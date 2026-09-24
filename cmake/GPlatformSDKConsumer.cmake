@@ -23,6 +23,7 @@ string(JSON _sdk_system GET "${_sdk_info}" CMAKE_SYSTEM_NAME)
 if(NOT _sdk_system STREQUAL CMAKE_SYSTEM_NAME)
     message(FATAL_ERROR "This SDK was built for ${_sdk_system}; consumer uses ${CMAKE_SYSTEM_NAME}")
 endif()
+set(GPlatformSDK_DIR "${_sdk_slot}/lib/cmake/GPlatformSDK" CACHE PATH "Selected SDK package" FORCE)
 find_package(GPlatformSDK CONFIG REQUIRED PATHS "${_sdk_slot}/lib/cmake/GPlatformSDK" NO_DEFAULT_PATH)
 
 function(gplatform_deploy_sdk_runtime target)
@@ -38,9 +39,14 @@ function(gplatform_deploy_sdk_runtime target)
         file(GLOB runtime CONFIGURE_DEPENDS "${_sdk_slot}/lib/*.so*")
     endif()
     if(runtime)
-        add_custom_command(TARGET ${target} POST_BUILD
+        set(stamp "${CMAKE_CURRENT_BINARY_DIR}/${target}-sdk-runtime.stamp")
+        add_custom_command(OUTPUT "${stamp}"
             COMMAND "${CMAKE_COMMAND}" -E make_directory "${destination}"
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${runtime} "${destination}"
+            COMMAND "${CMAKE_COMMAND}" -E touch "${stamp}"
+            DEPENDS ${runtime} "${_sdk_slot}/sdk-manifest.json"
             COMMAND_EXPAND_LISTS VERBATIM)
+        add_custom_target(${target}_sdk_runtime DEPENDS "${stamp}")
+        add_dependencies(${target} ${target}_sdk_runtime)
     endif()
 endfunction()
