@@ -1,0 +1,4 @@
+#!/bin/sh
+
+chmod 777 /opt/${PROJECT_APP_NAME}/${PROJECT_APP_NAME}.desktop
+cp /opt/${PROJECT_APP_NAME}/${PROJECT_APP_NAME}.desktop /usr/share/applications/

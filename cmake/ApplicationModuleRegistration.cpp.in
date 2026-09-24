@@ -1,0 +1,5 @@
+#include "ApplicationModuleRegistration.hpp"
+
+@GPLATFORM_MODULE_REGISTRATION_INCLUDES@
+void registerApplicationModules() {
+@GPLATFORM_MODULE_REGISTRATION_CALLS@}

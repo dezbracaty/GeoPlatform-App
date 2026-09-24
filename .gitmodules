@@ -1,0 +1,3 @@
+[submodule "GPlatformSDK"]
+	path = ThirdParty/libs/GPlatformSDK
+	url = https://github.com/dezbracaty/GeoPlatform-SDK.git

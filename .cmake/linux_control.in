@@ -1,0 +1,9 @@
+Package: ${PROJECT_APP_NAME}
+Version: ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}
+Section: utils
+Priority: optional
+Architecture: amd64
+Depends: libxcb-cursor0
+Installed-Size: 512
+Maintainer: ${PROJECT_COMPANY}
+Description: ${PROJECT_DESCRIPTION}

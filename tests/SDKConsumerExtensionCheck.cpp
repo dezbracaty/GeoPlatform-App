@@ -1,0 +1,44 @@
+#include <AutoRegisterDB.hpp>
+#include <DocumentManager.hpp>
+#include <RendererBackendCatalog.hpp>
+#include <QCoreApplication>
+#include <iostream>
+
+// These types exist only in the consumer, after the SDK has been built.
+class ConsumerDB final : public AutoRegisterDB {
+public:
+    TypeID getTypeID() const override { return static_cast<TypeID>(0x7f000001); }
+    bool needsVTKSync() const override { return false; }
+};
+
+class ConsumerRendererFactory final : public GPlatform::Rendering::IRendererBackendFactory {
+public:
+    GPlatform::Rendering::RendererBackendDescriptor descriptor() const override {
+        return {QStringLiteral("consumer-extension"), QStringLiteral("Consumer extension"),
+                {GPlatform::Rendering::GraphicsApi::OpenGL}};
+    }
+    std::shared_ptr<GPlatform::Rendering::IRendererSession> createSession(
+        const GPlatform::Rendering::RendererSessionCreateInfo&) const override {
+        return {};
+    }
+};
+
+int main(int argc, char** argv) {
+    QCoreApplication application(argc, argv);
+    auto* document = DocumentManager::instance();
+    auto db = AutoRegisterDB::create<ConsumerDB>();
+    if (!db || document->getDBInstance(db->getDBInstanceID()) != db) {
+        std::cerr << "Consumer-defined DB did not register with the document\n";
+        return 1;
+    }
+    using namespace GPlatform::Rendering;
+    registerCompiledRendererBackends();
+    auto& catalog = RendererBackendCatalog::instance();
+    if (catalog.backendIds().isEmpty() ||
+        !catalog.registerFactory(std::make_shared<ConsumerRendererFactory>()) ||
+        !catalog.find(u"consumer-extension")) {
+        std::cerr << "Consumer renderer extension did not coexist with SDK backends\n";
+        return 2;
+    }
+    return 0;
+}

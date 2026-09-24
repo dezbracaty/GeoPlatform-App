@@ -1,0 +1,16 @@
+{
+    "version": "1.0",
+    "description": "用户自定义快捷键配置示例",
+    "shortcuts": {
+        "edit.undo": "Ctrl+z",
+        "edit.redo": "Ctrl+Shift+z",
+        "camera.reset": "r",
+        "geometry.create.sphere": "s",
+        "geometry.create.cube": "c"
+    },
+    "metadata": {
+        "created": "2025-09-30",
+        "modified": "2025-09-30",
+        "notes": "用户自定义配置示例，覆盖应用和硬编码默认值"
+    }
+}

@@ -1,0 +1,39 @@
+{
+    "version": "1.0",
+    "description": "GPlatform 默认快捷键配置",
+    "shortcuts": {
+        "edit.undo": "Ctrl+z",
+        "edit.redo": "Ctrl+y",
+        "edit.copy": "Ctrl+c",
+        "edit.paste": "Ctrl+v",
+        "edit.delete": ["Backspace", "Delete"],
+
+        "geometry.create.sphere": "Ctrl+1",
+        "geometry.create.cube": "Ctrl+2",
+        "geometry.create.cylinder": "Ctrl+3",
+
+        "camera.fitScene": "Space",
+        "camera.resetDefault": "Shift+Space",
+        "camera.view.front": "1",
+        "camera.view.back": "2",
+        "camera.view.right": "3",
+        "camera.view.left": "4",
+        "camera.view.bottom": "5",
+        "camera.view.top": "6",
+        "camera.view.isometric": "7",
+        "camera.projection.toggle": "Alt+o",
+
+        "selection.clear": "Escape",
+
+        "model.scale": "Alt+s",
+        "model.rotate": "Alt+r",
+        "model.translate": "Alt+m",
+
+        "screenshot.capture": "Ctrl+Shift+s"
+    },
+    "metadata": {
+        "created": "2025-09-30",
+        "author": "GPlatform Team",
+        "notes": "应用级默认快捷键配置，覆盖硬编码默认值"
+    }
+}

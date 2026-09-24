@@ -1,0 +1,543 @@
+{
+  "version": "1.0",
+  "description": "GPlatform Application Menu Configuration",
+  "defaultEnvironment": "normal",
+  "environments": {
+    "normal": {
+      "description": "Normal 工作环境",
+      "groups": {
+        "Menu": {
+          "description": "应用主菜单栏",
+          "items": [
+            {
+              "text": "File", "isMenu": true,
+              "iconSource": "graph_Folder", "displayMode": "TextBesideIcon",
+              "items": [
+                {"text": "New...", "iconSource": "graph_Add", "actionCode": "file.new", "enabled": true},
+                {"text": "Open...", "iconSource": "graph_OpenFile", "actionCode": "model.import.choose", "enabled": true},
+                {"text": "Save", "iconSource": "graph_Save", "actionCode": "file.save", "enabled": true},
+                {"separator": true},
+                {"text": "Quit", "iconSource": "graph_Cancel", "actionCode": "file.quit", "enabled": true}
+              ]
+            },
+            {
+              "text": "Edit", "isMenu": true,
+              "iconSource": "graph_Edit", "displayMode": "TextBesideIcon",
+              "items": [
+                {"text": "Undo", "iconSource": "graph_Undo", "actionCode": "edit.undo", "enabled": true},
+                {"text": "Redo", "iconSource": "graph_Redo", "actionCode": "edit.redo", "enabled": true},
+                {"separator": true},
+                {"text": "Cut", "iconSource": "graph_Cut", "actionCode": "edit.cut", "enabled": true},
+                {"text": "Copy", "iconSource": "graph_Copy", "actionCode": "edit.copy", "enabled": true},
+                {"text": "Paste", "iconSource": "graph_Paste", "actionCode": "edit.paste", "enabled": true}
+              ]
+            },
+            {
+              "text": "Help", "isMenu": true,
+              "iconSource": "graph_Help", "displayMode": "TextBesideIcon",
+              "items": [
+                {"text": "About", "iconSource": "graph_Info", "actionCode": "help.about", "enabled": true}
+              ]
+            }
+          ]
+        },
+        "NoSelection": {
+          "description": "无选择上下文菜单",
+          "items": [
+            {
+              "text": "导入文件",
+              "iconSource": "graph_Import",
+              "actionCode": "model.import.choose",
+              "enabled": true
+            },
+            {
+              "separator": true
+            },
+            {
+              "text": "创建几何体",
+              "iconSource": "graph_Add",
+              "isMenu": true,
+              "items": [
+                {
+                  "text": "基础形状",
+                  "isMenu": true,
+                  "items": [
+                    {
+                      "text": "立方体",
+                      "iconSource": "graph_Checkbox",
+                      "actionCode": "geometry.create.cube",
+                      "enabled": true
+                    },
+                    {
+                      "text": "球体",
+                      "iconSource": "graph_StatusCircleRing",
+                      "actionCode": "geometry.create.sphere",
+                      "enabled": true
+                    },
+                    {
+                      "text": "圆柱体",
+                      "iconSource": "graph_CyliderContainer",
+                      "actionCode": "geometry.create.cylinder",
+                      "enabled": true
+                    },
+                    {
+                      "text": "圆锥体",
+                      "iconSource": "graph_ConstructionCone",
+                      "actionCode": "geometry.create.cone",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "separator": true
+                },
+                {
+                  "text": "高级形状",
+                  "isMenu": true,
+                  "items": [
+                    {
+                      "text": "圆环",
+                      "iconSource": "graph_Diagnostic",
+                      "actionCode": "geometry.create.torus",
+                      "enabled": true
+                    },
+                    {
+                      "text": "箭头",
+                      "iconSource": "graph_Up",
+                      "actionCode": "geometry.create.arrow",
+                      "enabled": true
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "separator": true
+            },
+            {
+              "text": "重置视角",
+              "iconSource": "graph_ViewAll",
+              "actionCode": "camera.reset",
+              "enabled": true
+            },
+            {
+              "text": "截图保存",
+              "iconSource": "graph_Camera",
+              "actionCode": "screenshot.capture",
+              "enabled": true
+            },
+            {
+              "separator": true
+            },
+            {
+              "text": "清除所有模型",
+              "iconSource": "graph_Clear",
+              "actionCode": "geometry.clear",
+              "enabled": true
+            }
+          ]
+        },
+        "SingleModel": {
+          "description": "单个模型上下文菜单",
+          "items": [
+            {
+              "text": "移动模型",
+              "iconSource": "graph_Move",
+              "actionCode": "model.translate",
+              "enabled": true
+            },
+            {
+              "text": "旋转模型",
+              "iconSource": "graph_Rotate",
+              "actionCode": "model.rotate",
+              "enabled": true
+            },
+            {
+              "text": "缩放模型",
+              "iconSource": "graph_ResizeMouseLarge",
+              "actionCode": "model.scale",
+              "enabled": true
+            },
+            {
+              "separator": true
+            },
+            {
+              "text": "复制模型",
+              "iconSource": "graph_Copy",
+              "actionCode": "edit.copy",
+              "enabled": true
+            },
+            {
+              "text": "粘贴模型",
+              "iconSource": "graph_Paste",
+              "actionCode": "edit.paste",
+              "enabled": true
+            },
+            {
+              "separator": true
+            },
+            {
+              "text": "删除模型",
+              "iconSource": "graph_Delete",
+              "actionCode": "edit.delete",
+              "enabled": true
+            },
+            {
+              "separator": true
+            },
+            {
+              "text": "聚焦到模型",
+              "iconSource": "graph_Bullseye",
+              "actionCode": "camera.reset",
+              "enabled": true
+            },
+            {
+              "separator": true
+            },
+            {
+              "text": "截图保存",
+              "iconSource": "graph_Camera",
+              "actionCode": "screenshot.capture",
+              "enabled": true
+            }
+          ]
+        },
+        "MultipleModels": {
+          "description": "多个模型上下文菜单",
+          "items": [
+            {
+              "text": "对齐模型",
+              "iconSource": "graph_AlignCenter",
+              "actionCode": "model.align",
+              "enabled": true
+            },
+            {
+              "text": "组合模型",
+              "iconSource": "graph_MergeCall",
+              "actionCode": "model.merge",
+              "enabled": true
+            },
+            {
+              "separator": true
+            },
+            {
+              "text": "复制选中",
+              "iconSource": "graph_Copy",
+              "actionCode": "edit.copy",
+              "enabled": true
+            },
+            {
+              "text": "删除选中",
+              "iconSource": "graph_Delete",
+              "actionCode": "edit.delete",
+              "enabled": true
+            },
+            {
+              "separator": true
+            },
+            {
+              "text": "聚焦到选中",
+              "iconSource": "graph_Bullseye",
+              "actionCode": "camera.reset",
+              "enabled": true
+            }
+          ]
+        }
+      }
+    },
+    "slicing": {
+      "description": "切片环境",
+      "groups": {
+        "Menu": {
+          "description": "切片环境菜单栏",
+          "items": [
+            {
+              "text": "Exit",
+              "isMenu": true,
+              "iconSource": "graph_ChromeClose",
+              "displayMode": "IconOnly",
+              "items": [
+                {
+                  "text": "Exit Slicing",
+                  "iconSource": "graph_ChromeClose",
+                  "actionCode": "slicing.exit",
+                  "enabled": true
+                }
+              ]
+            }
+          ]
+        },
+        "NoSelection": {
+          "description": "切片环境-无选择上下文菜单",
+          "items": [
+            {
+              "text": "返回正常模式",
+              "iconSource": "graph_Back",
+              "actionCode": "slicing.exit",
+              "enabled": true
+            }
+          ]
+        },
+        "SingleModel": {
+          "description": "切片环境-单个模型上下文菜单",
+          "items": [
+            {
+              "text": "开始切片",
+              "iconSource": "graph_Play",
+              "actionCode": "slice.start",
+              "enabled": true
+            },
+            {
+              "text": "预览层级",
+              "iconSource": "graph_View",
+              "actionCode": "slice.preview",
+              "enabled": true
+            },
+            {
+              "separator": true
+            },
+            {
+              "text": "切片设置",
+              "iconSource": "graph_Settings",
+              "actionCode": "slice.settings",
+              "enabled": true
+            }
+          ]
+        },
+        "MultipleModels": {
+          "description": "切片环境-多个模型上下文菜单",
+          "items": [
+            {
+              "text": "批量切片",
+              "iconSource": "graph_Play",
+              "actionCode": "slice.batchStart",
+              "enabled": true
+            }
+          ]
+        }
+      }
+    },
+    "editing": {
+      "description": "编辑环境",
+      "groups": {
+        "NoSelection": {
+          "description": "编辑环境-无选择上下文菜单",
+          "items": [
+            {
+              "text": "返回正常模式",
+              "iconSource": "graph_Back",
+              "actionCode": "env.switchToNormal",
+              "enabled": true
+            }
+          ]
+        },
+        "SingleModel": {
+          "description": "编辑环境-单个模型上下文菜单",
+          "items": [
+            {
+              "text": "移动",
+              "iconSource": "graph_MoveToFolder",
+              "actionCode": "model.translate",
+              "enabled": true
+            },
+            {
+              "text": "旋转",
+              "iconSource": "graph_Rotate",
+              "actionCode": "model.rotate",
+              "enabled": true
+            },
+            {
+              "text": "缩放",
+              "iconSource": "graph_ZoomIn",
+              "actionCode": "model.scale",
+              "enabled": true
+            },
+            {
+              "separator": true
+            },
+            {
+              "text": "分割模型",
+              "iconSource": "graph_Cut",
+              "actionCode": "model.split",
+              "enabled": true
+            },
+            {
+              "text": "删除",
+              "iconSource": "graph_Delete",
+              "actionCode": "edit.delete",
+              "enabled": true
+            }
+          ]
+        },
+        "MultipleModels": {
+          "description": "编辑环境-多个模型上下文菜单",
+          "items": [
+            {
+              "text": "合并模型",
+              "iconSource": "graph_MergeCall",
+              "actionCode": "model.merge",
+              "enabled": true
+            },
+            {
+              "text": "对齐模型",
+              "iconSource": "graph_AlignCenter",
+              "actionCode": "model.align",
+              "enabled": true
+            },
+            {
+              "separator": true
+            },
+            {
+              "text": "删除选中",
+              "iconSource": "graph_Delete",
+              "actionCode": "edit.delete",
+              "enabled": true
+            }
+          ]
+        }
+      }
+    },
+    "support": {
+      "description": "支撑环境",
+      "groups": {
+        "NoSelection": {
+          "description": "支撑环境-无选择上下文菜单",
+          "items": [
+            {
+              "text": "返回正常模式",
+              "iconSource": "graph_Back",
+              "actionCode": "env.switchToNormal",
+              "enabled": true
+            },
+            {
+              "separator": true
+            },
+            {
+              "text": "自动生成支撑",
+              "iconSource": "graph_LightningBolt",
+              "actionCode": "support.autoGenerate",
+              "enabled": true
+            }
+          ]
+        },
+        "SingleModel": {
+          "description": "支撑环境-单个模型上下文菜单",
+          "items": [
+            {
+              "text": "自动生成",
+              "iconSource": "graph_LightningBolt",
+              "actionCode": "support.autoGenerate",
+              "enabled": true
+            },
+            {
+              "text": "手动添加支撑",
+              "iconSource": "graph_Add",
+              "actionCode": "support.addManual",
+              "enabled": true
+            },
+            {
+              "separator": true
+            },
+            {
+              "text": "移除所有支撑",
+              "iconSource": "graph_Delete",
+              "actionCode": "support.removeAll",
+              "enabled": true
+            }
+          ]
+        },
+        "MultipleModels": {
+          "description": "支撑环境-多个模型上下文菜单",
+          "items": [
+            {
+              "text": "批量自动生成",
+              "iconSource": "graph_LightningBolt",
+              "actionCode": "support.batchAutoGenerate",
+              "enabled": true
+            },
+            {
+              "text": "移除所有支撑",
+              "iconSource": "graph_Delete",
+              "actionCode": "support.removeAll",
+              "enabled": true
+            }
+          ]
+        }
+      }
+    },
+    "preview": {
+      "description": "预览环境",
+      "groups": {
+        "NoSelection": {
+          "description": "预览环境-无选择上下文菜单",
+          "items": [
+            {
+              "text": "返回正常模式",
+              "iconSource": "graph_Back",
+              "actionCode": "env.switchToNormal",
+              "enabled": true
+            },
+            {
+              "separator": true
+            },
+            {
+              "text": "播放动画",
+              "iconSource": "graph_Play",
+              "actionCode": "preview.play",
+              "enabled": true
+            },
+            {
+              "text": "逐层查看",
+              "iconSource": "graph_MapLayers",
+              "actionCode": "preview.layerByLayer",
+              "enabled": true
+            }
+          ]
+        },
+        "SingleModel": {
+          "description": "预览环境-单个模型上下文菜单",
+          "items": [
+            {
+              "text": "播放动画",
+              "iconSource": "graph_Play",
+              "actionCode": "preview.play",
+              "enabled": true
+            },
+            {
+              "text": "暂停",
+              "iconSource": "graph_Pause",
+              "actionCode": "preview.pause",
+              "enabled": true
+            },
+            {
+              "text": "停止",
+              "iconSource": "graph_Stop",
+              "actionCode": "preview.stop",
+              "enabled": true
+            },
+            {
+              "separator": true
+            },
+            {
+              "text": "显示移动路径",
+              "iconSource": "graph_MapPin",
+              "actionCode": "preview.showTravels",
+              "enabled": true
+            }
+          ]
+        },
+        "MultipleModels": {
+          "description": "预览环境-多个模型上下文菜单",
+          "items": [
+            {
+              "text": "全部播放",
+              "iconSource": "graph_Play",
+              "actionCode": "preview.playAll",
+              "enabled": true
+            }
+          ]
+        }
+      }
+    }
+  }
+}

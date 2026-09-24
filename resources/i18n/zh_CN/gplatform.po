@@ -1,0 +1,2869 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: zh_CN\n"
+
+msgid "%1 model(s) prepared"
+msgstr "已准备 %1 个模型"
+
+msgid "%1 tasks"
+msgstr "%1 个任务"
+
+msgid "%1% transferred"
+msgstr "已传输 %1%"
+
+msgid "%1% · %2 remaining"
+msgstr "%1% · 剩余 %2"
+
+msgid "Add a model to start the print workflow"
+msgstr "添加模型以开始打印流程"
+
+msgid "Dismiss"
+msgstr "关闭"
+
+msgid "G-code is ready"
+msgstr "G-code 已生成"
+
+msgid "No G-code generated"
+msgstr "尚未生成 G-code"
+
+msgid "No models on the build plate"
+msgstr "打印平台上没有模型"
+
+msgid "Open printer details for more information"
+msgstr "打开打印机详情以查看更多信息"
+
+msgid "Pausing print"
+msgstr "正在暂停打印"
+
+msgid "Print Again"
+msgstr "再次打印"
+
+msgid "Print completed"
+msgstr "打印完成"
+
+msgid "Print failed"
+msgstr "打印失败"
+
+msgid "Print paused"
+msgstr "打印已暂停"
+
+msgid "Printer connection failed: %1"
+msgstr "打印机连接失败：%1"
+
+msgid "Printing Device · Connection Failed"
+msgstr "打印设备 · 连接失败"
+
+msgid "Ready for slicing"
+msgstr "可以开始切片"
+
+msgid "Resuming print"
+msgstr "正在恢复打印"
+
+msgid "Settings changed · Reslice required"
+msgstr "设置已更改 · 需要重新切片"
+
+msgid "Slice a model before exporting or printing"
+msgstr "请先切片，再导出或打印"
+
+msgid "Slicing configuration needs attention"
+msgstr "切片配置需要处理"
+
+msgid "Stopping print"
+msgstr "正在停止打印"
+
+msgid "Slicing failed"
+msgstr "切片失败"
+
+msgid "Task failed"
+msgstr "任务失败"
+
+msgid "The current output no longer matches the print settings"
+msgstr "当前输出与打印设置不再匹配"
+
+msgid "Transferring print job"
+msgstr "正在传输打印任务"
+
+msgid "Unknown error"
+msgstr "未知错误"
+
+msgid "View Details"
+msgstr "查看详情"
+
+msgid "Waiting for the printer to begin"
+msgstr "等待打印机开始任务"
+
+msgid "Waiting for the printer to pause"
+msgstr "等待打印机暂停"
+
+msgid "Waiting for the printer to resume"
+msgstr "等待打印机恢复"
+
+msgid "Waiting for the printer to stop"
+msgstr "等待打印机停止"
+
+msgid " times"
+msgstr " 次"
+
+msgid "%1 files selected"
+msgstr "已选择 %1 个文件"
+
+msgid "%1 has been saved to the model downloads folder"
+msgstr "%1 已保存到模型下载目录"
+
+msgid "%1 mm · %2 · %3"
+msgstr "%1 mm · %2 · %3"
+
+msgid "%1 model(s) on the build plate"
+msgstr "%1 个模型位于打印平台"
+
+msgid "%1 records"
+msgstr "%1 条记录"
+
+msgid "%1 results found"
+msgstr "找到 %1 个结果"
+
+msgid "%1 transactions"
+msgstr "%1 条事务"
+
+msgid "%1 · %2 mm"
+msgstr "%1 · %2 mm"
+
+msgid "%1. %2"
+msgstr "%1. %2"
+
+msgid "%1°C"
+msgstr "%1°C"
+
+msgid "%1°C / %2°C"
+msgstr "%1°C / %2°C"
+
+msgid "(%1 tasks)"
+msgstr "(%1 个任务)"
+
+msgid "2x2"
+msgstr "2x2"
+
+msgid "3D"
+msgstr "3D"
+
+msgid "3D Model Workshop"
+msgstr "3D 模型工坊"
+
+msgid "3D Models (*.stl *.obj *.glb *.gltf *.ply *.3ds *.dae *.fbx)"
+msgstr "3D 模型 (*.stl *.obj *.glb *.gltf *.ply *.3ds *.dae *.fbx)"
+
+msgid "3D Print"
+msgstr "3D 打印"
+
+msgid "3D Printing"
+msgstr "3D 打印"
+
+msgid "3D Printing Studio"
+msgstr "3D 打印工作室"
+
+msgid "A cute cartoon kitten with big eyes in a sitting pose"
+msgstr "一只可爱的卡通小猫，大眼睛，坐着的姿势"
+
+msgid "A humanoid sci-fi robot with a metallic finish and glowing blue eyes"
+msgstr "科幻机器人，人形，金属质感，蓝色发光眼睛"
+
+msgid "A medieval castle with towers and a moat"
+msgstr "中世纪风格的城堡，有塔楼和护城河"
+
+msgid "A proud Western dragon with spread wings and shimmering scales"
+msgstr "昂首挺胸的西方龙，张开翅膀，鳞片闪闪发光"
+
+msgid "AI Assistant"
+msgstr "AI 助手"
+
+msgid "AI Creation"
+msgstr "AI创作"
+
+msgid "AI Service"
+msgstr "AI 服务"
+
+msgid "AI is generating the model..."
+msgstr "AI正在生成模型..."
+
+msgid "AI is processing your request…"
+msgstr "AI 正在处理请求…"
+
+msgid "AI is responding"
+msgstr "AI 回复中"
+
+msgid "AI is responding…"
+msgstr "AI 正在回复…"
+
+msgid "AI not signed in · Click to sign in"
+msgstr "AI 未登录 · 点击登录"
+
+msgid "AI opened"
+msgstr "AI 已打开"
+
+msgid "AI signed in"
+msgstr "AI 已登录"
+
+msgid "AI signed in · %1"
+msgstr "AI 已登录 · %1"
+
+msgid "About"
+msgstr "关于"
+
+msgid "About %1 seconds remaining"
+msgstr "预计还需 %1 秒"
+
+msgid "About GPlatform"
+msgstr "关于 GPlatform"
+
+msgid "Acceleration"
+msgstr "加速度"
+
+msgid "Acceleration (mm/s²)"
+msgstr "加速度 (mm/s²)"
+
+msgid "Account"
+msgstr "账户"
+
+msgid "Accounts and Services"
+msgstr "账户与服务"
+
+msgid "Active Prints"
+msgstr "活动打印"
+
+msgid "Actual Image"
+msgstr "实际图像"
+
+msgid "Actual Result (playback)"
+msgstr "实际结果（回放时）"
+
+msgid "Actual Speed"
+msgstr "实际速度"
+
+msgid "Actual Speed (mm/s)"
+msgstr "实际速度 (mm/s)"
+
+msgid "Actual Volumetric Flow"
+msgstr "实际体积流量"
+
+msgid "Actual Volumetric Flow (mm³/s)"
+msgstr "实际体积流量 (mm³/s)"
+
+msgid "Add Model"
+msgstr "添加模型"
+
+msgid "Add a model to begin"
+msgstr "添加模型以开始准备"
+
+msgid "Add a model to run printability checks"
+msgstr "添加模型后执行可打印性检查"
+
+msgid "Advanced"
+msgstr "高级"
+
+msgid "Advanced Display Settings"
+msgstr "高级显示设置"
+
+msgid "After sign-in, AI chat uses your ChatGPT/Codex subscription through the local Codex App Server."
+msgstr "登录后，AI 对话通过本机 Codex App Server 使用你的 ChatGPT/Codex 订阅。"
+
+msgid "All"
+msgstr "所有"
+
+msgid "All Databases"
+msgstr "全部数据库"
+
+msgid "All Files (*)"
+msgstr "所有文件 (*)"
+
+msgid "All Sources"
+msgstr "全部来源"
+
+msgid "All Types"
+msgstr "全部类型"
+
+msgid "All files (*)"
+msgstr "所有文件 (*)"
+
+msgid "All models on the build plate"
+msgstr "切片平台上的所有模型"
+
+msgid "Ambient Light"
+msgstr "环境光"
+
+msgid "Apply Changes · %1 items"
+msgstr "应用操作 · %1 项"
+
+msgid "Applying will reload compatible process and filament presets"
+msgstr "应用后将重新加载兼容的工艺和耗材"
+
+msgid "Applying will update the current build plate"
+msgstr "应用后将更新当前打印板"
+
+msgid "Are you sure you want to exit the program?"
+msgstr "您确定要退出程序吗？"
+
+msgid "Ask AI or perform an action…"
+msgstr "询问 AI 或执行操作…"
+
+msgid "Auto"
+msgstr "自动"
+
+msgid "Available"
+msgstr "可用"
+
+msgid "Available Devices"
+msgstr "可用设备"
+
+msgid "Available Printers"
+msgstr "可用打印机"
+
+msgid "Average FPS:"
+msgstr "平均帧率："
+
+msgid "Back to Print Configuration"
+msgstr "返回打印配置"
+
+msgid "Background"
+msgstr "背景"
+
+msgid "Bed"
+msgstr "热床"
+
+msgid "Block Support"
+msgstr "阻挡支撑"
+
+msgid "Bottom Surface"
+msgstr "底面"
+
+msgid "Bridge"
+msgstr "桥接"
+
+msgid "Build Plate"
+msgstr "打印板"
+
+msgid "Build Plate Appearance"
+msgstr "打印床外观"
+
+msgid "Build Plate Color"
+msgstr "平台颜色"
+
+msgid "Build volume %1 × %2 × %3 mm"
+msgstr "打印空间 %1 × %2 × %3 mm"
+
+msgid "Cancel"
+msgstr "取消"
+
+msgid "Cancel Task"
+msgstr "取消任务"
+
+msgid "Capture"
+msgstr "采集"
+
+msgid "Changes: %1"
+msgstr "变更数: %1"
+
+msgid "ChatGPT / Codex"
+msgstr "ChatGPT / Codex"
+
+msgid "ChatGPT account connected"
+msgstr "已连接 ChatGPT 账户"
+
+msgid "ChatGPT/Codex account connected"
+msgstr "ChatGPT/Codex 账户已连接"
+
+msgid "ChatGPT/Codex sign-in and OpenAI Platform API billing are separate."
+msgstr "ChatGPT/Codex 登录与 OpenAI Platform API 计费相互独立。"
+
+msgid "Check Again"
+msgstr "重新检查"
+
+msgid "Check that the application is fully installed, then restart it"
+msgstr "请检查应用安装是否完整，然后重新启动"
+
+msgid "Check your network and scan again"
+msgstr "检查网络环境后重新扫描"
+
+msgid "Checking Codex sign-in status"
+msgstr "正在检查 Codex 登录状态"
+
+msgid "Circle"
+msgstr "圆"
+
+msgid "Clear"
+msgstr "清除"
+
+msgid "Clear All"
+msgstr "清空"
+
+msgid "Clear Conversation"
+msgstr "清空对话"
+
+msgid "Clear Search"
+msgstr "清除搜索"
+
+msgid "Click Scan Devices to find Flashforge printers"
+msgstr "点击扫描设备开始搜索 Flashforge 打印机"
+
+msgid "Click a transaction on the left to show its changes here."
+msgstr "点击左侧事务行即可弹出变更明细，同时这里会同步显示。"
+
+msgid "Click or drag to upload images"
+msgstr "点击或拖拽上传图片"
+
+msgid "Close"
+msgstr "关闭"
+
+msgid "Cloud Device · %1"
+msgstr "云端设备 · %1"
+
+msgid "Cloud Devices"
+msgstr "云端设备"
+
+msgid "Coiled Dragon"
+msgstr "盘龙"
+
+msgid "Collapse AI Assistant"
+msgstr "收起 AI 助手"
+
+msgid "Color"
+msgstr "颜色"
+
+msgid "Commit"
+msgstr "提交"
+
+msgid "Comparison"
+msgstr "对比视图"
+
+msgid "Completed successfully (%1 steps)"
+msgstr "执行成功（%1 步）"
+
+msgid "Connect"
+msgstr "连接"
+
+msgid "Connect and Print"
+msgstr "连接并打印"
+
+msgid "Connected"
+msgstr "已连接"
+
+msgid "Connected to Flashforge service"
+msgstr "已连接 Flashforge 服务"
+
+msgid "Connecting"
+msgstr "正在连接"
+
+msgid "Connecting to physical printer"
+msgstr "正在连接实体打印机"
+
+msgid "Connection verification code (if required by the device)"
+msgstr "连接验证码（设备要求时填写）"
+
+msgid "Continue"
+msgstr "继续"
+
+msgid "Copy Verification Code"
+msgstr "复制验证码"
+
+msgid "Cost"
+msgstr "成本"
+
+msgid "Credentials are managed by Codex App Server"
+msgstr "凭据由 Codex App Server 管理"
+
+msgid "Current FPS:"
+msgstr "当前帧率："
+
+msgid "Current configuration applied"
+msgstr "当前配置已应用"
+
+msgid "Custom"
+msgstr "自定义"
+
+msgid "Dark"
+msgstr "深色"
+
+msgid "Dashboard"
+msgstr "仪表板"
+
+msgid "Date Modified"
+msgstr "修改时间"
+
+msgid "Debugging Ready"
+msgstr "调试准备完成"
+
+msgid "Decorative Art"
+msgstr "艺术摆件"
+
+msgid "Default Build Plate"
+msgstr "默认打印板"
+
+msgid "Delete Model"
+msgstr "删除模型"
+
+msgid "Describe the 3D model you want to generate..."
+msgstr "描述您想要生成的 3D 模型..."
+
+msgid "Desktop"
+msgstr "桌面"
+
+msgid "Device scan failed"
+msgstr "设备扫描失败"
+
+msgid "Difference Image"
+msgstr "差异图像"
+
+msgid "Differences (marked in red)"
+msgstr "差异对比（红色标记）"
+
+msgid "Diffuse"
+msgstr "漫反射"
+
+msgid "Disable Manual Supports"
+msgstr "关闭手动支撑"
+
+msgid "Disconnect"
+msgstr "断开"
+
+msgid "Disconnected"
+msgstr "未连接"
+
+msgid "Discover models worth printing"
+msgstr "发现值得打印的好模型"
+
+msgid "Display Options"
+msgstr "显示选项"
+
+msgid "Display refresh rate settings"
+msgstr "显示刷新率设置"
+
+msgid "Document Monitor"
+msgstr "文档监听"
+
+msgid "Documents"
+msgstr "文档"
+
+msgid "Done"
+msgstr "完成"
+
+msgid "Download History"
+msgstr "下载记录"
+
+msgid "Download Model"
+msgstr "下载模型"
+
+msgid "Download completed"
+msgstr "下载完成"
+
+msgid "Download failed"
+msgstr "下载失败"
+
+msgid "Download started"
+msgstr "下载开始"
+
+msgid "Downloaded models will appear here"
+msgstr "已下载的模型将显示在这里"
+
+msgid "Downloading: %1"
+msgstr "正在下载：%1"
+
+msgid "Downloads"
+msgstr "下载"
+
+msgid "Drop to import a model file"
+msgstr "释放以导入模型文件"
+
+msgid "Drop to load a G-code file"
+msgstr "释放以加载 GCode 文件"
+
+msgid "Dropped:"
+msgstr "丢帧："
+
+msgid "Eastern Dragon"
+msgstr "东方神龙"
+
+msgid "Edge Width"
+msgstr "边缘线宽"
+
+msgid "Education"
+msgstr "教育"
+
+msgid "Enable Manual Supports"
+msgstr "开启手动支撑"
+
+msgid "Enforce Support"
+msgstr "强制支撑"
+
+msgid "Engineering Plate"
+msgstr "工程材料热床"
+
+msgid "Enter a description or upload reference images, and AI will generate multiple 3D model options"
+msgstr "输入文字描述或上传参考图片，AI 将为您生成多个 3D 模型方案"
+
+msgid "Enter a description or upload reference images, then click Generate to create a 3D model"
+msgstr "输入描述或上传参考图片，点击生成按钮开始创建3D模型"
+
+msgid "Enter folder path"
+msgstr "输入文件夹路径"
+
+msgid "Enter the following code on the verification page"
+msgstr "在验证页面输入下面的代码"
+
+msgid "Enter to send · Shift+Enter for a new line · Esc / Alt+I to collapse"
+msgstr "Enter 发送 · Shift+Enter 换行 · Esc / Alt+I 收起"
+
+msgid "Enter your password"
+msgstr "请输入密码"
+
+msgid "Enter your phone number or email"
+msgstr "请输入手机号或邮箱"
+
+msgid "Erase"
+msgstr "擦除"
+
+msgid "Erase all painting"
+msgstr "擦除所有涂绘"
+
+msgid "Expected Image"
+msgstr "期望图像"
+
+msgid "Expected Result (recording)"
+msgstr "期望结果（录制时）"
+
+msgid "Export"
+msgstr "导出"
+
+msgid "Export G-code"
+msgstr "导出 G-code"
+
+msgid "Export Slicing Job"
+msgstr "导出切片任务"
+
+msgid "Export failed: %1"
+msgstr "导出失败: %1"
+
+msgid "Failed"
+msgstr "失败"
+
+msgid "Failed to apply build plate. Check the application log."
+msgstr "打印板应用失败，请检查程序日志"
+
+msgid "Failed to apply filament preset"
+msgstr "耗材预设应用失败"
+
+msgid "Failed to apply machine configuration. Check the application log."
+msgstr "机器配置应用失败，请检查程序日志"
+
+msgid "Failed to apply process preset"
+msgstr "工艺预设应用失败"
+
+msgid "Failed to create toolpath preview object"
+msgstr "创建刀路预览对象失败"
+
+msgid "Failed to load model"
+msgstr "模型加载失败"
+
+msgid "Fan Speed"
+msgstr "风扇速度"
+
+msgid "Fan Speed (%)"
+msgstr "风扇速度 (%)"
+
+msgid "Filament"
+msgstr "耗材丝"
+
+msgid "Filament %1"
+msgstr "耗材 %1"
+
+msgid "Filament Change"
+msgstr "耗材切换"
+
+msgid "Filament Preset"
+msgstr "耗材预设"
+
+msgid "Filament · "
+msgstr "耗材 · "
+
+msgid "File name"
+msgstr "文件名"
+
+msgid "Fill"
+msgstr "填充"
+
+msgid "Find inspiration in curated community models and bring downloads directly into your printing workflow."
+msgstr "从社区精选模型中寻找灵感，下载后直接进入你的打印工作流。"
+
+msgid "Fire Dragon"
+msgstr "火龙"
+
+msgid "Fit"
+msgstr "适配"
+
+msgid "Fit to View"
+msgstr "适应视图"
+
+msgid "Flashforge Account"
+msgstr "Flashforge 账号"
+
+msgid "Flashforge Printer"
+msgstr "Flashforge 打印机"
+
+msgid "Flashforge Printing Service"
+msgstr "Flashforge 打印服务"
+
+msgid "Flashforge account connected"
+msgstr "Flashforge 账号已连接"
+
+msgid "Flashforge sign-in required"
+msgstr "需要登录 Flashforge 账号"
+
+msgid "Flush"
+msgstr "冲刷"
+
+msgid "Focus"
+msgstr "聚焦"
+
+msgid "Follow Display"
+msgstr "跟随显示"
+
+msgid "For example: a cute pink cartoon rabbit with long ears in a sitting pose"
+msgstr "例如：一只可爱的卡通兔子，大耳朵，粉色，坐着的姿势"
+
+msgid "Format"
+msgstr "格式"
+
+msgid "Found %1 related models"
+msgstr "找到 %1 个相关模型"
+
+msgid "Frame Time:"
+msgstr "帧时间："
+
+msgid "Friendly Reminder"
+msgstr "友情提示"
+
+msgid "Friendly reminder"
+msgstr "友情提示"
+
+msgid "G-code (*.gcode)"
+msgstr "G-code (*.gcode)"
+
+msgid "G-code Files"
+msgstr "G-code 文件"
+
+msgid "G-code Ready"
+msgstr "GCode 就绪"
+
+msgid "G-code has been generated and can be exported or sent to a printer"
+msgstr "GCode 已生成，可以导出或发送到打印机"
+
+msgid "GPlatform"
+msgstr "GPlatform"
+
+msgid "GPlatform Account"
+msgstr "GPlatform 账户"
+
+msgid "GPlatform Community"
+msgstr "GPlatform 社区"
+
+msgid "GPlatform account service is not available yet"
+msgstr "GPlatform 账户服务尚未开放"
+
+msgid "Gap Fill"
+msgstr "缝隙填充"
+
+msgid "Gap Infill"
+msgstr "间隙填充"
+
+msgid "Gap area  %1"
+msgstr "间隙区域  %1"
+
+msgid "Generate Again"
+msgstr "重新生成"
+
+msgid "Generate Model"
+msgstr "生成模型"
+
+msgid "Generating..."
+msgstr "生成中..."
+
+msgid "Generation complete! Select a model to import:"
+msgstr "生成完成！请选择要导入的模型："
+
+msgid "Grid"
+msgstr "网格"
+
+msgid "Grid Spacing"
+msgstr "网格间距"
+
+msgid "Help"
+msgstr "帮助"
+
+msgid "Hide All"
+msgstr "全部隐藏"
+
+msgid "Hide Manual Support Debug Panel"
+msgstr "隐藏手动支撑调试面板"
+
+msgid "Hide Slice Settings"
+msgstr "隐藏切片设置"
+
+msgid "Hide Toolpath Legend"
+msgstr "隐藏路径图例"
+
+msgid "High-Tack Cool Plate"
+msgstr "高附着力冷板"
+
+msgid "Home"
+msgstr "归零"
+
+msgid "Ice Dragon"
+msgstr "冰龙"
+
+msgid "Idle"
+msgstr "空闲"
+
+msgid "Image Reference"
+msgstr "图片参考"
+
+msgid "Import Local File"
+msgstr "导入本地"
+
+msgid "Import Model"
+msgstr "导入模型"
+
+msgid "Import Now"
+msgstr "一键导入"
+
+msgid "In Transaction"
+msgstr "事务中"
+
+msgid "Inner Wall"
+msgstr "内墙"
+
+msgid "Inspiration"
+msgstr "灵感提示"
+
+msgid "Internal Bridge"
+msgstr "内部桥接"
+
+msgid "Internal Solid Infill"
+msgstr "内部实心填充"
+
+msgid "Ironing"
+msgstr "熨烫"
+
+msgid "Jerk"
+msgstr "抖动"
+
+msgid "Jerk (mm/s)"
+msgstr "抖动 (mm/s)"
+
+msgid "Jobs Running"
+msgstr "运行中的任务"
+
+msgid "LAN Devices"
+msgstr "局域网设备"
+
+msgid "LAN · %1"
+msgstr "局域网 · %1"
+
+msgid "Layer %1"
+msgstr "第 %1 层"
+
+msgid "Layer %1 / %2 · Z %3"
+msgstr "第 %1 / %2 层 · Z %3"
+
+msgid "Layer %1/%2"
+msgstr "第 %1/%2 层"
+
+msgid "Layer Height"
+msgstr "层高"
+
+msgid "Layer Height %1"
+msgstr "层高 %1"
+
+msgid "Layer Height (mm)"
+msgstr "层高 (mm)"
+
+msgid "Layer Time"
+msgstr "层时间"
+
+msgid "Layer Time (log)"
+msgstr "层时间（对数）"
+
+msgid "Layer Time (s)"
+msgstr "层时间 (s)"
+
+msgid "Layers %1–%2"
+msgstr "第 %1–%2 层"
+
+msgid "Layout:"
+msgstr "布局："
+
+msgid "Left: Enforce  Right: Block  Shift+Left: Erase"
+msgstr "左键:Enforce  右键:Block  Shift+左键:Erase"
+
+msgid "License"
+msgstr "许可"
+
+msgid "Light"
+msgstr "浅色"
+
+msgid "Line Type"
+msgstr "线条类型"
+
+msgid "Line Width"
+msgstr "线宽"
+
+msgid "Line Width (mm)"
+msgstr "线宽 (mm)"
+
+msgid "Link and Connect"
+msgstr "绑定并连接"
+
+msgid "Linking"
+msgstr "正在绑定"
+
+msgid "Live Change Stream"
+msgstr "实时变更流"
+
+msgid "Live Changes"
+msgstr "实时变更"
+
+msgid "Live Print Visualization"
+msgstr "实时打印可视化"
+
+msgid "Loading model..."
+msgstr "正在加载模型..."
+
+msgid "Loading online models…"
+msgstr "正在加载在线模型…"
+
+msgid "Loading..."
+msgstr "加载中..."
+
+msgid "Locale"
+msgstr "语言"
+
+msgid "Machine"
+msgstr "机型"
+
+msgid "Machine changed, but the build plate could not be applied. Check the application log."
+msgstr "机型已切换，但打印板应用失败，请检查程序日志"
+
+msgid "Machine settings cannot be changed while slicing"
+msgstr "切片任务运行期间不能修改机器配置"
+
+msgid "Make sure the printer is powered on and online, then scan again"
+msgstr "确认打印机已开机并联网，然后重新扫描"
+
+msgid "Manage your downloaded models"
+msgstr "管理已下载的模型"
+
+msgid "Manual"
+msgstr "手动"
+
+msgid "Manual Support Debug Data"
+msgstr "手动支撑调试数据"
+
+msgid "Manual Supports"
+msgstr "手动支撑"
+
+msgid "Material Usage"
+msgstr "材料使用"
+
+msgid "Maximize"
+msgstr "最大化"
+
+msgid "Medieval Dragon"
+msgstr "中世纪龙"
+
+msgid "Memory: -- MB"
+msgstr "内存：-- MB"
+
+msgid "Metalness"
+msgstr "金属度"
+
+msgid "Minimize"
+msgstr "最小化"
+
+msgid "Model"
+msgstr "模型"
+
+msgid "Model Center"
+msgstr "模型中心"
+
+msgid "Model Details"
+msgstr "模型详情"
+
+msgid "Model Overview"
+msgstr "模型简介"
+
+msgid "Model download failed: %1"
+msgstr "模型下载失败：%1"
+
+msgid "Model service request failed"
+msgstr "模型服务请求失败"
+
+msgid "Multi-View 3D Display"
+msgstr "多视图 3D 显示"
+
+msgid "Multiple Types"
+msgstr "多类型"
+
+msgid "My Models"
+msgstr "我的模型"
+
+msgid "Name"
+msgstr "名称"
+
+msgid "Navigation Pane Display Mode"
+msgstr "导航窗格显示模式"
+
+msgid "Night"
+msgstr "夜景"
+
+msgid "No Filament Selected"
+msgstr "未选择耗材"
+
+msgid "No Flashforge devices found"
+msgstr "未发现 Flashforge 设备"
+
+msgid "No G-code"
+msgstr "无 GCode"
+
+msgid "No G-code Yet"
+msgstr "尚无 GCode"
+
+msgid "No Models"
+msgstr "无模型"
+
+msgid "No Models Added"
+msgstr "未添加模型"
+
+msgid "No Process Selected"
+msgstr "未选择工艺"
+
+msgid "No Transaction Selected"
+msgstr "未选中事务"
+
+msgid "No build plates available"
+msgstr "暂无可用打印板"
+
+msgid "No downloaded models yet"
+msgstr "暂无已下载的模型"
+
+msgid "No machine profile loaded"
+msgstr "尚未加载机型配置"
+
+msgid "No matching data. Try changing model properties or filters."
+msgstr "没有匹配的数据。请尝试修改模型属性或调整筛选条件。"
+
+msgid "No matching models"
+msgstr "没有匹配的模型"
+
+msgid "No matching models found"
+msgstr "没有找到匹配的模型"
+
+msgid "No matching parameters found"
+msgstr "未找到匹配参数"
+
+msgid "No matching results"
+msgstr "无匹配结果"
+
+msgid "No nozzles are available for the current machine"
+msgstr "当前机型没有可用喷嘴"
+
+msgid "No parameters on this page"
+msgstr "当前页面暂无参数"
+
+msgid "No slicing machine presets available"
+msgstr "暂无可用的切片机器预设"
+
+msgid "No transactions yet. Perform an edit that creates a transaction first."
+msgstr "暂无事务。请先执行带事务的编辑操作。"
+
+msgid "Normal"
+msgstr "普通"
+
+msgid "Not Connected"
+msgstr "尚未接入"
+
+msgid "Not Selected"
+msgstr "未选择"
+
+msgid "Not Signed In"
+msgstr "未登录"
+
+msgid "Nozzle"
+msgstr "喷嘴"
+
+msgid "Nozzle %1 mm · Bed %2"
+msgstr "喷嘴 %1 mm · 热床 %2"
+
+msgid "OBJ Files (*.obj)"
+msgstr "OBJ 文件 (*.obj)"
+
+msgid "OK"
+msgstr "确定"
+
+msgid "Object Created"
+msgstr "对象创建"
+
+msgid "Object Deleted"
+msgstr "对象删除"
+
+msgid "Offline"
+msgstr "离线"
+
+msgid "Ok"
+msgstr "确定"
+
+msgid "Old value: %1"
+msgstr "旧值: %1"
+
+msgid "Old value: %1    New value: %2"
+msgstr "旧值: %1    新值: %2"
+
+msgid "On overhangs only"
+msgstr "仅悬垂区域"
+
+msgid "Online Library"
+msgstr "在线库"
+
+msgid "Only WAN-mode devices need a linked Flashforge account"
+msgstr "只有 WAN 模式设备需要绑定 Flashforge 账号"
+
+msgid "Opacity"
+msgstr "不透明度"
+
+msgid "Open"
+msgstr "打开"
+
+msgid "Open AI Assistant (Alt+I)"
+msgstr "打开 AI 助手（Alt+I）"
+
+msgid "Open Accounts and Services"
+msgstr "打开账户与服务"
+
+msgid "Open Models Page"
+msgstr "访问模型页面"
+
+msgid "Open Verification Page"
+msgstr "打开验证页面"
+
+msgid "Open in Finder"
+msgstr "在访达中打开"
+
+msgid "Open in Separate Window"
+msgstr "在单独窗口中打开"
+
+msgid "Outer Wall"
+msgstr "外墙"
+
+msgid "Overhang Wall"
+msgstr "悬垂墙"
+
+msgid "PBR"
+msgstr "PBR"
+
+msgid "Page"
+msgstr "页面"
+
+msgid "Panels"
+msgstr "面板"
+
+msgid "Parameter schema not loaded"
+msgstr "未加载参数 schema"
+
+msgid "Parameters"
+msgstr "参数"
+
+msgid "Password"
+msgstr "密码"
+
+msgid "Pause"
+msgstr "暂停"
+
+msgid "Pause Print"
+msgstr "暂停打印"
+
+msgid "Pause Toolpath Playback"
+msgstr "暂停刀路播放"
+
+msgid "Paused"
+msgstr "已暂停"
+
+msgid "Pen size  %1 mm"
+msgstr "画笔大小  %1 mm"
+
+msgid "Perform"
+msgstr "执行"
+
+msgid "Performance Monitor"
+msgstr "性能监视器"
+
+msgid "Phone number or email"
+msgstr "手机号或邮箱"
+
+msgid "Phong"
+msgstr "Phong"
+
+msgid "Physical printer disconnected · Click to connect"
+msgstr "实体打印机未连接 · 点击连接"
+
+msgid "Physical printer: %1\nAddress: %2"
+msgstr "实体打印机：%1\n地址：%2"
+
+msgid "Pick something for your next print"
+msgstr "为你的下一次打印挑选"
+
+msgid "Pick-line layer synchronization (compatibility)"
+msgstr "拾取线层联动开关（兼容）"
+
+msgid "Play"
+msgstr "播放"
+
+msgid "Play toolpaths for all visible layers together"
+msgstr "同步播放所有可见层刀路"
+
+msgid "Popular Prints"
+msgstr "热门打印榜"
+
+msgid "Popular Searches"
+msgstr "热门搜索榜"
+
+msgid "Prepare"
+msgstr "准备"
+
+msgid "Press Alt+I to open or collapse anytime"
+msgstr "Alt+I 随时打开或收起"
+
+msgid "Pressure Advance"
+msgstr "压力提前"
+
+msgid "Preview"
+msgstr "预览"
+
+msgid "Preview Unavailable"
+msgstr "预览不可用"
+
+msgid "Realistic"
+msgstr "真实渲染"
+
+msgid "Primary Color"
+msgstr "主题色"
+
+msgid "Primary type: %1"
+msgstr "主类型: %1"
+
+msgid "Prime Tower"
+msgstr "擦料塔"
+
+msgid "Print Configuration"
+msgstr "打印配置"
+
+msgid "Print Configuration · %1"
+msgstr "打印配置 · %1"
+
+msgid "Print Job"
+msgstr "打印任务"
+
+msgid "Print Progress"
+msgstr "打印进度"
+
+msgid "Print Success"
+msgstr "打印成功"
+
+msgid "Print job failed"
+msgstr "打印任务失败"
+
+msgid "Print job in progress"
+msgstr "打印任务正在运行"
+
+msgid "Starting Print"
+msgstr "启动打印"
+
+msgid "Starting print…"
+msgstr "正在启动打印…"
+
+msgid "The slicing job is being transferred to the printer"
+msgstr "正在把切片任务传输到打印机"
+
+msgid "Transfer completed. Waiting for the printer to start the job"
+msgstr "传输已完成，正在等待打印机启动任务"
+
+msgid "Transferring"
+msgstr "传输中"
+
+msgid "Transferring · %1%"
+msgstr "传输中 · %1%"
+
+msgid "Printer Preset"
+msgstr "打印机预设"
+
+msgid "Printer linked"
+msgstr "打印机已绑定"
+
+msgid "Printer not linked"
+msgstr "打印机尚未绑定"
+
+msgid "Printer · "
+msgstr "打印机 · "
+
+msgid "Printers"
+msgstr "打印机"
+
+msgid "Printing"
+msgstr "打印中"
+
+msgid "Printing Device"
+msgstr "打印设备"
+
+msgid "Printing Device · %1"
+msgstr "打印设备 · %1"
+
+msgid "Printing Device · Connecting"
+msgstr "打印设备 · 正在连接"
+
+msgid "Printing Device · Disconnected"
+msgstr "打印设备 · 未连接"
+
+msgid "Printing Service"
+msgstr "打印服务"
+
+msgid "Printing device disconnected · Click to connect"
+msgstr "打印设备未连接 · 点击连接"
+
+msgid "Printing device service unavailable"
+msgstr "打印设备服务不可用"
+
+msgid "Printing paused"
+msgstr "打印已暂停"
+
+msgid "Process"
+msgstr "工艺"
+
+msgid "Process Preset"
+msgstr "工艺预设"
+
+msgid "Process · "
+msgstr "工艺 · "
+
+msgid "Processing request…"
+msgstr "正在处理请求…"
+
+msgid "Processing..."
+msgstr "正在处理..."
+
+msgid "Processing…"
+msgstr "正在处理…"
+
+msgid "Progress: "
+msgstr "进度："
+
+msgid "Property Changed"
+msgstr "属性变更"
+
+msgid "Property: %1    New value: %2"
+msgstr "属性: %1    新值: %2"
+
+msgid "Quit"
+msgstr "退出"
+
+msgid "Raft"
+msgstr "筏层"
+
+msgid "Ready"
+msgstr "就绪"
+
+msgid "Ready to Slice"
+msgstr "可切片"
+
+msgid "Real-time Layer Analysis"
+msgstr "实时层分析"
+
+msgid "Recent Models"
+msgstr "最近的模型"
+
+msgid "Recommended"
+msgstr "推荐"
+
+msgid "Recommended Models"
+msgstr "模型推荐"
+
+msgid "Refresh"
+msgstr "刷新"
+
+msgid "Refresh Rate"
+msgstr "刷新率"
+
+msgid "Remember last opened page"
+msgstr "记住上次打开的页面"
+
+msgid "Render Threads Active: 4"
+msgstr "渲染线程活动：4"
+
+msgid "Rendering Mode"
+msgstr "渲染模式"
+
+msgid "Requesting device code…"
+msgstr "正在申请 Device Code…"
+
+msgid "Reset"
+msgstr "重置"
+
+msgid "Reset All Cameras"
+msgstr "重置所有相机"
+
+msgid "Reset Camera"
+msgstr "重置相机"
+
+msgid "Reset direction"
+msgstr "重置方向"
+
+msgid "Reset zoom to 100%"
+msgstr "重置缩放到 100%"
+
+msgid "Reslice"
+msgstr "重新切片"
+
+msgid "Restart QML Engine"
+msgstr "重启 QML 引擎"
+
+msgid "Restarting QML Engine..."
+msgstr "正在重启 QML 引擎..."
+
+msgid "Restore Current Preset"
+msgstr "恢复当前预设"
+
+msgid "Resume Printing"
+msgstr "继续打印"
+
+msgid "Retry"
+msgstr "重试"
+
+msgid "Roughness"
+msgstr "粗糙度"
+
+msgid "Running"
+msgstr "运行中"
+
+msgid "STL Files (*.stl)"
+msgstr "STL 文件 (*.stl)"
+
+msgid "Save"
+msgstr "保存"
+
+msgid "Save File"
+msgstr "保存文件"
+
+msgid "Scan Again"
+msgstr "重新扫描"
+
+msgid "Scan Devices"
+msgstr "扫描设备"
+
+msgid "Scan for devices on the same LAN"
+msgstr "扫描同一局域网中的设备"
+
+msgid "Scanning"
+msgstr "扫描中"
+
+msgid "Scene Settings"
+msgstr "场景设置"
+
+msgid "Seam"
+msgstr "接缝"
+
+msgid "Search Parameters"
+msgstr "搜索参数"
+
+msgid "Search Results · %1 items"
+msgstr "搜索结果 · %1 项"
+
+msgid "Search menu..."
+msgstr "搜索菜单..."
+
+msgid "Search models, creators, or categories"
+msgstr "搜索模型、作者或分类"
+
+msgid "Search models, settings..."
+msgstr "搜索模型、设置..."
+
+msgid "Search models..."
+msgstr "搜索模型..."
+
+msgid "Search properties, types, or databases..."
+msgstr "搜索属性/类型/数据库..."
+
+msgid "Search..."
+msgstr "搜索..."
+
+msgid "Searching account devices and devices on the same LAN"
+msgstr "正在查询账号设备和同一局域网中的设备"
+
+msgid "Searching for printing devices"
+msgstr "正在查找打印设备"
+
+msgid "Section View"
+msgstr "剖切视图"
+
+msgid "Section view  %1%"
+msgstr "剖切视图  %1%"
+
+msgid "Select"
+msgstr "选择"
+
+msgid "Select Build Plate"
+msgstr "选择打印板"
+
+msgid "Select Export Format"
+msgstr "选择导出格式"
+
+msgid "Select File"
+msgstr "选择文件"
+
+msgid "Select Folder"
+msgstr "选择文件夹"
+
+msgid "Select Multiple Files"
+msgstr "选择多个文件"
+
+msgid "Select Printer"
+msgstr "选择打印机"
+
+msgid "Select a Physical Printer to Connect"
+msgstr "选择要连接的实体打印机"
+
+msgid "Select a model above to view details, then click Import Now"
+msgstr "点击上方模型查看详情，选中后点击一键导入"
+
+msgid "Select a transaction from the list first."
+msgstr "请先在事务列表里选择一条事务。"
+
+msgid "Selected Transaction Details"
+msgstr "选中事务详情"
+
+msgid "Send"
+msgstr "发送"
+
+msgid "Send to Printer"
+msgstr "发送打印"
+
+msgid "Settings"
+msgstr "设置"
+
+msgid "Settings Page"
+msgstr "设置页面"
+
+msgid "Settings changed; reslicing is required"
+msgstr "设置已更改，需要重新切片"
+
+msgid "Show"
+msgstr "显示"
+
+msgid "Show All"
+msgstr "全部显示"
+
+msgid "Show Bounding Box"
+msgstr "显示边界框"
+
+msgid "Show Candidate Surfaces (preview layer)"
+msgstr "显示候选面（预览层）"
+
+msgid "Show Debug Actor"
+msgstr "显示调试 Actor"
+
+msgid "Show Edges"
+msgstr "显示边缘"
+
+msgid "Show Final Surface Contours"
+msgstr "显示最终表面轮廓"
+
+msgid "Show Grid"
+msgstr "显示网格"
+
+msgid "Show Key Names"
+msgstr "显示键名"
+
+msgid "Show Manual Support Debug Panel"
+msgstr "显示手动支撑调试面板"
+
+msgid "Show Model Contact Surface"
+msgstr "显示模型接触面"
+
+msgid "Show Original Model"
+msgstr "显示原始模型"
+
+msgid "Show Pick-line Layer (ray/normal)"
+msgstr "显示拾取线层（射线/法线）"
+
+msgid "Show Projection Ring"
+msgstr "显示投影 ring"
+
+msgid "Show Slice Settings"
+msgstr "显示切片设置"
+
+msgid "Show Slicing Model"
+msgstr "显示切片模型"
+
+msgid "Show Toolpath Legend"
+msgstr "显示路径图例"
+
+msgid "Side by Side"
+msgstr "并排"
+
+msgid "Sign In"
+msgstr "登录"
+
+msgid "Sign In First"
+msgstr "先登录"
+
+msgid "Sign Out"
+msgstr "退出账号"
+
+msgid "Sign Out of AI Account"
+msgstr "退出 AI 账户"
+
+msgid "Sign in to Flashforge before connecting a WAN device"
+msgstr "请先登录 Flashforge 账号，再连接 WAN 设备"
+
+msgid "Sign in to access cloud devices; LAN devices do not require sign-in"
+msgstr "登录后可访问云端设备；局域网设备无需登录"
+
+msgid "Sign in to connect to cloud devices."
+msgstr "云端设备需要登录账号后才能连接。"
+
+msgid "Sign in to use AI Assistant"
+msgstr "登录后使用 AI 助手"
+
+msgid "Sign in to your Flashforge account first"
+msgstr "请先登录 Flashforge 账号"
+
+msgid "Sign in with ChatGPT/Codex"
+msgstr "使用 ChatGPT/Codex 登录"
+
+msgid "Sign in with a ChatGPT/Codex device code. Credentials are managed by Codex App Server."
+msgstr "通过 ChatGPT/Codex Device Code 登录，凭据由 Codex App Server 管理。"
+
+msgid "Sign-in failed"
+msgstr "登录失败"
+
+msgid "Signed In"
+msgstr "已登录"
+
+msgid "Signed in to Flashforge"
+msgstr "Flashforge 已登录"
+
+msgid "Signing in to Flashforge"
+msgstr "正在登录 Flashforge"
+
+msgid "Similarity: %1% (required: ≥%2%)"
+msgstr "相似度: %1% (要求: ≥%2%)"
+
+msgid "Size"
+msgstr "大小"
+
+msgid "Skirt"
+msgstr "裙边"
+
+msgid "Skybox Preset"
+msgstr "天空盒预设"
+
+msgid "Slice All"
+msgstr "切片所有"
+
+msgid "Slice Selected"
+msgstr "切片选中"
+
+msgid "Slice Settings"
+msgstr "切片设置"
+
+msgid "Slice selected models"
+msgstr "切片选中的模型"
+
+msgid "Sliced G-code 3MF (*.gcode.3mf)"
+msgstr "切片 G-code 3MF (*.gcode.3mf)"
+
+msgid "Slicing Job (Gcode.3MF)"
+msgstr "切片任务（Gcode.3MF）"
+
+msgid "Slicing Parameters"
+msgstr "切片参数"
+
+msgid "Slicing Parameters…"
+msgstr "切片参数…"
+
+msgid "Smart fill angle  %1°"
+msgstr "智能填充角度  %1°"
+
+msgid "Smooth Cool Plate"
+msgstr "光滑的低温打印床"
+
+msgid "Smooth High-Temperature Plate"
+msgstr "光面高温板"
+
+msgid "Smooth PEI Plate"
+msgstr "光面 PEI 板"
+
+msgid "Snap"
+msgstr "吸附"
+
+msgid "Solid Color"
+msgstr "纯色"
+
+msgid "Sort by Date"
+msgstr "按日期排序"
+
+msgid "Sort by Name"
+msgstr "按名称排序"
+
+msgid "Sort by Size"
+msgstr "按大小排序"
+
+msgid "Source"
+msgstr "来源"
+
+msgid "Sparse Infill"
+msgstr "稀疏填充"
+
+msgid "Specular Intensity"
+msgstr "镜面强度"
+
+msgid "Specular Reflection"
+msgstr "镜面反射"
+
+msgid "Speed"
+msgstr "速度"
+
+msgid "Speed (mm/s)"
+msgstr "速度 (mm/s)"
+
+msgid "Sphere"
+msgstr "球"
+
+msgid "Square"
+msgstr "正方形"
+
+msgid "Stacked"
+msgstr "堆叠"
+
+msgid "Standard"
+msgstr "标准"
+
+msgid "Start New Print"
+msgstr "开始新打印"
+
+msgid "Start Slicing"
+msgstr "开始切片"
+
+msgid "Starting device service"
+msgstr "正在启动设备服务"
+
+msgid "Starting print"
+msgstr "正在启动打印"
+
+msgid "Startup"
+msgstr "启动"
+
+msgid "Step %1 failed (%2): %3"
+msgstr "第 %1 步执行失败（%2）：%3"
+
+msgid "Step description: %1"
+msgstr "步骤描述: %1"
+
+msgid "Sticky on Top"
+msgstr "置顶"
+
+msgid "Sticky on Top cancelled"
+msgstr "取消置顶"
+
+msgid "Stop"
+msgstr "停止"
+
+msgid "Subscription type: %1"
+msgstr "订阅类型：%1"
+
+msgid "Success"
+msgstr "成功"
+
+msgid "Success Rate"
+msgstr "成功率"
+
+msgid "Suggested Searches"
+msgstr "猜你想搜"
+
+msgid "Summary"
+msgstr "汇总"
+
+msgid "Sunset"
+msgstr "日落"
+
+msgid "Support"
+msgstr "支撑"
+
+msgid "Support Interface"
+msgstr "支撑接触面"
+
+msgid "Support Transition"
+msgstr "支撑过渡"
+
+msgid "Supports .gcode and .gco files"
+msgstr "支持 .gcode, .gco 格式"
+
+msgid "Supports .stl, .obj, .3mf, and other formats"
+msgstr "支持 .stl, .obj, .3mf 等格式"
+
+msgid "Supports JPG, PNG, and WebP (up to 4 images)"
+msgstr "支持 JPG, PNG, WebP（最多4张）"
+
+msgid "Switch the printer, filament, process, and build plate here"
+msgstr "可在此切换打印机、耗材、工艺和打印板"
+
+msgid "Sync Views"
+msgstr "同步视图"
+
+msgid "Synchronize original model visibility"
+msgstr "同步原始模型可见性"
+
+msgid "System Event"
+msgstr "系统事件"
+
+msgid "Target:"
+msgstr "目标："
+
+msgid "Temp: "
+msgstr "温度："
+
+msgid "Temperature"
+msgstr "温度"
+
+msgid "Temperature (°C)"
+msgstr "温度 (°C)"
+
+msgid "Text Description"
+msgstr "文字描述"
+
+msgid "Textured Cool Plate"
+msgstr "纹理的低温打印床"
+
+msgid "Textured PEI Plate"
+msgstr "纹理PEI热床"
+
+msgid "The current build plate is unavailable"
+msgstr "当前打印板不可用"
+
+msgid "The current machine is unavailable"
+msgstr "当前机型不可用"
+
+msgid "The print job is paused. You can resume or stop it."
+msgstr "打印任务已暂停，可以继续或停止任务"
+
+msgid "The printer will connect automatically after it is linked."
+msgstr "绑定成功后将自动连接该打印机。"
+
+msgid "The program is already running. The parameter is ->"
+msgstr "程序已在运行。参数为 ->"
+
+msgid "The selected print output is unavailable: %1"
+msgstr "所选打印输出不可用：%1"
+
+msgid "The server returned invalid data"
+msgstr "服务器返回了无效的数据"
+
+msgid "Theme mode"
+msgstr "主题模式"
+
+msgid "There are no editable models to slice"
+msgstr "当前没有可编辑的切片模型"
+
+msgid "There are sliceable models on the build plate"
+msgstr "平台上存在可切片模型"
+
+msgid "There is no G-code to send"
+msgstr "当前没有可以发送的 GCode"
+
+msgid "This Week"
+msgstr "本周"
+
+msgid "This action requires a restart of the program to take effect, is it restarted?"
+msgstr "此操作需要重启程序才能生效，是否重启？"
+
+msgid "This folder is empty"
+msgstr "此文件夹为空"
+
+msgid "This printer is already linked"
+msgstr "该打印机已经绑定，不能重复绑定"
+
+msgid "This printer is not linked. Link and connect it first."
+msgstr "该打印机尚未绑定，请先绑定并连接"
+
+msgid "This transaction has no displayable changes."
+msgstr "该事务未记录到可展示的变更明细。"
+
+msgid "This verifies device ownership and establishes a connection."
+msgstr "将验证设备归属并建立连接。"
+
+msgid "Time"
+msgstr "时间"
+
+msgid "Toggle debug data visibility"
+msgstr "切换调试数据可见性"
+
+msgid "Toggle grid visibility"
+msgstr "切换网格可见性"
+
+msgid "Toggle original model visibility"
+msgstr "切换原始模型可见性"
+
+msgid "Toggle sliced model visibility"
+msgstr "切换切片模型可见性"
+
+msgid "Toggle snap to grid"
+msgstr "切换吸附到网格"
+
+msgid "Tool Call"
+msgstr "工具调用"
+
+msgid "Tool Change"
+msgstr "工具切换"
+
+msgid "Tool Parameters"
+msgstr "工具参数"
+
+msgid "Tool Type"
+msgstr "工具类型"
+
+msgid "Tool · %1"
+msgstr "工具 · %1"
+
+msgid "Toolpath Preview"
+msgstr "刀路预览"
+
+msgid "Top Surface"
+msgstr "顶面"
+
+msgid "Total"
+msgstr "总计"
+
+msgid "Total Objects: %1"
+msgstr "总对象数：%1"
+
+msgid "Total Time"
+msgstr "总时间"
+
+msgid "Transaction Changes"
+msgstr "事务变更明细"
+
+msgid "Transaction Committed"
+msgstr "事务提交"
+
+msgid "Transaction Debug"
+msgstr "事务调试"
+
+msgid "Transaction List"
+msgstr "事务列表"
+
+msgid "Transaction Monitor"
+msgstr "事务监听"
+
+msgid "Transaction Started"
+msgstr "事务开始"
+
+msgid "Transaction debug capture is disabled. Restart with --debug-transaction."
+msgstr "当前未启用事务调试采集。请用启动参数 --debug-transaction 重新启动应用。"
+
+msgid "Transferring slicing job"
+msgstr "正在传输切片任务"
+
+msgid "Travel"
+msgstr "空驶"
+
+msgid "Trending"
+msgstr "近期热门"
+
+msgid "Triangle"
+msgstr "三角形"
+
+msgid "Try a different search term"
+msgstr "尝试其他搜索词"
+
+msgid "Try different keywords"
+msgstr "尝试其他关键词"
+
+msgid "Try other keywords or recommended categories"
+msgstr "试试其他关键词或推荐分类"
+
+msgid "Type"
+msgstr "类型"
+
+msgid "UI verification failed!"
+msgstr "UI 验证失败！"
+
+msgid "Unable to connect to device"
+msgstr "无法连接设备"
+
+msgid "Unable to create export file: %1"
+msgstr "无法创建导出文件：%1"
+
+msgid "Unable to link device"
+msgstr "无法绑定设备"
+
+msgid "Unable to load online models: %1"
+msgstr "无法加载在线模型：%1"
+
+msgid "Unable to read source print output: %1"
+msgstr "无法读取源打印输出：%1"
+
+msgid "Unable to replace export file: %1"
+msgstr "无法替换导出文件：%1"
+
+msgid "Undefined"
+msgstr "未定义"
+
+msgid "Undo"
+msgstr "撤销"
+
+msgid "Undo stack: %1  Redo stack: %2"
+msgstr "撤销栈: %1  重做栈: %2"
+
+msgid "Unknown"
+msgstr "未知"
+
+msgid "Unknown Type"
+msgstr "未知类型"
+
+msgid "Untitled Model"
+msgstr "未命名模型"
+
+msgid "Untitled Transaction"
+msgstr "未命名事务"
+
+msgid "Usage"
+msgstr "用量"
+
+msgid "Use your Codex subscription without storing an API key in the project"
+msgstr "使用 Codex 订阅能力，不需要在项目中保存 API Key"
+
+msgid "Useful Accessories"
+msgstr "实用配件"
+
+msgid "User"
+msgstr "用户"
+
+msgid "User Guide"
+msgstr "使用指南"
+
+msgid "VTK Ready"
+msgstr "VTK 就绪"
+
+msgid "Verification Failed - Step %1"
+msgstr "验证失败 - 步骤 %1"
+
+msgid "View"
+msgstr "视图"
+
+msgid "View %1"
+msgstr "视图 %1"
+
+msgid "View %1 - Focus Mode"
+msgstr "视图 %1 - 聚焦模式"
+
+msgid "View 1 - Standard"
+msgstr "视图 1 - 标准"
+
+msgid "View 2 - Wireframe"
+msgstr "视图 2 - 线框"
+
+msgid "View 3 - Simplified"
+msgstr "视图 3 - 简化"
+
+msgid "View 4 - Highlight"
+msgstr "视图 4 - 高亮"
+
+msgid "View Elements"
+msgstr "视图元素"
+
+msgid "View More Models"
+msgstr "查看更多模型"
+
+msgid "View Report"
+msgstr "查看报告"
+
+msgid "View User Guide"
+msgstr "查看使用指南"
+
+msgid "View elements, background, and build plate appearance"
+msgstr "视图元素、背景、打印床外观"
+
+msgid "Visible steps %1/%2"
+msgstr "可见步 %1/%2"
+
+msgid "Volumetric Flow"
+msgstr "体积流量"
+
+msgid "Volumetric Flow (mm³/s)"
+msgstr "体积流量 (mm³/s)"
+
+msgid "VoxelShare Creator"
+msgstr "VoxelShare 创作者"
+
+msgid "Waiting for Verification"
+msgstr "等待验证"
+
+msgid "Waiting for tool result…"
+msgstr "等待工具结果…"
+
+msgid "Waiting to Generate"
+msgstr "等待生成"
+
+msgid "Western Dragon"
+msgstr "西方巨龙"
+
+msgid "When enabled, the application will open to the last viewed page on startup"
+msgstr "启用后，应用程序将在启动时打开上次查看的页面"
+
+msgid "Will connect to %1 · %2"
+msgstr "将连接 %1 · %2"
+
+msgid "Wipe"
+msgstr "擦拭"
+
+msgid "Zoom in"
+msgstr "放大"
+
+msgid "Zoom out"
+msgstr "缩小"
+
+msgid "auto"
+msgstr "自动"
+
+msgid "compact"
+msgstr "紧凑"
+
+msgid "dark"
+msgstr "深色"
+
+msgid "light"
+msgstr "浅色"
+
+msgid "minimal"
+msgstr "最小化"
+
+msgid "open"
+msgstr "打开"
+
+msgid "system"
+msgstr "系统"
+
+msgid "top"
+msgstr "顶部"
+
+msgid "⏳"
+msgstr "⏳"
+
+msgid "✨"
+msgstr "✨"
+
+msgid "✨ AI-powered 3D Generation"
+msgstr "✨ AI 驱动的 3D 生成"
+
+msgid "💡 Tip: clear reference images produce better results"
+msgstr "💡 上传技巧：清晰的参考图片能获得更好的生成效果"
+
+msgid "%1 slots · %2"
+msgstr "%1 槽 · %2"
+
+msgid "%1 · %2"
+msgstr "%1 · %2"
+
+msgid "Add Slot"
+msgstr "添加槽位"
+
+msgid "Add filament slot"
+msgstr "添加耗材槽位"
+
+msgid "Edit filament %1 color"
+msgstr "编辑耗材 %1 的颜色"
+
+msgid "Filament %1 Color"
+msgstr "耗材 %1 颜色"
+
+msgid "Filament Configuration"
+msgstr "耗材配置"
+
+msgid "Filament slots"
+msgstr "耗材槽位"
+
+msgid "Filaments"
+msgstr "耗材"
+
+msgid "Machine-fixed · %1 nozzles"
+msgstr "机器固定 · %1 喷头"
+
+msgid "Model labels correspond to filament slots. Press 1–%1 to select a slot; Shift + left mouse erases."
+msgstr "模型标签与耗材槽位一一对应。按 1–%1 选择槽位；按住 Shift 并单击鼠标左键可擦除。"
+
+msgid "No filaments"
+msgstr "无耗材"
+
+msgid "Open filament configuration"
+msgstr "打开耗材配置"
+
+msgid "Select slot %1, %2"
+msgstr "选择 %1 号槽，%2"
+
+msgid "Slot %1 · %2"
+msgstr "%1 号槽 · %2"
+
+msgid "Slot %1 · %2\n%3"
+msgstr "%1 号槽 · %2\n%3"
+
+msgid "Variable slots · %1/%2 active"
+msgstr "可变槽位 · 已启用 %1/%2"
+
+msgid "%1 slots"
+msgstr "%1 槽"
+
+msgid "Paint Model"
+msgstr "模型涂色"
+
+msgid "Unpainted area"
+msgstr "未涂色区域"
+
+msgid "Tool type"
+msgstr "工具类型"
+
+msgid "Height range  %1 mm"
+msgstr "高度范围  %1 mm"
+
+msgid "Vertical"
+msgstr "垂直"
+
+msgid "Horizontal"
+msgstr "水平"
+
+msgid "Remap filaments"
+msgstr "重新映射耗材"
+
+msgid "Hide filament remapping"
+msgstr "隐藏耗材映射"
+
+msgid "📤"
+msgstr "📤"
+
+msgid "The selected nozzle is incompatible with the current process preset"
+msgstr "所选喷嘴与当前工艺预设不兼容"
+
+msgid "Generating supports and slicing model…"
+msgstr "正在生成支撑并切片模型…"
+
+msgid "The model exceeds the maximum build volume height. Adjust its size or orientation and retry."
+msgstr "模型超过最大成型高度，请调整尺寸或方向后重试。"
+
+msgid "Unable to connect to the selected printer"
+msgstr "无法连接到所选打印机"
+
+msgid "Connection Failed"
+msgstr "连接失败"
+
+msgid "Adventurer 5M Pro"
+msgstr "Adventurer 5M Pro"
+
+msgid "42 min"
+msgstr "42 分钟"
+
+msgid "Calibration_Cube.gcode.3mf"
+msgstr "Calibration_Cube.gcode.3mf"
+
+msgid "Printer stopped responding while processing the job"
+msgstr "打印机在处理任务时停止响应"
+
+msgid "Attention"
+msgstr "需要注意"
+
+msgid "Busy"
+msgstr "忙碌"
+
+msgid "Calibrating"
+msgstr "正在校准"
+
+msgid "Camera is available"
+msgstr "摄像头可用"
+
+msgid "Canceling"
+msgstr "正在取消"
+
+msgid "Completed"
+msgstr "已完成"
+
+msgid "Confirm"
+msgstr "确认"
+
+msgid "Device service unavailable"
+msgstr "设备服务不可用"
+
+msgid "Devices"
+msgstr "设备"
+
+msgid "Error"
+msgstr "错误"
+
+msgid "Flashforge account"
+msgstr "Flashforge 账户"
+
+msgid "Heating"
+msgstr "正在加热"
+
+msgid "Loading"
+msgstr "正在加载"
+
+msgid "Loading printer status"
+msgstr "正在加载打印机状态"
+
+msgid "Make sure the printer is powered on and on the same network"
+msgstr "请确保打印机已开机并处于同一网络"
+
+msgid "No devices found"
+msgstr "未找到设备"
+
+msgid "Online"
+msgstr "在线"
+
+msgid "Online and offline"
+msgstr "在线与离线设备"
+
+msgid "Online printers open directly. Offline printers show their last known information."
+msgstr "在线打印机可直接打开；离线打印机显示最后一次获取的信息。"
+
+msgid "Pausing"
+msgstr "正在暂停"
+
+msgid "Printer access code"
+msgstr "打印机访问码"
+
+msgid "Printer access required"
+msgstr "需要打印机访问权限"
+
+msgid "Printer details are unavailable"
+msgstr "暂时无法获取打印机详情"
+
+msgid "Printing Devices"
+msgstr "打印设备"
+
+msgid "Scan failed"
+msgstr "扫描失败"
+
+msgid "Searching for devices"
+msgstr "正在搜索设备"
+
+msgid "Select a printer"
+msgstr "选择一台打印机"
+
+msgid "Sign in to Flashforge"
+msgstr "登录 Flashforge"
+
+msgid "This printer does not report a camera stream"
+msgstr "该打印机未提供摄像头画面"
+
+msgid "Unable to load printer"
+msgstr "无法加载打印机"
+
+msgid "Video unavailable while the printer is offline"
+msgstr "打印机离线时无法查看视频"
+
+msgid "Printing device"
+msgstr "打印设备"
+
+msgid "%1 · Offline"
+msgstr "%1 · 离线"
+
+msgid "%1 · Access required"
+msgstr "%1 · 需要验证"
+
+msgid "Loading %1"
+msgstr "正在载入 %1"
+
+msgid "Nozzle %1° · Bed %2°"
+msgstr "喷嘴 %1° · 热床 %2°"
+
+msgid "Choose an online or offline printer"
+msgstr "选择在线或离线打印机"
+
+msgid "%1 is offline"
+msgstr "%1 已离线"
+
+msgid "%1 requires an access code"
+msgstr "%1 需要访问码"
+
+msgid "Loading printer details"
+msgstr "正在载入打印机详情"
+
+msgid "Printer: %1\nAddress: %2"
+msgstr "打印机：%1\n地址：%2"
+
+msgid "LAN"
+msgstr "局域网"
+
+msgid "Cloud"
+msgstr "云端"
+
+msgid "Video is unavailable for this printer"
+msgstr "该打印机暂无视频预览"
+
+msgid "Loading video preview"
+msgstr "正在载入视频预览"
+
+msgid "This video stream cannot be previewed here"
+msgstr "当前无法预览此视频流"
+
+msgid "Printer is idle and ready to receive a print job"
+msgstr "设备空闲，可接收打印任务"
+
+msgid "Timed out waiting for the camera stream"
+msgstr "等待摄像头视频流超时"
+
+msgid "Unable to open the camera stream"
+msgstr "无法打开摄像头视频流"
+
+msgid "The printer camera became unavailable"
+msgstr "打印机摄像头当前不可用"
+
+msgid "Opening camera stream"
+msgstr "正在打开摄像头视频流"
+
+msgid "Loading live video"
+msgstr "正在加载实时视频"
+
+msgid "This video stream cannot be played"
+msgstr "无法播放此视频流"
+
+msgid "Closing camera stream"
+msgstr "正在关闭摄像头视频流"
+
+msgid "Live video is stopped"
+msgstr "实时视频已停止"
+
+msgid "Continuous fiber"
+msgstr "连续纤维"
+
+msgid "Continuous Fiber Contour"
+msgstr "纤维轮廓"
+
+msgid "Continuous Fiber Infill"
+msgstr "纤维填充"
+
+msgid "Base material"
+msgstr "基材"
+
+msgid "Nozzle %1"
+msgstr "喷头 %1"
+
+msgid "Left nozzle"
+msgstr "左喷头"
+
+msgid "Right nozzle"
+msgstr "右喷头"
+
+msgid "Automatic"
+msgstr "自动"
+
+msgid "Swap left and right"
+msgstr "交换左右喷头"
+
+msgid "Fiber process motion"
+msgstr "纤维非沉积工艺运动"
+
+msgid "Hold %1 to highlight paths and inspect G-code"
+msgstr "按住 %1 高亮刀路并查看 G-code"
+
+msgid "Hold %1 to inspect paths"
+msgstr "按住 %1 查看刀路"
+
+msgid "Cursor snapping"
+msgstr "光标吸附"
+
+msgid "File"
+msgstr "文件"
+
+msgid "Import…"
+msgstr "导入…"
+
+msgid "Import model or GCode file"
+msgstr "导入模型或 GCode 文件"
+
+msgid "Export STL"
+msgstr "导出 STL"
+
+msgid "Export selected model as STL"
+msgstr "将选中的模型导出为 STL"
+
+msgid "Save Project"
+msgstr "保存项目"
+
+msgid "Save current project"
+msgstr "保存当前项目"
+
+msgid "Open Project"
+msgstr "打开项目"
+
+msgid "Open existing project"
+msgstr "打开已有项目"
+
+msgid "Reset camera to default position"
+msgstr "将相机重置到默认位置"
+
+msgid "Zoom to Fit"
+msgstr "缩放至适合"
+
+msgid "Zoom camera to fit all objects (0)"
+msgstr "缩放视图以显示所有对象 (0)"
+
+msgid "Hide Grid"
+msgstr "隐藏网格"
+
+msgid "Show or hide print bed grid"
+msgstr "显示或隐藏打印平台网格"
+
+msgid "Hide Bounds"
+msgstr "隐藏边界框"
+
+msgid "Show Bounds"
+msgstr "显示边界框"
+
+msgid "Show or hide print volume"
+msgstr "显示或隐藏打印空间边界"
+
+msgid "Transform"
+msgstr "变换"
+
+msgid "Move"
+msgstr "移动"
+
+msgid "Move selected model (Alt+M)"
+msgstr "移动选中的模型 (Alt+M)"
+
+msgid "Rotate"
+msgstr "旋转"
+
+msgid "Rotate selected model (Alt+R)"
+msgstr "旋转选中的模型 (Alt+R)"
+
+msgid "Scale"
+msgstr "缩放"
+
+msgid "Scale selected model (Alt+S)"
+msgstr "缩放选中的模型 (Alt+S)"
+
+msgid "Mirror X"
+msgstr "沿 X 轴镜像"
+
+msgid "Mirror along X axis"
+msgstr "沿 X 轴镜像模型"
+
+msgid "Mirror Y"
+msgstr "沿 Y 轴镜像"
+
+msgid "Mirror along Y axis"
+msgstr "沿 Y 轴镜像模型"
+
+msgid "Mirror Z"
+msgstr "沿 Z 轴镜像"
+
+msgid "Mirror along Z axis"
+msgstr "沿 Z 轴镜像模型"
+
+msgid "Align to Bed"
+msgstr "贴合平台"
+
+msgid "Move selected models to bed surface (Z=0)"
+msgstr "将选中的模型移动到平台表面 (Z=0)"
+
+msgid "Center to Bed"
+msgstr "平台居中"
+
+msgid "Move selected models to bed center"
+msgstr "将选中的模型移动到平台中心"
+
+msgid "Smart Place"
+msgstr "智能放置"
+
+msgid "Align to bed and center automatically"
+msgstr "自动贴合平台并居中"
+
+msgid "Edit"
+msgstr "编辑"
+
+msgid "Auto Repair"
+msgstr "自动修复"
+
+msgid "Automatically repair mesh errors"
+msgstr "自动修复网格错误"
+
+msgid "Simplify Mesh"
+msgstr "简化网格"
+
+msgid "Reduce mesh polygon count"
+msgstr "减少网格面数"
+
+msgid "Analyze Mesh"
+msgstr "分析网格"
+
+msgid "Analyze mesh statistics"
+msgstr "分析网格统计信息"
+
+msgid "Measure"
+msgstr "测量"
+
+msgid "Measure dimensions"
+msgstr "测量尺寸"
+
+msgid "Cut"
+msgstr "切割"
+
+msgid "Cut model (C)"
+msgstr "切割模型 (C)"
+
+msgid "Paint colors on model surfaces"
+msgstr "在模型表面涂色"
+
+msgid "Split to Objects"
+msgstr "拆分为对象"
+
+msgid "Split model into objects"
+msgstr "将模型拆分为独立对象"
+
+msgid "Split to Parts"
+msgstr "拆分为零件"
+
+msgid "Split model into parts"
+msgstr "将模型拆分为零件"
+
+msgid "Merge"
+msgstr "合并"
+
+msgid "Merge selected models"
+msgstr "合并选中的模型"
+
+msgid "Slice"
+msgstr "切片"
+
+msgid "Lay Flat"
+msgstr "放平"
+
+msgid "Lay model flat on bed (F)"
+msgstr "将模型放平到平台上 (F)"
+
+msgid "Auto Support"
+msgstr "自动支撑"
+
+msgid "Automatically generate support structures"
+msgstr "自动生成支撑结构"
+
+msgid "Print Settings"
+msgstr "打印设置"
+
+msgid "Open print settings panel"
+msgstr "打开打印设置面板"
+
+msgid "Acknowledge"
+msgstr "确认"
+
+msgid "Connect to Send"
+msgstr "连接后发送"
+
+msgid "Printer operation unconfirmed"
+msgstr "打印机操作结果未确认"
+
+msgid "The operation may already have executed. Check the printer before acknowledging. Do not retry automatically."
+msgstr "操作可能已经执行。请检查打印机后再确认，不要自动重试。"
+
+msgid "The selected printer does not support an available preview format."
+msgstr "所选打印机不支持当前预览可导出的格式。"
+
+msgid "Transfer failed"
+msgstr "传输失败"
+
+msgid "Upload completed"
+msgstr "上传完成"
+
+msgid "I checked the printer. Acknowledge."
+msgstr "我已检查打印机，确认结果。"
+
+msgid "Refresh incomplete"
+msgstr "刷新未完成"
+
+msgid "Uploading: %1%"
+msgstr "正在上传：%1%"
+
+msgid "Level the bed before printing"
+msgstr "打印前调平热床"
+
+msgid "Send %1 to %2 (%3)?"
+msgstr "将 %1 发送到 %2（%3）？"
+
+msgid "The preview or printer changed. Cancel and send again to review the updated job."
+msgstr "预览或打印机已发生变化。请取消并重新发送，以检查更新后的任务。"
+
+msgid "Upload Only"
+msgstr "仅上传"
+
+msgid "Upload Only stores the file without starting the printer. Upload and Print starts printing after upload."
+msgstr "“仅上传”只保存文件，不启动打印。“上传并打印”会在上传后开始打印。"
+
+msgid "Upload and Print"
+msgstr "上传并打印"
+
+msgid "Connect to an idle printer before sending a file."
+msgstr "请先连接空闲的打印机，再发送文件。"
+
+msgid "Submission could not be confirmed. Check the printer before sending again."
+msgstr "无法确认提交结果。请检查打印机后再发送。"
+
+msgid "The connection was lost during submission. Check the printer before sending again."
+msgstr "提交期间连接中断。请检查打印机后再发送。"
+
+msgid "The destination filename does not match the selected format."
+msgstr "目标文件名与所选格式不匹配。"
+
+msgid "The file was sent, but printing could not be confirmed. Check the printer before sending again."
+msgstr "文件已发送，但无法确认是否开始打印。请检查打印机后再发送。"
+
+msgid "The print file content does not match the selected format."
+msgstr "打印文件内容与所选格式不匹配。"
+
+msgid "The print file is missing, unreadable, or does not match the selected format."
+msgstr "打印文件不存在、无法读取或与所选格式不匹配。"
+
+msgid "The selected printer does not support this file format."
+msgstr "所选打印机不支持此文件格式。"
+
+msgid "Use a filename without directories or control characters."
+msgstr "文件名不能包含目录路径或控制字符。"
+
+msgid "API key (optional on trusted networks)"
+msgstr "API 密钥（受信任网络中可不填）"
+
+msgid "Connect to Moonraker"
+msgstr "连接 Moonraker"
+
+msgid "Connection: %1"
+msgstr "连接类型：%1"
+
+msgid "Enter a printer IP address or HTTP(S) URL, with an optional port. HTTP is added if omitted. Use HTTPS on untrusted networks."
+msgstr "请输入打印机 IP 或 HTTP(S) 地址，可选填端口。未填写协议时自动补充 HTTP；不受信任的网络请使用 HTTPS。"
+
+msgid "Moonraker API key"
+msgstr "Moonraker API 密钥"
+
+msgid "The address and API key are kept only for this session. They are not saved to disk."
+msgstr "地址和 API 密钥仅在本次会话中保留，不保存到磁盘。"
+
+msgid "Use Flashforge"
+msgstr "使用 Flashforge"
+
+msgid "Command outcome is unknown. Check the printer before reconnecting."
+msgstr "无法确认指令执行结果。请检查打印机后再重新连接。"
+
+msgid "Enter an HTTP(S) Moonraker URL without credentials, query, or fragment, and a valid API key."
+msgstr "请输入不含账号密码、查询参数或片段的 Moonraker HTTP(S) 地址，以及有效的 API 密钥。"
+
+msgid "The selected printer does not support these print options."
+msgstr "所选打印机不支持这些打印选项。"
+
+msgid "Cannot snapshot the G-code file"
+msgstr "无法创建 G-code 文件快照"
+
+msgid "Cannot snapshot the G-code file, or the source changed"
+msgstr "无法创建 G-code 文件快照，或源文件已发生变化"
+
+msgid "File uploaded, but readiness could not be confirmed. Printing was not requested."
+msgstr "文件已上传，但无法确认打印机是否就绪，未请求开始打印。"
+
+msgid "Invalid Moonraker endpoint or API key"
+msgstr "Moonraker 地址或 API 密钥无效"
+
+msgid "Invalid print status"
+msgstr "打印状态数据无效"
+
+msgid "Invalid printer object list"
+msgstr "打印机对象列表无效"
+
+msgid "Klipper is not ready"
+msgstr "Klipper 尚未就绪"
+
+msgid "Klipper is not ready or returned invalid status"
+msgstr "Klipper 尚未就绪，或返回了无效状态"
+
+msgid "Klipper readiness status is unavailable"
+msgstr "无法获取 Klipper 就绪状态"
+
+msgid "Moonraker HTTP request failed. Check the printer before retrying."
+msgstr "Moonraker HTTP 请求失败，请检查打印机后再重试。"
+
+msgid "Moonraker authorization failed. Check the API key."
+msgstr "Moonraker 认证失败，请检查 API 密钥。"
+
+msgid "Moonraker camera is not supported"
+msgstr "暂不支持 Moonraker 摄像头"
+
+msgid "Moonraker submission is unavailable or unsupported"
+msgstr "当前无法提交 Moonraker 任务，或任务选项不受支持"
+
+msgid "Moonraker uses the configured API key, not a cloud account"
+msgstr "Moonraker 使用配置的 API 密钥，不使用云端账号"
+
+msgid "Print control is unavailable. Check the printer state."
+msgstr "打印控制不可用，请检查打印机状态。"
+
+msgid "Print control outcome is unknown"
+msgstr "无法确认打印控制指令的执行结果"
+
+msgid "Print start could not be confirmed"
+msgstr "无法确认是否开始打印"
+
+msgid "Upload outcome is unexpected. Check the printer before retrying."
+msgstr "上传结果异常，请检查打印机后再重试。"
+
+msgid "Continuous fiber resin infill"
+msgstr "基材补填"
+
+msgid "Resin infill"
+msgstr "基材补填"
+
+msgid "Resin infill density"
+msgstr "补填密度"
+
+msgid "Resin infill pattern"
+msgstr "补填图案"
+
+msgid "Resin infill direction"
+msgstr "补填方向"
+
+msgid "Resin infill rotation template"
+msgstr "补填层间旋转模板"
+
+msgid "Align resin infill to model"
+msgstr "补填方向跟随模型"
+
+msgid "Resin infill line width"
+msgstr "补填线宽"
+
+msgid "Resin infill line multiplier"
+msgstr "补填多线数量"
+
+msgid "Resin infill anchor length"
+msgstr "补填锚定长度"
+
+msgid "Maximum resin infill anchor length"
+msgstr "补填最大锚定长度"
+
+msgid "Resin infill speed"
+msgstr "补填速度"
+
+msgid "Resin infill acceleration"
+msgstr "补填加速度"
+
+msgid "Density of resin infill in the remaining internal area on fiber layers. Zero disables resin infill without disabling fiber."
+msgstr "铺纤层剩余内部区域的基材补填密度。设为 0 时关闭基材补填，但不关闭纤维铺设。"

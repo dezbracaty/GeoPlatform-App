@@ -1,0 +1,10 @@
+{
+  "model_provider": "CodexSubscription",
+  "model_providers": {
+    "CodexSubscription": {
+      "name": "ChatGPT/Codex",
+      "transport": "codex_app_server",
+      "requires_openai_auth": true
+    }
+  }
+}

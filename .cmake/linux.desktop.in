@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=${PROJECT_APP_NAME}
+Exec=/opt/${PROJECT_APP_NAME}/${PROJECT_APP_NAME}
+Icon=/opt/${PROJECT_APP_NAME}/${PROJECT_APP_NAME}.png
+Comment=${PROJECT_DESCRIPTION}
+Terminal=false
