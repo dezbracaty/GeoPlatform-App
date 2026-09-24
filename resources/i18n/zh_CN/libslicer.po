@@ -16641,11 +16641,11 @@ msgstr "纤维填充材料"
 msgid "Continuous fiber contour filament"
 msgstr "纤维轮廓材料"
 
-msgid "Continuous fiber contour width"
-msgstr "纤维轮廓宽度"
+msgid "Fiber width"
+msgstr "纤维丝宽度"
 
-msgid "Continuous fiber infill width"
-msgstr "纤维填充宽度"
+msgid "Physical fiber width shared by continuous fiber contours and infill. Specify a positive width in millimeters."
+msgstr "纤维轮廓和填充共用的实际丝宽，必须设置为大于零的毫米数值。"
 
 msgid "Continuous fiber layer interval"
 msgstr "铺纤层间隔"
