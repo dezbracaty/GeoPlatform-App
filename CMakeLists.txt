@@ -702,7 +702,7 @@ option(GPLATFORM_BUILD_SDK_CHECKS "Verify application extensions against the bin
 if(GPLATFORM_BUILD_SDK_CHECKS)
     enable_testing()
     add_executable(SDKConsumerExtensionCheck tests/SDKConsumerExtensionCheck.cpp)
-    target_link_libraries(SDKConsumerExtensionCheck PRIVATE BaseDB Document BaseRender Render)
+    target_link_libraries(SDKConsumerExtensionCheck PRIVATE BaseDB Document BaseGeometry BaseRender Render)
     add_test(NAME SDKConsumerExtensionCheck COMMAND SDKConsumerExtensionCheck)
     set_tests_properties(SDKConsumerExtensionCheck PROPERTIES TIMEOUT 180)
 endif()

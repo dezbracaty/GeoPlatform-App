@@ -28,4 +28,8 @@ set_target_properties(BaseGeometry PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if(COMMAND link_embree_to_target)
     link_embree_to_target(BaseGeometry)
+elseif(TARGET embree)
+    # The binary SDK exports Embree without the source dependency helper.
+    target_link_libraries(BaseGeometry PRIVATE embree)
+    target_compile_definitions(BaseGeometry PRIVATE GPLATFORM_HAS_EMBREE=1)
 endif()
