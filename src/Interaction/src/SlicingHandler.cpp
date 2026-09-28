@@ -174,6 +174,12 @@ void SlicingHandler::onEnter(std::shared_ptr<ActionContext> context) {
             return;
         }
 
+        // Reslicing resolves its source model/bed from the old preview above.
+        // Keep that preview while editing settings, but discard it before
+        // preparing or running the replacement slice.
+        SlicingPreviewBridge::instance()->stop();
+        cleanupSlicingEnvironment();
+
         // 先切换到 slicing 环境
         EnvironmentSwitchHandler::switchEnvironment("slicing");
 

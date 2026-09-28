@@ -1250,7 +1250,8 @@ void SlicingPreviewBridge::removeToolpathPreview(int modelId) {
 }
 
 void SlicingPreviewBridge::clearAllToolpathPreviewsInternal(int preservedModelId) {
-    if (m_activePreview && preservedModelId != m_currentModelId) {
+    if (m_activePreview &&
+        (preservedModelId < 0 || preservedModelId != m_currentModelId)) {
         m_activePreview->releasePrintOutputArtifacts();
         if (auto* docManager = DocumentManager::instance()) {
             m_activePreview->removeMaterial();
