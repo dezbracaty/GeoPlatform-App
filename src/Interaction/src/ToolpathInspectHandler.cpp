@@ -82,6 +82,19 @@ void ToolpathInspectHandler::onResume() {
     syncEnabled();
 }
 bool ToolpathInspectHandler::onKeyPressEvent(QKeyEvent* event) {
+    // macOS marks ordinary arrow keys as keypad input.
+    const auto modifiers = event->modifiers() & ~Qt::KeyboardModifiers(Qt::KeypadModifier);
+    if (modifiers == Qt::NoModifier && isActive() && inputViewId() != 0 &&
+        interactionPickService().roleForView(DBInstanceID(inputViewId())) == GPlatform::Rendering::RendererRole::Preview) {
+        auto* bridge = SlicingPreviewBridge::instance();
+        switch (event->key()) {
+        case Qt::Key_Up:    if (bridge->movePreviewLayerBy(1)) return true; break;
+        case Qt::Key_Down:  if (bridge->movePreviewLayerBy(-1)) return true; break;
+        case Qt::Key_Left:  if (bridge->movePreviewStepBy(-1)) return true; break;
+        case Qt::Key_Right: if (bridge->movePreviewStepBy(1)) return true; break;
+        default: break;
+        }
+    }
     if (event->key() == Qt::Key_Alt && !event->isAutoRepeat()) {
         auto* bridge = SlicingPreviewBridge::instance();
         const auto preview = bridge->currentToolpathPreview();

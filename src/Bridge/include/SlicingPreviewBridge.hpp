@@ -85,6 +85,8 @@ public:
     Q_INVOKABLE void pause();
     Q_INVOKABLE void stop();
     Q_INVOKABLE void setLayerRange(int start, int end);
+    Q_INVOKABLE bool movePreviewLayerBy(int direction);
+    Q_INVOKABLE bool movePreviewStepBy(int direction);
     Q_INVOKABLE QVariantMap layerInfo(int layer) const;
 
     void beginPreviewLoad(const QString& artifactPath);

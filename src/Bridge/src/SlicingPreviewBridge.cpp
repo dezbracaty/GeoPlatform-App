@@ -1101,6 +1101,34 @@ void SlicingPreviewBridge::play() { emit playbackPlayRequested(); }
 void SlicingPreviewBridge::pause() { emit playbackPauseRequested(); }
 void SlicingPreviewBridge::stop() { emit playbackStopRequested(); }
 
+bool SlicingPreviewBridge::movePreviewLayerBy(int direction) {
+    const auto preview = currentToolpathPreview();
+    if ((direction != -1 && direction != 1) || !previewPanelVisible() || isLoading() ||
+        !preview || !preview->isVisible() || totalLayers() <= 0) return false;
+
+    const int layer = std::clamp(layerRangeEnd() + direction, 0, totalLayers() - 1);
+    if (layerRangeStart() != layer || layerRangeEnd() != layer) {
+        if (isPlaying()) pause();
+        setLayerRange(layer, layer);
+    }
+    return true;
+}
+
+bool SlicingPreviewBridge::movePreviewStepBy(int direction) {
+    const auto preview = currentToolpathPreview();
+    if ((direction != -1 && direction != 1) || !previewPanelVisible() || isLoading() ||
+        !preview || !preview->isVisible() || totalSteps() <= 0) return false;
+
+    const int lastStep = totalSteps() - 1;
+    const int step = currentStep() < 0 ? lastStep : currentStep();
+    const int nextStep = std::clamp(step + direction, 0, lastStep);
+    if (nextStep != step) {
+        if (isPlaying()) pause();
+        setCurrentStep(nextStep);
+    }
+    return true;
+}
+
 void SlicingPreviewBridge::setLayerRange(int start, int end) {
     if (auto preview = getCurrentPreview()) {
         if (preview->getTotalLayers() <= 0) {

@@ -17,6 +17,29 @@ Item {
              && !SlicingPreviewBridge.isLoading
              && SlicingPreviewBridge.totalLayers > 1
     readonly property int maxLayer: Math.max(0, SlicingPreviewBridge.totalLayers - 1)
+    Keys.priority: Keys.BeforeItem
+    Keys.onPressed: function(event) {
+        if (event.key !== Qt.Key_Up && event.key !== Qt.Key_Down
+                && event.key !== Qt.Key_Left && event.key !== Qt.Key_Right) {
+            event.accepted = false
+            return
+        }
+        // Own direction keys even when navigation is rejected by the bridge.
+        event.accepted = true
+        const modifiers = event.modifiers & ~Qt.KeypadModifier
+        if (modifiers !== Qt.NoModifier)
+            return
+        switch (event.key) {
+        case Qt.Key_Up: SlicingPreviewBridge.movePreviewLayerBy(1); break
+        case Qt.Key_Down: SlicingPreviewBridge.movePreviewLayerBy(-1); break
+        case Qt.Key_Left: SlicingPreviewBridge.movePreviewStepBy(-1); break
+        case Qt.Key_Right: SlicingPreviewBridge.movePreviewStepBy(1); break
+        }
+    }
+    Keys.onReleased: function(event) {
+        event.accepted = event.key === Qt.Key_Up || event.key === Qt.Key_Down
+                || event.key === Qt.Key_Left || event.key === Qt.Key_Right
+    }
 
     function displayLayer(layer) {
         return Math.round(layer) + 1
@@ -132,6 +155,8 @@ Item {
         onRangeMoved: function(start, end) {
             SlicingPreviewBridge.setLayerRange(start, end)
         }
+        onFirstPressedChanged: if (firstPressed) root.forceActiveFocus()
+        onSecondPressedChanged: if (secondPressed) root.forceActiveFocus()
 
         firstHandleContent: Component {
             Rectangle {
