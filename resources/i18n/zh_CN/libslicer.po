@@ -16635,6 +16635,12 @@ msgstr "纤维填充密度"
 msgid "Continuous fiber infill pattern"
 msgstr "纤维填充图案"
 
+msgid "Fiber infill angle sequence"
+msgstr "纤维直线填充角度序列"
+
+msgid "Comma-separated rectilinear fiber directions in degrees, repeated on successive fiber layers (for example, 0,45,90,135). Angles are relative to the build plate; 180 degrees is the same line direction as 0. The default 45,135 matches the standard alternating infill directions."
+msgstr "用逗号分隔的纤维直线填充角度，按铺纤层依次循环（例如 0,45,90,135）。角度相对于打印平台；180 度与 0 度的直线方向相同。默认 45,135 对应标准的交替填充方向。"
+
 msgid "Continuous fiber infill filament"
 msgstr "纤维填充材料"
 
