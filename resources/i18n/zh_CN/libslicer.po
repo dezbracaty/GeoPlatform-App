@@ -16692,6 +16692,12 @@ msgstr "纤维起铺速度"
 msgid "Fiber start stabilization length"
 msgstr "纤维起铺稳定段长度"
 
+msgid "Fiber corner stabilization length"
+msgstr "纤维转角稳定长度"
+
+msgid "Minimum deposited fiber path length before each radius-optimized rectilinear return. The entire return, including its arcs and connecting segment, is excluded. Zero disables this constraint."
+msgstr "每个经最小转弯半径优化的直线填充折返之前，实际铺设的纤维路径须达到的最短长度。整个折返（包括圆弧和中间连接段）不计入该长度；设为 0 则关闭此限制。"
+
 msgid "Minimum effective fiber length"
 msgstr "最短有效主动铺纤长度"
 
