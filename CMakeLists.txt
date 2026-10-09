@@ -1,14 +1,24 @@
 cmake_minimum_required(VERSION 3.24)
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    include(cmake/GPlatformBuildInputs.cmake)
     if(CMAKE_HOST_APPLE)
         set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0" CACHE STRING "Minimum macOS deployment version")
     endif()
-    if(DEFINED ENV{GPLATFORM_QT_ROOT})
-        list(PREPEND CMAKE_PREFIX_PATH "$ENV{GPLATFORM_QT_ROOT}")
-    endif()
 endif()
 project(GPlatform VERSION 1.0.0)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    gplatform_configure_toolchain()
+    option(GPLATFORM_CHECK_ONLY "Check compiler and Qt without loading the SDK" OFF)
+    if(GPLATFORM_CHECK_ONLY)
+        find_package(Qt6 REQUIRED COMPONENTS Core Quick QuickControls2)
+        return()
+    endif()
+    option(GPLATFORM_BUILD_TESTS "Build App tests" OFF)
+    if(GPLATFORM_BUILD_TESTS)
+        enable_testing()
+    endif()
+endif()
 if(NOT TARGET Foundation)
     include(cmake/GPlatformSDKConsumer.cmake)
 endif()
@@ -215,10 +225,6 @@ set(GENERATED_APPLICATION_MODULE_REGISTRATION
     "${CMAKE_CURRENT_BINARY_DIR}/GeneratedApplicationModuleRegistration.cpp")
 gplatform_generate_application_module_registration(
     "${GENERATED_APPLICATION_MODULE_REGISTRATION}")
-
-if(GPLATFORM_BUILD_TESTS AND GPLATFORM_CORE_SOURCE_DIR)
-    add_subdirectory("${GPLATFORM_CORE_SOURCE_DIR}/tests" "${CMAKE_CURRENT_BINARY_DIR}/tests")
-endif()
 
 set(SOURCE_FILES
     src/Application/src/main.cpp

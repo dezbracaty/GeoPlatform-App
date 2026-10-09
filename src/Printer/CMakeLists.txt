@@ -57,21 +57,9 @@ if(GPLATFORM_BUILD_TESTS)
     gplatform_link_registered_modules(
         PrinterQtFacadeCheck Printer)
     add_test(NAME PrinterQtFacadeCheck COMMAND PrinterQtFacadeCheck)
-endif()
-
-if(GPLATFORM_BUILD_TESTS AND GPLATFORM_CORE_SOURCE_DIR)
-    # This focused harness includes the production implementation and injects
-    # SDK function pointers. Do not link Printer again (duplicate symbols).
-    add_executable(FlashforgePrinterAgentShutdownCheck
-        ${GPLATFORM_CORE_SOURCE_DIR}/tests/FlashforgePrinterAgentShutdownCheck.cpp)
-    target_compile_features(FlashforgePrinterAgentShutdownCheck PRIVATE cxx_std_17)
-    target_include_directories(FlashforgePrinterAgentShutdownCheck PRIVATE
-        include src/Flashforge
-        "$<TARGET_PROPERTY:Foundation,INTERFACE_INCLUDE_DIRECTORIES>"
-        "${FLASHNETWORK_SDK_DIR}")
-    target_link_libraries(FlashforgePrinterAgentShutdownCheck PRIVATE
-        Qt6::Core spdlog::spdlog miniz)
-    add_test(NAME FlashforgePrinterAgentShutdownCheck COMMAND FlashforgePrinterAgentShutdownCheck)
-    set_tests_properties(FlashforgePrinterAgentShutdownCheck PROPERTIES TIMEOUT 15)
     set_tests_properties(PrinterQtFacadeCheck PROPERTIES TIMEOUT 15)
+    if(WIN32)
+        set_tests_properties(PrinterQtFacadeCheck PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>;PATH=path_list_prepend:$<TARGET_FILE_DIR:GPlatform>")
+    endif()
 endif()

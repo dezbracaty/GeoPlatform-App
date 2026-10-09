@@ -29,6 +29,15 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug"
       }
+    },
+    {
+      "name": "check",
+      "inherits": "base",
+      "binaryDir": "${sourceDir}/build-environment-check",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "GPLATFORM_CHECK_ONLY": true
+      }
     }
   ],
   "buildPresets": [
