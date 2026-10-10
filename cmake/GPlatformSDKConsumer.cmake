@@ -43,7 +43,20 @@ if(NOT _sdk_compiler STREQUAL CMAKE_CXX_COMPILER_ID)
     message(FATAL_ERROR "This SDK requires ${_sdk_compiler}; consumer compiler is ${CMAKE_CXX_COMPILER_ID}. Select a compatible compiler or publish a matching SDK.")
 endif()
 set(GPlatformSDK_DIR "${_sdk_slot}/lib/cmake/GPlatformSDK" CACHE PATH "Selected SDK package" FORCE)
-find_package(GPlatformSDK CONFIG REQUIRED PATHS "${_sdk_slot}/lib/cmake/GPlatformSDK" NO_DEFAULT_PATH)
+find_package(GPlatformSDK CONFIG PATHS "${_sdk_slot}/lib/cmake/GPlatformSDK" NO_DEFAULT_PATH)
+if(NOT GPlatformSDK_FOUND)
+    if(DEFINED Qt6_FOUND AND NOT Qt6_FOUND)
+        string(JSON _sdk_qt_version GET "${_sdk_info}" Qt6_VERSION)
+        message(FATAL_ERROR
+            "Cannot load GPlatformSDK: ${GPlatformSDK_NOT_FOUND_MESSAGE}\n"
+            "This SDK requires Qt ${_sdk_qt_version} EXACT with its required components: ${Qt6_NOT_FOUND_MESSAGE}\n"
+            "See the CMake/Qt diagnostic above. Set Qt6_DIR to the directory containing Qt6Config.cmake,\n"
+            "or CMAKE_PREFIX_PATH to the Qt installation prefix; an IDE Qt Kit is also supported.\n"
+            "Example: cmake --preset release -DQt6_DIR=\"<Qt>/lib/cmake/Qt6\"\n"
+            "Use a new build directory when changing Qt installations.")
+    endif()
+    message(FATAL_ERROR "Cannot load GPlatformSDK: ${GPlatformSDK_NOT_FOUND_MESSAGE}. See the dependency diagnostic above.")
+endif()
 
 function(gplatform_deploy_sdk_runtime target)
     if(APPLE)

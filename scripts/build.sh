@@ -8,7 +8,6 @@ configure_args=()
 while (($#)); do
     case "$1" in
         --preset) preset="${2:?Expected release or debug}"; shift 2 ;;
-        --qt-root) export GPLATFORM_QT_ROOT="${2:?Expected Qt SDK root}"; shift 2 ;;
         --cmake) cmake_tool="${2:?Expected CMake executable}"; shift 2 ;;
         --configure-only) mode=configure; shift ;;
         --check) mode=check; shift ;;

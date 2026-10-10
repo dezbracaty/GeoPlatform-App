@@ -38,30 +38,31 @@ Windows SDK 使用 MSVC 19.44、Qt 6.11.2；macOS SDK 使用 AppleClang 21、Qt 
 ## CMake 编译
 
 安装 CMake 3.24+、Ninja、Python 3，以及与 SDK 匹配的 Qt 开发环境。
-设置 `GPLATFORM_QT_ROOT` 环境变量，指向包含 `lib/cmake/Qt6/Qt6Config.cmake` 的 Qt SDK。
+Qt 由本机提供：`Qt6_DIR` 指向包含 `Qt6Config.cmake` 的目录，或用 `CMAKE_PREFIX_PATH` 指向 Qt 安装根目录；也可由 IDE 的 Qt Kit 传入。无需同时设置两个变量。
+SDK 的 Qt 依赖查找失败时会停止配置，保留原始诊断，并提示 SDK 所需版本和标准路径配置示例；其他 SDK 依赖错误不会被当作 Qt 配置错误。
 Windows 使用 MSVC x64 和 MSVC Qt；需要 Visual Studio C++ 工作负载与 Windows SDK。
 
-Windows 普通终端：
+Windows MSVC 开发者终端：
 
 ```powershell
-$env:GPLATFORM_QT_ROOT = "C:/path/to/Qt/msvc2022_64"
-scripts/build.cmd -Check
-scripts/build.cmd
+$env:Qt6_DIR = "C:/path/to/Qt/msvc2022_64/lib/cmake/Qt6"
+cmake --preset release
+cmake --build --preset release
 ```
 
 macOS/Linux：
 
 ```bash
-export GPLATFORM_QT_ROOT=/path/to/matching/Qt
-bash scripts/build.sh --check
-bash scripts/build.sh
+export Qt6_DIR=/path/to/matching/Qt/lib/cmake/Qt6
+cmake --preset release
+cmake --build --preset release
 ```
 
-已经准备好编译器环境的终端也可以直接执行 `cmake --preset release` 和 `cmake --build --preset release`。
+已在用户环境或 IDE 中配置 Qt 的用户无需再次设置路径。普通 Windows 终端可使用已有的 `scripts/build.cmd` 准备 MSVC 环境并构建。
 VS Code 使用 CMake Tools 的 `release`/`debug` 预设；Windows 开发环境由插件准备。
 修改环境变量后需要重启 IDE。更换编译器或 Qt 时使用新的构建目录。
 
-主项目和独立 App 共用本子树中的构建启动器、Qt 输入和 MSVC/Ninja 兼容处理。
+本子树保留已有构建启动器和 MSVC/Ninja 兼容处理；Qt 使用标准 CMake 包发现。
 CMake 根据实际编译器识别架构；不要求存在 `VSCMD_ARG_TGT_ARCH`。
 `check` 检查编译器与 Qt，不加载 SDK；完整配置才会验证并加载指定版本的 SDK。
 独立构建使用 App 自身的构建目录和 SDK 子模块，不读取主项目依赖缓存、源码或测试入口。

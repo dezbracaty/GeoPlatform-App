@@ -1,7 +1,6 @@
 [CmdletBinding()]
 param(
     [ValidateSet('release', 'debug')][string]$Preset = 'release',
-    [string]$QtRoot = $env:GPLATFORM_QT_ROOT,
     [string]$VsRoot = $env:GPLATFORM_VS_ROOT,
     [string]$CMake = 'cmake',
     [ValidateSet('x64')][string]$Architecture = 'x64',
@@ -21,7 +20,6 @@ try {
     $cmakeTool = Get-Command $CMake -CommandType Application -ErrorAction SilentlyContinue
     if (-not $cmakeTool) { throw "CMake was not found: $CMake. Install CMake >= 3.24 on PATH or pass -CMake <executable>." }
     $cmakePath = $cmakeTool.Source
-    if ($QtRoot) { $env:GPLATFORM_QT_ROOT = $QtRoot }
     $env:GPLATFORM_TARGET_ARCH = $Architecture
     if ($VsRoot -or -not $env:VSCMD_VER -or $env:VSCMD_ARG_TGT_ARCH -ne $Architecture) {
         if (-not $VsRoot) {
