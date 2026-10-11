@@ -24,53 +24,45 @@ BaseRender 源码提供渲染器工厂、会话等扩展接口；内置后端仍
 
 ```bash
 git lfs install
-git clone --recurse-submodules https://github.com/dezbracaty/GeoPlatform-App.git
+git clone --branch fix/sdk-packaging-restart --recurse-submodules https://github.com/dezbracaty/GeoPlatform-App.git
 cd GeoPlatform-App
 git -C ThirdParty/libs/GPlatformSDK lfs pull
 ```
 
-SDK 路径为 `ThirdParty/libs/GPlatformSDK/<架构>/<构建类型>/`，版本由子模块提交指针决定。
-查看所选版本中的 `sdk-build.json`，确认平台、架构、Qt 版本及工具链匹配。
-本版本提供 macOS `arm64/Release` 和 Windows `AMD64/Release`。
-Windows SDK 使用 MSVC 19.44、Qt 6.11.2；macOS SDK 使用 AppleClang 21、Qt 6.9.3。
-拉取已有子模块不会生成尚未发布的平台产物。
+SDK 路径固定为 `ThirdParty/libs/GPlatformSDK/<架构>/<构建类型>/`。
+版本由本仓库记录的子模块提交指针决定，无需在目录名中写版本。
 
 ## CMake 编译
 
-安装 CMake 3.24+、Ninja、Python 3，以及与 SDK 匹配的 Qt 开发环境。
-Qt 由本机提供：`Qt6_DIR` 指向包含 `Qt6Config.cmake` 的目录，或用 `CMAKE_PREFIX_PATH` 指向 Qt 安装根目录；也可由 IDE 的 Qt Kit 传入。无需同时设置两个变量。
-SDK 的 Qt 依赖查找失败时会停止配置，保留原始诊断，并提示 SDK 所需版本和标准路径配置示例；其他 SDK 依赖错误不会被当作 Qt 配置错误。
-Windows 使用 MSVC x64 和 MSVC Qt；需要 Visual Studio C++ 工作负载与 Windows SDK。
-
-Windows MSVC 开发者终端：
-
-```powershell
-$env:Qt6_DIR = "C:/path/to/Qt/msvc2022_64/lib/cmake/Qt6"
-cmake --preset release
-cmake --build --preset release
-```
-
-macOS/Linux：
+请使用与 SDK 配套的 C++ 工具链及相同 Qt 版本；实际构建信息见所选 `<架构>/<构建类型>/sdk-build.json`。
+Windows 使用 MSVC 开发环境，macOS 最低版本为 15。
+安装 CMake 3.24+、Ninja、配套 Qt（含 Quick、QuickControls2、Quick3D、Network、Concurrent、Multimedia 等模块），
+将 CMake 和 Ninja 加入 PATH。在本仓库根目录执行：
 
 ```bash
-export Qt6_DIR=/path/to/matching/Qt/lib/cmake/Qt6
 cmake --preset release
 cmake --build --preset release
 ```
 
-已在用户环境或 IDE 中配置 Qt 的用户无需再次设置路径。普通 Windows 终端可使用已有的 `scripts/build.cmd` 准备 MSVC 环境并构建。
-VS Code 使用 CMake Tools 的 `release`/`debug` 预设；Windows 开发环境由插件准备。
-修改环境变量后需要重启 IDE。更换编译器或 Qt 时使用新的构建目录。
+Windows 本次验收使用 Visual Studio 自带的 CMake。在已配置 MSVC 开发环境和 Qt 搜索路径的 PowerShell 中，显式选择本机对应安装路径：
 
-本子树保留已有构建启动器和 MSVC/Ninja 兼容处理；Qt 使用标准 CMake 包发现。
-CMake 根据实际编译器识别架构；不要求存在 `VSCMD_ARG_TGT_ARCH`。
-不提供单独的环境检查入口；正常 configure 会验证并加载指定版本的 SDK。
-构建 preset 不固定并发数；用户可通过 CMake 的标准并发设置自行控制。
-独立构建使用 App 自身的构建目录和 SDK 子模块，不读取主项目依赖缓存、源码或测试入口。
+```powershell
+$CMakePath = 'C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
+& $CMakePath --preset release
+& $CMakePath --build --preset release
+```
+
+`CMakePath` 是终端变量，用来选择启动工具；不是项目要求新增的 CMake 配置变量。
 
 CMake 会编译本仓库的 Base、AppDB、Document 和业务源码，并链接 SDK 中的库。
 SDK 中的依赖库与其对应构建的公开头文件、生成的配置头文件一起提供；App 不再次 fetch 或编译这些库。
 不同平台的生成头文件可能不同，不混用其他平台或其他构建配置的头文件。
+不提供单独的环境检查入口；构建 preset 不固定并发数。
+Qt 由本机提供：`Qt6_DIR` 指向包含 `Qt6Config.cmake` 的目录，或用 `CMAKE_PREFIX_PATH` 指向 Qt 安装根目录；也可由 IDE 的 Qt Kit 传入。无需同时设置两个变量。
+SDK 的 Qt 依赖查找失败时会停止配置，保留原始诊断，并提示 SDK 所需版本和标准路径配置示例；其他 SDK 依赖错误不会被当作 Qt 配置错误。
+变量可在用户环境或本地 CMake 配置中设置，不在仓库中固定安装路径。Qt 版本须与 SDK 匹配；更换 Qt 时使用新的构建目录。
+主项目打包生成的 App 文件目录已经带有实物 SDK，直接使用以上命令；无需伪造 Git 仓库或初始化。
+正式 Git 仓库使用者则需按上面的步骤初始化 submodule/LFS。两种交付状态应分别验证。
 SDK 动态库会自动复制到应用包中。Qt 开发环境由本机提供；对外分发应用还需完成 Qt 部署与应用签名。
 `debug` 预设需要 SDK 中已有相应架构的 `Debug/` 产物，不能混用 Release 库。
 
@@ -85,14 +77,13 @@ cmake --build --preset release
 ```
 
 使用仓库记录的子模块指针，不使用 `git submodule update --remote` 自动追踪 SDK 最新分支。
-错误会区分 SDK 子模块未初始化、该版本没有当前平台/构建类型，以及 LFS 文件未下载。
-按对应提示处理；平台包缺失需要发布配套 SDK 并更新子模块指针。
+如果提示 SDK 缺失，请检查子模块和构建类型；如果提示 Git LFS 指针，请在 SDK 子模块中执行 `git lfs pull`。
 
 ## 可选扩展检查
 
 ```bash
 cmake --preset release -DGPLATFORM_BUILD_SDK_CHECKS=ON
-cmake --build build-Release --target GPlatform SDKConsumerExtensionCheck
+cmake --build build-Release --target SDKConsumerExtensionCheck
 ctest --test-dir build-Release -R '^SDKConsumerExtensionCheck$' --output-on-failure
 ```
 

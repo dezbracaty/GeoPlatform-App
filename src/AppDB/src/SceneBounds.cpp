@@ -15,7 +15,8 @@ Box computeSceneBounds() {
     bool first = true;
     for (const auto& id : document->getAllDBInstanceIds()) {
         auto actor = std::dynamic_pointer_cast<ActorDB>(document->getDBInstance(id));
-        if (!actor || !actor->getVisible() || actor->getTypeID() == TypeID::TOOLPATH_PREVIEW_DB) {
+        if (!actor || !actor->getVisible() || actor->getTypeID() == TypeID::TOOLPATH_PREVIEW_DB ||
+            (actor->getTypeID() == TypeID::FIBER_MASK_DB && !actor->isTempDB())) {
             continue;
         }
 

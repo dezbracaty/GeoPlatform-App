@@ -7,7 +7,8 @@ REGISTER_PERSISTENT_INTERACTION_ACTION(
     "selection.pick",
     "selection.clear",
     "modelInteraction.suspendSelectionInput",
-    "modelInteraction.resumeSelectionInput")
+    "modelInteraction.resumeSelectionInput",
+    "modelInteraction.cancelDrag")
 
 #include "AIDescriptorHelper.hpp"
 #include "InteractionRuntime.hpp"
@@ -61,7 +62,7 @@ bool containsId(const std::vector<DBInstanceID>& ids, DBInstanceID id) {
 std::vector<DBInstanceID> parseModelIds(const QVariantMap& params) {
     std::vector<DBInstanceID> ids;
     const auto append = [&ids](int rawId) {
-        if (rawId > 0) {
+        if (rawId != 0) {
             ids.emplace_back(rawId);
         }
     };
@@ -124,6 +125,10 @@ void ModelInteractionHandler::handleAction(
     }
     if (actionCode == "modelInteraction.resumeSelectionInput") {
         m_selectionInputSuspended = false;
+        return;
+    }
+    if (actionCode == "modelInteraction.cancelDrag") {
+        finishDrag(false);
         return;
     }
     if (actionCode == "selection.clear") {
@@ -251,10 +256,15 @@ bool ModelInteractionHandler::onMousePressEvent(QMouseEvent* event) {
     }
 
     const QPoint pressPosition = event->position().toPoint();
+    if (m_scopeOwner && m_pointerScope && m_pointerScope->viewId != viewId)
+        return false;
+    const auto* scope = m_scopeOwner && m_pointerScope && m_pointerScope->viewId == viewId
+        ? &*m_pointerScope : nullptr;
     const auto pick = interactionPickService().pickCpuForView(
-        viewId, pressPosition, GPlatform::Rendering::PickDetail::Object);
+        viewId, pressPosition, GPlatform::Rendering::PickDetail::Object,
+        scope ? &scope->candidates : nullptr);
     if (pick.status == GPlatform::Rendering::PickStatus::Miss) {
-        if (!SelectionBridge::instance()->getSelectedIds().empty() &&
+        if ((!scope || scope->clearOnBlankClick) && !SelectionBridge::instance()->getSelectedIds().empty() &&
             event->modifiers() == Qt::NoModifier) {
             m_blankClick = BlankClickCandidate{viewId, pressPosition};
         }
@@ -287,6 +297,10 @@ bool ModelInteractionHandler::beginModelGesture(
     if (!actor || !actor->isVisible() || !actor->isPickable()) {
         return false;
     }
+    const auto scope = m_scopeOwner && m_pointerScope && m_pointerScope->viewId == viewId
+        ? m_pointerScope : std::nullopt;
+    if (scope && scope->beforeSelect && !scope->beforeSelect(actor->getDBInstanceID()))
+        return true;
     if (modifiers.testFlag(Qt::ControlModifier)) {
         selectObject(actor->getDBInstanceID(), true);
         return true;
@@ -310,6 +324,7 @@ bool ModelInteractionHandler::beginModelGesture(
     m_drag.latestPosition = pressPosition;
     m_drag.latestModifiers = modifiers;
     m_drag.initialActorPosition = actor->getPosition();
+    m_drag.initialTransform = actor->getTransform();
     m_drag.requiresThreshold = !alreadySelected;
     const auto worldBounds = actor->worldBounds();
     m_drag.anchorWorldPosition = worldBounds.valid
@@ -321,6 +336,7 @@ bool ModelInteractionHandler::beginModelGesture(
         return true;
     }
     m_drag.anchorWorldPosition = *anchor;
+    if (scope && scope->started) scope->started(m_drag.actorId);
 
     LOG_DEBUG("ModelInteractionHandler armed actor={} View={} threshold={}",
               m_drag.actorId.getValue(), m_drag.viewId.getValue(),
@@ -468,7 +484,7 @@ void ModelInteractionHandler::clearSelectionVisual(DBInstanceID id) {
 }
 
 void ModelInteractionHandler::createSelectionBox(DBInstanceID actorId) {
-    if (!actorId.isValid() || m_selectionBoxes.count(actorId) != 0) {
+    if (!actorId.isValid() || actorId.isTemp() || m_selectionBoxes.count(actorId) != 0) {
         return;
     }
     TransientUpdateGuard transient;
@@ -499,10 +515,9 @@ void ModelInteractionHandler::updateDrag(
     }
     const int distance =
         (screenPosition - m_drag.pressPosition).manhattanLength();
-    const int threshold = m_drag.requiresThreshold
-        ? kNewSelectionDragThreshold : 0;
-    if (!m_drag.transaction && distance < threshold) {
-        return;
+    if (m_drag.requiresThreshold) {
+        if (distance < kNewSelectionDragThreshold) return;
+        m_drag.requiresThreshold = false;
     }
 
     auto actor = resolveDraggedActor();
@@ -535,7 +550,7 @@ void ModelInteractionHandler::updateDrag(
         return;
     }
 
-    if (!m_drag.transaction) {
+    if (!actor->isTempDB() && !m_drag.transaction) {
         auto& transactions = TransactionManager::instance();
         if (transactions.isInTransaction()) {
             LOG_WARN("ModelInteractionHandler refused to replace an active transaction");
@@ -551,8 +566,15 @@ void ModelInteractionHandler::updateDrag(
             return;
         }
     }
+    m_drag.moved = true;
     ImmediateNotifyGuard notifyImmediately;
-    actor->setPosition(newPosition);
+    if (actor->isTempDB()) {
+        TransientUpdateGuard transient;
+        actor->setPosition(newPosition);
+    } else {
+        actor->setPosition(newPosition);
+    }
+
 }
 
 std::optional<Vector3> ModelInteractionHandler::intersectDragPlane(
@@ -595,12 +617,35 @@ void ModelInteractionHandler::finishDrag(bool commit) {
     if (!m_drag.armed) {
         return;
     }
-    if (m_drag.transaction) {
-        if (commit) {
-            m_drag.transaction->commit();
-        } else {
-            m_drag.transaction->rollback();
-        }
-    }
+    // End pointer ownership before notifying the tool: selection/lifecycle callbacks
+    // may synchronously cancel a gesture again.
+    auto completed = std::move(m_drag);
     m_drag = DragState{};
+    const auto scope = m_scopeOwner && m_pointerScope && m_pointerScope->viewId == completed.viewId
+        ? m_pointerScope : std::nullopt;
+    if (completed.transaction) {
+        if (commit) completed.transaction->commit();
+        else completed.transaction->rollback();
+        completed.transaction.reset();
+    }
+    const auto actor = DocumentManager::instance()->getDB<ActorDB>(completed.actorId);
+    if (!commit && actor && actor->isTempDB()) {
+        TransientUpdateGuard transient;
+        ImmediateNotifyGuard immediate;
+        actor->setTransform(completed.initialTransform);
+    }
+    if (scope && scope->finished)
+        scope->finished(completed.actorId, commit && completed.moved, completed.initialTransform);
+}
+
+void ModelInteractionHandler::setPointerScope(QObject* owner, PointerScope scope) {
+    if (m_scopeOwner != owner) finishDrag(false);
+    m_scopeOwner = owner;
+    m_pointerScope = std::move(scope);
+}
+void ModelInteractionHandler::clearPointerScope(QObject* owner) {
+    if (m_scopeOwner != owner) return;
+    finishDrag(false);
+    m_scopeOwner.clear();
+    m_pointerScope.reset();
 }

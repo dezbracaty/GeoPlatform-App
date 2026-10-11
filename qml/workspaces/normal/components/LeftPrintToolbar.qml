@@ -331,6 +331,14 @@ ToolbarSurface {
                         }
                     },
                     {
+                        targetName: "print.toolbar.edit.fiberMask",
+                        icon: FluentIcons.graph_Ruler,
+                        text: qsTr("Fiber Mask"),
+                        tooltip: qsTr("Draw a region with separate fiber parameters"),
+                        enabled: SelectionBridge.hasSelection,
+                        action: function() { FiberMaskBridge.enterSelectedModel() }
+                    },
+                    {
                         targetName: "print.toolbar.edit.cut",
                         icon: FluentIcons.graph_Cut,
                         text: qsTr("Cut"),
@@ -412,7 +420,7 @@ ToolbarSurface {
                         action: function() {
                             if (SelectionBridge.hasSelection) {
                                 ActionManager.triggerAction("model.slice", {
-                                    "modelId": SelectionBridge.selectedId
+                                    "modelId": FiberMaskBridge.active ? FiberMaskBridge.state.modelId : SelectionBridge.selectedId
                                 });
                             }
                         }

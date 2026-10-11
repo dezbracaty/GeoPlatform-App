@@ -4,9 +4,12 @@
 #include "PickService.hpp"
 
 #include <SystemTypes.hpp>
+#include <Transform.hpp>
 
 #include <QHash>
 #include <QPoint>
+#include <QPointer>
+#include <functional>
 
 #include <cstdint>
 #include <memory>
@@ -27,6 +30,18 @@ class ModelInteractionHandler final : public IActionHandlerBase {
 public:
     explicit ModelInteractionHandler(QObject* parent = nullptr);
     ~ModelInteractionHandler() override;
+    struct PointerScope {
+        DBInstanceID viewId;
+        std::vector<DBInstanceID> candidates;
+        bool clearOnBlankClick{true};
+        std::function<bool(DBInstanceID)> beforeSelect;
+        // Notification after pointer state and any ordinary-object transaction end.
+        std::function<void(DBInstanceID, bool, const Transform&)> finished;
+        std::function<void(DBInstanceID)> started;
+    };
+    void setPointerScope(QObject* owner, PointerScope scope);
+    void clearPointerScope(QObject* owner);
+    bool isDragging() const { return m_drag.armed; }
 
     HandlerType getHandlerType() const override {
         return HandlerType::Middleware;
@@ -49,12 +64,14 @@ public:
 private:
     struct DragState {
         bool armed{false};
+        bool moved{false};
         DBInstanceID viewId{INVALID_DB_ID};
         DBInstanceID actorId{INVALID_DB_ID};
         QPoint pressPosition;
         QPoint latestPosition;
         Qt::KeyboardModifiers latestModifiers{Qt::NoModifier};
         Vector3 initialActorPosition;
+        Transform initialTransform;
         Vector3 anchorWorldPosition;
         bool requiresThreshold{true};
         std::unique_ptr<TransactionGuard> transaction;
@@ -100,4 +117,6 @@ private:
     std::optional<BlankClickCandidate> m_blankClick;
     std::unordered_map<DBInstanceID, DBInstanceID> m_selectionBoxes;
     bool m_selectionInputSuspended{false};
+    QPointer<QObject> m_scopeOwner;
+    std::optional<PointerScope> m_pointerScope;
 };

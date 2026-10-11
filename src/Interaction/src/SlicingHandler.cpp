@@ -1110,8 +1110,8 @@ void SlicingHandler::createToolpathPreview() {
         emit NotificationManager::instance()->fiberFillDebugAvailable(
             token, static_cast<int>(preview->getFiberFillDiagnostics().size()));
     } else if (m_sliceSession && m_sliceSession->request.config.value("fiber_fill_debug") == "1") {
-        NotificationManager::instance()->showInfo(tr("铺纤填充调试"),
-            tr("没有可显示的铺纤诊断。未生成区域仅比较已有候选轮廓与最终纤维覆盖，不包含从未生成候选的部分。"));
+        // An empty debug result uses the same timed, informational notification.
+        emit NotificationManager::instance()->fiberFillDebugAvailable(QString(), 0);
     }
     auto vizDuration = std::chrono::duration_cast<std::chrono::milliseconds>(vizEndTime - vizStartTime).count();
     LOG_INFO("[SLICING TIMING] 创建 ToolpathPreviewDB 完成 (总耗时: {}ms)", vizDuration);

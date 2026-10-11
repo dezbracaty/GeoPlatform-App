@@ -1,7 +1,8 @@
 include_guard(GLOBAL)
 
-# Ninja compares /showIncludes prefixes as raw bytes. Preserve the compiler's
-# actual output; decoding AUTO can corrupt UTF-8 from Chinese MSVC under an IDE.
+# Ninja parses /showIncludes output. Preserve the actual compiler output bytes:
+# older CMake versions can mis-decode UTF-8 diagnostics using the Windows ANSI
+# code page. VSLANG alone is insufficient when only a Chinese VS pack exists.
 if(MSVC AND CMAKE_GENERATOR MATCHES "^Ninja")
     set(_probe_dir "${CMAKE_BINARY_DIR}/CMakeFiles/GPlatformMsvcDependencies")
     file(MAKE_DIRECTORY "${_probe_dir}")
@@ -26,9 +27,7 @@ if(MSVC AND CMAKE_GENERATOR MATCHES "^Ninja")
     set(CMAKE_CL_SHOWINCLUDES_PREFIX "${CMAKE_MATCH_2}")
     foreach(_language C CXX)
         set(CMAKE_${_language}_CL_SHOWINCLUDES_PREFIX "${CMAKE_CL_SHOWINCLUDES_PREFIX}")
-        # The explicit command delimiter also refreshes dependency records
-        # produced by the previous launcher with an incorrectly decoded prefix.
-        set(_launcher "${CMAKE_COMMAND};-E;env;--unset=VS_UNICODE_OUTPUT;VSLANG=1033;--")
+        set(_launcher "${CMAKE_COMMAND};-E;env;--unset=VS_UNICODE_OUTPUT;VSLANG=1033")
         if(CMAKE_${_language}_COMPILER_LAUNCHER)
             list(APPEND _launcher ${CMAKE_${_language}_COMPILER_LAUNCHER})
         endif()

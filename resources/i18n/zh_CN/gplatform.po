@@ -2867,3 +2867,183 @@ msgstr "补填加速度"
 
 msgid "Density of resin infill in the remaining internal area on fiber layers. Zero disables resin infill without disabling fiber."
 msgstr "铺纤层剩余内部区域的基材补填密度。设为 0 时关闭基材补填，但不关闭纤维铺设。"
+
+msgid "Fiber Mask"
+msgstr "纤维蒙版"
+
+msgid "Draw a region with separate fiber parameters"
+msgstr "绘制使用独立纤维参数的区域"
+
+msgid "Model: %1"
+msgstr "模型：%1"
+
+msgid "Hold Ctrl and drag the depth arrow, or enter a signed depth. Negative values reverse direction."
+msgstr "按住 Ctrl 拖动深度箭头或输入深度，负值表示反向延伸。"
+
+msgid "Drag masks to move them. Drag empty space to rotate the camera. Hold Ctrl to draw; Alt disables drawing snaps."
+msgstr "直接拖动蒙版即可移动，拖动空白处旋转镜头。按住 Ctrl 绘制，Alt 暂时关闭绘制吸附。"
+
+msgid "Box"
+msgstr "盒形"
+
+msgid "Cylinder"
+msgstr "圆柱"
+
+msgid "New"
+msgstr "新建"
+
+msgid "Snapped to model bounds"
+msgstr "已吸附到模型边界"
+
+msgid "Mask name"
+msgstr "蒙版名称"
+
+msgid "Width / diameter"
+msgstr "宽度 / 直径"
+
+msgid "Length"
+msgstr "长度"
+
+msgid "Height"
+msgstr "高度"
+
+msgid "Rotation X"
+msgstr "X 轴旋转"
+
+msgid "Rotation Y"
+msgstr "Y 轴旋转"
+
+msgid "Rotation Z"
+msgstr "Z 轴旋转"
+
+msgid "Signed depth"
+msgstr "延伸深度"
+
+msgid "Next"
+msgstr "下一步"
+
+msgid "Mask fiber parameters take priority over the model settings."
+msgstr "蒙版的纤维参数优先于模型设置。"
+
+msgid "Enabled"
+msgstr "启用"
+
+msgid "Visible"
+msgstr "显示"
+
+msgid "Select a model before creating a fiber mask."
+msgstr "请先选择一个模型，再创建纤维蒙版。"
+
+msgid "Cannot start the fiber mask tool."
+msgstr "无法启动纤维蒙版工具。"
+
+msgid "Fiber mask"
+msgstr "纤维蒙版"
+
+msgid "The source model is no longer available."
+msgstr "所属模型已不存在。"
+
+msgid "Finish drawing the mask before confirming."
+msgstr "请先完成蒙版绘制，再确认。"
+
+msgid "Mask geometry must have valid dimensions and a rigid local transform."
+msgstr "蒙版尺寸必须有效，局部变换只能包含平移和旋转。"
+
+msgid "The mask no longer belongs to this model."
+msgstr "蒙版已不属于当前模型。"
+
+msgid "Mask dimensions must be positive and finite."
+msgstr "蒙版尺寸必须是大于零的有效数值。"
+
+msgid "Cannot change mask visibility while another document operation is active."
+msgstr "其他文档操作进行中，无法更改蒙版显示状态。"
+
+msgid "Cannot delete the mask while another document operation is active."
+msgstr "其他文档操作进行中，无法删除蒙版。"
+
+msgid "Delete the selected mask from the mask editor."
+msgstr "请在蒙版编辑面板中删除选中的蒙版。"
+
+msgid "Restore inheritance"
+msgstr "恢复继承"
+
+msgid "Later masks override earlier masks"
+msgstr "后面的蒙版覆盖前面的蒙版"
+
+msgid "Cannot create another mask: coverage order is exhausted."
+msgstr "蒙版覆盖顺序已达上限，无法继续创建。"
+
+msgid "Rotate the view or enter dimensions: the drawing plane is edge-on."
+msgstr "绘制平面侧对镜头，请旋转视图或输入尺寸。"
+
+msgid "Rotate the view or enter a value: the axis faces the camera."
+msgstr "操作轴正对镜头，请旋转视图或输入数值。"
+
+msgid "Draw a non-zero footprint."
+msgstr "请绘制具有有效面积的底面。"
+
+msgid "Cannot attach the mask to its model."
+msgstr "无法将蒙版关联到所属模型。"
+
+msgid "Invalid fiber parameter."
+msgstr "纤维参数无效。"
+
+msgid "The viewport projection is unavailable."
+msgstr "无法取得当前视口的投影。"
+
+msgid "Drag the depth arrow or enter a depth value."
+msgstr "请拖动深度箭头或输入深度值。"
+
+msgid "Show section"
+msgstr "查看截面"
+
+msgid "Section height"
+msgstr "截面高度"
+
+msgid "Coverage preview"
+msgstr "区域覆盖预览"
+
+msgid "Fiber mask %1"
+msgstr "纤维蒙版 %1"
+
+msgid "Position and dimensions are in model coordinates."
+msgstr "位置和尺寸使用模型局部坐标。"
+
+msgid "Rotate the view: the drawing plane is edge-on or behind the camera."
+msgstr "请旋转视图：绘制平面侧对镜头或位于镜头后方。"
+
+msgid "Ctrl drawing enabled"
+msgstr "Ctrl 绘制已启用"
+
+msgid "Hold Ctrl and drag a rectangle. New masks default to the model's full height; adjust position and dimensions after creation."
+msgstr "按住 Ctrl 拖出矩形。新蒙版默认与模型等高，创建后可调整位置和尺寸。"
+
+msgid "Release the mouse to save, then drag another rectangle to create the next mask."
+msgstr "松开鼠标即可保存，再拖出矩形即可继续创建下一个蒙版。"
+
+msgid "Drag the mask to move it, or hold Ctrl and drag in empty space to create another."
+msgstr "直接拖动蒙版即可移动，或按住 Ctrl 在空白处拖动创建下一个蒙版。"
+
+msgid "Save changes"
+msgstr "保存修改"
+
+msgid "Fiber masks"
+msgstr "纤维蒙版"
+
+msgid "%1 · %2 masks"
+msgstr "%1 · %2 个蒙版"
+
+msgid "No masks"
+msgstr "暂无蒙版"
+
+msgid "Position and dimensions"
+msgstr "位置和尺寸"
+
+msgid "Fiber parameters"
+msgstr "纤维参数"
+
+msgid "Unavailable with the current fiber options"
+msgstr "当前纤维选项下不可用"
+
+msgid "Cannot save the mask while another document operation is active."
+msgstr "其他文档操作正在进行，暂时无法保存蒙版。"

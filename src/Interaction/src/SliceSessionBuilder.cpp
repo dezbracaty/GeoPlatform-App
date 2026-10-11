@@ -8,6 +8,7 @@
 #include <DocumentManager.hpp>
 #include <Geometry.hpp>
 #include <ModelInstanceDB.hpp>
+#include <FiberMaskDB.hpp>
 #include <ModelGeometryDB.hpp>
 #include "ModelFilamentSlotResolver.hpp"
 #include <ModelPartDB.hpp>
@@ -53,6 +54,7 @@ public:
         std::uint64_t modelId{0};
         std::uint64_t meshRevision{0};
         std::vector<Volume> volumes;
+        std::vector<libslicer::SliceFiberMaskInput> fiberMasks;
         std::vector<std::string> supportEnforcerPaths;
     };
 
@@ -326,6 +328,48 @@ SliceSessionBuilder::CaptureResult SliceSessionBuilder::capture(const Request& r
             result.error = "Model instance has no printable part";
             return result;
         }
+        std::vector<std::shared_ptr<FiberMaskDB>> masks;
+        for (auto id : document->getOwnedChildren(modelId, FiberMaskDB::kOwnerRelation)) {
+            auto mask = document->getDB<FiberMaskDB>(id);
+            if (!mask) {
+                result.error = "Owned fiber mask is unavailable";
+                return result;
+            }
+            masks.push_back(std::move(mask));
+        }
+        std::sort(masks.begin(), masks.end(), [](const auto& first, const auto& second) {
+            return FiberMaskDB::precedes(*first, *second);
+        });
+        for (const auto& mask : masks) {
+            libslicer::SliceFiberMaskInput input;
+            input.id = std::to_string(mask->getDBInstanceID().getValue());
+            switch (static_cast<FiberMaskDB::Shape>(mask->getShape())) {
+            case FiberMaskDB::Shape::Box: input.shape = libslicer::FiberMaskShape::Box; break;
+            case FiberMaskDB::Shape::Cylinder: input.shape = libslicer::FiberMaskShape::Cylinder; break;
+            case FiberMaskDB::Shape::Sphere: input.shape = libslicer::FiberMaskShape::Sphere; break;
+            default:
+                result.error = "Fiber mask " + input.id + " has an unknown shape";
+                return result;
+            }
+            const auto dimensions = mask->getDimensions();
+            input.dimensions_mm = {double(dimensions.x), double(dimensions.y), double(dimensions.z)};
+            const auto pose = mask->getTransformMatrix();
+            for (int row = 0; row != 4; ++row)
+                for (int column = 0; column != 4; ++column)
+                    input.mask_to_object[std::size_t(row * 4 + column)] = double(pose(row, column));
+            input.enabled = mask->getEnabled();
+            if (input.enabled) {
+                auto parameters = libslicer::Config::for_overrides(
+                    captured->profile.config, libslicer::ConfigScope::FiberMask);
+                const auto loaded = parameters.load_overrides(mask->getParameterOverridesJson());
+                if (!loaded) {
+                    result.error = "Fiber mask " + input.id + ": " + loaded.diagnostics.front().message;
+                    return result;
+                }
+                input.settings = parameters.overrides();
+            }
+            model.fiberMasks.push_back(std::move(input));
+        }
         if (modelId == request.supportTargetModelId) {
             model.supportEnforcerPaths = request.supportEnforcerPaths;
             supportTargetFound = true;
@@ -382,6 +426,7 @@ SliceSessionBuilder::Result SliceSessionBuilder::build(
         object.name = model.name;
         object.transform = model.transform;
         object.support_enforcer_paths = model.supportEnforcerPaths;
+        object.fiber_masks = model.fiberMasks;
 
         int surfaceRevision = 0;
         for (const auto& capturedVolume : model.volumes) {

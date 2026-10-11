@@ -1,5 +1,13 @@
 #include "../include/ModelInstanceDB.hpp"
 
+std::optional<ActorDB::PickHit> ModelInstanceDB::intersectPickRay(
+    const Vector3& origin, const Vector3& direction, float maxDistance) const {
+    const auto hit = intersectWorldRay(origin, direction, maxDistance);
+    if (!hit) return std::nullopt;
+    return PickHit{hit->worldDistance, hit->worldPosition, hit->objectLocalPosition,
+                   hit->partId, hit->primitiveIndex};
+}
+
 #include "../include/ModelObjectDB.hpp"
 #include "../include/ModelPartDB.hpp"
 #include "../include/ModelGeometryDB.hpp"

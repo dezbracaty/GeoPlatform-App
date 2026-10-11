@@ -41,6 +41,13 @@ public:
     }
     virtual void onExit() = 0;
 
+    // Allow an active editor to finish its draft before a competing action starts.
+    virtual bool prepareForAction(const QString& actionCode, HandlerType incomingType) {
+        Q_UNUSED(actionCode);
+        Q_UNUSED(incomingType);
+        return true;
+    }
+
     // ============================================================
     // AI 相关接口
     // ============================================================

@@ -147,7 +147,7 @@ FramelessWindow {
         }
 
         function onWarningOccurred(title, message) {
-            infobar_manager.showWarning(title, 4000, message)
+            notification_overlay.pushWarning(title, message)
         }
 
         function onInfoOccurred(title, message) {

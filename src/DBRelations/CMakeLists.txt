@@ -20,6 +20,7 @@ add_library(DBRelations STATIC
     ModelGraphRelations.cpp
     ModelGraphRelations.hpp
     ManualSupportRelations.cpp
+    FiberMaskRelations.cpp
     ManualSupportRelations.hpp
     PrintBedCollisionDetector.cpp
     PrintBedCollisionDetector.hpp

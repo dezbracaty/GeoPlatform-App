@@ -7,6 +7,8 @@
 #include <memory>
 #include <shared_mutex>
 #include <Transform.hpp>
+#include <optional>
+#include <limits>
 
 // =====================================================================
 // 属性宏定义（使用 T{} 默认构造）
@@ -87,6 +89,16 @@ public:                                                       \
 class ActorDB : public AutoRegisterDB {
 
 public:
+    struct PickHit {
+        float worldDistance{0};
+        Vector3 worldPosition;
+        Vector3 localPosition;
+        std::optional<DBInstanceID> partId;
+        std::optional<std::uint64_t> primitiveIndex;
+    };
+    virtual std::optional<PickHit> intersectPickRay(
+        const Vector3&, const Vector3&,
+        float = std::numeric_limits<float>::infinity()) const { return std::nullopt; }
     /**
      * @brief 边界框结构体
      */

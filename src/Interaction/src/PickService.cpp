@@ -3,6 +3,7 @@
 #include "Foundation/Log.h"
 
 #include <DocumentManager.hpp>
+#include <ActorDB.hpp>
 #include <ModelInstanceDB.hpp>
 #include <ModelPartDB.hpp>
 #include <ViewportCoordinateSystem.hpp>
@@ -247,7 +248,7 @@ std::uint64_t PickService::requestForView(
 RenderPickResult PickService::pickCpuForView(
     DBInstanceID viewId,
     const QPoint& screenPosition,
-    PickDetail detail) const {
+    PickDetail detail, const std::vector<DBInstanceID>* candidates) const {
     RenderPickResult result;
     result.windowId = viewId;
     result.status = PickStatus::Miss;
@@ -285,41 +286,24 @@ RenderPickResult PickService::pickCpuForView(
     }
     const WorldRay ray = projection.rayFromScreen(QPointF(screenPosition));
 
-    float nearestDistance = std::numeric_limits<float>::infinity();
-    ModelInstanceDB::RayHit nearestInstanceHit;
-    std::shared_ptr<ModelInstanceDB> nearestInstance;
-    for (const auto& object :
-         document->getDBInstancesByType(TypeID::MODEL_INSTANCE_DB)) {
-        auto instance = std::dynamic_pointer_cast<ModelInstanceDB>(object);
-        if (!instance || !instance->getVisible() || !instance->isPickable() ||
-            !instance->isValid()) {
-            continue;
-        }
-        const auto hit = instance->intersectWorldRay(
-            ray.origin, ray.direction, nearestDistance);
-        if (!hit || hit->worldDistance >= nearestDistance) continue;
-        nearestDistance = hit->worldDistance;
-        nearestInstanceHit = *hit;
-        nearestInstance = std::move(instance);
-    }
-
-    if (nearestInstance) {
+    float nearest = std::numeric_limits<float>::infinity();
+    const auto ids = candidates ? *candidates : document->getAllDBInstanceIds();
+    for (const auto id : ids) {
+        const auto actor = document->getDB<ActorDB>(id);
+        if (!actor || !actor->isVisible() || !actor->isPickable() || !actor->isValid()) continue;
+        const auto hit = actor->intersectPickRay(ray.origin, ray.direction, nearest);
+        if (!hit || hit->worldDistance >= nearest) continue;
+        // Object-only actors must not replace a triangle/surface target for richer queries.
+        if (detail != PickDetail::Object && !hit->partId) continue;
+        nearest = hit->worldDistance;
         result.status = PickStatus::Hit;
-        result.payload.objectId = nearestInstance->getDBInstanceID();
-        if (detail != PickDetail::Object &&
-            nearestInstanceHit.partId.isValid()) {
-            result.payload.partId = nearestInstanceHit.partId;
+        result.payload.objectId = id;
+        if (detail != PickDetail::Object) {
+            result.payload.partId = hit->partId;
+            result.payload.localPosition = hit->localPosition;
+            result.payload.worldPosition = hit->worldPosition;
         }
-        if (detail == PickDetail::Surface || detail == PickDetail::Primitive) {
-            result.payload.localPosition =
-                nearestInstanceHit.objectLocalPosition;
-            result.payload.worldPosition = nearestInstanceHit.worldPosition;
-        }
-        if (detail == PickDetail::Primitive) {
-            result.payload.primitiveIndex =
-                nearestInstanceHit.primitiveIndex;
-        }
-        return result;
+        if (detail == PickDetail::Primitive) result.payload.primitiveIndex = hit->primitiveIndex;
     }
 
     return result;

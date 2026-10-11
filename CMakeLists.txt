@@ -1,19 +1,12 @@
 cmake_minimum_required(VERSION 3.24)
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    include(cmake/GPlatformBuildInputs.cmake)
     if(CMAKE_HOST_APPLE)
         set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0" CACHE STRING "Minimum macOS deployment version")
     endif()
 endif()
 project(GPlatform VERSION 1.0.0)
-if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    gplatform_configure_toolchain()
-    option(GPLATFORM_BUILD_TESTS "Build App tests" OFF)
-    if(GPLATFORM_BUILD_TESTS)
-        enable_testing()
-    endif()
-endif()
+include(cmake/GPlatformMsvcDependencies.cmake)
 if(NOT TARGET Foundation)
     include(cmake/GPlatformSDKConsumer.cmake)
 endif()
@@ -125,6 +118,8 @@ set(QML_FILES
     qml/workspaces/normal/components/LeftPrintToolbar.qml
     qml/workspaces/normal/components/ModelInspectorPanel.qml
     qml/workspaces/normal/components/ModelColorPaintPanel.qml
+    qml/workspaces/normal/components/FiberMaskPanel.qml
+    qml/workspaces/normal/components/FiberMaskListPanel.qml
     qml/workspaces/normal/components/CutToolPanel.qml
     qml/workspaces/normal/components/RightPrintToolbar.qml
     qml/workspaces/normal/centralPart.qml

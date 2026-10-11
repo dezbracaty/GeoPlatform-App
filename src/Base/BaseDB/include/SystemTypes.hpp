@@ -52,6 +52,7 @@ enum class TypeID : uint32_t {
     MODEL_GEOMETRY_DB = 33, // Part 拥有的正式几何资源
 
     SNAP_PREVIEW_DB = 34, // 视口内临时吸附高亮，使用后端无关点线数据
+    FIBER_MASK_DB = 35, // Model-owned regional fiber parameters (not printable geometry)
 
     // GPlatform specific types
     POINT_DATA_DB = 100,
@@ -165,6 +166,8 @@ inline QString typeIdToString(TypeID typeId) {
             return "SLICING_CONFIG_DB";
         case TypeID::DEBUG_ACTOR_DB:
             return "DEBUG_ACTOR_DB";
+        case TypeID::FIBER_MASK_DB:
+            return "FIBER_MASK_DB";
         case TypeID::MANUAL_SUPPORT_DB:
             return "MANUAL_SUPPORT_DB";
         case TypeID::MODEL_SURFACE_COLOR_DB:

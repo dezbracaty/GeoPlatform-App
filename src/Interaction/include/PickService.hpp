@@ -12,6 +12,8 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <vector>
+
 
 enum class PickChannel : std::uint8_t {
     Hover,
@@ -50,7 +52,7 @@ Q_DECLARE_METATYPE(PickSnapshot)
 
 /**
  * View-scoped Pick router for asynchronous renderer requests, blocking widget
- * requests, and synchronous CPU model queries.
+ * requests, and synchronous CPU actor queries.
  *
  * Every consumer submits its own semantic detail and channel. There is no
  * process-wide aggregation of Handler requirements. The service keeps at most
@@ -81,7 +83,7 @@ public:
         PickDelivery delivery = PickDelivery::OneShot);
 
     /**
-     * Synchronous CPU triangle Pick for interactions that must decide whether
+     * Synchronous CPU Actor Pick for interactions that must decide whether
      * to consume the current input event. The call never builds or repairs
      * acceleration data; it only reads each Part's eagerly maintained BVH state.
      */
@@ -89,7 +91,8 @@ public:
         DBInstanceID viewId,
         const QPoint& screenPosition,
         GPlatform::Rendering::PickDetail detail =
-            GPlatform::Rendering::PickDetail::Object) const;
+            GPlatform::Rendering::PickDetail::Object,
+        const std::vector<DBInstanceID>* candidates = nullptr) const;
 
     /** Exact-position blocking access to the existing renderer Pick path. */
     GPlatform::Rendering::RenderPickResult pickRendererForViewBlocking(

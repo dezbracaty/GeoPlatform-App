@@ -56,6 +56,8 @@ set(APPDB_HEADERS
     include/ToolpathPreviewDB.hpp
     include/SlicingConfigDB.hpp
     include/ManualSupportDB.hpp
+    include/FiberMaskDB.hpp
+    include/FiberMaskGeometryUtils.hpp
     include/ModelSurfaceColorDB.hpp
     include/DebugActorDB.hpp
     include/TransientPolyDataActorDB.hpp
@@ -100,6 +102,8 @@ set(APPDB_SOURCES
     src/ToolpathPreviewDB.cpp
     src/SlicingConfigDB.cpp
     src/ManualSupportDB.cpp
+    src/FiberMaskDB.cpp
+    src/FiberMaskGeometryUtils.cpp
     src/ModelSurfaceColorDB.cpp
     src/SkyboxDB.cpp
     src/LightDB.cpp

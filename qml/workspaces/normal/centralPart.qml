@@ -20,6 +20,8 @@ Item {
                                          ? threadRenderer.renderActive
                                          : false
     onRenderActiveChanged: {
+        if (!renderActive && FiberMaskBridge.active)
+            FiberMaskBridge.cancel()
         if (!renderActive && CutToolBridge.active)
             CutToolBridge.cancel()
     }
@@ -130,6 +132,7 @@ Item {
         objectName: "modelInspectorPanel"
         anchors.top: parent.top
         anchors.topMargin: 132
+        visible: !FiberMaskBridge.active
         anchors.right: rightPrintToolbar.left
         anchors.rightMargin: 12
         z: 50
@@ -201,6 +204,30 @@ Item {
         onClosed: {
             if (CutToolBridge.active)
                 CutToolBridge.cancel()
+        }
+    }
+
+    PanelSurface {
+        id: fiberMaskSidebar
+        objectName: "fiberMaskSidebar"
+        anchors.top: parent.top
+        anchors.topMargin: 132
+        anchors.right: rightPrintToolbar.left
+        anchors.rightMargin: 12
+        width: Math.max(0, Math.min(430, centralFragment.width - 100))
+        // The global command bar belongs to the Dock host and sits above this
+        // entire viewport. Reserve its footprint instead of extending beneath it.
+        readonly property int viewportBottomInset: PrintWorkspaceStyle.space16
+                                                   + PrintWorkspaceStyle.globalCommandBarHeight
+                                                   + PrintWorkspaceStyle.space12
+        height: Math.max(0, centralFragment.height - anchors.topMargin - viewportBottomInset)
+        visible: centralFragment.renderActive && FiberMaskBridge.active
+        z: 100
+        clip: true
+        Loader {
+            anchors.fill: parent
+            active: FiberMaskBridge.active
+            sourceComponent: Component { FiberMaskPanel {} }
         }
     }
 

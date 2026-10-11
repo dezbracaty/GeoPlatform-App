@@ -357,9 +357,11 @@ std::vector<float> CameraDB::calculateProjectionMatrix(float aspectRatio) const 
         matrix[0] = 2.0f / (right - left);
         matrix[5] = 2.0f / (top - bottom);
         matrix[10] = -2.0f / (farPlane - nearPlane);
-        matrix[12] = -(right + left) / (right - left);
-        matrix[13] = -(top + bottom) / (top - bottom);
-        matrix[14] = -(farPlane + nearPlane) / (farPlane - nearPlane);
+        // CoordinateTransform consumes row-major matrices. Translation belongs
+        // in the last column; the last row must keep homogeneous w equal to 1.
+        matrix[3] = -(right + left) / (right - left);
+        matrix[7] = -(top + bottom) / (top - bottom);
+        matrix[11] = -(farPlane + nearPlane) / (farPlane - nearPlane);
         matrix[15] = 1.0f;
     }
     return matrix;

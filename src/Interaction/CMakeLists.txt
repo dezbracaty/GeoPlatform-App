@@ -60,6 +60,8 @@ set(INTERACTION_SOURCES
     src/SurfaceBrushProjection.cpp
     src/ModelColorPaintHandler.cpp
     src/ModelFilamentAssignmentHandler.cpp
+    src/FiberMaskHandler.cpp
+    src/FiberMaskParameters.cpp
     src/CutToolHandler.cpp
     src/ModelColorPaintComputeCoordinator.cpp
     src/ModelLibraryActionHandler.cpp
@@ -113,6 +115,7 @@ set(INTERACTION_HEADERS
     include/SurfaceBrushProjection.hpp
     include/ModelColorPaintHandler.hpp
     include/ModelFilamentAssignmentHandler.hpp
+    include/FiberMaskHandler.hpp
     include/CutToolHandler.hpp
     include/ModelColorPaintComputeCoordinator.hpp
     include/ModelLibraryActionHandler.hpp

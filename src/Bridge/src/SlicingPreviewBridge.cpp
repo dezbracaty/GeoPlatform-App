@@ -522,6 +522,10 @@ QVariantMap SlicingPreviewBridge::previewPanelData(const QString& viewType) cons
             row.insert(QStringLiteral("id"), QStringLiteral("move.fiberProcess"));
             row.insert(QStringLiteral("label"), tr("Fiber process motion"));
             row.insert(QStringLiteral("color"), QStringLiteral("#808080"));
+            row.insert(QStringLiteral("time"), QString());
+            row.insert(QStringLiteral("percent"), QString());
+            row.insert(QStringLiteral("usagePrimary"), QString());
+            row.insert(QStringLiteral("usageSecondary"), QString());
             row.insert(QStringLiteral("visible"), preview->getShowFiberProcess());
             row.insert(QStringLiteral("displayEnabled"), true);
             rows.append(row);
@@ -539,7 +543,10 @@ QVariantMap SlicingPreviewBridge::previewPanelData(const QString& viewType) cons
             row.insert(QStringLiteral("visible"), preview->getShowFiberDiagnostics() &&
                        !(preview->getHiddenFiberDiagnosticKinds() & (1u << unsigned(kind))));
             row.insert(QStringLiteral("displayEnabled"), true);
-            row.insert(QStringLiteral("usageSecondary"), description.arg(count));
+            row.insert(QStringLiteral("time"), QString());
+            row.insert(QStringLiteral("percent"), QString());
+            row.insert(QStringLiteral("usagePrimary"), description.arg(count));
+            row.insert(QStringLiteral("usageSecondary"), QString());
             rows.append(row);
         };
         diagnostic_row(DiagnosticKind::RejectedPath, QStringLiteral("diagnostic.fiberRejected"),

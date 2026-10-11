@@ -400,6 +400,15 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
     const bool isMiddlewareHandler = (handlerType == HandlerType::Middleware);
     const bool isExclusiveHandler = (handlerType == HandlerType::Exclusive);
 
+    const auto activeHandler = m_activeHandler;
+    if (activeHandler && !activeHandler->prepareForAction(actionCode, handlerType)) {
+        m_lastActionOutcome = buildActionOutcome(invokeSeq, actionCode, false, false,
+                                                "The current edit could not be saved", {},
+                                                isAIInvoke, handlerType, false,
+                                                ActionErrorCode::ContractValidation);
+        return false;
+    }
+
     LOG_DEBUG("Handler found for action: {}, type: {}, aiInvoke={}",
               actionCode.toStdString(),
               static_cast<int>(handlerType),

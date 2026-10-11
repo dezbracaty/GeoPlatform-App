@@ -6,7 +6,7 @@ import SmoothUI.Controls
 import SmoothUI.impl
 import GPlatform
 
-// Persistent bottom-right notifications. The visual shell intentionally follows
+// Timed bottom-right notifications. The visual shell intentionally follows
 // the former BackgroundTaskOverlay: a compact pill that expands upward into a
 // non-modal list. Producers only submit data; opening details remains a user
 // action.
@@ -19,7 +19,8 @@ Rectangle {
     signal fiberFillDebugActivated(string previewToken)
 
     readonly property int autoDismissInterval: 10000
-    readonly property bool latestIsFiberDebug: notifications.count > 0 && notifications.get(0).previewToken.length > 0
+    readonly property string latestKind: notifications.count > 0 ? notifications.get(0).kind : ""
+    readonly property bool latestIsFiberDebug: latestKind === "fiberDebug"
 
     SmoothUI.theme: Theme.of(root)
 
@@ -46,12 +47,39 @@ Rectangle {
         shadowVerticalOffset: 3
     }
 
+    function notificationIcon(kind) {
+        if (kind === "warning") return FluentIcons.graph_Warning
+        if (kind === "fiberDebug") return FluentIcons.graph_Info
+        return FluentIcons.graph_Error
+    }
+
+    function notificationColor(kind) {
+        if (kind === "warning") return root.SmoothUI.theme.res.systemFillColorCaution
+        if (kind === "fiberDebug") return Theme.accentColor.defaultBrushFor(root.SmoothUI.dark)
+        return root.SmoothUI.theme.res.systemFillColorCritical
+    }
+
+    function pushWarning(title, message) {
+        for (let i = 0; i < notifications.count; ++i) {
+            const item = notifications.get(i)
+            if (item.kind === "warning" && item.title === title && item.message === message) {
+                notifications.move(i, 0, 1)
+                scheduleAutoDismiss()
+                return
+            }
+        }
+        notifications.insert(0, {
+            "kind": "warning", "presetName": "", "optionKey": "", "previewToken": "",
+            "title": title, "message": message
+        })
+    }
+
     function pushSliceConfigurationError(presetName, message, optionKey) {
         // Orca keeps validation failures visible. Deduplicate an identical
         // diagnostic instead of stacking repeated slice attempts.
         for (let i = 0; i < notifications.count; ++i) {
             const item = notifications.get(i)
-            if (item.message === message && item.optionKey === optionKey) {
+            if (item.kind === "configurationError" && item.message === message && item.optionKey === optionKey) {
                 notifications.setProperty(i, "presetName", presetName)
                 notifications.move(i, 0, 1)
                 scheduleAutoDismiss()
@@ -60,6 +88,7 @@ Rectangle {
         }
 
         notifications.insert(0, {
+            "kind": "configurationError",
             "presetName": presetName,
             "message": message,
             "optionKey": optionKey,
@@ -71,11 +100,14 @@ Rectangle {
     function pushFiberFillDebug(previewToken, count) {
         // Only the current slice can be activated; replace older debug notices.
         for (let i = notifications.count - 1; i >= 0; --i)
-            if (notifications.get(i).previewToken.length > 0) notifications.remove(i)
+            if (notifications.get(i).kind === "fiberDebug") notifications.remove(i)
         notifications.insert(0, {
+            "kind": "fiberDebug",
             "presetName": "", "optionKey": "", "previewToken": previewToken,
             "title": qsTr("铺纤填充调试"),
-            "message": qsTr("已采集 %1 项铺纤诊断，点击显示。青色：原始轮廓区域；红色：候选轮廓未生成区域；橙色：被拒绝路径。诊断内容不会打印。").arg(count)
+            "message": count > 0
+                ? qsTr("已采集 %1 项铺纤诊断，点击显示。青色：原始轮廓区域；红色：候选轮廓未生成区域；橙色：被拒绝路径。诊断内容不会打印。").arg(count)
+                : qsTr("没有可显示的铺纤诊断。未生成区域仅比较已有候选轮廓与最终纤维覆盖，不包含从未生成候选的部分。")
         })
     }
 
@@ -83,6 +115,8 @@ Rectangle {
         if (index < 0 || index >= notifications.count)
             return
         const item = notifications.get(index)
+        if (item.kind === "warning" || (item.kind === "fiberDebug" && item.previewToken.length === 0))
+            return
         const presetName = item.presetName
         const message = item.message
         const optionKey = item.optionKey
@@ -107,7 +141,6 @@ Rectangle {
 
     function scheduleAutoDismiss() {
         if (notifications.count > 0
-                && notifications.get(0).previewToken.length === 0
                 && !notificationListPopup.opened
                 && !notificationHover.hovered) {
             autoDismissTimer.restart()
@@ -124,7 +157,7 @@ Rectangle {
 
     Timer {
         id: autoDismissTimer
-        interval: root.autoDismissInterval
+        interval: root.latestKind === "warning" ? 4000 : root.autoDismissInterval
         repeat: false
         onTriggered: root.dismiss(0)
     }
@@ -144,14 +177,18 @@ Rectangle {
             Layout.preferredWidth: 36
             Layout.preferredHeight: 36
             radius: 18
-            color: root.SmoothUI.theme.res.systemFillColorCriticalBackground
+            color: root.latestKind === "warning"
+                   ? root.SmoothUI.theme.res.systemFillColorCautionBackground
+                   : root.latestIsFiberDebug
+                     ? root.SmoothUI.theme.res.systemFillColorSolidAttentionBackground
+                     : root.SmoothUI.theme.res.systemFillColorCriticalBackground
 
             Icon {
                 anchors.centerIn: parent
                 width: 18
                 height: 18
-                source: root.latestIsFiberDebug ? FluentIcons.graph_Info : FluentIcons.graph_Error
-                color: root.latestIsFiberDebug ? "#ff8000" : root.SmoothUI.theme.res.systemFillColorCritical
+                source: root.notificationIcon(root.latestKind)
+                color: root.notificationColor(root.latestKind)
             }
         }
 
@@ -170,6 +207,8 @@ Rectangle {
             Label {
                 Layout.fillWidth: true
                 text: notifications.count > 0 ? notifications.get(0).message : ""
+                textFormat: Text.PlainText
+                maximumLineCount: 1
                 elide: Text.ElideRight
                 font: Typography.caption
                 color: root.SmoothUI.theme.res.textFillColorSecondary
@@ -181,7 +220,7 @@ Rectangle {
             implicitWidth: Math.max(20, countLabel.implicitWidth + 8)
             implicitHeight: 20
             radius: 10
-            color: root.SmoothUI.theme.res.systemFillColorCritical
+            color: root.notificationColor(root.latestKind)
 
             Label {
                 id: countLabel
@@ -222,7 +261,7 @@ Rectangle {
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
         onClicked: {
-            if (root.latestIsFiberDebug) root.activate(0)
+            if (root.latestIsFiberDebug && notifications.get(0).previewToken.length > 0) root.activate(0)
             else notificationListPopup.toggle()
         }
     }
@@ -336,8 +375,8 @@ Rectangle {
                             Layout.preferredWidth: 18
                             Layout.preferredHeight: 18
                             Layout.alignment: Qt.AlignTop
-                            source: model.previewToken.length > 0 ? FluentIcons.graph_Info : FluentIcons.graph_Error
-                            color: model.previewToken.length > 0 ? "#ff8000" : root.SmoothUI.theme.res.systemFillColorCritical
+                            source: root.notificationIcon(model.kind)
+                            color: root.notificationColor(model.kind)
                         }
 
                         ColumnLayout {
@@ -355,8 +394,11 @@ Rectangle {
                             Label {
                                 Layout.fillWidth: true
                                 text: model.message
+                                textFormat: model.kind === "warning" ? Text.PlainText : Text.AutoText
                                 wrapMode: Text.WordWrap
-                                maximumLineCount: 2
+                                // Warnings have no modal details dialog. Let the user
+                                // read the full text inside the bounded, scrollable list.
+                                maximumLineCount: model.kind === "warning" ? 2147483647 : 2
                                 elide: Text.ElideRight
                                 font: Typography.caption
                                 color: root.SmoothUI.theme.res.textFillColorSecondary
@@ -372,6 +414,7 @@ Rectangle {
                             }
 
                             Label {
+                                visible: model.kind === "configurationError" || model.previewToken.length > 0
                                 text: qsTr("查看详情")
                                 font: Typography.caption
                                 color: Theme.accentColor.defaultBrushFor(

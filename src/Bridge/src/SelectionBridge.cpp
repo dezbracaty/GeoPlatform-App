@@ -2,6 +2,8 @@
 #include "BridgeRegistration.hpp"
 #include <DocumentManager.hpp>
 #include <ActorDB.hpp>
+#include <algorithm>
+#include <memory>
 #include "Foundation/Log.h"
 #include <QQmlEngine>
 #include <ModelOrientationWidgetDB.hpp>
@@ -9,6 +11,50 @@
 #include <ModelTranslateWidgetDB.hpp>
 #include <transdb.h>
 #include <SystemTypes.hpp>  // For typeIdToString()
+#include <ImmediateNotifyGuard.hpp>
+
+namespace {
+template <typename Widget>
+void collectLinkedWidgets(DocumentManager& document, TypeID type,
+                          const std::vector<DBInstanceID>& actors,
+                          std::vector<std::shared_ptr<AutoRegisterDB>>& widgets) {
+    for (const auto id : document.getAllDBInstanceIds(type)) {
+        const auto widget = document.getDB<Widget>(id);
+        if (widget && std::find(actors.begin(), actors.end(), widget->getLinkedActorID()) != actors.end())
+            widgets.push_back(widget);
+    }
+}
+
+void removeLinkedWidgets(const std::vector<DBInstanceID>& actors) {
+    auto* document = DocumentManager::instance();
+    if (!document || actors.empty()) return;
+    std::vector<std::shared_ptr<AutoRegisterDB>> widgets;
+    collectLinkedWidgets<ModelOrientationWidgetDB>(*document, TypeID::MODEL_ORIENTATION_WIDGET_DB, actors, widgets);
+    collectLinkedWidgets<ModelScaleWidgetDB>(*document, TypeID::MODEL_SCALE_WIDGET_DB, actors, widgets);
+    collectLinkedWidgets<ModelTranslateWidgetDB>(*document, TypeID::MODEL_TRANSLATE_WIDGET_DB, actors, widgets);
+    if (widgets.empty()) return;
+
+    auto& transactions = TransactionManager::instance();
+    const bool hasPersistentWidget = std::any_of(widgets.begin(), widgets.end(),
+        [](const auto& widget) { return !widget->isTempDB(); });
+    std::unique_ptr<TransactionGuard> transaction;
+    if (hasPersistentWidget && !transactions.isRecordingSuppressed() && !transactions.isInTransaction())
+        transaction = std::make_unique<TransactionGuard>("Remove Model Widgets");
+
+    // Persistent widget deletion belongs to the caller's transaction when one
+    // exists. Record its material and relations too, so rollback restores a
+    // complete graph. Temporary widgets never enter that history.
+    ImmediateNotifyGuard immediate;
+    for (const auto& widget : widgets) {
+        if (widget->isTempDB()) {
+            TransientUpdateGuard transient;
+            document->unregisterDBInstance(widget->getDBInstanceID());
+        } else {
+            document->unregisterDBInstance(widget->getDBInstanceID());
+        }
+    }
+}
+} // namespace
 
 SelectionBridge::SelectionBridge(QObject* parent)
     : PropertyBridgeBase(parent) {
@@ -89,60 +135,7 @@ void SelectionBridge::setSelectedObjects(const std::vector<DBInstanceID>& select
         }
     }
 
-    // 删除被取消选中模型的所有Widget (Orientation, Scale, Translate)
-    if (!deselectedModels.empty()) {
-        LOG_INFO("🗑️ SelectionBridge: Cleaning up widgets for {} deselected models", deselectedModels.size());
-        TransactionGuard guard("Remove Model Widgets");
-
-        auto docManager = DocumentManager::instance();
-
-        // 清理 ModelOrientationWidget
-        auto orientationWidgetIds = docManager->getAllDBInstanceIds(TypeID::MODEL_ORIENTATION_WIDGET_DB);
-        for (const auto& widgetId : orientationWidgetIds) {
-            auto instance = docManager->getDBInstance(widgetId);
-            if (auto widget = std::dynamic_pointer_cast<ModelOrientationWidgetDB>(instance)) {
-                auto linkedActorId = widget->getLinkedActorID();
-                for (const auto& deselectedId : deselectedModels) {
-                    if (linkedActorId == deselectedId) {
-                        docManager->unregisterDBInstance(widgetId);
-                        break;
-                    }
-                }
-            }
-        }
-
-        // 清理 ModelScaleWidget
-        auto scaleWidgetIds = docManager->getAllDBInstanceIds(TypeID::MODEL_SCALE_WIDGET_DB);
-        LOG_DEBUG("SelectionBridge: Found {} scale widgets to check for cleanup", scaleWidgetIds.size());
-        for (const auto& widgetId : scaleWidgetIds) {
-            auto instance = docManager->getDBInstance(widgetId);
-            if (auto widget = std::dynamic_pointer_cast<ModelScaleWidgetDB>(instance)) {
-                auto linkedActorId = widget->getLinkedActorID();
-                for (const auto& deselectedId : deselectedModels) {
-                    if (linkedActorId == deselectedId) {
-                        LOG_INFO("🗑️ SelectionBridge: Removing ModelScaleWidget {} linked to deselected actor {}", widgetId.getValue(), deselectedId.getValue());
-                        docManager->unregisterDBInstance(widgetId);
-                        break;
-                    }
-                }
-            }
-        }
-
-        // 清理 ModelTranslateWidget
-        auto translateWidgetIds = docManager->getAllDBInstanceIds(TypeID::MODEL_TRANSLATE_WIDGET_DB);
-        for (const auto& widgetId : translateWidgetIds) {
-            auto instance = docManager->getDBInstance(widgetId);
-            if (auto widget = std::dynamic_pointer_cast<ModelTranslateWidgetDB>(instance)) {
-                auto linkedActorId = widget->getLinkedActorID();
-                for (const auto& deselectedId : deselectedModels) {
-                    if (linkedActorId == deselectedId) {
-                        docManager->unregisterDBInstance(widgetId);
-                        break;
-                    }
-                }
-            }
-        }
-    }
+    removeLinkedWidgets(deselectedModels);
 
     m_selectedIds = selectedIds;
     m_cacheValid = false;
@@ -182,57 +175,7 @@ void SelectionBridge::clearSelection() {
 
     LOG_INFO("🧹 SelectionBridge: Selection cleared");
 
-    // 删除所有之前选中模型的所有Widget (Orientation, Scale, Translate)
-    TransactionGuard guard("Remove Model Widgets");
-
-    auto docManager = DocumentManager::instance();
-
-    // 清理 ModelOrientationWidget
-    auto orientationWidgetIds = docManager->getAllDBInstanceIds(TypeID::MODEL_ORIENTATION_WIDGET_DB);
-    for (const auto& widgetId : orientationWidgetIds) {
-        auto instance = docManager->getDBInstance(widgetId);
-        if (auto widget = std::dynamic_pointer_cast<ModelOrientationWidgetDB>(instance)) {
-            auto linkedActorId = widget->getLinkedActorID();
-            for (const auto& prevId : m_selectedIds) {
-                if (linkedActorId == prevId) {
-                    docManager->unregisterDBInstance(widgetId);
-                    break;
-                }
-            }
-        }
-    }
-
-    // 清理 ModelScaleWidget
-    auto scaleWidgetIds = docManager->getAllDBInstanceIds(TypeID::MODEL_SCALE_WIDGET_DB);
-    for (const auto& widgetId : scaleWidgetIds) {
-        auto instance = docManager->getDBInstance(widgetId);
-        if (auto widget = std::dynamic_pointer_cast<ModelScaleWidgetDB>(instance)) {
-            auto linkedActorId = widget->getLinkedActorID();
-            for (const auto& prevId : m_selectedIds) {
-                if (linkedActorId == prevId) {
-                    docManager->unregisterDBInstance(widgetId);
-                    break;
-                }
-            }
-        }
-    }
-
-    // 清理 ModelTranslateWidget
-    auto translateWidgetIds = docManager->getAllDBInstanceIds(TypeID::MODEL_TRANSLATE_WIDGET_DB);
-    for (const auto& widgetId : translateWidgetIds) {
-        auto instance = docManager->getDBInstance(widgetId);
-        if (auto widget = std::dynamic_pointer_cast<ModelTranslateWidgetDB>(instance)) {
-            auto linkedActorId = widget->getLinkedActorID();
-            for (const auto& prevId : m_selectedIds) {
-                if (linkedActorId == prevId) {
-                    docManager->unregisterDBInstance(widgetId);
-                    break;
-                }
-            }
-        }
-    }
-
-
+    removeLinkedWidgets(m_selectedIds);
     m_selectedIds.clear();
     m_cacheValid = false;
 

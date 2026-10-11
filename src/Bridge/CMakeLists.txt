@@ -18,6 +18,7 @@ set(BRIDGE_SOURCES
     src/ModelSettingsBridge.cpp
     src/ModelColorPaintBridge.cpp
     src/CutToolBridge.cpp
+    src/FiberMaskBridge.cpp
     src/CameraBridge.cpp
     src/PrintBedPropertyBridge.cpp
     src/ModelPropertyBridge.cpp
@@ -46,6 +47,7 @@ set(BRIDGE_HEADERS
     include/ModelSettingsBridge.hpp
     include/ModelColorPaintBridge.hpp
     include/CutToolBridge.hpp
+    include/FiberMaskBridge.hpp
     include/CameraBridge.hpp
     include/PrintBedPropertyBridge.hpp
     include/ModelPropertyBridge.hpp

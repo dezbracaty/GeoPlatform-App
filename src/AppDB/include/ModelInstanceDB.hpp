@@ -65,6 +65,8 @@ public:
         const Vector3& worldOrigin,
         const Vector3& worldDirection,
         float maxWorldDistance = std::numeric_limits<float>::infinity()) const;
+    std::optional<PickHit> intersectPickRay(const Vector3& origin, const Vector3& direction,
+                                         float maxDistance) const override;
 
     std::vector<DBRelationRef> reportRelations() const override;
     bool replaceRelations(
