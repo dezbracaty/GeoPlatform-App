@@ -5,7 +5,6 @@ param(
     [string]$CMake = 'cmake',
     [ValidateSet('x64')][string]$Architecture = 'x64',
     [switch]$ConfigureOnly,
-    [switch]$Check,
     [switch]$OpenVSCode,
     [string]$SourceDir,
     [string[]]$CMakeArgs = @()
@@ -55,13 +54,11 @@ try {
         & code --new-window $projectRoot
         if ($LASTEXITCODE -ne 0) { throw 'VS Code could not be started. Install its code command on PATH.' }
     } else {
-        $configurePreset = $Preset
-        if ($Check) { $configurePreset = 'check' }
-        $configureArgs = @('--preset', $configurePreset)
+        $configureArgs = @('--preset', $Preset)
         $configureArgs += $CMakeArgs
         & $cmakePath @configureArgs
         if ($LASTEXITCODE -ne 0) { throw "CMake configure failed ($LASTEXITCODE)." }
-        if (-not $ConfigureOnly -and -not $Check) {
+        if (-not $ConfigureOnly) {
             & $cmakePath --build --preset $Preset
             if ($LASTEXITCODE -ne 0) { throw "GPlatform build failed ($LASTEXITCODE)." }
         }

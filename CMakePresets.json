@@ -29,15 +29,6 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug"
       }
-    },
-    {
-      "name": "check",
-      "inherits": "base",
-      "binaryDir": "${sourceDir}/build-environment-check",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "GPLATFORM_CHECK_ONLY": true
-      }
     }
   ],
   "buildPresets": [
@@ -46,16 +37,14 @@
       "configurePreset": "release",
       "targets": [
         "GPlatform"
-      ],
-      "jobs": 4
+      ]
     },
     {
       "name": "debug",
       "configurePreset": "debug",
       "targets": [
         "GPlatform"
-      ],
-      "jobs": 4
+      ]
     }
   ]
 }

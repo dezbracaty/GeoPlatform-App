@@ -10,7 +10,6 @@ while (($#)); do
         --preset) preset="${2:?Expected release or debug}"; shift 2 ;;
         --cmake) cmake_tool="${2:?Expected CMake executable}"; shift 2 ;;
         --configure-only) mode=configure; shift ;;
-        --check) mode=check; shift ;;
         --) shift; configure_args+=("$@"); break ;;
         *) echo "Unknown argument: $1" >&2; exit 1 ;;
     esac
@@ -21,11 +20,7 @@ if [[ "$(uname -s)" == Darwin ]]; then
     xcrun --find clang >/dev/null || { echo 'Install/select Xcode or Command Line Tools; check DEVELOPER_DIR.' >&2; exit 1; }
     xcrun --show-sdk-path >/dev/null || { echo 'No macOS SDK in the selected Apple developer directory.' >&2; exit 1; }
 fi
-if [[ "$mode" == check ]]; then
-    "$cmake_tool" --preset check "${configure_args[@]}"
-else
-    "$cmake_tool" --preset "$preset" "${configure_args[@]}"
-    if [[ "$mode" == build ]]; then
-        "$cmake_tool" --build --preset "$preset"
-    fi
+"$cmake_tool" --preset "$preset" "${configure_args[@]}"
+if [[ "$mode" == build ]]; then
+    "$cmake_tool" --build --preset "$preset"
 fi

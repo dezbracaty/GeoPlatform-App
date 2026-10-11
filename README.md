@@ -64,10 +64,13 @@ VS Code 使用 CMake Tools 的 `release`/`debug` 预设；Windows 开发环境�
 
 本子树保留已有构建启动器和 MSVC/Ninja 兼容处理；Qt 使用标准 CMake 包发现。
 CMake 根据实际编译器识别架构；不要求存在 `VSCMD_ARG_TGT_ARCH`。
-`check` 检查编译器与 Qt，不加载 SDK；完整配置才会验证并加载指定版本的 SDK。
+不提供单独的环境检查入口；正常 configure 会验证并加载指定版本的 SDK。
+构建 preset 不固定并发数；用户可通过 CMake 的标准并发设置自行控制。
 独立构建使用 App 自身的构建目录和 SDK 子模块，不读取主项目依赖缓存、源码或测试入口。
 
 CMake 会编译本仓库的 Base、AppDB、Document 和业务源码，并链接 SDK 中的库。
+SDK 中的依赖库与其对应构建的公开头文件、生成的配置头文件一起提供；App 不再次 fetch 或编译这些库。
+不同平台的生成头文件可能不同，不混用其他平台或其他构建配置的头文件。
 SDK 动态库会自动复制到应用包中。Qt 开发环境由本机提供；对外分发应用还需完成 Qt 部署与应用签名。
 `debug` 预设需要 SDK 中已有相应架构的 `Debug/` 产物，不能混用 Release 库。
 

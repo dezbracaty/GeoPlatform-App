@@ -72,9 +72,14 @@ function(gplatform_deploy_sdk_runtime target)
     endif()
     if(runtime)
         set(stamp "${CMAKE_CURRENT_BINARY_DIR}/${target}-sdk-runtime.stamp")
+        # One process per library avoids Windows command-line length limits.
+        set(copy_commands "")
+        foreach(library IN LISTS runtime)
+            list(APPEND copy_commands COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${library}" "${destination}")
+        endforeach()
         add_custom_command(OUTPUT "${stamp}"
             COMMAND "${CMAKE_COMMAND}" -E make_directory "${destination}"
-            COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${runtime} "${destination}"
+            ${copy_commands}
             COMMAND "${CMAKE_COMMAND}" -E touch "${stamp}"
             DEPENDS ${runtime} "${_sdk_slot}/sdk-manifest.json"
             COMMAND_EXPAND_LISTS VERBATIM)
