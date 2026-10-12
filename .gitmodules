@@ -2,3 +2,18 @@
 	path = ThirdParty/libs/GPlatformSDK
 	url = https://github.com/dezbracaty/GeoPlatform-SDK.git
 	branch = fix/sdk-packaging-restart
+
+[submodule "ThirdParty/SmoothUI"]
+	path = ThirdParty/SmoothUI
+	url = https://github.com/dezbracaty/SmoothUI-Lib
+	branch = dev
+
+[submodule "ThirdParty/SmoothUIDock"]
+	path = ThirdParty/SmoothUIDock
+	url = https://github.com/dezbracaty/SmoothUI-Dock.git
+	branch = fix/sdk-packaging-restart
+
+[submodule "ThirdParty/OrcaSlicer"]
+	path = ThirdParty/OrcaSlicer
+	url = https://github.com/dezbracaty/OrcaSlicer.git
+	branch = fix/sdk-packaging-restart

@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
+include(cmake/GPlatformBuildInputs.cmake)
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     if(CMAKE_HOST_APPLE)
