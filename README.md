@@ -26,13 +26,15 @@ BaseRender 源码提供渲染器工厂、会话等扩展接口；内置后端仍
 
 ```bash
 git lfs install
-git clone --branch fix/sdk-packaging-restart --recurse-submodules https://github.com/dezbracaty/GeoPlatform-App.git
+git clone --recurse-submodules https://github.com/dezbracaty/GeoPlatform-App.git
 cd GeoPlatform-App
 git -C ThirdParty/libs/GPlatformSDK lfs pull
 ```
 
 SDK 路径固定为 `ThirdParty/libs/GPlatformSDK/<架构>/<构建类型>/`。
 版本由本仓库记录的子模块提交指针决定，无需在目录名中写版本。
+当前支持入口是默认分支 `fix/sdk-packaging-restart`；SDK 同名重建后仅提供格式 2 的新交付历史。
+旧版本记录的 SDK SHA 需要从迁移归档恢复；不将旧完整 SDK 混入当前交付。
 Git App 同时检查第三方子模块提交及受管文件修改；改变与 SDK 共用的第三方输入，需要根项目重新生产匹配 SDK。
 
 ## CMake 编译
