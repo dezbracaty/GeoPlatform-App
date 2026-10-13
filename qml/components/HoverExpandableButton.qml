@@ -17,6 +17,15 @@ Item {
     property int expandDirection: 0  // 0=右, 1=下, 2=左, 3=上
     property int hoverDelay: 300     // hover延迟毫秒
     property int hideDelay: 500      // 隐藏延迟毫秒
+    function guideState() {
+        return { opened: expandPopup.visible }
+    }
+    function restoreGuideState(state) {
+        if (state.opened)
+            expandPopup.open()
+        else
+            expandPopup.close()
+    }
 
     implicitWidth: PrintWorkspaceStyle.toolbarButtonSize
     implicitHeight: PrintWorkspaceStyle.toolbarButtonSize

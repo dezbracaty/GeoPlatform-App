@@ -15,6 +15,17 @@ AppPopup {
     property int historyCursor: 0
     property string inputDraft: ""
     property bool userPositioned: false
+    property bool guideMode: false
+    focus: !guideMode
+    closePolicy: guideMode ? Popup.NoAutoClose : Popup.CloseOnEscape
+
+    readonly property Item guidePanelItem: popupContent
+    function guideSummary() {
+        return { visible: AIChatBridge.panelVisible, guideMode: guideMode,
+                 draftHash: Qt.md5(inputArea.text), historyCount: AIChatBridge.messages.length,
+                 historyHash: Qt.md5(JSON.stringify(AIChatBridge.messages)),
+                 streaming: AIChatBridge.streaming, turn: AIChatBridge.activeTurnId() }
+    }
     property real draggedX: 0
     property real draggedY: 0
     readonly property real edgeMargin: 16
@@ -96,7 +107,7 @@ AppPopup {
     Shortcut {
         sequence: "Escape"
         context: Qt.WindowShortcut
-        enabled: control.opened
+        enabled: control.opened && !control.guideMode
         autoRepeat: false
         onActivated: control.requestClose()
     }
@@ -105,7 +116,7 @@ AppPopup {
         if (!AIChatBridge.panelVisible)
             AIChatBridge.openPanel()
         Qt.callLater(function() {
-            if (control.opened) {
+            if (control.opened && !control.guideMode) {
                 if (AIAccountBridge.signedIn)
                     inputArea.forceActiveFocus(Qt.ShortcutFocusReason)
                 else
@@ -157,6 +168,7 @@ AppPopup {
 
     ColumnLayout {
         id: popupContent
+        objectName: "aiAssistantContent"
         anchors.fill: parent
         spacing: 0
         focus: true

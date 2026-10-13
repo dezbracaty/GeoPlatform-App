@@ -85,6 +85,7 @@ Item {
             // Page-role-selected renderer
             ThreadRendererQmlItem {
                 id: threadRenderer
+                objectName: "print.viewport." + root.workspaceName + ".renderer"
                 anchors.fill: parent
                 rendererRole: root.rendererRole
                 renderActive: root.renderActive

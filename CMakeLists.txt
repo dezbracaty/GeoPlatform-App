@@ -87,6 +87,7 @@ set(QML_FILES
     qml/dialogs/PrinterControlPopup.qml
     qml/dialogs/AccountCenterPopup.qml
     qml/components/DraggablePanel.qml
+    qml/components/UserGuide.qml
     qml/components/PrinterStatusBar.qml
     qml/components/MachineSelectionBar.qml
     qml/components/PreviewInspectionHint.qml

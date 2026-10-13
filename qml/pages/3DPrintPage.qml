@@ -37,6 +37,14 @@ ContentPage {
         : (activePageName === "realistic" ? realisticPage.workspaceContent
                                            : preparePage.workspaceContent)
     readonly property var workspacePageNames: ["prepare", "preview", "realistic"]
+    readonly property Item guidePrintBar: globalPrintBar
+    property var guideTabs: ({})
+    function guideTab(name) { return guideTabs[name] || null }
+    function guidePageReady(name) {
+        const renderer = rendererForPage(name)
+        return dockReady && activePageName === name && renderer && renderer.visible
+            && renderer.renderActive && (renderer.hasPresentedFrame || renderer.isFrameReady)
+    }
 
     function openPrinterControl() {
         globalPrintBar.closeMachinePopup()
@@ -261,6 +269,11 @@ ContentPage {
 
                         Button {
                             id: workspaceTab
+                            Component.onCompleted: root.guideTabs[root.workspacePageNames[index]] = workspaceTab
+                            Component.onDestruction: {
+                                if (root.guideTabs[root.workspacePageNames[tabIndex]] === workspaceTab)
+                                    delete root.guideTabs[root.workspacePageNames[tabIndex]]
+                            }
                             objectName: "print.workspace.tab."
                                         + root.workspacePageNames[index]
                             readonly property int tabIndex: index
@@ -356,7 +369,7 @@ ContentPage {
         return preparePage.renderer
     }
 
-    function activatePage(pageName, updateEnvironment) {
+    function activatePage(pageName, updateEnvironment, copyCamera = true) {
         if (!dockReady || workspacePageNames.indexOf(pageName) < 0) {
             return
         }
@@ -365,7 +378,7 @@ ContentPage {
         var targetRenderer = rendererForPage(pageName)
         changingPage = true
         activePageName = pageName
-        if (sourceRenderer && targetRenderer && sourceRenderer !== targetRenderer)
+        if (copyCamera && sourceRenderer && targetRenderer && sourceRenderer !== targetRenderer)
             targetRenderer.copyCameraStateFrom(sourceRenderer)
         if (pageName === "preview") {
             previewDock.setAsCurrentTab()

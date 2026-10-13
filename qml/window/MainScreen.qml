@@ -11,6 +11,22 @@ Item {
     id: root
     property alias pageRouter: page_router
     property bool debugWindowOpened: false
+    property alias userGuide: workspaceGuide
+    function startUserGuide(workspace) {
+        const routed = navigation_view.routerView.currentItem
+        const page = routed ? (routed.singleton && routed.singletonItem
+                               ? routed.singletonItem.item : routed.item) : null
+        workspaceGuide.start(workspace, page)
+    }
+    UserGuide {
+        id: workspaceGuide
+        navigation: navigation_view
+        aiPanel: aiAssistantPanel
+    }
+    Connections {
+        target: navigation_view.routerView
+        function onCurrentItemChanged() { workspaceGuide.close() }
+    }
 
     Component.onCompleted: Global.mainScreen = root
     Component.onDestruction: {
@@ -231,6 +247,7 @@ Item {
         id: aiAssistantShortcut
         objectName: "aiAssistantShortcut"
         sequence: "Alt+I"
+        enabled: !workspaceGuide.running
         context: Qt.ApplicationShortcut
         onActivated: {
             if (!ActionManager.triggerAction("ui.ai.toggle"))
@@ -240,12 +257,14 @@ Item {
 
     Shortcut {
         sequence: "Ctrl+O"
+        enabled: !workspaceGuide.running
         context: Qt.ApplicationShortcut
         onActivated: Global.starter.chooseModel({})
     }
 
     Shortcut {
         sequence: "Ctrl+I"
+        enabled: !workspaceGuide.running
         context: Qt.ApplicationShortcut
         onActivated: Global.starter.chooseStl({})
     }

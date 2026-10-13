@@ -6,7 +6,7 @@
 [submodule "ThirdParty/SmoothUI"]
 	path = ThirdParty/SmoothUI
 	url = https://github.com/dezbracaty/SmoothUI-Lib
-	branch = dev
+	branch = feature/print-workspace-tour
 
 [submodule "ThirdParty/SmoothUIDock"]
 	path = ThirdParty/SmoothUIDock

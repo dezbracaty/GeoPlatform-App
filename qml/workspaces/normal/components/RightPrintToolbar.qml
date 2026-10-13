@@ -80,15 +80,6 @@ ToolbarSurface {
                 tooltip: qsTr("Help")
                 expandItems: [
                     {
-                        icon: FluentIcons.graph_Help,
-                        text: qsTr("User Guide"),
-                        tooltip: qsTr("View User Guide"),
-                        enabled: true,
-                        action: function() {
-                            rightPrintToolbar.guideRequested()
-                        }
-                    },
-                    {
                         icon: FluentIcons.graph_Info,
                         text: qsTr("About"),
                         tooltip: qsTr("About GPlatform"),

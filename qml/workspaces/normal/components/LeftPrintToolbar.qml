@@ -15,6 +15,8 @@ ToolbarSurface {
     // 属性声明 - 从父组件传递
     property bool gridVisible: true
     property bool showBedBounds: true
+    readonly property var guideGroups: [fileGroupButton, viewGroupButton, transformGroupButton,
+                                       editGroupButton, sliceGroupButton]
 
     ScrollView {
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
@@ -31,6 +33,8 @@ ToolbarSurface {
 
             // ==================== File 分组 ====================
             HoverExpandableButton {
+                id: fileGroupButton
+                objectName: "print.toolbar.file"
                 icon.name: FluentIcons.graph_Document
                 tooltip: qsTr("File")
                 expandItems: [
@@ -85,6 +89,8 @@ ToolbarSurface {
 
             // ==================== View 分组 ====================
             HoverExpandableButton {
+                id: viewGroupButton
+                objectName: "print.toolbar.view"
                 icon.name: FluentIcons.graph_View
                 tooltip: qsTr("View")
                 expandItems: [
@@ -145,6 +151,8 @@ ToolbarSurface {
 
             // ==================== Transform 分组 ====================
             HoverExpandableButton {
+                id: transformGroupButton
+                objectName: "print.toolbar.transform"
                 icon.name: FluentIcons.graph_Move
                 enabled: SelectionBridge.hasSelection
                 tooltip: qsTr("Transform")
@@ -289,6 +297,7 @@ ToolbarSurface {
 
             // ==================== Edit 分组 ====================
             HoverExpandableButton {
+                id: editGroupButton
                 objectName: "print.toolbar.edit"
                 icon.name: FluentIcons.graph_Edit
                 enabled: SelectionBridge.hasSelection
@@ -401,6 +410,7 @@ ToolbarSurface {
             // ==================== Slice 分组 ====================
             HoverExpandableButton {
                 id: sliceGroupButton
+                objectName: "print.toolbar.slice"
 
                 readonly property string sliceSelectedText: qsTr("Slice Selected")
                 readonly property string sliceSelectedTooltip: qsTr("Slice selected models")
