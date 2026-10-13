@@ -445,10 +445,9 @@ if(GPLATFORM_ENABLE_LIBSLICER)
         endif()
     endif()
 
-    # A profile-only edit does not relink the application, so a POST_BUILD
-    # command alone leaves stale presets in the runnable app bundle. Track the
-    # installed libslicer resources explicitly and deploy them before the app
-    # target whenever any resource changes.
+    # A runtime- or profile-only edit may not relink the application. Track
+    # both inputs so the existing deployment task also updates the runnable
+    # bundle when POST_BUILD does not run.
     file(GLOB_RECURSE _gplatform_libslicer_runtime_resources
         CONFIGURE_DEPENDS LIST_DIRECTORIES FALSE
         "${LIBSLICER_RESOURCE_DIR}/*")
@@ -461,10 +460,15 @@ if(GPLATFORM_ENABLE_LIBSLICER)
         COMMAND "${CMAKE_COMMAND}" -E copy_directory
             "${LIBSLICER_RESOURCE_DIR}"
             "${_gplatform_libslicer_resource_dir}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory
+            "${_gplatform_libslicer_runtime_dir}"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "$<TARGET_FILE:libslicer::libslicer>"
+            "${_gplatform_libslicer_runtime_dir}/$<TARGET_FILE_NAME:libslicer::libslicer>"
         COMMAND "${CMAKE_COMMAND}" -E touch
             "${_gplatform_libslicer_resource_stamp}"
-        DEPENDS ${_gplatform_libslicer_runtime_resources}
-        COMMENT "Deploying updated libslicer preset resources"
+        DEPENDS ${_gplatform_libslicer_runtime_resources} "$<TARGET_FILE:libslicer::libslicer>"
+        COMMENT "Deploying updated libslicer runtime and preset resources"
         VERBATIM)
     add_custom_target(${PROJECT_NAME}_libslicer_resources
         DEPENDS "${_gplatform_libslicer_resource_stamp}")

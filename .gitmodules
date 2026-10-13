@@ -1,7 +1,7 @@
 [submodule "GPlatformSDK"]
 	path = ThirdParty/libs/GPlatformSDK
 	url = https://github.com/dezbracaty/GeoPlatform-SDK.git
-	branch = fix/sdk-packaging-restart
+	branch = feature/print-workspace-tour
 
 [submodule "ThirdParty/SmoothUI"]
 	path = ThirdParty/SmoothUI
@@ -16,4 +16,4 @@
 [submodule "ThirdParty/OrcaSlicer"]
 	path = ThirdParty/OrcaSlicer
 	url = https://github.com/dezbracaty/OrcaSlicer.git
-	branch = fix/sdk-packaging-restart
+	branch = feature/print-workspace-tour

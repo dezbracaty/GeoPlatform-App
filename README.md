@@ -35,11 +35,11 @@ SDK 路径固定为 `ThirdParty/libs/GPlatformSDK/<架构>/<构建类型>/`。
 版本由本仓库记录的子模块提交指针决定，无需在目录名中写版本。
 当前支持入口是默认分支 `fix/sdk-packaging-restart`；SDK 同名重建后仅提供格式 2 的新交付历史。
 旧版本记录的 SDK SHA 需要从迁移归档恢复；不将旧完整 SDK 混入当前交付。
-Git App 同时检查第三方子模块提交及受管文件修改；改变与 SDK 共用的第三方输入，需要根项目重新生产匹配 SDK。
+SDK 元数据中的第三方提交、版本和开关记录生产来源，不要求 App 的 HEAD 或工作区与记录完全相等；未提交修改可以正常配置和编译。
 
 ## CMake 编译
 
-请使用与 SDK 配套的 C++ 工具链及相同 Qt 版本；实际构建信息见所选 `<架构>/<构建类型>/sdk-build.json`。
+请使用与 SDK 二进制兼容的 C++ 工具链及 Qt；实际生产环境记录在所选 `<架构>/<构建类型>/sdk-build.json`，不强制 MSVC 主次版本或 Qt 补丁版本完全相同。
 Windows 使用 MSVC 开发环境，macOS 最低版本为 15。
 安装 CMake 3.24+、Ninja、配套 Qt（含 Quick、QuickControls2、Quick3D、Network、Concurrent、Multimedia 等模块），
 将 Ninja 等构建工具加入 PATH；macOS/Linux 将所选 CMake 加入 PATH。在本仓库根目录执行：
@@ -52,7 +52,7 @@ cmake --build --preset release
 Windows 使用 Visual Studio 自带的 CMake。VS Code 用户将 [settings.json.example](settings.json.example) 复制到本仓库的 `.vscode/settings.json`，填写：
 
 - `cmake.cmakePath`：VS 自带 `cmake.exe` 的完整路径。
-- `cmake.configureEnvironment.Qt6_DIR`：包含 `Qt6Config.cmake` 的目录，须匹配 SDK 的 Qt 版本。
+- `cmake.configureEnvironment.Qt6_DIR`：包含本机所选 `Qt6Config.cmake` 的目录。
 
 安装 CMake Tools 扩展，选择 `release` configure/build preset，依次执行 CMake: Configure 和 CMake: Build。
 模板中的占位路径必须替换；无效的 CMake 路径由 CMake Tools 报错。未启用模板时仍可能从 PATH 自动选择 CMake。
@@ -72,7 +72,7 @@ $env:Qt6_DIR = 'C:/path/to/Qt/msvc2022_64/lib/cmake/Qt6'
 
 CMake 会编译本仓库的 Base、AppDB、Document 和业务源码，并链接 SDK 中的库。
 SDK 格式 2 只提供内部库（含 Tr、TransDB、JournalSystem）及对应构建的公开/生成头文件，不包含第三方库。
-App 先读取 SDK 的依赖版本、特性和源码子模块提交要求，查找本机匹配 Qt，再用与根项目相同的 fetch 规则准备第三方目标，最后导入内部 SDK。
+App 检查 SDK 的平台、格式、编译器类型和 MSVC 运行库，查找本机所选 Qt，再用与根项目相同的 fetch 规则和当前配置准备第三方目标，最后导入内部 SDK；不从 SDK 元数据强制覆盖依赖版本和开关。
 VTK、OCCT、RTTR、Embree、spdlog 等从原有机器级缓存使用配套安装的库和头文件；兼容缓存可复用，缺失时由原有规则下载或构建。Eigen/cereal 是头文件库，Filament 沿用官方预编译包。
 SmoothUI、SmoothUIDock/KDDockWidgets 和 miniz 在 App 构建中从子模块源码编译；libslicer 使用原有独立构建缓存。其缓存键含源码绝对路径，因此不同 checkout 首次可能重新编译 libslicer，不迁移缓存或复用含其他源码路径的构建树。
 不混用旧完整 SDK 格式或不同平台/配置的头文件；没有格式 2 的平台槽会明确报缺失，需要根项目在相应平台生产。
@@ -80,12 +80,13 @@ SmoothUI、SmoothUIDock/KDDockWidgets 和 miniz 在 App 构建中从子模块源
 Windows 必须提供有效的 `Qt6_DIR`；缺失或目录不含 `Qt6Config.cmake` 时，在 `project()` 前报错停止。
 可通过环境变量、`-DQt6_DIR=...` 或本地 CMake 配置提供，已有合法缓存也算已提供；显式 CMake 值优先于环境默认值。
 Windows 只查找所选 Qt 目录，不自动改用其他安装。macOS/Linux 保留标准 Qt6_DIR、prefix 和 Kit 查找方式。
-SDK 的 Qt 依赖查找失败时会停止配置，保留原始诊断，并提示 SDK 所需版本和标准路径配置示例；其他 SDK 依赖错误不会被当作 Qt 配置错误。
-不在仓库中固定安装路径。Qt 版本须与 SDK 匹配；更换 Qt 时清理该项目配置缓存或使用新的构建目录。
+Qt 组件查找失败时会停止配置，保留原始诊断，并提示标准路径配置示例；其他 SDK 依赖错误不会被当作 Qt 配置错误。
+不在仓库中固定安装路径，也不锁定 Qt 的同一补丁版本。跨库接口或依赖 ABI 改变时仍需重建配套 SDK，实际兼容性由编译、链接和运行验证。更换 Qt 时清理该项目配置缓存或使用新的构建目录。
 仅修改环境不会覆盖旧缓存，无需清理机器级依赖缓存。纯 build 未触发重新 configure 时不会执行这些输入检查。
 主项目打包生成的 App 文件目录带有实物 SDK 和已初始化的第三方受管源码，直接使用以上命令；无需伪造 Git 仓库或初始化。`ThirdParty/source-revisions.json` 记录生产输入来源，不能证明文件未被后续修改；包的实物校验和真实构建仍需验证。
 正式 Git 仓库使用者则需按上面的步骤初始化 submodule/LFS。两种交付状态应分别验证。
 SDK 动态库会自动复制到应用包中。Qt 开发环境由本机提供；对外分发应用还需完成 Qt 部署与应用签名。
+libslicer 运行库和预设资源由现有部署任务跟踪；增量更新运行库时，即使主程序不重新链接，也会复制到运行目录。
 `debug` 预设需要 SDK 中已有相应架构的 `Debug/` 产物，不能混用 Release 库。
 
 ## 更新代码
