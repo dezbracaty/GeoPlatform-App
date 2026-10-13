@@ -42,22 +42,33 @@ Git App 同时检查第三方子模块提交及受管文件修改；改变与 SD
 请使用与 SDK 配套的 C++ 工具链及相同 Qt 版本；实际构建信息见所选 `<架构>/<构建类型>/sdk-build.json`。
 Windows 使用 MSVC 开发环境，macOS 最低版本为 15。
 安装 CMake 3.24+、Ninja、配套 Qt（含 Quick、QuickControls2、Quick3D、Network、Concurrent、Multimedia 等模块），
-将 CMake 和 Ninja 加入 PATH。在本仓库根目录执行：
+将 Ninja 等构建工具加入 PATH；macOS/Linux 将所选 CMake 加入 PATH。在本仓库根目录执行：
 
 ```bash
 cmake --preset release
 cmake --build --preset release
 ```
 
-Windows 使用 Visual Studio 自带的 CMake。在已配置 MSVC 开发环境和 Qt 搜索路径的 PowerShell 中，显式选择本机对应安装路径：
+Windows 使用 Visual Studio 自带的 CMake。VS Code 用户将 [settings.json.example](settings.json.example) 复制到本仓库的 `.vscode/settings.json`，填写：
+
+- `cmake.cmakePath`：VS 自带 `cmake.exe` 的完整路径。
+- `cmake.configureEnvironment.Qt6_DIR`：包含 `Qt6Config.cmake` 的目录，须匹配 SDK 的 Qt 版本。
+
+安装 CMake Tools 扩展，选择 `release` configure/build preset，依次执行 CMake: Configure 和 CMake: Build。
+模板中的占位路径必须替换；无效的 CMake 路径由 CMake Tools 报错。未启用模板时仍可能从 PATH 自动选择 CMake。
+个人 `.vscode/settings.json` 不提交；主项目和独立 App 共用这份模板。
+
+命令行用户在已配置 MSVC 开发环境的 PowerShell 中显式选择本机安装路径和 Qt：
 
 ```powershell
 $CMakePath = 'C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
+$env:Qt6_DIR = 'C:/path/to/Qt/msvc2022_64/lib/cmake/Qt6'
 & $CMakePath --preset release
 & $CMakePath --build --preset release
 ```
 
-`CMakePath` 是终端变量，用来选择启动工具；不是项目要求新增的 CMake 配置变量。
+`CMakePath` 是终端变量，用来选择启动工具；不是项目要求新增的 CMake 配置变量。VS Code 的 `cmake.cmakePath` 不影响终端中的裸 `cmake` 命令。
+上面的通用命令和下面的更新、扩展检查命令在 Windows 下也应使用所选 VS CMake 执行。
 
 CMake 会编译本仓库的 Base、AppDB、Document 和业务源码，并链接 SDK 中的库。
 SDK 格式 2 只提供内部库（含 Tr、TransDB、JournalSystem）及对应构建的公开/生成头文件，不包含第三方库。
@@ -66,9 +77,12 @@ VTK、OCCT、RTTR、Embree、spdlog 等从原有机器级缓存使用配套安�
 SmoothUI、SmoothUIDock/KDDockWidgets 和 miniz 在 App 构建中从子模块源码编译；libslicer 使用原有独立构建缓存。其缓存键含源码绝对路径，因此不同 checkout 首次可能重新编译 libslicer，不迁移缓存或复用含其他源码路径的构建树。
 不混用旧完整 SDK 格式或不同平台/配置的头文件；没有格式 2 的平台槽会明确报缺失，需要根项目在相应平台生产。
 不提供单独的环境检查入口；preset 和共享 fetch 入口不额外限制并发数。OrcaSlicer 自身依赖脚本保留其已有构建行为。
-Qt 由本机提供：`Qt6_DIR` 指向包含 `Qt6Config.cmake` 的目录，或用 `CMAKE_PREFIX_PATH` 指向 Qt 安装根目录；也可由 IDE 的 Qt Kit 传入。无需同时设置两个变量。
+Windows 必须提供有效的 `Qt6_DIR`；缺失或目录不含 `Qt6Config.cmake` 时，在 `project()` 前报错停止。
+可通过环境变量、`-DQt6_DIR=...` 或本地 CMake 配置提供，已有合法缓存也算已提供；显式 CMake 值优先于环境默认值。
+Windows 只查找所选 Qt 目录，不自动改用其他安装。macOS/Linux 保留标准 Qt6_DIR、prefix 和 Kit 查找方式。
 SDK 的 Qt 依赖查找失败时会停止配置，保留原始诊断，并提示 SDK 所需版本和标准路径配置示例；其他 SDK 依赖错误不会被当作 Qt 配置错误。
-变量可在用户环境或本地 CMake 配置中设置，不在仓库中固定安装路径。Qt 版本须与 SDK 匹配；更换 Qt 时使用新的构建目录。
+不在仓库中固定安装路径。Qt 版本须与 SDK 匹配；更换 Qt 时清理该项目配置缓存或使用新的构建目录。
+仅修改环境不会覆盖旧缓存，无需清理机器级依赖缓存。纯 build 未触发重新 configure 时不会执行这些输入检查。
 主项目打包生成的 App 文件目录带有实物 SDK 和已初始化的第三方受管源码，直接使用以上命令；无需伪造 Git 仓库或初始化。`ThirdParty/source-revisions.json` 记录生产输入来源，不能证明文件未被后续修改；包的实物校验和真实构建仍需验证。
 正式 Git 仓库使用者则需按上面的步骤初始化 submodule/LFS。两种交付状态应分别验证。
 SDK 动态库会自动复制到应用包中。Qt 开发环境由本机提供；对外分发应用还需完成 Qt 部署与应用签名。

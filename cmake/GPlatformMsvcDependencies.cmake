@@ -1,8 +1,9 @@
 include_guard(GLOBAL)
 
-# Ninja parses /showIncludes output. Preserve the actual compiler output bytes:
-# older CMake versions can mis-decode UTF-8 diagnostics using the Windows ANSI
-# code page. VSLANG alone is insufficient when only a Chinese VS pack exists.
+# Ninja parses /showIncludes output. Decode the compiler's console encoding into
+# CMake's internal UTF-8 before the generator encodes the prefix for Ninja.
+# Raw ANSI bytes can make rules.ninja generation fail in an IDE without a console.
+# VSLANG alone is insufficient when only a Chinese VS pack exists.
 if(MSVC AND CMAKE_GENERATOR MATCHES "^Ninja")
     set(_probe_dir "${CMAKE_BINARY_DIR}/CMakeFiles/GPlatformMsvcDependencies")
     file(MAKE_DIRECTORY "${_probe_dir}")
@@ -13,7 +14,7 @@ if(MSVC AND CMAKE_GENERATOR MATCHES "^Ninja")
             "${CMAKE_CXX_COMPILER}" /nologo /showIncludes /c
             "${_probe_dir}/probe.cpp" "/Fo${_probe_dir}/probe.obj"
         RESULT_VARIABLE _probe_result OUTPUT_VARIABLE _probe_output
-        ERROR_VARIABLE _probe_error ENCODING NONE)
+        ERROR_VARIABLE _probe_error ENCODING AUTO)
     if(NOT _probe_result EQUAL 0)
         message(FATAL_ERROR "MSVC dependency probe failed: ${_probe_output}${_probe_error}")
     endif()

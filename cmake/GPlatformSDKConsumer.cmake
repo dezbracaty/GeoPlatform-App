@@ -60,11 +60,16 @@ foreach(index RANGE ${_sdk_dependency_last})
     set(${key} "${expected}")
 endforeach()
 string(JSON _sdk_qt_version GET "${_sdk_info}" Qt6_VERSION)
-find_package(Qt6 ${_sdk_qt_version} EXACT COMPONENTS Core Gui Qml Quick QuickControls2 Network Quick3D Concurrent Multimedia Widgets OpenGL OpenGLWidgets Sql)
+if(CMAKE_HOST_WIN32)
+    find_package(Qt6 ${_sdk_qt_version} EXACT CONFIG COMPONENTS Core Gui Qml Quick QuickControls2 Network Quick3D Concurrent Multimedia Widgets OpenGL OpenGLWidgets Sql
+        PATHS "${Qt6_DIR}" NO_DEFAULT_PATH)
+else()
+    find_package(Qt6 ${_sdk_qt_version} EXACT COMPONENTS Core Gui Qml Quick QuickControls2 Network Quick3D Concurrent Multimedia Widgets OpenGL OpenGLWidgets Sql)
+endif()
 if(NOT Qt6_FOUND)
     message(FATAL_ERROR
         "This SDK requires Qt ${_sdk_qt_version} EXACT: ${Qt6_NOT_FOUND_MESSAGE}\n"
-        "Set Qt6_DIR to the directory containing Qt6Config.cmake, or CMAKE_PREFIX_PATH to the Qt installation prefix; an IDE Qt Kit is also supported.\n"
+        "Set Qt6_DIR to the directory containing Qt6Config.cmake.\n"
         "Example: cmake --preset release -DQt6_DIR=\"<Qt>/lib/cmake/Qt6\"\n"
         "Use a new build directory when changing Qt installations.")
 endif()

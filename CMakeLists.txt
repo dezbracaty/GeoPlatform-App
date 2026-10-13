@@ -41,7 +41,12 @@ add_definitions(-DAPP_VERSION=${VERSION_STR})
 
 set(QML_IMPORT_PATH ${CMAKE_BINARY_DIR}/qt/qml CACHE STRING "" FORCE)
 
-find_package(Qt6 COMPONENTS Core Quick QuickControls2 Network Quick3D Concurrent Multimedia REQUIRED)
+if(CMAKE_HOST_WIN32)
+    find_package(Qt6 CONFIG REQUIRED COMPONENTS Core Quick QuickControls2 Network Quick3D Concurrent Multimedia
+        PATHS "${Qt6_DIR}" NO_DEFAULT_PATH)
+else()
+    find_package(Qt6 COMPONENTS Core Quick QuickControls2 Network Quick3D Concurrent Multimedia REQUIRED)
+endif()
 
 # Find spdlog package
 find_package(spdlog REQUIRED)
