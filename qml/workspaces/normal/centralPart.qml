@@ -20,6 +20,8 @@ Item {
                                          ? threadRenderer.renderActive
                                          : false
     onRenderActiveChanged: {
+        if (!renderActive)
+            closeGuide()
         if (!renderActive && FiberMaskBridge.active)
             FiberMaskBridge.cancel()
         if (!renderActive && CutToolBridge.active)
@@ -59,6 +61,83 @@ Item {
     property bool inspectorAutoExpandSuppressed: false
     property bool rotationWidgetActive: false  // 跟踪旋转widget是否真正激活
     property bool cellHighlightActive: false  // 跟踪面片高亮功能是否激活
+
+    function startGuide() {
+        if (!renderActive || !Window.window || workspaceTour.popupItem)
+            return
+
+        var guideSteps = [
+            {
+                title: qsTr("3D View"),
+                description: qsTr("Rotate, pan and zoom to inspect models on the build plate."),
+                target: function() { return guideViewportArea }
+            },
+            {
+                title: qsTr("Model Tools"),
+                description: qsTr("Import models and use editing tools from this toolbar."),
+                target: function() { return leftPrintToolbar }
+            }
+        ]
+        if (modelInspector.visible) {
+            guideSteps.push({
+                title: qsTr("Model Properties"),
+                description: qsTr("Select a model, then open this panel to view and edit its properties."),
+                target: function() { return modelInspector }
+            })
+        }
+        guideSteps.push({
+            title: qsTr("Scene Settings"),
+            description: qsTr("Adjust scene settings here. Use the guide button to repeat this tour."),
+            target: function() { return rightPrintToolbar },
+            isLast: true
+        })
+        workspaceTour.steps = guideSteps
+        workspaceTour.open()
+    }
+
+    function closeGuide() {
+        if (workspaceTour && workspaceTour.popupItem) {
+            workspaceTour.popupItem.destroy()
+            workspaceTour.popupItem = null
+        }
+    }
+
+    Component.onDestruction: closeGuide()
+
+    // Highlight a central region so Tour can keep its description inside the window.
+    Item {
+        id: guideViewportArea
+        anchors.centerIn: parent
+        width: Math.min(parent.width * 0.55, 440)
+        height: Math.min(parent.height * 0.3, 200)
+    }
+
+    Tour {
+        id: workspaceTour
+        objectName: "print.workspace.tour"
+        radius: 8
+    }
+
+    Shortcut {
+        sequence: "Escape"
+        enabled: workspaceTour.popupItem !== null
+        onActivated: centralFragment.closeGuide()
+    }
+
+    Connections {
+        target: centralFragment.Window.window
+        function onVisibleChanged() {
+            if (!centralFragment.Window.window || !centralFragment.Window.window.visible)
+                centralFragment.closeGuide()
+        }
+    }
+
+    Connections {
+        target: modelInspector
+        function onVisibleChanged() {
+            centralFragment.closeGuide()
+        }
+    }
 
     function openSceneSettingsPanel() {
         sceneSettingsPopup.triggerButton = rightPrintToolbar
@@ -115,6 +194,7 @@ Item {
         x: parent.width - width - 16
         y: Math.max(70, (parent.height - height) / 2)
         z: 10
+        onGuideRequested: centralFragment.startGuide()
 
         // 连接打开设置面板信号
         onOpenSettingsPanel: function(panelType, triggerButton) {
