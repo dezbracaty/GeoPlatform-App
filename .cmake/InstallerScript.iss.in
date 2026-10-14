@@ -7,6 +7,7 @@
 #define MyAppURL "${PROJECT_DOMAIN}"
 #define MyAppExeName "${PROJECT_APP_NAME}.exe"
 #define MyAppFileDir "dist"
+#define VCRuntimeVersion GetVersionNumbersString(AddBackslash(SourcePath) + "..\" + MyAppFileDir + "\vc_redist.x64.exe")
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
@@ -19,7 +20,9 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-DefaultDirName={pf64}\{#MyAppName}
+DefaultDirName={commonpf64}\{#MyAppName}
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 DisableProgramGroupPage=yes
 ; Uncomment the following line to run in non administrative install mode (install for current user only.)
 ;PrivilegesRequired=lowest
@@ -30,7 +33,7 @@ SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\{#MyAppExeName}
 SetupIconFile=${APP_ICON}
-MinVersion = 6.1
+MinVersion=10.0.17763
 
 [Languages]
 Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
@@ -39,8 +42,10 @@ Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.i
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkablealone
 
 [Files]
+; Extract prerequisites before the application files in this solid-compressed archive.
+Source: ".\..\{#MyAppFileDir}\vc_redist.x64.exe"; Flags: dontcopy
 Source: ".\..\{#MyAppFileDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: ".\..\{#MyAppFileDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: ".\..\{#MyAppFileDir}\*"; DestDir: "{app}"; Excludes: "{#MyAppExeName},vc_redist.x64.exe"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
 [Icons]
@@ -49,4 +54,62 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+var
+  VCRuntimeRestartRequired: Boolean;
+
+function VCRuntimeNeeded: Boolean;
+var
+  Installed: Cardinal;
+  Version: String;
+  InstalledVersion, RequiredVersion: Int64;
+begin
+  Result := True;
+  if not RegQueryDWordValue(HKLM64,
+    'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64', 'Installed', Installed) then
+    Exit;
+  if Installed <> 1 then
+    Exit;
+  if not RegQueryStringValue(HKLM64,
+    'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64', 'Version', Version) then
+    Exit;
+  if Copy(Version, 1, 1) = 'v' then
+    Delete(Version, 1, 1);
+  if not StrToVersion(Version, InstalledVersion) or
+     not StrToVersion('{#VCRuntimeVersion}', RequiredVersion) then
+    Exit;
+  Result := ComparePackedVersion(InstalledVersion, RequiredVersion) < 0;
+  Log(Format('VC runtime: installed=%s required=%s', [Version, '{#VCRuntimeVersion}']));
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ExitCode: Integer;
+begin
+  Result := '';
+  if not VCRuntimeNeeded then
+  begin
+    Log('VC runtime prerequisite satisfied; skipping installation');
+    Exit;
+  end;
+  Log('Installing bundled VC runtime prerequisite');
+  ExtractTemporaryFile('vc_redist.x64.exe');
+  if not Exec(ExpandConstant('{tmp}\vc_redist.x64.exe'),
+    '/install /quiet /norestart', '', SW_HIDE, ewWaitUntilTerminated, ExitCode) then
+  begin
+    Result := Format('无法启动 Microsoft Visual C++ 运行时安装程序（错误 %d）。', [ExitCode]);
+    Exit;
+  end;
+  Log(Format('VC runtime installer exit code: %d', [ExitCode]));
+  VCRuntimeRestartRequired := ExitCode = 3010;
+  if ((ExitCode <> 0) and (ExitCode <> 3010) and (ExitCode <> 1638)) or
+     VCRuntimeNeeded then
+    Result := Format('Microsoft Visual C++ 运行时安装未完成（返回值 %d）。', [ExitCode]);
+end;
+
+function NeedRestart: Boolean;
+begin
+  Result := VCRuntimeRestartRequired;
+end;
 

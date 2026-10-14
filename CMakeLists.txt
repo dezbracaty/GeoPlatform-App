@@ -327,6 +327,11 @@ set(COMMON_LIBRARIES
 
 list(APPEND COMMON_LIBRARIES Qt6::Multimedia)
 
+if(WIN32 AND TARGET libslicer::libslicer)
+    file(GLOB _libslicer_private_dlls CONFIGURE_DEPENDS
+        "${GPLATFORM_LIBSLICER_INSTALL_DIR}/bin/*.dll")
+endif()
+
 if(GPLATFORM_ENABLE_LIBSLICER)
     if(NOT TARGET libslicer::libslicer)
         message(FATAL_ERROR "GPLATFORM_ENABLE_LIBSLICER is ON, but libslicer::libslicer is unavailable")
@@ -454,6 +459,12 @@ if(GPLATFORM_ENABLE_LIBSLICER)
         "${LIBSLICER_RESOURCE_DIR}/*")
     set(_gplatform_libslicer_resource_stamp
         "${CMAKE_CURRENT_BINARY_DIR}/libslicer-runtime-resources.stamp")
+    set(_gplatform_libslicer_private_commands "")
+    if(_libslicer_private_dlls)
+        list(APPEND _gplatform_libslicer_private_commands
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                ${_libslicer_private_dlls} "${_gplatform_libslicer_runtime_dir}")
+    endif()
     add_custom_command(
         OUTPUT "${_gplatform_libslicer_resource_stamp}"
         COMMAND "${CMAKE_COMMAND}" -E remove_directory
@@ -466,9 +477,11 @@ if(GPLATFORM_ENABLE_LIBSLICER)
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
             "$<TARGET_FILE:libslicer::libslicer>"
             "${_gplatform_libslicer_runtime_dir}/$<TARGET_FILE_NAME:libslicer::libslicer>"
+        ${_gplatform_libslicer_private_commands}
         COMMAND "${CMAKE_COMMAND}" -E touch
             "${_gplatform_libslicer_resource_stamp}"
-        DEPENDS ${_gplatform_libslicer_runtime_resources} "$<TARGET_FILE:libslicer::libslicer>"
+        DEPENDS ${_gplatform_libslicer_runtime_resources}
+            ${_libslicer_private_dlls} "$<TARGET_FILE:libslicer::libslicer>"
         COMMENT "Deploying updated libslicer runtime and preset resources"
         VERBATIM)
     add_custom_target(${PROJECT_NAME}_libslicer_resources
@@ -503,62 +516,47 @@ endif()
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE $<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:QT_QML_DEBUG>)
 
-# Windows平台：自动复制运行时依赖的 DLL
+# Build and dist deploy from the same selected packages, never from an old bundle.
 if(WIN32)
-    # 首先运行 windeployqt 部署 Qt 依赖
     unset(WINDEPLOYQT_EXECUTABLE CACHE)
     unset(WINDEPLOYQT_EXECUTABLE)
     find_program(WINDEPLOYQT_EXECUTABLE NAMES windeployqt
         PATHS "${QT_SDK_DIR}/bin" NO_DEFAULT_PATH REQUIRED)
-    if(WINDEPLOYQT_EXECUTABLE)
-        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-            COMMAND "${WINDEPLOYQT_EXECUTABLE}"
-                --qmldir "${CMAKE_SOURCE_DIR}"
-                --no-translations
-                "$<TARGET_FILE:${PROJECT_NAME}>"
-            COMMENT "运行 windeployqt 部署 Qt 依赖"
-        )
-    else()
-        message(WARNING "未找到 windeployqt，Qt DLL 可能无法正常复制")
-    endif()
-
-    # 复制 RTTR DLL
     if(TARGET rttr_core)
         get_target_property(RTTR_DLL_LOCATION rttr_core IMPORTED_LOCATION)
+    endif()
+
+    function(_gplatform_windows_deploy_commands destination output)
+        set(commands COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "$<TARGET_RUNTIME_DLLS:${PROJECT_NAME}>" "${destination}")
         if(RTTR_DLL_LOCATION)
-            add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${RTTR_DLL_LOCATION}"
-                    "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
-                COMMENT "复制 RTTR DLL 到可执行文件目录"
-            )
+            list(APPEND commands COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${RTTR_DLL_LOCATION}" "${destination}")
         endif()
-    endif()
-
-    # Resolve DLLs from the actual target graph, including configuration-specific
-    # OCCT, VTK and Embree locations, rather than guessing cache directories.
-    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-            $<TARGET_RUNTIME_DLLS:${PROJECT_NAME}>
-            "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
-        COMMAND_EXPAND_LISTS
-        VERBATIM
-        COMMENT "Deploying linked Windows runtime DLLs")
-
-    if(TARGET libslicer::libslicer)
-        # The standalone package also owns private dependencies such as GMP.
-        file(GLOB _libslicer_private_dlls CONFIGURE_DEPENDS
-            "${GPLATFORM_LIBSLICER_INSTALL_DIR}/bin/*.dll")
         if(_libslicer_private_dlls)
-            add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-                COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                    ${_libslicer_private_dlls}
-                    "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
-                COMMAND_EXPAND_LISTS
-                VERBATIM
-                COMMENT "Deploying libslicer private runtime DLLs")
+            list(APPEND commands COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                ${_libslicer_private_dlls} "${destination}")
         endif()
-    endif()
+        if(COMMAND gplatform_get_sdk_runtime_files)
+            gplatform_get_sdk_runtime_files(sdk_runtime)
+            foreach(library IN LISTS sdk_runtime)
+                list(APPEND commands COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "${library}" "${destination}")
+            endforeach()
+        endif()
+        # Qt deployment must run last so its output is not overwritten by raw DLLs.
+        list(APPEND commands COMMAND "${WINDEPLOYQT_EXECUTABLE}"
+            --qmldir "${CMAKE_CURRENT_SOURCE_DIR}" --no-translations --compiler-runtime
+            "${destination}/$<TARGET_FILE_NAME:${PROJECT_NAME}>")
+        set(${output} "${commands}" PARENT_SCOPE)
+    endfunction()
+
+    _gplatform_windows_deploy_commands("$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+        _gplatform_build_deploy_commands)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        ${_gplatform_build_deploy_commands}
+        COMMAND_EXPAND_LISTS VERBATIM
+        COMMENT "Deploying Windows runtime dependencies")
 endif()
 set(DIST_PATH ${CMAKE_SOURCE_DIR}/dist)
 
@@ -595,22 +593,38 @@ file(WRITE ${CMAKE_BINARY_DIR}/remove_build_files.cmake
 
 if (CMAKE_BUILD_TYPE MATCHES "Release")
     if(WIN32)
-        set(QT_DEPLOY "${WINDEPLOYQT_EXECUTABLE}")
-        if (MSVC)
-            file(GLOB_RECURSE RUNTIME_FILE_PATHS ./runtime/msvc/*.dll)
-        elseif (MINGW)
-            file(GLOB_RECURSE RUNTIME_FILE_PATHS ./runtime/mingw/*.dll)
-        endif ()
-    add_custom_target(${PROJECT_NAME}_dist
-        COMMAND ${CMAKE_COMMAND} -E remove_directory ${DIST_PATH}
-        COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_APP_NAME}.exe ${DIST_PATH}/${PROJECT_APP_NAME}.exe
-        COMMAND ${QT_DEPLOY} --qmldir=${CMAKE_SOURCE_DIR} --plugindir ${DIST_PATH}/plugins --no-translations --compiler-runtime ${DIST_PATH}/${PROJECT_APP_NAME}.exe
-        COMMAND ${CMAKE_COMMAND} -P ${CMAKE_BINARY_DIR}/remove_build_files.cmake
-        COMMAND ${CMAKE_COMMAND} -E copy ${RUNTIME_FILE_PATHS} ${DIST_PATH}
-        COMMENT "Windows Deploying Qt Dependencies After Build........."
-        SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    )
+        file(REAL_PATH "${CMAKE_SOURCE_DIR}" _dist_source_dir)
+        set(_dist_real_path "${_dist_source_dir}/dist")
+        if(EXISTS "${DIST_PATH}")
+            file(REAL_PATH "${DIST_PATH}" _dist_real_path)
+        endif()
+        file(REAL_PATH "${CMAKE_CURRENT_BINARY_DIR}" _dist_binary_dir)
+        cmake_path(IS_PREFIX _dist_real_path "${_dist_binary_dir}" NORMALIZE
+            _dist_contains_app_output)
+        if(IS_SYMLINK "${DIST_PATH}" OR
+           NOT _dist_real_path STREQUAL "${_dist_source_dir}/dist" OR
+           _dist_contains_app_output)
+            message(FATAL_ERROR "dist must be the source-root output directory, separate from the application build directory")
+        endif()
+        set(_gplatform_dist_resource_commands "")
+        if(GPLATFORM_ENABLE_LIBSLICER)
+            list(APPEND _gplatform_dist_resource_commands
+                COMMAND "${CMAKE_COMMAND}" -E copy_directory
+                    "${LIBSLICER_RESOURCE_DIR}" "${DIST_PATH}/resources/libslicer")
+        endif()
+        _gplatform_windows_deploy_commands("${DIST_PATH}"
+            _gplatform_dist_deploy_commands)
+        add_custom_target(${PROJECT_NAME}_dist
+            COMMAND "${CMAKE_COMMAND}" -E remove_directory "${DIST_PATH}"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${DIST_PATH}"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "$<TARGET_FILE:${PROJECT_NAME}>" "${DIST_PATH}"
+            ${_gplatform_dist_resource_commands}
+            ${_gplatform_dist_deploy_commands}
+            COMMAND_EXPAND_LISTS VERBATIM
+            COMMENT "Preparing complete Windows distribution"
+        )
+        add_dependencies(${PROJECT_NAME}_dist ${PROJECT_NAME})
 endif()
 if (APPLE)
     unset(QT_DEPLOY CACHE)
