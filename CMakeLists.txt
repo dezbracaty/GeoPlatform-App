@@ -6,7 +6,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0" CACHE STRING "Minimum macOS deployment version")
     endif()
 endif()
-project(GPlatform VERSION 1.0.0)
+project(GPlatform VERSION 0.0.1)
 include(cmake/GPlatformMsvcDependencies.cmake)
 if(NOT TARGET Foundation)
     include(cmake/GPlatformSDKConsumer.cmake)
@@ -625,6 +625,26 @@ if (CMAKE_BUILD_TYPE MATCHES "Release")
             COMMENT "Preparing complete Windows distribution"
         )
         add_dependencies(${PROJECT_NAME}_dist ${PROJECT_NAME})
+
+        find_program(ISCC_EXECUTABLE NAMES ISCC
+            HINTS "$ENV{LOCALAPPDATA}/Programs/Inno Setup 7"
+                  "$ENV{ProgramFiles}/Inno Setup 7")
+        if(ISCC_EXECUTABLE AND EXISTS "${ISCC_EXECUTABLE}")
+            add_custom_target(${PROJECT_NAME}_installer
+                COMMAND "${ISCC_EXECUTABLE}"
+                    "${CMAKE_SOURCE_DIR}/package/InstallerScript.iss"
+                DEPENDS "${CMAKE_SOURCE_DIR}/package/InstallerScript.iss"
+                BYPRODUCTS "${CMAKE_SOURCE_DIR}/package/installer.exe"
+                VERBATIM
+                COMMENT "Building Windows installer with Inno Setup")
+            add_dependencies(${PROJECT_NAME}_installer ${PROJECT_NAME}_dist)
+        else()
+            add_custom_target(${PROJECT_NAME}_installer
+                COMMAND "${CMAKE_COMMAND}" -E echo
+                    "Inno Setup compiler ISCC.exe was not found. Install Inno Setup 7 or set ISCC_EXECUTABLE to its full path, then configure again."
+                COMMAND "${CMAKE_COMMAND}" -E false
+                VERBATIM)
+        endif()
 endif()
 if (APPLE)
     unset(QT_DEPLOY CACHE)

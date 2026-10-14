@@ -3,6 +3,7 @@ import QtQuick.Layouts
 import QtQuick.Controls
 import SmoothUI.Controls
 import SmoothUI.impl
+import GPlatform
 
 ScrollablePage {
     title: qsTr("About")
@@ -16,7 +17,7 @@ ScrollablePage {
         }
         
         Label {
-            text: "Version 1.0.0"
+            text: "Version " + AppInfo.version
             font: Typography.subtitle
         }
         

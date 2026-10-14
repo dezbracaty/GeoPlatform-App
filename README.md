@@ -85,9 +85,24 @@ Qt 组件查找失败时会停止配置，保留原始诊断，并提示标准�
 仅修改环境不会覆盖旧缓存，无需清理机器级依赖缓存。纯 build 未触发重新 configure 时不会执行这些输入检查。
 主项目打包生成的 App 文件目录带有实物 SDK 和已初始化的第三方受管源码，直接使用以上命令；无需伪造 Git 仓库或初始化。`ThirdParty/source-revisions.json` 记录生产输入来源，不能证明文件未被后续修改；包的实物校验和真实构建仍需验证。
 正式 Git 仓库使用者则需按上面的步骤初始化 submodule/LFS。两种交付状态应分别验证。
-SDK 动态库会自动复制到应用包中。Qt 开发环境由本机提供；对外分发应用还需完成 Qt 部署与应用签名。
+SDK 动态库会自动复制到应用包中。Qt 开发环境由本机提供；Windows 安装包通过下面的目标完成 Qt 部署，应用签名由发布者处理。
 libslicer 运行库和预设资源由现有部署任务跟踪；增量更新运行库时，即使主程序不重新链接，也会复制到运行目录。
 `debug` 预设需要 SDK 中已有相应架构的 `Debug/` 产物，不能混用 Release 库。
+
+## Windows 安装包
+
+安装 Inno Setup 7，并完成上面的 Release configure 后，在 App 根目录执行：
+
+```powershell
+& $CMakePath --build build-Release --target GPlatform_installer
+```
+
+该目标依次构建程序、重新生成 `dist/`（部署 Qt、依赖 DLL 和切片资源），再编译安装模板。
+输出为 App 自己的 `package/installer.exe`，内置 VC++ x64 运行时；安装时按需安装运行时。
+CMake 从 PATH 和 Inno Setup 7 的标准用户/系统安装位置查找 ISCC。
+非标准位置可在 configure 时指定 `-DISCC_EXECUTABLE="<安装目录>/ISCC.exe"`。
+缺少 ISCC 只会让安装包目标报错，普通 configure 和编译仍可使用；安装工具后重新 configure。
+此目标仅用于 Windows Release，不自动安装工具、运行安装器或发布产物。
 
 ## 更新代码
 
