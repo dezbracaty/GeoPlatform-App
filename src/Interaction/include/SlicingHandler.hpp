@@ -1,4 +1,6 @@
 #pragma once
+#include "ToolpathPreviewPreparation.hpp"
+#include <SliceOutputRecord.hpp>
 
 #include "StandardActionHandler.hpp"
 #include "ModelInstanceDB.hpp"
@@ -81,9 +83,11 @@ protected:
     const QHash<QString, QVariantMap>& aiDescriptorTable() const override;
 
 private:
+    friend struct ToolpathHandlerTestAccess;
     // 模式和状态
     Mode m_mode = Mode::Slice;
     State m_state = State::Inactive;
+    bool m_slicePending{false};
 
     // 参数
     QString m_modelId;
@@ -119,7 +123,10 @@ private:
     double m_filamentUsed{0.0};
     int m_layerCount{0};
 
-    libslicer::ToolpathPreviewPtr m_toolpathPreview;
+    GPlatform::PreparedToolpathPreview m_preparedPreview;
+    std::shared_ptr<GPlatform::SliceOutputRecord> m_pendingOutput;
+    std::shared_ptr<const GPlatform::SliceOutputRecord> m_outputAtStart;
+    std::uint64_t m_publicationEpoch{0};
 
     // Import 模式参数
     QString m_importFilePath;

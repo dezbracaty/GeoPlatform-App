@@ -1,5 +1,3 @@
-#include <QFileInfo>
-#include <QDateTime>
 #include "ToolpathPreviewDB.hpp"
 #include "ToolpathPreviewUtils.hpp"
 
@@ -154,6 +152,15 @@ void ToolpathPreviewDB::initializeSubActorProperties() {
     onShowFiberProcessChanged = [this](bool) {
         if (!m_suppressPreviewNotifications) notifyGeometryChange("ShowFiberProcess");
     };
+    onShowFiberCutPointsChanged = [this](bool) {
+        if (!m_suppressPreviewNotifications) notifyGeometryChange("ShowFiberCutPoints");
+    };
+    onHighlightFiberTailChanged = [this](bool) {
+        if (!m_suppressPreviewNotifications) notifyGeometryChange("HighlightFiberTail");
+    };
+    onInspectedElementIndexChanged = [this](int) {
+        if (!m_suppressPreviewNotifications) notifyGeometryChange("InspectedElementIndex");
+    };
     onShowFiberDiagnosticsChanged = [this](bool) {
         if (!m_suppressPreviewNotifications) notifyGeometryChange("ShowFiberDiagnostics");
     };
@@ -194,7 +201,10 @@ void ToolpathPreviewDB::initializeSubActorProperties() {
     setSourceModelDBId(INVALID_DB_ID);
     setColorMode(ToolpathPreviewColorMode::PreviewColor);
     setShowTravel(false);
-    setShowFiberProcess(false);
+    setShowFiberProcess(true);
+    setShowFiberCutPoints(false);
+    setHighlightFiberTail(false);
+    setInspectedElementIndex(-1);
     setShowFiberDiagnostics(false);
     setHiddenFiberDiagnosticKinds(0);
     setShowSeam(true);
@@ -237,11 +247,9 @@ void ToolpathPreviewDB::setPreviewData(ToolpathPreviewData&& data) {
     setShowFiberDiagnostics(false);
     setHiddenFiberDiagnosticKinds(0);
     ++m_previewDataGeneration;
+    setInspectedElementIndex(-1);
 
-    m_gcodeSource.reset();
-    const QFileInfo sourceInfo(QString::fromStdString(data.printGCodePath));
-    m_sourceByteSize = sourceInfo.exists() ? sourceInfo.size() : -1;
-    m_sourceModified = sourceInfo.lastModified().toMSecsSinceEpoch();
+    m_gcodeSource = std::move(data.gcodeSource);
     publishInspectionGeometry();
     setPreviewArtifactPath(data.artifactPath);
     setPrintGCodePath(data.printGCodePath);
@@ -288,7 +296,6 @@ void ToolpathPreviewDB::clearPreviewData() {
     publishSnapGeometry({});
     m_inspectionElements.clear();
     m_gcodeSource.reset();
-    m_sourceByteSize = -1;
     m_layers.clear();
     m_segments.clear();
     m_options.clear();
@@ -303,6 +310,7 @@ void ToolpathPreviewDB::clearPreviewData() {
     setShowFiberDiagnostics(false);
     setHiddenFiberDiagnosticKinds(0);
     ++m_previewDataGeneration;
+    setInspectedElementIndex(-1);
     setPreviewArtifactPath("");
     setPrintGCodePath("");
     setPrintGCode3mfPath("");
@@ -442,6 +450,18 @@ bool ToolpathPreviewDB::resetLegendVisibility() {
         setShowSeam(true);
         changed = true;
     }
+    if (!getShowFiberProcess()) {
+        setShowFiberProcess(true);
+        changed = true;
+    }
+    if (!getShowFiberCutPoints()) {
+        setShowFiberCutPoints(true);
+        changed = true;
+    }
+    if (!getHighlightFiberTail()) {
+        setHighlightFiberTail(true);
+        changed = true;
+    }
     return changed;
 }
 
@@ -450,7 +470,10 @@ bool ToolpathPreviewDB::hasHiddenLegendItems() const {
            !getHiddenExtrusionRoles().empty() ||
            !getHiddenToolIds().empty() ||
            !getShowTravel() ||
-           !getShowSeam();
+           !getShowSeam() ||
+           (std::any_of(getOptions().begin(), getOptions().end(), [](const auto& event) {
+                return event.kind == ToolpathEventKind::FiberCut;
+            }) && (!getShowFiberProcess() || !getShowFiberCutPoints() || !getHighlightFiberTail()));
 }
 
 ActorDB::BoundingBox ToolpathPreviewDB::localBounds() const {
@@ -489,10 +512,8 @@ std::shared_ptr<AutoRegisterDB> ToolpathPreviewDB::clone() const {
     data.supportedViewTypes = m_supportedViewTypes;
     data.stats = m_stats;
     data.bounds = m_bounds;
+    data.gcodeSource = m_gcodeSource;
     cloned->setPreviewData(std::move(data));
-    cloned->m_gcodeSource = m_gcodeSource;
-    cloned->m_sourceByteSize = m_sourceByteSize;
-    cloned->m_sourceModified = m_sourceModified;
     cloned->m_printGCodeLease = m_printGCodeLease;
     cloned->m_printGCode3mfLease = m_printGCode3mfLease;
     cloned->copyTransformFrom(*this);
@@ -503,6 +524,8 @@ std::shared_ptr<AutoRegisterDB> ToolpathPreviewDB::clone() const {
     cloned->setColorMode(getColorMode());
     cloned->setShowTravel(getShowTravel());
     cloned->setShowFiberProcess(getShowFiberProcess());
+    cloned->setShowFiberCutPoints(getShowFiberCutPoints());
+    cloned->setHighlightFiberTail(getHighlightFiberTail());
     cloned->setShowFiberDiagnostics(getShowFiberDiagnostics());
     cloned->setHiddenFiberDiagnosticKinds(getHiddenFiberDiagnosticKinds());
     cloned->setShowSeam(getShowSeam());
@@ -583,11 +606,6 @@ void ToolpathPreviewDB::publishInspectionGeometry() {
     }
 }
 
-void ToolpathPreviewDB::setGCodeSource(std::uint64_t generation,
-                                     std::shared_ptr<const GCodeSource> source) {
-    if (generation==m_previewDataGeneration) m_gcodeSource=std::move(source);
-}
-
 std::uint32_t ToolpathPreviewDB::sourceLineForPosition(int layerIndex, int step, bool layerStart) const {
     if (layerIndex < 0 || layerIndex >= int(m_layers.size())) return 0;
     const auto& layer = m_layers[std::size_t(layerIndex)];
@@ -612,12 +630,14 @@ ToolpathPreviewDB::InspectionVisibility ToolpathPreviewDB::inspectionVisibility(
     InspectionVisibility result;
     result.generation = m_previewDataGeneration;
     result.visible = isVisible() && !m_layers.empty();
-    if (!result.visible) return result;
-    result.firstLayer = std::clamp(getShowLayerRangeStart(),0,int(m_layers.size())-1);
-    result.lastLayer = std::clamp(std::max(result.firstLayer,getShowLayerRangeEnd()),result.firstLayer,int(m_layers.size())-1);
+    if (!m_layers.empty()) {
+        result.firstLayer = std::clamp(getShowLayerRangeStart(),0,int(m_layers.size())-1);
+        result.lastLayer = std::clamp(std::max(result.firstLayer,getShowLayerRangeEnd()),result.firstLayer,int(m_layers.size())-1);
+    }
     result.step = getCurrentStep();
     result.travel = getShowTravel();
     result.fiber = getShowFiberProcess();
+    result.fiberCuts = getShowFiberCutPoints();
     result.diagnostics = getShowFiberDiagnostics();
     result.hiddenDiagnosticKinds = getHiddenFiberDiagnosticKinds();
     result.seam = getShowSeam() && getColorMode()==ToolpathPreviewColorMode::FeatureType;
@@ -649,17 +669,10 @@ bool ToolpathPreviewDB::inspectionElementVisible(std::size_t featureIndex,
         (visibility.step<0 ? layer->segmentCount : std::min<std::uint64_t>(std::uint64_t(visibility.step)+1,layer->segmentCount));
     if (item.kind==InspectionElement::Kind::Event) {
         const auto& event=m_options[item.index];
-        return event.kind==ToolpathEventKind::Seam && visibility.seam && event.afterSegment<=visibleEnd;
+        return ToolpathPreviewUtils::isEventVisible(*this,event,visibility);
     }
     if (item.index<layer->segmentBegin || item.index>=visibleEnd) return false;
-    const auto& segment=m_segments[item.index];
-    const bool travel=ToolpathPreviewUtils::isTravelSegment(segment);
-    const bool finish=segment.fiberPhase==ToolpathFiberPhase::Finish;
-    const auto hidden=[](const auto& list,auto id){return std::find(list.begin(),list.end(),id)!=list.end();};
-    return !(finish && !visibility.fiber) && !(travel && !finish && !visibility.travel) &&
-        (travel || !hidden(visibility.hiddenRoles,segment.extrusionRole)) &&
-        (segment.cpColorId==0xffffu || !hidden(visibility.hiddenColors,segment.cpColorId)) &&
-        (segment.toolId==0xffffu || !hidden(visibility.hiddenTools,segment.toolId));
+    return ToolpathPreviewUtils::passesSegmentFilters(m_segments[item.index],visibility);
 }
 
 } // namespace GPlatform

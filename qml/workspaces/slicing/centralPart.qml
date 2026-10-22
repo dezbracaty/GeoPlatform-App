@@ -1306,6 +1306,34 @@ Item {
         }
     }
 
+    PanelSurface {
+        objectName: "slicing.preview.unavailable"
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.top: parent.top
+        anchors.topMargin: 100
+        width: Math.min(560, parent.width - 48)
+        height: unavailableMessage.implicitHeight + 32
+        visible: SlicingPreviewBridge.printOutputReady && !SlicingPreviewBridge.geometryAvailable
+        z: 90
+        ColumnLayout {
+            id: unavailableMessage
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: 16
+            Label {
+                text: SlicingPreviewBridge.previewStatusMessage
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+            Label {
+                text: qsTr("The G-code output can still be exported from the toolbar below.")
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+        }
+    }
+
     ToolpathPreviewLegendPanel {
         // The shared Toolpath/G-code panel sits on the right, beside
         // the vertical layer scrubber. The Dock workspace tabs occupy the

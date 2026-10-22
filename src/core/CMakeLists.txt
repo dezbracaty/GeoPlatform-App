@@ -28,6 +28,7 @@ target_link_libraries(GPlatformCore
         Foundation::QmlRegistration
         BaseUI
     PRIVATE
+        Bridge
         BaseInteraction
         Document
         GPlatform::Tr
@@ -35,7 +36,6 @@ target_link_libraries(GPlatformCore
 )
 
 target_compile_definitions(GPlatformCore PRIVATE
-    PROJECT_VERSION="${PROJECT_VERSION}"
     PROJECT_HOTLOAD_ENABLED="${HOTLOAD_ENABLED}"
     $<$<BOOL:${HOTLOAD_ENABLED}>:PROJECT_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../..">
     $<$<NOT:$<BOOL:${HOTLOAD_ENABLED}>>:PROJECT_SOURCE_DIR="">

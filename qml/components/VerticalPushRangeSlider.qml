@@ -139,6 +139,7 @@ Item {
 
         MouseArea {
             id: firstMouseArea
+            objectName: control.objectName + ".firstHandle.input"
             z: 100
             anchors.fill: parent
             enabled: control.enabled && control.maximumValue > control.minimumValue
@@ -182,6 +183,7 @@ Item {
 
         MouseArea {
             id: secondMouseArea
+            objectName: control.objectName + ".secondHandle.input"
             z: 100
             anchors.fill: parent
             enabled: control.enabled && control.maximumValue > control.minimumValue

@@ -277,6 +277,7 @@ FramelessWindow {
                 }
             }
             Button {
+                objectName: "window.quit.confirm"
                 text: qsTr("Ok")
                 highlighted: true
                 onClicked: {

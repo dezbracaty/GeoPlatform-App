@@ -98,11 +98,21 @@ libslicer 运行库和预设资源由现有部署任务跟踪；增量更新运�
 ```
 
 该目标依次构建程序、重新生成 `dist/`（部署 Qt、依赖 DLL 和切片资源），再编译安装模板。
-输出为 App 自己的 `package/installer.exe`，内置 VC++ x64 运行时；安装时按需安装运行时。
+输出为 App 自己的 `package/CFSlicer-<版本号>-<YYYYMMDD>.exe`，例如 `CFSlicer-0.0.3-20261016.exe`；日期取打包当天。内置 VC++ x64 运行时，安装时按需安装运行时。
 CMake 从 PATH 和 Inno Setup 7 的标准用户/系统安装位置查找 ISCC。
 非标准位置可在 configure 时指定 `-DISCC_EXECUTABLE="<安装目录>/ISCC.exe"`。
 缺少 ISCC 只会让安装包目标报错，普通 configure 和编译仍可使用；安装工具后重新 configure。
 此目标仅用于 Windows Release，不自动安装工具、运行安装器或发布产物。
+
+安装向导提供两种互斥的安装方式：
+
+- **全新安装（重置全部设置）**：更新程序，并用包内 `GPlatform.defaults.ini` 整份替换启动安装器用户的 `%LOCALAPPDATA%\GPlatform\GPlatform\GPlatform.ini`。旧键和值全部清除，默认中文、最小化导航窗格；模型和项目文件保留。
+- **覆盖安装（保留全部设置）**：只更新程序，用户 INI 原文件保持不变。
+
+检测到已有用户 INI 时默认选择覆盖安装，否则默认选择全新安装；不会记住上次的重置选择。需要静默安装时，可用 Inno Setup 标准参数 `/TASKS="settingskeep"` 或 `/TASKS="settingsreset"` 明确选择，未指定则使用相同的自动选择规则。
+默认 INI 由仓库 `config/GPlatform.defaults.ini` 维护，路径项留空后由程序采用当前用户的默认目录，不复制打包机器的个人配置。
+配置检测和替换在安装器原始启动用户身份下执行，UAC 使用另一个管理员账户授权时也不会改写该管理员的配置。请正常双击安装器，再按 UAC 提示授权；预先以其他账户启动安装器时，该账户本身就是安装器的启动用户。
+安装期间通过现有应用关闭流程退出旧程序，完成后由最后一页的启动选项决定是否打开新程序。配置操作仅发生在安装阶段，日常启动不执行版本重置。
 
 ## 更新代码
 

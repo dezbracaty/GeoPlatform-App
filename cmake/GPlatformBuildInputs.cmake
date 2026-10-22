@@ -58,6 +58,12 @@ if(CMAKE_TOOLCHAIN_FILE AND NOT EXISTS "${CMAKE_TOOLCHAIN_FILE}")
     message(FATAL_ERROR "CMAKE_TOOLCHAIN_FILE does not exist: ${CMAKE_TOOLCHAIN_FILE}")
 endif()
 if(CMAKE_GENERATOR STREQUAL "Ninja")
+    if(NOT CMAKE_MAKE_PROGRAM AND CMAKE_HOST_WIN32)
+        # VS ships Ninja alongside CMake; prefer it over unrelated PATH tools.
+        get_filename_component(_gplatform_cmake_bin "${CMAKE_COMMAND}" DIRECTORY)
+        find_program(CMAKE_MAKE_PROGRAM NAMES ninja
+            PATHS "${_gplatform_cmake_bin}/../../Ninja" NO_DEFAULT_PATH)
+    endif()
     if(NOT CMAKE_MAKE_PROGRAM)
         find_program(CMAKE_MAKE_PROGRAM NAMES ninja)
     endif()

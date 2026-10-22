@@ -379,6 +379,7 @@ PanelSurface {
 
         Loader {
             id: contentLoader
+            clip: true
             objectName: "slicing.preview.typesContent"
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -401,6 +402,16 @@ PanelSurface {
                 item.viewType = Qt.binding(function() { return root.viewType })
             }
         }
+        ToolpathPreviewFeatureTable {
+            objectName: "slicing.preview.optionsTable"
+            Layout.fillWidth: true
+            Layout.preferredHeight: implicitHeight
+            Layout.maximumHeight: implicitHeight
+            visible: !SlicingPreviewBridge.previewPanelFolded && !root.codeTab
+                     && rows.length > 0
+            rows: root.panelData.optionRows || []
+            viewType: root.viewType
+        }
         ToolpathGCodePanel {
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -412,7 +423,7 @@ PanelSurface {
     }
 
     Component { id: summaryComponent; ToolpathPreviewSummaryContent {} }
-    Component { id: featureComponent; ToolpathPreviewFeatureTable {} }
+    Component { id: featureComponent; ToolpathPreviewFeatureTable { objectName: "slicing.preview.featureTable" } }
     Component { id: filamentComponent; ToolpathPreviewFilamentTable {} }
     Component { id: rangeComponent; ToolpathPreviewRangeContent {} }
 }

@@ -6,7 +6,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0" CACHE STRING "Minimum macOS deployment version")
     endif()
 endif()
-project(GPlatform VERSION 0.0.1)
+project(GPlatform VERSION 0.0.3)
 include(cmake/GPlatformMsvcDependencies.cmake)
 if(NOT TARGET Foundation)
     include(cmake/GPlatformSDKConsumer.cmake)
@@ -37,7 +37,6 @@ else()
 endif()
 
 set(VERSION_STR "${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH}")
-add_definitions(-DAPP_VERSION=${VERSION_STR})
 
 set(QML_IMPORT_PATH ${CMAKE_BINARY_DIR}/qt/qml CACHE STRING "" FORCE)
 
@@ -229,6 +228,11 @@ set(SOURCE_FILES
     ${GENERATED_APPLICATION_MODULE_REGISTRATION}
 )
 
+# Only application startup embeds the product version. Other modules read it
+# through QCoreApplication so a release bump does not invalidate their objects.
+set_property(SOURCE src/Application/src/main.cpp APPEND PROPERTY
+    COMPILE_DEFINITIONS PROJECT_VERSION="${PROJECT_VERSION}")
+
 
 set_source_files_properties(${PACKAGED_QML_SINGLETONS} PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
@@ -391,7 +395,6 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     PROJECT_COMPANY="${PROJECT_COMPANY}"
     PROJECT_DOMAIN="${PROJECT_DOMAIN}"
 	PROJECT_DESCRIPTION="${PROJECT_DESCRIPTION}"
-    PROJECT_VERSION="${PROJECT_VERSION}"
     $<$<BOOL:${HOTLOAD_ENABLED}>:PROJECT_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}">
     $<$<NOT:$<BOOL:${HOTLOAD_ENABLED}>>:PROJECT_SOURCE_DIR="">
     PROJECT_HOTLOAD_ENABLED="${HOTLOAD_ENABLED}"
@@ -634,7 +637,7 @@ if (CMAKE_BUILD_TYPE MATCHES "Release")
                 COMMAND "${ISCC_EXECUTABLE}"
                     "${CMAKE_SOURCE_DIR}/package/InstallerScript.iss"
                 DEPENDS "${CMAKE_SOURCE_DIR}/package/InstallerScript.iss"
-                BYPRODUCTS "${CMAKE_SOURCE_DIR}/package/installer.exe"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/config/GPlatform.defaults.ini"
                 VERBATIM
                 COMMENT "Building Windows installer with Inno Setup")
             add_dependencies(${PROJECT_NAME}_installer ${PROJECT_NAME}_dist)

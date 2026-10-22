@@ -42,6 +42,11 @@ Item {
             wrapMode: Text.WordWrap
             font: Typography.caption
         }
+        RowLayout {
+            visible: root.codeModel.hasFiberRoute
+            Button { text: qsTr("Cut command"); onClicked: root.codeModel.navigateFiberEvent(false) }
+            Button { text: qsTr("Fiber depleted"); onClicked: root.codeModel.navigateFiberEvent(true) }
+        }
         ListView {
             id: codeList
             objectName: "gcodeList"

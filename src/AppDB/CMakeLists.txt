@@ -20,6 +20,7 @@ endif()
 set(APPDB_HEADERS
     include/SnapPreviewDB.hpp
     include/GCodeSource.hpp
+    include/SliceOutputRecord.hpp
     include/AppDBRegistration.hpp
     include/ActorDB.hpp
     include/MaterialDB.hpp
@@ -68,6 +69,7 @@ set(APPDB_HEADERS
 set(APPDB_SOURCES
     src/SnapPreviewDB.cpp
     src/GCodeSource.cpp
+    src/SliceOutputRecord.cpp
     src/AppDBRegistration.cpp
     src/ActorDB.cpp
     src/MaterialDB.cpp

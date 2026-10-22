@@ -16683,8 +16683,11 @@ msgstr "纤维预送料速度"
 msgid "Fiber Z-hop height"
 msgstr "铺纤抬升高度"
 
-msgid "Fiber landing length"
-msgstr "纤维落地段长度"
+msgid "Fiber landing path length"
+msgstr "纤维落纤路径长度"
+
+msgid "XY distance traveled along the complete fiber path while lowering to the layer. Independent of Z-hop height and powered start stabilization."
+msgstr "下降到打印层时，沿完整纤维路径行走的 XY 距离。与抬升高度和主动起铺稳定段长度分别设置。"
 
 msgid "Fiber landing speed"
 msgstr "纤维落地速度"
@@ -16736,6 +16739,9 @@ msgstr "纤维切断 G-code"
 
 msgid "Fiber finish extension length"
 msgstr "纤维收尾切线延伸长度"
+
+msgid "Non-depositing travel along the final tangent after rectilinear fiber infill or an open fiber contour reaches its planned endpoint. Does not change the cutter-to-contact tail or cut position."
+msgstr "直线纤维填充或开放纤维轮廓到达原定终点后，沿最终切线继续空驶的距离。不改变切刀至接触点尾段长度或切丝位置。"
 
 msgid "Fiber contour maximum speed"
 msgstr "纤维轮廓最大速度"

@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Controls as QQC
 import SmoothUI
 import SmoothUI.Controls
 import GPlatform
@@ -8,7 +9,7 @@ Item {
     id: root
     property var panelData: ({})
     property string viewType: "lineType"
-    readonly property var rows: panelData.featureRows || []
+    property var rows: panelData.featureRows || []
     implicitHeight: Math.min(480, header.implicitHeight + featureList.contentHeight + 6)
 
     readonly property int colorWidth: 18
@@ -81,7 +82,12 @@ Item {
 
     function setAllRowsVisible(visible) {
         var position = featureList.contentY
-        SlicingPreviewBridge.setPreviewLegendGroupVisible(viewType, visible)
+        // Snapshot the rows: each setter refreshes the bridge model synchronously.
+        var items = rows.slice()
+        for (var i = 0; i < items.length; ++i) {
+            if (items[i].displayEnabled !== false)
+                SlicingPreviewBridge.setPreviewPanelRowVisible(viewType, items[i].id, visible)
+        }
         restoreScrollPosition(position)
     }
 
@@ -101,6 +107,7 @@ Item {
             Label { Layout.preferredWidth: root.percentWidth; text: "%"; horizontalAlignment: Text.AlignRight; font: Typography.caption; color: Theme.of(root).res.textFillColorSecondary }
             Label { Layout.preferredWidth: root.usageWidth; text: qsTr("Usage"); horizontalAlignment: Text.AlignRight; font: Typography.caption; color: Theme.of(root).res.textFillColorSecondary }
             CheckBox {
+                objectName: "slicing.preview.legendAll"
                 Layout.preferredWidth: root.displayWidth
                 Layout.alignment: Qt.AlignHCenter
                 text: qsTr("All")
@@ -117,13 +124,16 @@ Item {
 
         ListView {
             id: featureList
+            objectName: "slicing.preview.legendList"
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
+            QQC.ScrollBar.vertical: QQC.ScrollBar {}
             model: root.rows
             delegate: Rectangle {
                 required property var modelData
                 required property int index
+                objectName: "slicing.preview.legendRow." + modelData.id
                 width: featureList.width
                 height: 34
                 radius: PrintWorkspaceStyle.controlRadius
@@ -194,6 +204,7 @@ Item {
                         color: Theme.of(root).res.textFillColorPrimary
                     }
                     CheckBox {
+                        objectName: "slicing.preview.legendToggle." + modelData.id
                         Layout.preferredWidth: root.displayWidth
                         Layout.alignment: Qt.AlignHCenter
                         text: ""

@@ -3,6 +3,7 @@
 
 #define MyAppName "${PROJECT_APP_NAME}"
 #define MyAppVersion "${PROJECT_VERSION}"
+#define MyAppBuildDate GetDateTimeString("yyyymmdd", "", "")
 #define MyAppPublisher "${PROJECT_COMPANY}"
 #define MyAppURL "${PROJECT_DOMAIN}"
 #define MyAppExeName "${PROJECT_APP_NAME}.exe"
@@ -24,10 +25,11 @@ DefaultDirName={commonpf64}\{#MyAppName}
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 DisableProgramGroupPage=yes
+RestartApplications=no
 ; Uncomment the following line to run in non administrative install mode (install for current user only.)
 ;PrivilegesRequired=lowest
 OutputDir=.\
-OutputBaseFilename=installer
+OutputBaseFilename=CFSlicer-{#MyAppVersion}-{#MyAppBuildDate}
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
@@ -39,12 +41,15 @@ MinVersion=10.0.17763
 Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 
 [Tasks]
+Name: "settingsreset"; Description: "全新安装（重置全部设置）"; GroupDescription: "安装方式："; Flags: exclusive
+Name: "settingskeep"; Description: "覆盖安装（保留全部设置）"; GroupDescription: "安装方式："; Flags: exclusive unchecked
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkablealone
 
 [Files]
 ; Extract prerequisites before the application files in this solid-compressed archive.
 Source: ".\..\{#MyAppFileDir}\vc_redist.x64.exe"; Flags: dontcopy
 Source: ".\..\{#MyAppFileDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "${CMAKE_CURRENT_SOURCE_DIR}/config/GPlatform.defaults.ini"; DestDir: "{app}"; Flags: ignoreversion
 Source: ".\..\{#MyAppFileDir}\*"; DestDir: "{app}"; Excludes: "{#MyAppExeName},vc_redist.x64.exe"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
@@ -58,6 +63,83 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChang
 [Code]
 var
   VCRuntimeRestartRequired: Boolean;
+  DefaultSettingsTasks: String;
+
+const
+  UserSettingsDir = '%LOCALAPPDATA%\{#MyAppName}\{#MyAppName}';
+  UserSettingsFile = UserSettingsDir + '\{#MyAppName}.ini';
+
+function RunUserSettingsCommand(const Command, WorkingDir: String;
+  var ExitCode: Integer): Boolean;
+begin
+  { Resolve LOCALAPPDATA in the original user's process, not the elevated installer. }
+  Result := ExecAsOriginalUser(ExpandConstant('{cmd}'),
+    '/D /E:ON /V:OFF /S /C "' + Command + '"', WorkingDir,
+    SW_HIDE, ewWaitUntilTerminated, ExitCode);
+end;
+
+procedure InitializeWizard;
+var
+  ExitCode: Integer;
+  RequestedTasks: String;
+begin
+  if not RunUserSettingsCommand(
+    '(if not defined LOCALAPPDATA exit /b 2) & if exist "' +
+    UserSettingsFile + '" (exit /b 0) else (exit /b 1)',
+    ExpandConstant('{sys}'), ExitCode) then
+    RaiseException(Format('无法检查安装用户的配置文件（错误 %d）。', [ExitCode]));
+  if (ExitCode <> 0) and (ExitCode <> 1) then
+    RaiseException(Format('无法确定安装用户的配置目录（返回值 %d）。', [ExitCode]));
+
+  { Do not inherit a previous reset choice; explicit standard /TASKS takes precedence. }
+  RequestedTasks := Lowercase(ExpandConstant('{param:TASKS|}') + ',' +
+    ExpandConstant('{param:MERGETASKS|}'));
+  if (Pos('settingsreset', RequestedTasks) = 0) and
+     (Pos('settingskeep', RequestedTasks) = 0) then
+  begin
+    if ExitCode = 0 then
+      DefaultSettingsTasks := '!settingsreset,settingskeep'
+    else
+      DefaultSettingsTasks := '!settingskeep,settingsreset';
+  end;
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  { Task controls are created on page entry; apply defaults once, preserving user edits. }
+  if (CurPageID = wpSelectTasks) and (DefaultSettingsTasks <> '') then
+  begin
+    WizardSelectTasks(DefaultSettingsTasks);
+    DefaultSettingsTasks := '';
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ExitCode: Integer;
+begin
+  if CurStep <> ssPostInstall then
+    Exit;
+  if WizardIsTaskSelected('settingskeep') then
+  begin
+    Log('Settings mode: preserve; user INI is left untouched');
+    Exit;
+  end;
+
+  { WorkingDir passes the install path without embedding it in shell command text. }
+  if not RunUserSettingsCommand(
+    '(if not defined LOCALAPPDATA exit /b 2) & (if not exist "' +
+    UserSettingsDir + '" mkdir "' + UserSettingsDir +
+    '") & (if not exist "' + UserSettingsDir +
+    '" exit /b 3) & copy /B /Y "GPlatform.defaults.ini" "' +
+    UserSettingsFile + '" >nul && "%SystemRoot%\System32\fc.exe" /B ' +
+    '"GPlatform.defaults.ini" "' + UserSettingsFile + '" >nul',
+    ExpandConstant('{app}'), ExitCode) then
+    RaiseException(Format('无法重置安装用户的配置文件（错误 %d）。', [ExitCode]));
+  if ExitCode <> 0 then
+    RaiseException(Format('配置文件重置失败（返回值 %d）。', [ExitCode]));
+  Log('Settings mode: reset; complete default INI copied for the original user');
+end;
 
 function VCRuntimeNeeded: Boolean;
 var
@@ -88,6 +170,11 @@ var
   ExitCode: Integer;
 begin
   Result := '';
+  if WizardIsTaskSelected('settingsreset') = WizardIsTaskSelected('settingskeep') then
+  begin
+    Result := '请选择一种安装方式：全新安装或覆盖安装。';
+    Exit;
+  end;
   if not VCRuntimeNeeded then
   begin
     Log('VC runtime prerequisite satisfied; skipping installation');

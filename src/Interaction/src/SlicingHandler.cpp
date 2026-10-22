@@ -10,7 +10,6 @@ REGISTER_INTERACTION_ACTION(
     "model.importGCode",
     "slicing.clearAllSliceData",
     "slicing.exit")
-#include "TransactionManager.hpp"
 #include <DocumentManager.hpp>
 #include "CameraDB.hpp"
 #include "EnvironmentManager.hpp"
@@ -24,8 +23,9 @@ REGISTER_INTERACTION_ACTION(
 #include "SliceSessionBuilder.hpp"
 #include "MeshExporter.hpp"
 #include "ToolpathPreviewDB.hpp"
-#include "ToolpathPreviewRelations.hpp"
-#include "LibSlicerToolpathAdapter.hpp"
+#include "ToolpathPreviewPreparation.hpp"
+#include "ToolpathResultPublication.hpp"
+#include <QPointer>
 #include "ManualSupportDB.hpp"
 #include "ManualSupportRelations.hpp"
 #include <ModelInstanceDB.hpp>
@@ -89,7 +89,7 @@ SlicingHandler::SlicingHandler(QObject* parent)
 SlicingHandler::~SlicingHandler() {
     if (m_taskWatcher && m_taskWatcher->isRunning()) {
         m_taskWatcher->cancel();
-        m_taskWatcher->waitForFinished();
+        try { m_taskWatcher->waitForFinished(); } catch (...) {}
     }
     cleanupUnownedTemporaryPrintOutputs();
 }
@@ -110,6 +110,12 @@ const QHash<QString, QVariantMap>& SlicingHandler::aiDescriptorTable() const {
 }
 
 void SlicingHandler::onEnter(std::shared_ptr<ActionContext> context) {
+    auto* publication = SlicingPreviewBridge::instance();
+    if (!publication->acceptsPublication(publication->publicationEpoch())) {
+        if (context) context->setError(ActionErrorCode::Internal, QStringLiteral("Application is shutting down"));
+        return;
+    }
+
     // 调用基类实现
     StandardActionHandler::onEnter(context);
 
@@ -121,7 +127,7 @@ void SlicingHandler::onEnter(std::shared_ptr<ActionContext> context) {
         actionCode == "model.sliceAll" ||
         actionCode == "slicing.reslice" ||
         actionCode == "support.manual.slice") {
-        if (m_taskWatcher && m_taskWatcher->isRunning()) {
+        if (m_slicePending || (m_taskWatcher && m_taskWatcher->isRunning())) {
             const QString message = QStringLiteral("A slicing task is already running");
             if (m_context) {
                 m_context->setError(ActionErrorCode::Internal, message);
@@ -175,10 +181,8 @@ void SlicingHandler::onEnter(std::shared_ptr<ActionContext> context) {
         }
 
         // Reslicing resolves its source model/bed from the old preview above.
-        // Keep that preview while editing settings, but discard it before
-        // preparing or running the replacement slice.
+        // Keep the old preview until a prepared replacement is accepted.
         SlicingPreviewBridge::instance()->stop();
-        cleanupSlicingEnvironment();
 
         // 先切换到 slicing 环境
         EnvironmentSwitchHandler::switchEnvironment("slicing");
@@ -266,7 +270,7 @@ void SlicingHandler::onEnter(std::shared_ptr<ActionContext> context) {
         if (m_taskWatcher && m_taskWatcher->isRunning()) {
             LOG_INFO("SlicingHandler: Cancelling running slice task...");
             m_taskWatcher->cancel();
-            m_taskWatcher->waitForFinished();
+            try { m_taskWatcher->waitForFinished(); } catch (...) {}
             LOG_INFO("SlicingHandler: Slice task cancelled");
 
             // 结束 TaskStateNotifier 任务
@@ -367,18 +371,16 @@ QStringList SlicingHandler::collectPlateSliceTargets(
 bool SlicingHandler::resolveResliceTargets(
     QStringList& targets, QString* errorMessage) {
     targets.clear();
-    const auto preview = SlicingPreviewBridge::instance()
-        ? SlicingPreviewBridge::instance()->currentToolpathPreview()
-        : nullptr;
+    const auto output = SlicingPreviewBridge::instance()->currentOutput();
     auto* document = DocumentManager::instance();
-    if (!preview || !document) {
+    if (!output || !document) {
         if (errorMessage) {
-            *errorMessage = QStringLiteral("No active toolpath preview");
+            *errorMessage = QStringLiteral("No active slice output");
         }
         return false;
     }
 
-    m_sliceSourceScope = preview->getSourceScope();
+    m_sliceSourceScope = output->sourceScope;
     if (m_sliceSourceScope ==
         GPlatform::ToolpathPreviewSourceScope::ImportedGCode) {
         if (errorMessage) {
@@ -390,8 +392,7 @@ bool SlicingHandler::resolveResliceTargets(
 
     if (m_sliceSourceScope ==
         GPlatform::ToolpathPreviewSourceScope::Plate) {
-        m_slicePrintBedId = document->getOwner(
-            preview->getDBInstanceID());
+        m_slicePrintBedId = output->printBedId;
         m_sliceAllMode = true;
         targets = collectPlateSliceTargets(m_slicePrintBedId);
         if (targets.isEmpty()) {
@@ -407,7 +408,7 @@ bool SlicingHandler::resolveResliceTargets(
         return true;
     }
 
-    m_sliceSourceModelId = preview->getSourceModelDBId();
+    m_sliceSourceModelId = output->sourceModelId;
     const auto instance = document->getDB<ModelInstanceDB>(
         m_sliceSourceModelId);
     if (!instance || !instance->isValid() ||
@@ -568,6 +569,9 @@ bool SlicingHandler::startSliceTaskForModel(const QString& modelId, QString* err
 
     m_state = State::Processing;
 
+    m_publicationEpoch = SlicingPreviewBridge::instance()->beginOutputTask();
+    m_outputAtStart = SlicingPreviewBridge::instance()->currentOutput();
+    m_slicePending = true;
     QFuture<void> future = QtConcurrent::run([this]() {
         performSlice();
     });
@@ -671,6 +675,9 @@ bool SlicingHandler::startSliceTaskForPlate(const QStringList& modelIds, QString
     emit sliceProgress(0, taskDescription);
 
     m_state = State::Processing;
+    m_publicationEpoch = SlicingPreviewBridge::instance()->beginOutputTask();
+    m_outputAtStart = SlicingPreviewBridge::instance()->currentOutput();
+    m_slicePending = true;
     QFuture<void> future = QtConcurrent::run([this]() { performSlice(); });
     m_taskWatcher->setFuture(future);
     connect(m_taskWatcher.get(), &QFutureWatcher<void>::finished,
@@ -684,8 +691,9 @@ void SlicingHandler::onExit() {
 
     // 等待后台任务完成
     if (m_taskWatcher && m_taskWatcher->isRunning()) {
-        LOG_INFO("SlicingHandler: Waiting for background task to complete...");
-        m_taskWatcher->waitForFinished();
+        LOG_INFO("SlicingHandler: Cancelling background task before exit...");
+        m_taskWatcher->cancel();
+        try { m_taskWatcher->waitForFinished(); } catch (...) {}
     }
 
     // 清理资源
@@ -713,8 +721,10 @@ void SlicingHandler::onExit() {
 
 void SlicingHandler::performSlice() {
     LOG_INFO("[SLICING] performSlice started for: {}", m_modelName.toStdString());
-    m_toolpathPreview.reset();
-    cleanupUnownedTemporaryPrintOutputs();
+    m_preparedPreview = {};
+    m_success = false;
+    m_errorMessage.clear();
+    m_pendingOutput.reset();
 
     auto cleanupTemporaryInputs = [this]() {
         if (m_needCleanupSupportMeshStl && !m_supportMeshStlPath.isEmpty()) {
@@ -726,15 +736,17 @@ void SlicingHandler::performSlice() {
     };
 
     // 辅助函数：在主线程中更新进度
-    auto updateProgress = [this](float progress, const QString& description = QString()) {
-        QMetaObject::invokeMethod(qApp, [this, progress, description]() {
-            if (!m_taskId.isEmpty()) {
-                TaskStateNotifier::instance()->updateProgress(m_taskId, progress);
-                if (!description.isEmpty()) {
-                    TaskStateNotifier::instance()->updateDescription(m_taskId, description);
-                }
-            }
-        });
+    const QPointer<SlicingHandler> self(this);
+    const auto taskId = m_taskId;
+    const auto epoch = m_publicationEpoch;
+    auto* bridge = SlicingPreviewBridge::instance();
+    auto updateProgress = [self, taskId, epoch, bridge](float progress, const QString& description = QString()) {
+        if (!self || !bridge->acceptsPublication(epoch)) return;
+        QMetaObject::invokeMethod(self, [self, taskId, epoch, bridge, progress, description] {
+            if (!self || !bridge->acceptsPublication(epoch) || self->m_taskId != taskId || self->m_state != State::Processing) return;
+            TaskStateNotifier::instance()->updateProgress(taskId, progress);
+            if (!description.isEmpty()) TaskStateNotifier::instance()->updateDescription(taskId, description);
+        }, Qt::QueuedConnection);
     };
 
     updateProgress(0.1f, QString("正在生成切片几何快照..."));
@@ -748,7 +760,8 @@ void SlicingHandler::performSlice() {
     }
     const auto snapshotStart = std::chrono::steady_clock::now();
     auto built = SliceSessionBuilder::build(*captured, [this]() {
-        return m_taskWatcher && m_taskWatcher->isCanceled();
+        return (m_taskWatcher && m_taskWatcher->isCanceled()) ||
+            !SlicingPreviewBridge::instance()->acceptsPublication(m_publicationEpoch);
     });
     if (!built) {
         m_success = false;
@@ -779,7 +792,8 @@ void SlicingHandler::performSlice() {
                        QString::fromUtf8(stage.data(), static_cast<qsizetype>(stage.size())));
     };
     callbacks.is_cancelled = [this]() {
-        return m_taskWatcher && m_taskWatcher->isCanceled();
+        return (m_taskWatcher && m_taskWatcher->isCanceled()) ||
+            !SlicingPreviewBridge::instance()->acceptsPublication(m_publicationEpoch);
     };
 
     updateProgress(0.3f, QString("执行 libslicer 切片..."));
@@ -791,17 +805,28 @@ void SlicingHandler::performSlice() {
     m_gcode3mfPath = QString::fromStdString(result.gcode_3mf.path);
     m_gcode3mfIsLibraryTemporary = result.success &&
         result.gcode_3mf.ownership == libslicer::OutputArtifactOwnership::LibraryTemporary;
+    m_pendingOutput = std::make_shared<GPlatform::SliceOutputRecord>();
+    m_pendingOutput->setArtifacts(m_gcodePath, m_gcodeIsLibraryTemporary, m_gcode3mfPath,
+        m_gcode3mfIsLibraryTemporary, m_outputAtStart);
+    m_pendingOutput->name = m_modelName;
+    m_pendingOutput->sourceScope = m_sliceSourceScope;
+    m_pendingOutput->sourceModelId = m_sliceSourceModelId;
+    m_pendingOutput->printBedId = m_slicePrintBedId;
+    m_pendingOutput->displayModelId = m_sliceSourceScope == GPlatform::ToolpathPreviewSourceScope::SingleModel
+        ? int(m_sliceSourceModelId.getValue()) : int(DBInstanceID(m_modelId).getValue());
+    m_pendingOutput->stats.totalTimeS = float(result.summary.estimated_time_seconds);
+    m_pendingOutput->stats.totalExtrusionMm = float(result.summary.filament_used_mm);
+    m_pendingOutput->stats.totalLayers = int(result.summary.layer_count);
     m_totalTime = result.summary.estimated_time_seconds;
     m_filamentUsed = result.summary.filament_used_mm / 1000.0;
     m_layerCount = static_cast<int>(result.summary.layer_count);
-    m_toolpathPreview = result.preview;
     if (!result.belt_support_debug.path.empty()) {
         LOG_INFO("SlicingHandler: Belt support audit saved to {}",
                  result.belt_support_debug.path);
     }
 
-    if (m_toolpathPreview) {
-        for (const auto& feature : m_toolpathPreview->statistics.features) {
+    if (result.preview && result.preview->schema_version == libslicer::toolpath_schema_version) {
+        for (const auto& feature : result.preview->statistics.features) {
             if (feature.role == libslicer::ToolpathExtrusionRole::SparseInfill) {
                 LOG_INFO("TOOLPATH sparseInfill paths={} renderSegments={} lengthMm={:.3f} volumeMm3={:.3f}",
                          feature.path_count,
@@ -839,6 +864,18 @@ void SlicingHandler::performSlice() {
         m_errorMessage.clear();
     }
 
+    if (m_success) {
+        m_success = m_pendingOutput->validate(&m_errorMessage);
+        if (m_success && result.preview) {
+            auto source = GPlatform::captureToolpathSource(m_gcodePath, callbacks.is_cancelled);
+            m_preparedPreview = GPlatform::prepareToolpathPreview(*result.preview, std::move(source), callbacks.is_cancelled);
+        } else if (m_success) {
+            m_preparedPreview.error = QStringLiteral("No toolpath preview was provided");
+        }
+        if (m_preparedPreview.cancelled) { m_success = false; m_errorMessage = QStringLiteral("Slicing cancelled"); }
+        m_pendingOutput->warnings.append(m_sliceWarnings);
+    }
+
     cleanupTemporaryInputs();
 
     if (m_success) {
@@ -854,6 +891,10 @@ void SlicingHandler::performSlice() {
 }
 
 void SlicingHandler::onTaskCompleted() {
+    m_slicePending = false;
+    try { m_taskWatcher->future().waitForFinished(); }
+    catch (const std::exception& error) { m_success = false; m_errorMessage = QString::fromUtf8(error.what()); }
+    catch (...) { m_success = false; m_errorMessage = QStringLiteral("Unexpected slicing task failure"); }
     const bool trackedInvocation = m_context &&
         !m_context->getInvocationId().trimmed().isEmpty();
     const ScopedTransactionContextMetadata transactionScope(
@@ -865,21 +906,36 @@ void SlicingHandler::onTaskCompleted() {
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - m_taskStartTime).count();
     LOG_INFO("[SLICING TIMING] Backend ready task={} elapsed={}ms", m_taskId.toStdString(), duration);
 
-    if (m_state == State::Processing) {
-        m_state = State::Ready;
+    if (m_state != State::Processing || (m_taskWatcher && m_taskWatcher->isCanceled()) ||
+        !SlicingPreviewBridge::instance()->acceptsPublication(m_publicationEpoch)) {
+        m_success = false;
+        m_errorMessage = QStringLiteral("Slicing cancelled");
+        m_preparedPreview = {};
+        cleanupUnownedTemporaryPrintOutputs();
+        if (!m_taskId.isEmpty()) { TaskStateNotifier::instance()->endTask(m_taskId); m_taskId.clear(); }
+        if (m_state == State::Processing) {
+            m_state = State::Ready;
+            if (m_context) m_context->setError(ActionErrorCode::Internal, m_errorMessage);
+            completeInvocation(m_context);
+        }
+        return;
     }
+    m_state = State::Ready;
 
     // 只处理切片模式（导入由 GCodeImportHandler 处理）
     if (m_mode == Mode::Slice) {
         if (m_success) {
             // 在主线程中创建可视化
-            createToolpathPreview();
+            try { createToolpathPreview(); }
+            catch (const std::exception& error) { m_success = false; m_errorMessage = QString::fromUtf8(error.what()); }
+            catch (...) { m_success = false; m_errorMessage = QStringLiteral("Unexpected toolpath publication failure"); }
         }
 
-        // Preview creation is part of slicing success. It may fail even after
-        // libslicer produced a valid GCode file.
+        // Successful output acceptance is independent from preview availability.
         if (m_success) {
-            SliceSettingsBridge::instance()->markCurrentAsSliced();
+            const auto active = GPlatform::SlicingBackend::instance().activeProfileSnapshot();
+            SliceSettingsBridge::instance()->markAsSlicedForRevision(m_sliceSession->profileRevision,
+                active ? std::optional<std::uint64_t>(active->revision) : std::nullopt);
             EnvironmentSwitchHandler::switchEnvironment("preview");
 
             if (!m_taskId.isEmpty()) {
@@ -897,7 +953,10 @@ void SlicingHandler::onTaskCompleted() {
                     tr("Slicing warnings"), m_sliceWarnings.join(QStringLiteral("\n")));
             emit sliceCompleted(m_gcodePath, true);
         } else {
-            EnvironmentSwitchHandler::switchEnvironment("normal");
+            m_preparedPreview = {};
+            cleanupUnownedTemporaryPrintOutputs();
+            if (!SlicingPreviewBridge::instance()->currentOutput()) EnvironmentSwitchHandler::switchEnvironment("normal");
+            else EnvironmentSwitchHandler::switchEnvironment("preview");
             emit sliceCompleted("", false, m_errorMessage);
             if (m_context) {
                 m_context->setError(ActionErrorCode::Internal, m_errorMessage);
@@ -907,6 +966,8 @@ void SlicingHandler::onTaskCompleted() {
         QVariantMap completionResult;
         completionResult.insert("modelId", m_modelId);
         completionResult.insert("gcodePath", m_success ? m_gcodePath : QString());
+        completionResult.insert("previewAvailable", m_success && SlicingPreviewBridge::instance()->geometryAvailable());
+        completionResult.insert("warnings", m_sliceWarnings);
         completionResult.insert("estimatedTimeSeconds", m_totalTime);
         completionResult.insert("filamentUsedMeters", m_filamentUsed);
         completionResult.insert("layerCount", m_layerCount);
@@ -944,19 +1005,9 @@ void SlicingHandler::cleanupSlicingEnvironment() {
 }
 
 void SlicingHandler::cleanupUnownedTemporaryPrintOutputs() {
-    const auto removeTemporary = [](QString& path, bool& isTemporary, const char* label) {
-        if (!isTemporary || path.isEmpty()) {
-            return;
-        }
-        if (QFile::remove(path)) {
-            LOG_INFO("SlicingHandler: removed unowned temporary {}: {}", label, path.toStdString());
-        } else if (QFileInfo::exists(path)) {
-            LOG_WARN("SlicingHandler: failed to remove unowned temporary {}: {}", label, path.toStdString());
-        }
-        isTemporary = false;
-    };
-    removeTemporary(m_gcodePath, m_gcodeIsLibraryTemporary, "GCode");
-    removeTemporary(m_gcode3mfPath, m_gcode3mfIsLibraryTemporary, "GCode 3MF");
+    m_pendingOutput.reset();
+    m_outputAtStart.reset();
+    m_gcodeIsLibraryTemporary = m_gcode3mfIsLibraryTemporary = false;
 }
 
 void SlicingHandler::clearAllSliceData() {
@@ -965,7 +1016,7 @@ void SlicingHandler::clearAllSliceData() {
     if (m_taskWatcher && m_taskWatcher->isRunning()) {
         LOG_INFO("SlicingHandler: Cancelling running slice task before clearing...");
         m_taskWatcher->cancel();
-        m_taskWatcher->waitForFinished();
+        try { m_taskWatcher->waitForFinished(); } catch (...) {}
 
         if (!m_taskId.isEmpty()) {
             TaskStateNotifier::instance()->endTask(m_taskId);
@@ -1016,112 +1067,18 @@ QString SlicingHandler::getOrExportSupportMeshSTL() {
 }
 
 void SlicingHandler::createToolpathPreview() {
-    auto vizStartTime = std::chrono::steady_clock::now();
-
-    if (!m_success) {
-        return;
+    if (!m_success || !m_pendingOutput) return;
+    auto published = GPlatform::publishToolpathResult(m_pendingOutput, std::move(m_preparedPreview), m_publicationEpoch);
+    m_success = published.accepted;
+    if (!m_success) { m_errorMessage = published.error; return; }
+    m_sliceWarnings = m_pendingOutput->warnings;
+    if (!m_pendingOutput->geometryAvailable) m_sliceWarnings << m_pendingOutput->previewError;
+    cleanupUnownedTemporaryPrintOutputs();
+    if (published.preview && !published.preview->getFiberFillDiagnostics().empty()) {
+        const QString token = QStringLiteral("%1:%2").arg(published.preview->getDBInstanceID().getValue())
+            .arg(published.preview->getPreviewDataGeneration());
+        emit NotificationManager::instance()->fiberFillDebugAvailable(token, int(published.preview->getFiberFillDiagnostics().size()));
     }
-
-    if (!m_toolpathPreview) {
-        m_success = false;
-        m_errorMessage = "libslicer returned no toolpath preview";
-        LOG_ERROR("SlicingHandler: {}", m_errorMessage.toStdString());
-        cleanupUnownedTemporaryPrintOutputs();
-        return;
-    }
-
-    TransactionGuard guard("Create Toolpath Preview");
-
-    auto preview = trans::TransDB::create<GPlatform::ToolpathPreviewDB>();
-    if (!preview) {
-        m_success = false;
-        m_errorMessage = "Failed to create ToolpathPreviewDB";
-        LOG_ERROR("SlicingHandler: {}", m_errorMessage.toStdString());
-        cleanupUnownedTemporaryPrintOutputs();
-        return;
-    }
-
-    auto data = GPlatform::adaptLibSlicerToolpath(*m_toolpathPreview);
-    data.printGCodePath = m_gcodePath.toStdString();
-    data.printGCodeOwnership = m_gcodeIsLibraryTemporary
-        ? GPlatform::ToolpathArtifactOwnership::GeneratedTemporary
-        : GPlatform::ToolpathArtifactOwnership::External;
-    data.printGCode3mfPath = m_gcode3mfPath.toStdString();
-    data.printGCode3mfOwnership = m_gcode3mfIsLibraryTemporary
-        ? GPlatform::ToolpathArtifactOwnership::GeneratedTemporary
-        : GPlatform::ToolpathArtifactOwnership::External;
-    const DBInstanceID sourceModelId(m_modelId);
-    preview->setSourceModelName(m_modelName.toStdString());
-    preview->setSourceScope(m_sliceSourceScope);
-    preview->setSourceModelDBId(
-        m_sliceSourceScope ==
-                GPlatform::ToolpathPreviewSourceScope::SingleModel
-            ? m_sliceSourceModelId
-            : INVALID_DB_ID);
-    preview->setPreviewData(std::move(data));
-    if (m_toolpathPreview->metadata_json.find(
-            "gplatform.belt_support_algorithm_audit.v1") != std::string::npos) {
-        preview->setShowLayerRangeStart(0);
-        preview->setShowLayerRangeEnd(0);
-        preview->setCurrentLayer(0);
-    }
-    m_gcodeIsLibraryTemporary = false;
-    m_gcode3mfIsLibraryTemporary = false;
-    preview->setVisible(true);
-
-    // Slice inputs are required to be immutable world-space snapshots.
-    Transform identityTransform;
-    identityTransform.identity();
-    preview->setTransform(identityTransform);
-
-    if (auto* manager = DocumentManager::instance()) {
-        manager->registerDBInstance(preview, TypeID::TOOLPATH_PREVIEW_DB);
-        if (!m_slicePrintBedId.isValid() ||
-            !manager->attachOwnedChild(
-                m_slicePrintBedId, preview->getDBInstanceID(),
-                ToolpathPreviewRelations::PrintBedPreviewsRelation)) {
-            m_success = false;
-            m_errorMessage =
-                "Failed to attach ToolpathPreviewDB to print bed";
-            LOG_ERROR("SlicingHandler: {}", m_errorMessage.toStdString());
-            guard.rollback();
-            cleanupUnownedTemporaryPrintOutputs();
-            return;
-        }
-    }
-
-    // 注册到 SlicingPreviewBridge
-    auto* bridge = SlicingPreviewBridge::instance();
-    if (bridge) {
-        bridge->completePreviewLoad(
-            QString(),
-            m_gcodePath,
-            static_cast<int>(sourceModelId.getValue()),
-            m_modelName,
-            preview
-        );
-
-    }
-
-    auto vizEndTime = std::chrono::steady_clock::now();
-    if (!preview->getFiberFillDiagnostics().empty()) {
-        const QString token = QStringLiteral("%1:%2")
-            .arg(preview->getDBInstanceID().getValue()).arg(preview->getPreviewDataGeneration());
-        emit NotificationManager::instance()->fiberFillDebugAvailable(
-            token, static_cast<int>(preview->getFiberFillDiagnostics().size()));
-    } else if (m_sliceSession && m_sliceSession->request.config.value("fiber_fill_debug") == "1") {
-        // An empty debug result uses the same timed, informational notification.
-        emit NotificationManager::instance()->fiberFillDebugAvailable(QString(), 0);
-    }
-    auto vizDuration = std::chrono::duration_cast<std::chrono::milliseconds>(vizEndTime - vizStartTime).count();
-    LOG_INFO("[SLICING TIMING] 创建 ToolpathPreviewDB 完成 (总耗时: {}ms)", vizDuration);
-    LOG_INFO("SlicingHandler: Created ToolpathPreviewDB with {} layers and {} drawable moves",
-             preview->getTotalLayers(), preview->getStats().renderSegmentCount);
-    LOG_INFO(
-        "SlicingHandler: preview source scope={} bed={} model={}",
-        static_cast<int>(preview->getSourceScope()),
-        m_slicePrintBedId.getValue(),
-        preview->getSourceModelDBId().getValue());
 }
 
 void SlicingHandler::setDebugMode(bool enabled) {

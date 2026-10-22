@@ -3068,3 +3068,35 @@ msgstr "选中模型后，打开此面板查看和编辑模型属性。"
 
 msgid "Adjust scene settings here. Use the guide button to repeat this tour."
 msgstr "在这里调整场景设置。需要时可再次点击向导按钮，重新查看引导。"
+msgid "Runtime information"
+msgstr "运行信息"
+
+msgid "Journal service"
+msgstr "Journal 服务"
+
+msgid "Listening"
+msgstr "正在监听"
+
+msgid "Not listening"
+msgstr "未监听"
+
+msgid "Not enabled"
+msgstr "未启用"
+
+msgid "Listen address"
+msgstr "监听地址"
+
+msgid "Copy address"
+msgstr "复制地址"
+
+msgid "Process ID"
+msgstr "进程 PID"
+
+msgid "Slicing completed. Preview unavailable: %1"
+msgstr "切片完成。预览不可用：%1"
+
+msgid "The G-code output can still be exported from the toolbar below."
+msgstr "仍可通过下方工具栏导出 G-code 文件。"
+
+msgid "G-code import warnings"
+msgstr "G-code 导入警告"

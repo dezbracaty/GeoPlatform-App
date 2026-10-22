@@ -5,30 +5,39 @@ include_guard(GLOBAL)
 # Raw ANSI bytes can make rules.ninja generation fail in an IDE without a console.
 # VSLANG alone is insufficient when only a Chinese VS pack exists.
 if(MSVC AND CMAKE_GENERATOR MATCHES "^Ninja")
+    if(NOT Python3_EXECUTABLE)
+        find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    endif()
+    get_filename_component(_utf8_launcher
+        "${CMAKE_CURRENT_LIST_DIR}/msvc_utf8_launcher.py" ABSOLUTE)
     set(_probe_dir "${CMAKE_BINARY_DIR}/CMakeFiles/GPlatformMsvcDependencies")
     file(MAKE_DIRECTORY "${_probe_dir}")
-    file(WRITE "${_probe_dir}/gplatform_dependency_probe.h" "#pragma once\n")
-    file(WRITE "${_probe_dir}/probe.cpp" "#include \"gplatform_dependency_probe.h\"\n")
+    execute_process(COMMAND "${Python3_EXECUTABLE}" "${_utf8_launcher}" --probe-header-name
+        OUTPUT_VARIABLE _probe_name RESULT_VARIABLE _probe_name_result ENCODING UTF-8)
+    if(NOT _probe_name_result EQUAL 0)
+        message(FATAL_ERROR "Cannot select an MSVC dependency probe header")
+    endif()
+    string(JSON _probe_header GET "${_probe_name}" header)
+    file(WRITE "${_probe_dir}/${_probe_header}" "#pragma once\n")
+    file(WRITE "${_probe_dir}/probe.cpp" "#include \"${_probe_header}\"\n")
     execute_process(
         COMMAND "${CMAKE_COMMAND}" -E env --unset=VS_UNICODE_OUTPUT VSLANG=1033
-            "${CMAKE_CXX_COMPILER}" /nologo /showIncludes /c
+            "${Python3_EXECUTABLE}" "${_utf8_launcher}"
+            --detect-header "${_probe_header}" --
+            "${CMAKE_CXX_COMPILER}" /nologo /utf-8 /showIncludes /c
             "${_probe_dir}/probe.cpp" "/Fo${_probe_dir}/probe.obj"
         RESULT_VARIABLE _probe_result OUTPUT_VARIABLE _probe_output
-        ERROR_VARIABLE _probe_error ENCODING AUTO)
+        ERROR_VARIABLE _probe_error ENCODING UTF-8)
     if(NOT _probe_result EQUAL 0)
         message(FATAL_ERROR "MSVC dependency probe failed: ${_probe_output}${_probe_error}")
     endif()
-    # Capture everything before the absolute included-header path, without
-    # assuming an installed language pack or the wording of the diagnostics.
-    string(REGEX MATCH "(^|\n)([^\r\n]*: +)[A-Za-z]:[^\r\n]*gplatform_dependency_probe\\.h"
-        _probe_match "${_probe_output}")
-    if(NOT _probe_match)
-        message(FATAL_ERROR "Cannot detect MSVC /showIncludes prefix: ${_probe_output}")
-    endif()
-    set(CMAKE_CL_SHOWINCLUDES_PREFIX "${CMAKE_MATCH_2}")
+    string(JSON _output_encoding GET "${_probe_output}" encoding)
+    string(JSON CMAKE_CL_SHOWINCLUDES_PREFIX GET "${_probe_output}" prefix)
     foreach(_language C CXX)
         set(CMAKE_${_language}_CL_SHOWINCLUDES_PREFIX "${CMAKE_CL_SHOWINCLUDES_PREFIX}")
         set(_launcher "${CMAKE_COMMAND};-E;env;--unset=VS_UNICODE_OUTPUT;VSLANG=1033")
+        list(APPEND _launcher "${Python3_EXECUTABLE}" "${_utf8_launcher}"
+            --encoding "${_output_encoding}" --)
         if(CMAKE_${_language}_COMPILER_LAUNCHER)
             list(APPEND _launcher ${CMAKE_${_language}_COMPILER_LAUNCHER})
         endif()

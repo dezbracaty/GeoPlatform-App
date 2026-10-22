@@ -475,7 +475,7 @@ PanelSurface {
                     PreviewInspectionHint {
                         id: previewHint
                         Layout.fillWidth: true
-                        visible: root.previewReady
+                        visible: root.previewReady && SlicingPreviewBridge.geometryAvailable
                         compact: root.narrow
                     }
 
@@ -549,6 +549,7 @@ PanelSurface {
                         }
 
                         MenuItem {
+                            objectName: "printOutputExportGCode"
                             text: qsTr("G-code Files")
                             icon.name: FluentIcons.graph_Document
                             enabled: !root.previewDirty
@@ -557,6 +558,7 @@ PanelSurface {
                         }
 
                         MenuItem {
+                            objectName: "printOutputExportPackage"
                             text: qsTr("Slicing Job (Gcode.3MF)")
                             icon.name: FluentIcons.graph_ZipFolder
                             enabled: !root.previewDirty

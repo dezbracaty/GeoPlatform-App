@@ -5,6 +5,7 @@
 #include <QTimer>
 #include <deque>
 #include <chrono>
+#include <algorithm>
 
 /**
  * @brief FPS监测器
@@ -43,10 +44,20 @@ public:
      * @brief 记录一帧
      */
     void recordFrame() {
-        auto now = std::chrono::high_resolution_clock::now();
+        recordFrameAt(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+    }
+
+    // Presentation time travels with a queued GUI notification. Measuring its
+    // delivery time would turn a GUI backlog into an artificial high-FPS burst.
+    void recordFrameAt(qint64 presentedAtNs) {
+        using Clock = std::chrono::steady_clock;
+        const auto now = Clock::time_point(std::chrono::duration_cast<Clock::duration>(
+            std::chrono::nanoseconds(presentedAtNs)));
         QMutexLocker locker(&m_statsMutex);
 
-        if (!m_presentationActive) {
+        if (!m_presentationActive || now < m_acceptFramesSince ||
+            (m_lastFrameTime.time_since_epoch().count() > 0 && now <= m_lastFrameTime)) {
             return;
         }
 
@@ -59,7 +70,9 @@ public:
             double frameTimeMs = duration.count() / 1000.0;
 
             const double targetFrameTime = 1000.0 / m_targetFPS;
-            const bool startsNewBurst = frameTimeMs > targetFrameTime * 4.0;
+            // A continuous slow renderer is still one cadence. Using four
+            // target intervals here erased every sample below about 15 FPS.
+            const bool startsNewBurst = frameTimeMs > 1000.0;
             if (startsNewBurst) {
                 m_frameTimes.clear();
             }
@@ -102,6 +115,7 @@ public:
         }
 
         m_presentationActive = active;
+        if (active) m_acceptFramesSince = std::chrono::steady_clock::now();
         m_frameTimes.clear();
         m_lastFrameTime = {};
         m_currentFPS = 0;
@@ -118,6 +132,7 @@ public:
      */
     void reset() {
         QMutexLocker locker(&m_statsMutex);
+        m_acceptFramesSince = std::chrono::steady_clock::now();
         m_frameTimes.clear();
         m_lastFrameTime = {};
         m_recordedDroppedFrames = 0;
@@ -184,7 +199,7 @@ signals:
 
 private:
     void updateFPS() {
-        auto now = std::chrono::high_resolution_clock::now();
+        auto now = std::chrono::steady_clock::now();
         const double currentTimestampMs = std::chrono::duration<double, std::milli>(
                                               now.time_since_epoch())
                                               .count();
@@ -200,18 +215,12 @@ private:
             }
         }
 
-        // A resumed presentation starts a fresh cadence window and must not
-        // treat the suspended interval as one very long dropped frame.
-        if (m_frameTimes.empty()) {
-            m_lastFrameTime = {};
-        }
+        // Keep the last accepted timestamp even after the sampling window
+        // expires, so a delayed duplicate cannot be counted a second time.
+        // Explicit reset/resume starts a fresh epoch.
 
         // Treat a producer/scene-graph stall as zero current FPS while keeping
         // the historical samples available for average/min/max reporting.
-        constexpr double activeIdleThresholdMs = 150.0;
-        const bool isActive = m_presentationActive && !m_frameTimes.empty()
-            && currentTimestampMs - m_frameTimes.back() <= activeIdleThresholdMs;
-
         if (m_frameTimes.size() > 1) {
             const double elapsedMs = m_frameTimes.back() - m_frameTimes.front();
             m_averageFrameTime = elapsedMs > 0.0
@@ -220,6 +229,13 @@ private:
         } else {
             m_averageFrameTime = 0;
         }
+
+        // Preserve fast stall detection at high FPS, while allowing several
+        // measured frame intervals for a genuinely slow GPU (up to the 1s window).
+        const double activeIdleThresholdMs =
+            std::min(1000.0, std::max(150.0, m_averageFrameTime * 3.0));
+        const bool isActive = m_presentationActive && !m_frameTimes.empty()
+            && currentTimestampMs - m_frameTimes.back() <= activeIdleThresholdMs;
 
         m_currentFPS = isActive && m_averageFrameTime > 0.0
             ? 1000.0 / m_averageFrameTime
@@ -259,7 +275,8 @@ private:
     }
 
     mutable QMutex m_statsMutex;
-    std::chrono::high_resolution_clock::time_point m_lastFrameTime;
+    std::chrono::steady_clock::time_point m_lastFrameTime;
+    std::chrono::steady_clock::time_point m_acceptFramesSince;
     std::deque<double> m_frameTimes; // 存储最近的帧时间戳（毫秒）
 
     int m_targetFPS;
