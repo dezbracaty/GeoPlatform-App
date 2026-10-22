@@ -1,4 +1,5 @@
 import QtQuick
+import SmoothUI.Controls
 import GPlatform
 
 AppSurface {
@@ -7,7 +8,7 @@ AppSurface {
     property bool blocksPointerInput: true
 
     elevation: 2
-    surfaceRadius: PrintWorkspaceStyle.dialogRadius
+    surfaceRadius: Theme.panelRadius
     shadowOpacity: elevation >= 8 ? 0.30 : 0.16
 
     // PanelSurface represents an interactive surface layered over the 3D

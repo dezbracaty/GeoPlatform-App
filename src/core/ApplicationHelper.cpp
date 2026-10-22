@@ -1,6 +1,7 @@
 #include "ApplicationHelper.h"
 #include "CoreRegistration.hpp"
 #include "ActionManager.hpp"
+#include <SlicingPreviewBridge.hpp>
 #include <DocumentManager.hpp>
 #include <UndoRedoManager.hpp>
 #include <QQmlEngine>
@@ -26,29 +27,18 @@ QStringList ApplicationHelper::takeRestartArguments() {
     return std::exchange(m_restartArguments, {});
 }
 
-void ApplicationHelper::exit(int code) {
-    // 在确认关闭时执行优雅关闭
-    LOG_INFO("ApplicationHelper: Starting graceful shutdown sequence");
-
-    // 直接清理最关键的组件 - ActionManager
-    // 这是最重要的，因为它持有的 Handler 缓存会导致析构顺序问题
+void ApplicationHelper::prepareForExit() {
+    if (m_shutdownPrepared) return;
+    m_shutdownPrepared = true;
+    auto* preview = SlicingPreviewBridge::instance();
+    preview->beginShutdown();
     cleanupHandlers();
-
-    // 清理 UndoRedoManager
-    if (auto* undoManager = UndoRedoManager::instance()) {
-        undoManager->clear();
-        LOG_INFO("UndoRedoManager cleared");
-    }
-
-    // 其他组件会通过正常的析构顺序自动清理
-    // DocumentManager、TransactionManager 等都有正确的析构函数
-
-    LOG_INFO("ApplicationHelper: Exiting application with code {}", code);
-
-    // 刷新日志缓冲区，确保所有日志都写入文件
+    preview->clearAllDBReferences();
+    if (auto* undoManager = UndoRedoManager::instance()) undoManager->clear();
+}
+void ApplicationHelper::exit(int code) {
+    prepareForExit();
     Log::flush();
-
-    // 注意：不要关闭日志系统，让它随静态变量自然析构
     QCoreApplication::exit(code);
 }
 

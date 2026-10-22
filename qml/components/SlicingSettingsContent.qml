@@ -8,6 +8,7 @@ import SmoothUI.impl
 
 Item {
     id: root
+    SmoothUI.theme: Theme.of(root)
     clip: true
     implicitWidth: preferredWidth
     implicitHeight: preferredHeight
@@ -364,7 +365,7 @@ Item {
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
                 height: 1
-                color: Theme.res.dividerStrokeColorDefault
+                color: root.SmoothUI.theme.res.dividerStrokeColorDefault
             }
 
             RowLayout {
@@ -375,7 +376,7 @@ Item {
                 Label {
                     text: qsTr("Slicing Parameters")
                     font: Typography.bodyStrong
-                    color: Theme.res.textFillColorPrimary
+                    color: root.SmoothUI.theme.res.textFillColorPrimary
                 }
 
                 Item { Layout.fillWidth: true }
@@ -405,7 +406,7 @@ Item {
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
                 height: 1
-                color: Theme.res.dividerStrokeColorDefault
+                color: root.SmoothUI.theme.res.dividerStrokeColorDefault
             }
 
             RowLayout {
@@ -421,7 +422,7 @@ Item {
                     Label {
                         text: qsTr("Printer Preset")
                         font.pixelSize: 10
-                        color: Theme.res.textFillColorTertiary
+                        color: root.SmoothUI.theme.res.textFillColorTertiary
                     }
                     ComboBox {
                         id: printerPresetCombo
@@ -447,7 +448,7 @@ Item {
                     Label {
                         text: qsTr("Filament Configuration")
                         font.pixelSize: 10
-                        color: Theme.res.textFillColorTertiary
+                        color: root.SmoothUI.theme.res.textFillColorTertiary
                     }
                     Button {
                         id: filamentSlotsButton
@@ -469,7 +470,7 @@ Item {
                                     radius: 4
                                     color: modelData.color || "#808080"
                                     border.width: 1
-                                    border.color: Theme.res.controlStrokeColorDefault
+                                    border.color: root.SmoothUI.theme.res.controlStrokeColorDefault
                                 }
                             }
 
@@ -477,7 +478,7 @@ Item {
                                 Layout.fillWidth: true
                                 text: root.filamentSlotsSummary()
                                 font: Typography.caption
-                                color: Theme.res.textFillColorPrimary
+                                color: root.SmoothUI.theme.res.textFillColorPrimary
                                 elide: Text.ElideRight
                             }
 
@@ -485,7 +486,7 @@ Item {
                                 Layout.preferredWidth: 12
                                 Layout.preferredHeight: 12
                                 source: FluentIcons.graph_ChevronRightSmall
-                                color: Theme.res.textFillColorSecondary
+                                color: root.SmoothUI.theme.res.textFillColorSecondary
                             }
                         }
                         onClicked: {
@@ -501,7 +502,7 @@ Item {
                     Label {
                         text: qsTr("Process Preset")
                         font.pixelSize: 10
-                        color: Theme.res.textFillColorTertiary
+                        color: root.SmoothUI.theme.res.textFillColorTertiary
                     }
                     ComboBox {
                         id: processPresetCombo
@@ -526,7 +527,7 @@ Item {
                     Label {
                         text: qsTr("Build Plate")
                         font.pixelSize: 10
-                        color: Theme.res.textFillColorTertiary
+                        color: root.SmoothUI.theme.res.textFillColorTertiary
                     }
                     ComboBox {
                         Layout.fillWidth: true
@@ -559,7 +560,7 @@ Item {
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
                 height: 1
-                color: Theme.res.dividerStrokeColorDefault
+                color: root.SmoothUI.theme.res.dividerStrokeColorDefault
             }
 
             RowLayout {
@@ -646,7 +647,7 @@ Item {
                     Label {
                         text: qsTr("Settings Page")
                         font: Typography.bodyStrong
-                        color: Theme.res.textFillColorPrimary
+                        color: root.SmoothUI.theme.res.textFillColorPrimary
                     }
 
                     ListView {
@@ -666,16 +667,16 @@ Item {
                             flat: true
 
                             background: Rectangle {
-                                radius: 6
+                                radius: root.SmoothUI.radius
                                 color: parent.ListView.isCurrentItem
-                                       ? Theme.res.subtleFillColorSecondary
+                                       ? root.SmoothUI.theme.res.subtleFillColorSecondary
                                        : "transparent"
                             }
 
                             contentItem: Label {
                                 text: root.localizedSchemaText(modelData.title, modelData.id || "")
                                 font: Typography.caption
-                                color: Theme.res.textFillColorPrimary
+                                color: root.SmoothUI.theme.res.textFillColorPrimary
                                 leftPadding: 10
                                 verticalAlignment: Text.AlignVCenter
                             }
@@ -697,7 +698,7 @@ Item {
                     Layout.fillWidth: true
                     Layout.preferredHeight: visible ? 34 : 0
                     visible: root.globalSearchMode || root.workspaceIndex !== 1
-                    radius: 6
+                    radius: root.SmoothUI.radius
                     color: PrintWorkspaceStyle.secondarySurface(root.SmoothUI.dark)
 
                     Label {
@@ -711,7 +712,7 @@ Item {
                                  : ((root.workspaceIndex === 0 ? qsTr("Process · ") : qsTr("Printer · "))
                                     + root.currentPageTitle))
                         font: Typography.bodyStrong
-                        color: Theme.res.textFillColorPrimary
+                        color: root.SmoothUI.theme.res.textFillColorPrimary
                     }
                 }
 
@@ -722,7 +723,7 @@ Item {
                         ? 88 + 80 * Math.max.apply(null, root.toolGroups.map(function(group) { return Math.max(1, group.slots.length) }))
                         : 124) : 0
                     visible: !root.globalSearchMode && root.workspaceIndex === 1
-                    radius: 6
+                    radius: root.SmoothUI.radius
                     color: PrintWorkspaceStyle.secondarySurface(root.SmoothUI.dark)
 
                     ColumnLayout {
@@ -763,7 +764,7 @@ Item {
                             Label {
                                 text: qsTr("%1 slots").arg(root.filamentSlots.length)
                                 font: Typography.bodyStrong
-                                color: Theme.res.textFillColorPrimary
+                                color: root.SmoothUI.theme.res.textFillColorPrimary
                             }
 
                             Label {
@@ -775,7 +776,7 @@ Item {
                                       : qsTr("Machine-fixed · %1 nozzles")
                                             .arg(SliceSettingsBridge.selectedMachine.physicalToolCount || 1)
                                 font: Typography.caption
-                                color: Theme.res.textFillColorSecondary
+                                color: root.SmoothUI.theme.res.textFillColorSecondary
                                 elide: Text.ElideRight
                             }
 
@@ -798,7 +799,7 @@ Item {
                                 visible: SliceSettingsBridge.configurationError.length > 0
                                 text: SliceSettingsBridge.configurationError
                                 font: Typography.caption
-                                color: Theme.res.systemFillColorCritical
+                                color: root.SmoothUI.theme.res.systemFillColorCritical
                                 elide: Text.ElideRight
                                 Layout.maximumWidth: 240
                             }
@@ -848,7 +849,7 @@ Item {
                                                 Layout.fillWidth: true
                                                 Layout.preferredHeight: 74
                                                 Layout.minimumWidth: 126
-                                                radius: 6
+                                                radius: root.SmoothUI.radius
                                                 color: PrintWorkspaceStyle.surface(root.SmoothUI.dark)
 
                                                 ColumnLayout {
@@ -866,14 +867,14 @@ Item {
                                                             radius: 5
                                                             color: filamentSlotCard.modelData.color || "#808080"
                                                             border.width: 1
-                                                            border.color: Theme.res.controlStrokeColorDefault
+                                                            border.color: root.SmoothUI.theme.res.controlStrokeColorDefault
                                                         }
 
                                                         Label {
                                                             Layout.fillWidth: true
                                                             text: (SliceSettingsBridge.selectedMachine.physicalToolCount > 1 ? root.physicalToolLabel(filamentSlotCard.modelData) + " · " : "") + qsTr("Slot %1 · %2").arg(filamentSlotCard.modelData.number).arg(filamentSlotCard.modelData.materialType || qsTr("Unknown"))
                                                             font: Typography.bodyStrong
-                                                            color: Theme.res.textFillColorPrimary
+                                                            color: root.SmoothUI.theme.res.textFillColorPrimary
                                                             elide: Text.ElideRight
                                                         }
 
@@ -992,7 +993,7 @@ Item {
                                      ? qsTr("No parameters on this page")
                                      : qsTr("Parameter schema not loaded"))
                             horizontalAlignment: Text.AlignHCenter
-                            color: Theme.res.textFillColorSecondary
+                            color: root.SmoothUI.theme.res.textFillColorSecondary
                             padding: 12
                         }
 
@@ -1031,8 +1032,8 @@ Item {
                           : qsTr("Current configuration applied")
                     font: Typography.caption
                     color: SliceSettingsBridge.hasPendingReslice
-                           ? Theme.res.systemFillColorCaution
-                           : Theme.res.textFillColorSecondary
+                           ? root.SmoothUI.theme.res.systemFillColorCaution
+                           : root.SmoothUI.theme.res.textFillColorSecondary
                     horizontalAlignment: Text.AlignRight
                     elide: Text.ElideRight
                 }
@@ -1089,12 +1090,12 @@ Item {
         readonly property bool focused: String(modelData.key || "")
                                         === root.focusedSettingKey
         color: focused
-               ? Qt.alpha(Theme.accentColor.defaultBrushFor(root.SmoothUI.dark), 0.10)
+               ? Qt.alpha(root.SmoothUI.theme.accentColor.defaultBrushFor(root.SmoothUI.dark), 0.10)
                : Qt.rgba(0, 0, 0, 0.06)
-        radius: 6
+        radius: root.SmoothUI.radius
         border.color: focused
-                      ? Theme.accentColor.defaultBrushFor(root.SmoothUI.dark)
-                      : Theme.res.cardStrokeColorDefault
+                      ? root.SmoothUI.theme.accentColor.defaultBrushFor(root.SmoothUI.dark)
+                      : root.SmoothUI.theme.res.cardStrokeColorDefault
         border.width: focused ? 2 : 1
         implicitHeight: searchCardLayout.implicitHeight + 12
 
@@ -1114,8 +1115,8 @@ Item {
                       + root.localizedSchemaText(modelData.pageTitle, modelData.page || "")
                       + " / "
                       + root.localizedSchemaText(modelData.sectionTitle, modelData.section || "")
-                color: Theme.res.textFillColorSecondary
-                font.pixelSize: 11
+                color: root.SmoothUI.theme.res.textFillColorSecondary
+                font.pixelSize: Theme.captionFontSize
                 elide: Text.ElideRight
             }
 
@@ -1165,13 +1166,13 @@ Item {
                 Layout.fillWidth: true
                 text: title
                 font: Typography.bodyStrong
-                color: Theme.res.textFillColorPrimary
+                color: root.SmoothUI.theme.res.textFillColorPrimary
             }
 
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 1
-                color: Theme.res.dividerStrokeColorDefault
+                color: root.SmoothUI.theme.res.dividerStrokeColorDefault
             }
 
             ColumnLayout {
@@ -1465,7 +1466,7 @@ Item {
 
                 Label {
                     text: title
-                    color: Theme.res.textFillColorPrimary
+                    color: root.SmoothUI.theme.res.textFillColorPrimary
                     font: Typography.caption
                     elide: Text.ElideRight
                 }
@@ -1473,8 +1474,8 @@ Item {
                 Label {
                     visible: root.showParamKeys
                     text: paramKey
-                    color: Theme.res.textFillColorTertiary
-                    font.pixelSize: 12
+                    color: root.SmoothUI.theme.res.textFillColorTertiary
+                    font.pixelSize: Theme.captionFontSize
                     elide: Text.ElideRight
                 }
             }
@@ -1729,7 +1730,7 @@ Item {
     }
 
     component UnitLabel: Label {
-        color: Theme.res.textFillColorSecondary
+        color: root.SmoothUI.theme.res.textFillColorSecondary
         font: Typography.caption
     }
 
@@ -1738,15 +1739,15 @@ Item {
         implicitWidth: valueText.implicitWidth + 10
         implicitHeight: 24
         radius: 4
-        color: Qt.rgba(0, 120, 212, 0.14)
-        border.color: Qt.rgba(0, 120, 212, 0.35)
+        color: Colors.withOpacity(root.SmoothUI.theme.accentColor.defaultBrushFor(root.SmoothUI.dark), 0.14)
+        border.color: Colors.withOpacity(root.SmoothUI.theme.accentColor.defaultBrushFor(root.SmoothUI.dark), 0.35)
         border.width: 1
 
         Label {
             id: valueText
             anchors.centerIn: parent
             text: parent.text
-            color: Theme.res.textFillColorPrimary
+            color: root.SmoothUI.theme.res.textFillColorPrimary
             font: Typography.caption
         }
     }
@@ -1754,12 +1755,6 @@ Item {
     component MultilineInput: TextArea {
         wrapMode: TextArea.Wrap
         selectByMouse: true
-        padding: 6
-        background: Rectangle {
-            radius: 4
-            color: Theme.res.controlFillColorSecondary
-            border.color: Theme.res.cardStrokeColorDefault
-            border.width: 1
-        }
+        padding: Theme.controlPadding
     }
 }

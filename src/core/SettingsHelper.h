@@ -49,7 +49,7 @@ public:
         save("displayMode", mode);
     }
     Q_INVOKABLE int getDisplayMode() {
-        return get("displayMode", QVariant(4)).toInt(); // 4 = Auto
+        return get("displayMode", QVariant(2)).toInt(); // 2 = Minimal
     }
     Q_INVOKABLE void savePrimaryColor(const QString& color) {
         save("primaryColor", color);

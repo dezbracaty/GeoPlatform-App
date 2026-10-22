@@ -2,6 +2,8 @@
 
 #include "BridgeBase.hpp"
 #include "GCodeLineModel.hpp"
+#include <SliceOutputRecord.hpp>
+#include <atomic>
 #include <QObject>
 #include <QJSEngine>
 #include <QQmlEngine>
@@ -42,6 +44,8 @@ class SlicingPreviewBridge : public bridge::BridgeBase {
     Q_PROPERTY(QString printOutputPath READ printOutputPath NOTIFY printOutputPathChanged)
     Q_PROPERTY(QString printPackagePath READ printPackagePath NOTIFY printOutputPathChanged)
     Q_PROPERTY(bool printOutputReady READ printOutputReady NOTIFY printOutputPathChanged)
+    Q_PROPERTY(bool geometryAvailable READ geometryAvailable NOTIFY currentToolpathPreviewChanged)
+    Q_PROPERTY(QString previewStatusMessage READ previewStatusMessage NOTIFY currentToolpathPreviewChanged)
     Q_PROPERTY(bool printPackageExportAvailable READ printPackageExportAvailable NOTIFY printOutputPathChanged)
     Q_PROPERTY(bool resliceAvailable READ resliceAvailable NOTIFY currentToolpathPreviewChanged)
     Q_PROPERTY(bool previewPanelVisible READ previewPanelVisible WRITE setPreviewPanelVisible NOTIFY previewPanelVisibleChanged)
@@ -60,6 +64,25 @@ class SlicingPreviewBridge : public bridge::BridgeBase {
     QML_SINGLETON
 
 public:
+    std::shared_ptr<const GPlatform::SliceOutputRecord> currentOutput() const { return m_currentOutput; }
+    std::uint64_t publicationEpoch() const { return m_publicationEpoch.load(); }
+    std::uint64_t beginOutputTask() { return m_shuttingDown.load() ? 0 : ++m_publicationEpoch; }
+    bool acceptsPublication(std::uint64_t epoch) const { return !m_shuttingDown.load() && epoch == publicationEpoch(); }
+    void beginShutdown();
+    struct PreparedOutputPublication {
+        std::shared_ptr<GPlatform::SliceOutputRecord> output;
+        std::shared_ptr<GPlatform::ToolpathPreviewDB> preview;
+        QString modelName;
+        QString artifactPath;
+        int displayModelId = -1;
+    };
+    std::optional<PreparedOutputPublication> prepareOutputPublication(
+        std::shared_ptr<GPlatform::SliceOutputRecord> output,
+        std::shared_ptr<GPlatform::ToolpathPreviewDB> preview,
+        std::uint64_t epoch, QString* error) const;
+    void installCommittedOutput(PreparedOutputPublication prepared);
+    bool geometryAvailable() const { return bool(m_activePreview); }
+    QString previewStatusMessage() const;
     GCodeLineModel* gcodeLines() const { return m_gcodeLines; }
     static SlicingPreviewBridge* instance();
     static SlicingPreviewBridge* create(QQmlEngine* qmlEngine, QJSEngine* jsEngine);
@@ -215,12 +238,22 @@ private:
     QString resolveCurrentPrintOutputPath() const;
     QString resolveCurrentPrintOutputPath(const QString& formatId) const;
     void clearAllToolpathPreviewsInternal(int preservedModelId);
+    PreparedOutputPublication makeOutputPublication(
+        std::shared_ptr<GPlatform::SliceOutputRecord> output,
+        std::shared_ptr<GPlatform::ToolpathPreviewDB> preview) const;
+    bool replaceLegacyToolpathPreview(int modelId, const QString& modelName,
+        std::shared_ptr<GPlatform::ToolpathPreviewDB> preview,
+        const QString& artifactPath, const QString& printOutputPath, QString* error);
     void navigateGCode(bool layerStart);
     bool isValidPreviewPanelViewType(const QString& viewType) const;
     bool applyPreviewPanelRenderStateForViewType(const QString& viewType,
                                                  bool restoreFeatureVisibility,
                                                  bool logWhenUnavailable);
     std::shared_ptr<GPlatform::ToolpathPreviewDB> m_activePreview;
+    std::shared_ptr<GPlatform::SliceOutputRecord> m_currentOutput;
+    std::atomic<std::uint64_t> m_publicationEpoch{1};
+    std::atomic_bool m_shuttingDown{false};
+    void notifyCurrentOutput();
     mutable std::weak_ptr<GPlatform::ToolpathPreviewDB> m_cachedAuditPreview;
     mutable std::uint64_t m_cachedAuditPreviewGeneration{0};
     mutable QVariantList m_cachedAuditStages;
@@ -234,7 +267,6 @@ private:
     QString m_previewInspectorTab{QStringLiteral("types")};
     bool m_isLoading = false;
     QString m_previewArtifactPath;
-    QString m_printOutputPath;
     bool m_previewPanelVisible = false;
     bool m_previewPanelFolded = false;
     QString m_previewPanelViewType = QStringLiteral("summary");

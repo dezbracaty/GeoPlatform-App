@@ -13,6 +13,7 @@ struct Vector3;
  * - scene.init: 初始化完整场景（Skybox + PrintBed）
  * - scene.skybox.preset: 切换天空盒预设
  * - scene.skybox.colors: 修改天空盒颜色
+ * - scene.theme.set: 更新应用级有效主题
  *
  * 设计原则：
  * - 场景初始化是幂等的，多次调用不会重复创建
@@ -22,12 +23,17 @@ class SceneHandler : public StandardActionHandler {
     Q_OBJECT
 
 public:
-    explicit SceneHandler(QObject* parent = nullptr);
+    explicit SceneHandler(QObject* parent = nullptr,
+                          HandlerType handlerType = HandlerType::Exclusive);
     virtual ~SceneHandler() = default;
 
+    HandlerType getHandlerType() const override { return m_handlerType; }
     void onEnter(std::shared_ptr<ActionContext> context) override;
 
 private:
+    const HandlerType m_handlerType;
+    void setTheme(const QVariantMap& params);
+
     // === 场景初始化 ===
 
     /**

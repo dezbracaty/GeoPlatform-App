@@ -10,6 +10,11 @@ Starter {
     id: starter
 
     property var pendingModelFiles: ({})
+    property bool themeInitialized: false
+
+    function syncEffectiveTheme() {
+        ActionManager.triggerAction("scene.theme.set", { dark: Theme.dark })
+    }
 
     function chooseModel(params) { return chooseModelFile("file.import", params) }
     function chooseStl(params) { return chooseModelFile("import_stl", params) }
@@ -79,6 +84,8 @@ Starter {
 
         // Load saved theme setting on startup
         Theme.darkMode = SettingsHelper.getDarkMode()
+        themeInitialized = true
+        syncEffectiveTheme()
 
         // Initialize Global settings
         Global.displayMode = SettingsHelper.getDisplayMode()
@@ -117,6 +124,10 @@ Starter {
     // Auto-save theme changes
     Connections {
         target: Theme
+        function onDarkChanged() {
+            if (starter.themeInitialized)
+                starter.syncEffectiveTheme()
+        }
         function onDarkModeChanged() {
             SettingsHelper.saveDarkMode(Theme.darkMode)
         }

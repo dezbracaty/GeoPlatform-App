@@ -58,13 +58,6 @@ function(gplatform_resolve_fetch_cache PREFIX LIB_NAME LIB_VERSION BUILD_TYPE)
     set(_cache_dir "${_fetch_cache_dir}/${LIB_NAME}-v${LIB_VERSION}")
     set(_arch_dir "${_cache_dir}/${_fetch_cache_arch}")
     set(_forward_args)
-    if(MSVC AND CMAKE_GENERATOR MATCHES "^Ninja")
-        # Child projects need the same raw /showIncludes prefix detection as
-        # the App; CMake's decoded prefix can differ from Chinese MSVC output.
-        get_filename_component(_msvc_dependency_hook
-            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../GPlatformMsvcDependencies.cmake" ABSOLUTE)
-        list(APPEND _forward_args "-DCMAKE_PROJECT_INCLUDE=${_msvc_dependency_hook}")
-    endif()
     if(CMAKE_GENERATOR STREQUAL "Ninja" AND CMAKE_MAKE_PROGRAM)
         list(APPEND _forward_args "-DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}")
     endif()

@@ -1,19 +1,19 @@
 [submodule "GPlatformSDK"]
 	path = ThirdParty/libs/GPlatformSDK
 	url = https://github.com/dezbracaty/GeoPlatform-SDK.git
-	branch = fix/sdk-packaging-restart
+	branch = feature/gplatform-ui
 
 [submodule "ThirdParty/SmoothUI"]
 	path = ThirdParty/SmoothUI
 	url = https://github.com/dezbracaty/SmoothUI-Lib
-	branch = dev
+	branch = feature/gplatform-ui
 
 [submodule "ThirdParty/SmoothUIDock"]
 	path = ThirdParty/SmoothUIDock
 	url = https://github.com/dezbracaty/SmoothUI-Dock.git
-	branch = fix/sdk-packaging-restart
+	branch = feature/gplatform-ui
 
 [submodule "ThirdParty/OrcaSlicer"]
 	path = ThirdParty/OrcaSlicer
 	url = https://github.com/dezbracaty/OrcaSlicer.git
-	branch = fix/sdk-packaging-restart
+	branch = feature/continuous-fiber-v2

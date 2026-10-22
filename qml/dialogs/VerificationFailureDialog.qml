@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import SmoothUI.Controls
+import SmoothUI.impl
 import "."
 
 ContentDialog {
@@ -28,15 +29,15 @@ ContentDialog {
         // 错误信息
         Label {
             text: qsTr("UI verification failed!")
-            font.pixelSize: 18
+            font.pixelSize: Theme.panelTitleFontSize
             font.bold: true
-            color: "#FF0000"
+            color: dialog.SmoothUI.theme.res.systemFillColorCritical
         }
 
         // 详细信息
         Label {
             text: qsTr("Step description: %1").arg(stepDescription)
-            font.pixelSize: 14
+            font.pixelSize: Theme.bodyFontSize
             wrapMode: Text.WordWrap
             width: parent.width
         }
@@ -45,8 +46,8 @@ ContentDialog {
             text: qsTr("Similarity: %1% (required: ≥%2%)")
                 .arg((similarity * 100).toFixed(2))
                 .arg((threshold * 100).toFixed(1))
-            font.pixelSize: 14
-            color: "#FF0000"
+            font.pixelSize: Theme.bodyFontSize
+            color: dialog.SmoothUI.theme.res.systemFillColorCritical
         }
 
         // 图片对比区域 - 使用TabBar和StackLayout

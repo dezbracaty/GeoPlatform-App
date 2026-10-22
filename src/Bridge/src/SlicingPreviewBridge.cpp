@@ -6,6 +6,7 @@
 #include "ModelInstanceDB.hpp"
 #include "ToolpathPreviewDB.hpp"
 #include "ToolpathPreviewUtils.hpp"
+#include <TransactionManager.hpp>
 #include "Foundation/Log.h"
 #include <QColor>
 #include <QDir>
@@ -21,6 +22,7 @@
 #include <algorithm>
 #include <limits>
 #include <optional>
+#include <stdexcept>
 #include <vector>
 
 SlicingPreviewBridge::SlicingPreviewBridge(QObject* parent)
@@ -56,26 +58,86 @@ std::shared_ptr<GPlatform::ToolpathPreviewDB> SlicingPreviewBridge::getCurrentPr
 }
 
 QString SlicingPreviewBridge::resolveCurrentPrintOutputPath() const {
-    if (auto preview = getCurrentPreview()) {
-        const QString path = QString::fromStdString(preview->getPrintGCodePath());
-        if (!path.isEmpty()) {
-            return path;
-        }
-    }
-    return m_printOutputPath;
+    return m_currentOutput ? m_currentOutput->gcode.path : QString();
 }
-
 QString SlicingPreviewBridge::resolveCurrentPrintOutputPath(const QString& formatId) const {
-    if (formatId == QStringLiteral("gcode-3mf")) {
-        if (auto preview = getCurrentPreview()) {
-            return QString::fromStdString(preview->getPrintGCode3mfPath());
-        }
-        return {};
-    }
-    if (formatId == QStringLiteral("gcode")) {
-        return resolveCurrentPrintOutputPath();
-    }
+    if (!m_currentOutput) return {};
+    if (formatId == QStringLiteral("gcode-3mf")) return m_currentOutput->package.path;
+    if (formatId == QStringLiteral("gcode")) return m_currentOutput->gcode.path;
     return {};
+}
+QString SlicingPreviewBridge::previewStatusMessage() const {
+    if (!m_currentOutput) return {};
+    if (!m_activePreview) return tr("Slicing completed. Preview unavailable: %1").arg(m_currentOutput->previewError);
+    return {};
+}
+void SlicingPreviewBridge::beginShutdown() {
+    m_shuttingDown.store(true);
+    ++m_publicationEpoch;
+}
+void SlicingPreviewBridge::notifyCurrentOutput() {
+    emit currentModelChanged();
+    emit currentToolpathPreviewChanged();
+    emit previewArtifactPathChanged();
+    emit printOutputPathChanged();
+    emit slicedModelListChanged();
+    emit currentLayerChanged(); emit currentStepChanged(); emit layerRangeChanged();
+    emit totalLayersChanged(); emit totalStepsChanged(); emit statisticsChanged();
+    emit colorModeChanged(); emit pathVisibilityChanged(); emit previewLegendItemsChanged();
+}
+SlicingPreviewBridge::PreparedOutputPublication SlicingPreviewBridge::makeOutputPublication(
+    std::shared_ptr<GPlatform::SliceOutputRecord> output,
+    std::shared_ptr<GPlatform::ToolpathPreviewDB> preview) const {
+    PreparedOutputPublication prepared;
+    prepared.modelName = output->name;
+    prepared.displayModelId = output->displayModelId;
+    prepared.artifactPath = preview ? QString::fromStdString(preview->getPreviewArtifactPath()) : QString();
+    prepared.output = std::move(output);
+    prepared.preview = std::move(preview);
+    return prepared;
+}
+std::optional<SlicingPreviewBridge::PreparedOutputPublication> SlicingPreviewBridge::prepareOutputPublication(
+    std::shared_ptr<GPlatform::SliceOutputRecord> output,
+    std::shared_ptr<GPlatform::ToolpathPreviewDB> preview, std::uint64_t epoch, QString* error) const {
+    if (!output || !acceptsPublication(epoch)) {
+        if (error) *error = QStringLiteral("Task cancelled or superseded");
+        return std::nullopt;
+    }
+    if (!output->validate(error)) return std::nullopt;
+    if (output->sourceScope == GPlatform::ToolpathPreviewSourceScope::ImportedGCode && !preview) {
+        if (error) *error = QStringLiteral("G-code has no compatible preview");
+        return std::nullopt;
+    }
+    return makeOutputPublication(std::move(output), std::move(preview));
+}
+void SlicingPreviewBridge::installCommittedOutput(PreparedOutputPublication prepared) {
+    // All rejectable work and DB changes have already completed. Install every
+    // field before notifying QML; this step never removes the previous DB.
+    auto previousPreview = std::move(m_activePreview);
+    auto previousOutput = std::move(m_currentOutput);
+    m_currentOutput = std::move(prepared.output);
+    m_activePreview = std::move(prepared.preview);
+    m_currentOutput->geometryAvailable = bool(m_activePreview);
+    m_activePreviewName = std::move(prepared.modelName);
+    m_currentModelId = prepared.displayModelId;
+    m_previewArtifactPath = std::move(prepared.artifactPath);
+    const bool wasLoading = m_isLoading;
+    const bool panelChanged = m_previewPanelVisible != bool(m_activePreview);
+    const bool modifierChanged = panelChanged && m_previewInspectModifierPressed;
+    const bool snapChanged = panelChanged && m_previewCursorSnapEnabled;
+    m_isLoading = false;
+    m_previewPanelVisible = bool(m_activePreview);
+    if (panelChanged) {
+        m_previewInspectModifierPressed = false;
+        m_previewCursorSnapEnabled = false;
+    }
+    ++m_publicationEpoch;
+    if (m_activePreview) applyPreviewPanelRenderStateForViewType(m_previewPanelViewType, false, false);
+    if (wasLoading) emit isLoadingChanged();
+    if (modifierChanged) emit previewInspectModifierPressedChanged();
+    if (snapChanged) emit previewCursorSnapEnabledChanged();
+    if (panelChanged) emit previewPanelVisibleChanged();
+    notifyCurrentOutput();
 }
 
 QString SlicingPreviewBridge::previewArtifactPath() const {
@@ -97,7 +159,7 @@ QString SlicingPreviewBridge::printPackagePath() const {
 }
 
 bool SlicingPreviewBridge::printOutputReady() const {
-    return !printOutputPath().isEmpty() || !printPackagePath().isEmpty();
+    return GPlatform::SliceOutputRecord::readable(printOutputPath()) || GPlatform::SliceOutputRecord::readable(printPackagePath());
 }
 
 bool SlicingPreviewBridge::printPackageExportAvailable() const {
@@ -440,6 +502,54 @@ QVariantMap SlicingPreviewBridge::previewPanelData(const QString& viewType) cons
     }
     const auto& stats = preview->getStats();
 
+    // Process options use the same row contract/delegate as the existing feature legend.
+    QVariantList optionRows;
+    std::size_t cuts = 0, finishBlocks = 0;
+    double tailLength = 0, finishLength = 0;
+    for (const auto& event : preview->getOptions()) {
+        if (event.kind != GPlatform::ToolpathEventKind::FiberCut) continue;
+        ++cuts;
+        if (event.fiberRoute) {
+            const auto lengths = GPlatform::ToolpathPreviewUtils::fiberRouteLengths(*preview, *event.fiberRoute);
+            tailLength += lengths.first;
+            finishLength += lengths.second;
+            finishBlocks += !event.fiberRoute->finishRanges.empty();
+        }
+    }
+    const auto optionRow = [&](const QString& id, const QString& label, const QString& color,
+                               bool visible, const QString& measurement) {
+        QVariantMap row;
+        row.insert(QStringLiteral("id"), id);
+        row.insert(QStringLiteral("label"), label);
+        row.insert(QStringLiteral("color"), color);
+        row.insert(QStringLiteral("visible"), visible);
+        row.insert(QStringLiteral("displayEnabled"), true);
+        row.insert(QStringLiteral("time"), QString());
+        row.insert(QStringLiteral("percent"), QString());
+        row.insert(QStringLiteral("usagePrimary"), measurement);
+        row.insert(QStringLiteral("usageSecondary"), QString());
+        optionRows.append(row);
+    };
+    if (cuts) {
+        optionRow(QStringLiteral("move.fiberCuts"), tr("切丝点"), QStringLiteral("#ff8c28"),
+                  preview->getShowFiberCutPoints(), tr("%1 次").arg(cuts));
+        optionRow(QStringLiteral("move.fiberTail"), tr("切丝后余丝高亮"), QStringLiteral("#b450e6"),
+                  preview->getHighlightFiberTail(), QStringLiteral("%1 mm").arg(tailLength, 0, 'f', 2));
+        optionRow(QStringLiteral("move.fiberProcess"), tr("额外空走"), QStringLiteral("#469bff"),
+                  preview->getShowFiberProcess(), tr("%1 mm\n%2 段").arg(finishLength, 0, 'f', 2).arg(finishBlocks));
+    } else {
+        // SDK phases remain useful when source capture or local annotations are
+        // unavailable. Keep their display controls without inventing route data.
+        const auto& segments = preview->getSegments();
+        if (std::any_of(segments.begin(), segments.end(), GPlatform::ToolpathPreviewUtils::isFiberTail))
+            optionRow(QStringLiteral("move.fiberTail"), tr("切丝后余丝高亮"), QStringLiteral("#b450e6"),
+                      preview->getHighlightFiberTail(), {});
+        if (std::any_of(segments.begin(), segments.end(), GPlatform::ToolpathPreviewUtils::isFiberFinish))
+            optionRow(QStringLiteral("move.fiberProcess"), tr("额外空走"), QStringLiteral("#469bff"),
+                      preview->getShowFiberProcess(), {});
+    }
+    result.insert(QStringLiteral("optionRows"), optionRows);
+
     if (viewType == QStringLiteral("summary")) {
         QVariantList rows;
         rows.append(summaryRow(QStringLiteral("Total"),
@@ -515,21 +625,6 @@ QVariantMap SlicingPreviewBridge::previewPanelData(const QString& viewType) cons
             row.insert(QStringLiteral("displayEnabled"), !wipe);
             rows.append(row);
         }
-        if (std::any_of(preview->getSegments().begin(), preview->getSegments().end(), [](const auto& segment) {
-                return segment.fiberPhase == GPlatform::ToolpathFiberPhase::Finish;
-            })) {
-            QVariantMap row;
-            row.insert(QStringLiteral("id"), QStringLiteral("move.fiberProcess"));
-            row.insert(QStringLiteral("label"), tr("Fiber process motion"));
-            row.insert(QStringLiteral("color"), QStringLiteral("#808080"));
-            row.insert(QStringLiteral("time"), QString());
-            row.insert(QStringLiteral("percent"), QString());
-            row.insert(QStringLiteral("usagePrimary"), QString());
-            row.insert(QStringLiteral("usageSecondary"), QString());
-            row.insert(QStringLiteral("visible"), preview->getShowFiberProcess());
-            row.insert(QStringLiteral("displayEnabled"), true);
-            rows.append(row);
-        }
         using DiagnosticKind = GPlatform::FiberDiagnosticKind;
         const auto diagnostic_row = [&](DiagnosticKind kind, const QString& id,
                                         const QString& label, const QString& color, const QString& description) {
@@ -559,6 +654,8 @@ QVariantMap SlicingPreviewBridge::previewPanelData(const QString& viewType) cons
                        tr("圆角后轮廓候选（调试）"), QStringLiteral("#60df80"), tr("%1 条路径"));
         diagnostic_row(DiagnosticKind::MissingContourRegion, QStringLiteral("diagnostic.fiberMissingRegion"),
                        tr("候选轮廓未生成区域（调试）"), QStringLiteral("#ff3030"), tr("%1 个未铺设区域（按原因记录）"));
+        rows.append(optionRows);
+        result.insert(QStringLiteral("optionRows"), QVariantList{});
         result.insert(QStringLiteral("featureRows"), rows);
         return result;
     }
@@ -655,7 +752,6 @@ QVariantMap SlicingPreviewBridge::previewPanelData(const QString& viewType) cons
             row.insert(QStringLiteral("label"), QString::number(value, 'f', range->decimals));
             rows.append(row);
         }
-        QVariantList optionRows;
         if (range->showTravelOption) {
             QVariantMap option;
             option.insert(QStringLiteral("id"), QStringLiteral("move.travel"));
@@ -665,7 +761,11 @@ QVariantMap SlicingPreviewBridge::previewPanelData(const QString& viewType) cons
             option.insert(QStringLiteral("label"), QStringLiteral("Travel"));
             option.insert(QStringLiteral("visible"), preview->getShowTravel());
             option.insert(QStringLiteral("displayEnabled"), true);
-            optionRows.append(option);
+            option.insert(QStringLiteral("time"), QString());
+            option.insert(QStringLiteral("percent"), QString());
+            option.insert(QStringLiteral("usagePrimary"), QString());
+            option.insert(QStringLiteral("usageSecondary"), QString());
+            optionRows.prepend(option);
         }
         result.insert(QStringLiteral("rangeTitle"), range->title);
         result.insert(QStringLiteral("rangeRows"), rows);
@@ -708,6 +808,12 @@ bool SlicingPreviewBridge::setPreviewPanelRowVisible(const QString& viewType,
         changed = hidden != previous || shown != preview->getShowFiberDiagnostics();
         preview->setHiddenFiberDiagnosticKinds(hidden);
         preview->setShowFiberDiagnostics(shown);
+    } else if (rowId == QStringLiteral("move.fiberCuts")) {
+        changed = preview->getShowFiberCutPoints() != visible;
+        preview->setShowFiberCutPoints(visible);
+    } else if (rowId == QStringLiteral("move.fiberTail")) {
+        changed = preview->getHighlightFiberTail() != visible;
+        preview->setHighlightFiberTail(visible);
     } else if (rowId == QStringLiteral("move.fiberProcess")) {
         if (preview->getShowFiberProcess() != visible) {
             preview->setShowFiberProcess(visible);
@@ -883,6 +989,16 @@ bool SlicingPreviewBridge::setPreviewLegendGroupVisible(const QString& viewType,
         LOG_ERROR("SlicingPreviewBridge::setPreviewLegendGroupVisible no current preview viewType={}",
                   viewType.toStdString());
         return false;
+    }
+
+    if (viewType == QStringLiteral("lineType")) {
+        const auto rows = previewPanelData(viewType).value(QStringLiteral("featureRows")).toList();
+        for (const auto& value : rows) {
+            const auto row = value.toMap();
+            if (row.value(QStringLiteral("displayEnabled")).toBool())
+                setPreviewPanelRowVisible(viewType, row.value(QStringLiteral("id")).toString(), visible);
+        }
+        return true;
     }
 
     const auto items = buildLegendItemsForViewType(*preview, viewType);
@@ -1210,112 +1326,96 @@ void SlicingPreviewBridge::updatePlaybackLooping(bool looping) {
     emit isLoopingChanged();
 }
 
-void SlicingPreviewBridge::addToolpathPreview(int modelId,
-                                              const QString& modelName,
-                                              std::shared_ptr<GPlatform::ToolpathPreviewDB> preview) {
-    if (!preview) {
-        LOG_ERROR("SlicingPreviewBridge::addToolpathPreview null preview modelId={}", modelId);
-        return;
+void SlicingPreviewBridge::addToolpathPreview(int modelId, const QString& modelName,
+    std::shared_ptr<GPlatform::ToolpathPreviewDB> preview) {
+    if (!preview) return;
+    QString error;
+    const auto artifact = QString::fromStdString(preview->getPreviewArtifactPath());
+    const auto output = QString::fromStdString(preview->getPrintGCodePath());
+    if (!replaceLegacyToolpathPreview(modelId, modelName, std::move(preview), artifact, output, &error))
+        LOG_WARN("Failed to replace legacy toolpath preview: {}", error.toStdString());
+}
+bool SlicingPreviewBridge::replaceLegacyToolpathPreview(int modelId, const QString& modelName,
+    std::shared_ptr<GPlatform::ToolpathPreviewDB> preview,
+    const QString& artifactPath, const QString& printOutputPath, QString* error) {
+    const auto epoch = publicationEpoch();
+    if (!preview || !acceptsPublication(epoch)) {
+        if (error) *error = QStringLiteral("Preview unavailable, cancelled or superseded");
+        return false;
     }
-
-    if (m_activePreview && m_activePreview != preview) {
-        m_activePreview->releasePrintOutputArtifacts();
-        if (auto* docManager = DocumentManager::instance()) {
-            m_activePreview->removeMaterial();
-            docManager->unregisterDBInstance(
-                m_activePreview->getDBInstanceID());
+    auto* document = DocumentManager::instance();
+    const auto previousOutput = m_currentOutput;
+    const auto previousPreview = m_activePreview;
+    const auto previousMaterial = previousPreview ? previousPreview->getMaterial() : nullptr;
+    const auto candidateMaterial = preview->getMaterial();
+    auto output = std::make_shared<GPlatform::SliceOutputRecord>();
+    output->setArtifacts(printOutputPath, false,
+        QString::fromStdString(preview->getPrintGCode3mfPath()), false, m_currentOutput);
+    output->name = modelName;
+    output->sourceScope = preview->getSourceScope();
+    output->sourceModelId = preview->getSourceModelDBId();
+    output->printBedId = document->getOwner(preview->getDBInstanceID());
+    output->displayModelId = modelId;
+    output->stats = preview->getStats();
+    const bool readable = GPlatform::SliceOutputRecord::readable(output->gcode.path);
+    auto prepared = readable ? prepareOutputPublication(output, preview, epoch, error)
+                             : std::optional<PreparedOutputPublication>(makeOutputPublication(output, preview));
+    if (!prepared) return false;
+    prepared->artifactPath = artifactPath;
+    {
+        TransactionGuard transaction("Replace legacy toolpath preview");
+        try {
+            if (previousPreview && previousPreview != preview && document->getDBInstance(previousPreview->getDBInstanceID()) &&
+                !document->unregisterDBInstance(previousPreview->getDBInstanceID()))
+                throw std::runtime_error("Failed to remove previous toolpath preview");
+            if (!acceptsPublication(epoch)) throw std::runtime_error("Task cancelled or superseded");
+            if (readable && !output->validate(error)) throw std::runtime_error(error ? error->toStdString() : "Print output unavailable");
+            transaction.commit();
+        } catch (...) {
+            transaction.rollback();
+            document->flushPendingChanges();
+            try { throw; }
+            catch (const std::bad_alloc&) { throw; }
+            catch (const std::exception& exception) {
+                if (error) *error = QString::fromUtf8(exception.what());
+                return false;
+            }
         }
     }
-
-    m_activePreview = std::move(preview);
-    m_activePreviewName = modelName;
-
-    if (m_activePreview->getSourceScope() ==
-        GPlatform::ToolpathPreviewSourceScope::SingleModel) {
-        const DBInstanceID sourceModelId =
-            m_activePreview->getSourceModelDBId();
-        modelId = sourceModelId.isValid() &&
-                sourceModelId.getValue() <=
-                    static_cast<std::uint64_t>(
-                        std::numeric_limits<int>::max())
-            ? static_cast<int>(sourceModelId.getValue())
-            : -1;
-    }
-
-    const bool modelChanged = m_currentModelId != modelId;
-    m_currentModelId = modelId;
-    if (modelChanged) {
-        emit currentModelChanged();
-    }
-    emit currentToolpathPreviewChanged();
-    emit previewArtifactPathChanged();
-    emit printOutputPathChanged();
-    emit slicedModelListChanged();
-    emit currentLayerChanged();
-    emit currentStepChanged();
-    emit totalLayersChanged();
-    emit totalStepsChanged();
-    emit statisticsChanged();
-    emit colorModeChanged();
-    emit pathVisibilityChanged();
-    emit previewLegendItemsChanged();
+    installCommittedOutput(std::move(*prepared));
+    // The compatibility API also accepts standalone DB-owned artifacts. New
+    // publication DBs borrow paths, so this does not own their record leases.
+    if (previousPreview && previousPreview != preview) previousPreview->releasePrintOutputArtifacts();
+    return true;
 }
-
 void SlicingPreviewBridge::removeToolpathPreview(int modelId) {
-    if (!m_activePreview || modelId != m_currentModelId) {
-        return;
-    }
-    m_activePreview->releasePrintOutputArtifacts();
-    if (auto* docManager = DocumentManager::instance()) {
-        m_activePreview->removeMaterial();
-        docManager->unregisterDBInstance(
-            m_activePreview->getDBInstanceID());
-    }
-    m_activePreview.reset();
-    m_activePreviewName.clear();
-    m_currentModelId = -1;
-    emit currentModelChanged();
-    emit currentToolpathPreviewChanged();
-    emit previewArtifactPathChanged();
-    emit printOutputPathChanged();
-    emit totalLayersChanged();
-    emit totalStepsChanged();
-    emit previewLegendItemsChanged();
-    emit slicedModelListChanged();
+    if (modelId == m_currentModelId) clearAllToolpathPreviews();
 }
-
 void SlicingPreviewBridge::clearAllToolpathPreviewsInternal(int preservedModelId) {
-    if (m_activePreview &&
-        (preservedModelId < 0 || preservedModelId != m_currentModelId)) {
-        m_activePreview->releasePrintOutputArtifacts();
-        if (auto* docManager = DocumentManager::instance()) {
+    ++m_publicationEpoch;
+    const bool preserve = preservedModelId >= 0 && m_currentOutput &&
+        m_currentOutput->sourceScope == GPlatform::ToolpathPreviewSourceScope::SingleModel &&
+        m_currentOutput->sourceModelId == DBInstanceID(std::uint64_t(preservedModelId));
+    if (!preserve) {
+        stop();
+        setPreviewPanelVisible(false);
+        if (m_activePreview) {
+            m_activePreview->releasePrintOutputArtifacts();
             m_activePreview->removeMaterial();
-            docManager->unregisterDBInstance(
-                m_activePreview->getDBInstanceID());
+            DocumentManager::instance()->unregisterDBInstance(m_activePreview->getDBInstanceID());
         }
         m_activePreview.reset();
-        m_activePreviewName.clear();
-        m_currentModelId = -1;
+        m_currentOutput.reset();
+        m_activePreviewName.clear(); m_currentModelId = -1;
+        m_previewArtifactPath.clear();
     }
-
-    emit currentModelChanged();
-    emit currentToolpathPreviewChanged();
-    emit previewArtifactPathChanged();
-    emit printOutputPathChanged();
-    emit slicedModelListChanged();
-    emit totalLayersChanged();
-    emit totalStepsChanged();
-    emit statisticsChanged();
-    emit previewLegendItemsChanged();
+    notifyCurrentOutput();
 }
-
 void SlicingPreviewBridge::clearAllToolpathPreviews() {
+    cancelPreviewLoad();
     clearAllToolpathPreviewsInternal(-1);
 }
-
-void SlicingPreviewBridge::clearAllDBReferences() {
-    clearAllToolpathPreviews();
-}
+void SlicingPreviewBridge::clearAllDBReferences() { clearAllToolpathPreviews(); }
 
 bool SlicingPreviewBridge::showFiberFillDiagnostics(const QString& previewToken) {
     const auto preview = getCurrentPreview();
@@ -1369,7 +1469,7 @@ std::shared_ptr<GPlatform::ToolpathPreviewDB> SlicingPreviewBridge::currentToolp
 
 QVariant SlicingPreviewBridge::slicedModelList() const {
     QVariantList result;
-    if (m_activePreview) {
+    if (m_currentOutput || m_activePreview) {
         QVariantMap item;
         item.insert(QStringLiteral("id"), m_currentModelId);
         item.insert(
@@ -1401,26 +1501,11 @@ void SlicingPreviewBridge::completePreviewLoad(const QString& artifactPath,
         return;
     }
 
-    addToolpathPreview(modelId, modelName, preview);
-    applyPreviewPanelRenderStateForViewType(m_previewPanelViewType, false, false);
-
-    setPreviewPanelVisible(true);
-
-    m_previewArtifactPath = artifactPath;
-    m_printOutputPath = printOutputPath;
-    m_isLoading = false;
-    emit previewArtifactPathChanged();
-    emit printOutputPathChanged();
-    emit isLoadingChanged();
-    // The layer/range/timeline/statistics properties now read from a freshly
-    // loaded preview. Notify the always-resident controls to discard their
-    // stale empty-preview values.
-    emit totalLayersChanged();
-    emit totalStepsChanged();
-    emit currentLayerChanged();
-    emit currentStepChanged();
-    emit layerRangeChanged();
-    emit statisticsChanged();
+    QString error;
+    if (!replaceLegacyToolpathPreview(modelId, modelName, preview, artifactPath, printOutputPath, &error)) {
+        failPreviewLoad(artifactPath, error);
+        return;
+    }
     emit previewLoadFinished(true, artifactPath);
 
     LOG_INFO("SlicingPreviewBridge::completePreviewLoad artifact={} printOutput={} layers={} drawable={}",
@@ -1455,7 +1540,6 @@ void SlicingPreviewBridge::clearPreview() {
     cancelPreviewLoad();
     clearAllToolpathPreviewsInternal(-1);
     m_previewArtifactPath.clear();
-    m_printOutputPath.clear();
     emit previewArtifactPathChanged();
     emit printOutputPathChanged();
     emit previewLegendItemsChanged();
@@ -1464,11 +1548,6 @@ void SlicingPreviewBridge::clearPreview() {
 void SlicingPreviewBridge::clearPreviewPreservingModel(int modelId) {
     cancelPreviewLoad();
     clearAllToolpathPreviewsInternal(modelId);
-    m_previewArtifactPath.clear();
-    m_printOutputPath.clear();
-    emit previewArtifactPathChanged();
-    emit printOutputPathChanged();
-    emit previewLegendItemsChanged();
 }
 
 bool SlicingPreviewBridge::canExportPrintOutput(const QString& formatId) const {
@@ -1532,8 +1611,8 @@ bool SlicingPreviewBridge::exportCurrentPrintOutputAs(const QString& formatId, c
 
 QString SlicingPreviewBridge::defaultPrintOutputFileName(const QString& formatId) const {
     QString baseName = QStringLiteral("slicing_result");
-    if (const auto preview = getCurrentPreview(); preview && !preview->getSourceModelName().empty()) {
-        baseName = QFileInfo(QString::fromStdString(preview->getSourceModelName())).completeBaseName();
+    if (m_currentOutput && !m_currentOutput->name.isEmpty()) {
+        baseName = QFileInfo(m_currentOutput->name).completeBaseName();
         baseName.replace(QRegularExpression(QStringLiteral(R"([\\/:*?"<>|])")),
                          QStringLiteral("_"));
         if (baseName.trimmed().isEmpty()) {
@@ -1563,52 +1642,36 @@ QStringList SlicingPreviewBridge::printOutputNameFilters(const QString& formatId
 }
 
 bool SlicingPreviewBridge::canResliceCurrentModel() const {
-    const auto preview = getCurrentPreview();
+    const auto output = m_currentOutput;
     auto* document = DocumentManager::instance();
-    if (!preview || !document ||
-        preview->getSourceScope() ==
-            GPlatform::ToolpathPreviewSourceScope::ImportedGCode) {
-        return false;
+    if (!output || !document || output->sourceScope == GPlatform::ToolpathPreviewSourceScope::ImportedGCode) return false;
+    if (output->sourceScope == GPlatform::ToolpathPreviewSourceScope::SingleModel) {
+        const auto instance = document->getDB<ModelInstanceDB>(output->sourceModelId);
+        return instance && instance->isValid() && instance->getPrintable();
     }
-
-    if (preview->getSourceScope() ==
-        GPlatform::ToolpathPreviewSourceScope::SingleModel) {
-        const auto instance = document->getDB<ModelInstanceDB>(
-            preview->getSourceModelDBId());
-        return instance && instance->isValid() &&
-            instance->getPrintable();
-    }
-
-    const DBInstanceID printBedId = document->getOwner(
-        preview->getDBInstanceID());
-    if (!printBedId.isValid()) return false;
-    for (const auto& object : document->getDBInstancesByType(
-             TypeID::MODEL_INSTANCE_DB)) {
-        const auto instance =
-            std::dynamic_pointer_cast<ModelInstanceDB>(object);
-        if (instance && instance->isValid() &&
-            instance->getPrintable() &&
-            instance->getParentPrintBedDBId() == printBedId) {
-            return true;
-        }
+    if (!output->printBedId.isValid()) return false;
+    for (const auto& object : document->getDBInstancesByType(TypeID::MODEL_INSTANCE_DB)) {
+        const auto instance = std::dynamic_pointer_cast<ModelInstanceDB>(object);
+        if (instance && instance->isValid() && instance->getPrintable() &&
+            instance->getParentPrintBedDBId() == output->printBedId) return true;
     }
     return false;
 }
 
 float SlicingPreviewBridge::totalTime() const {
-    return getCurrentPreview() ? getCurrentPreview()->getTotalTime() : 0.0f;
+    return m_currentOutput ? m_currentOutput->stats.totalTimeS : 0.0f;
 }
 
 float SlicingPreviewBridge::totalExtrusion() const {
-    return getCurrentPreview() ? getCurrentPreview()->getTotalExtrusion() : 0.0f;
+    return m_currentOutput ? m_currentOutput->stats.totalExtrusionMm : 0.0f;
 }
 
 float SlicingPreviewBridge::totalPrintDistance() const {
-    return getCurrentPreview() ? getCurrentPreview()->getTotalPrintDistance() : 0.0f;
+    return m_currentOutput ? m_currentOutput->stats.totalPrintDistanceMm : 0.0f;
 }
 
 float SlicingPreviewBridge::totalTravelDistance() const {
-    return getCurrentPreview() ? getCurrentPreview()->getTotalTravelDistance() : 0.0f;
+    return m_currentOutput ? m_currentOutput->stats.totalTravelDistanceMm : 0.0f;
 }
 
 int SlicingPreviewBridge::colorMode() const {

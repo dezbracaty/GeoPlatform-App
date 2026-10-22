@@ -3047,3 +3047,72 @@ msgstr "当前纤维选项下不可用"
 
 msgid "Cannot save the mask while another document operation is active."
 msgstr "其他文档操作正在进行，暂时无法保存蒙版。"
+
+msgid "Runtime information"
+msgstr "运行信息"
+
+msgid "Journal service"
+msgstr "Journal 服务"
+
+msgid "Listening"
+msgstr "正在监听"
+
+msgid "Not listening"
+msgstr "未监听"
+
+msgid "Not enabled"
+msgstr "未启用"
+
+msgid "Listen address"
+msgstr "监听地址"
+
+msgid "Copy address"
+msgstr "复制地址"
+
+msgid "Process ID"
+msgstr "进程 PID"
+
+msgid "Slicing completed. Preview unavailable: %1"
+msgstr "切片完成。预览不可用：%1"
+
+msgid "The G-code output can still be exported from the toolbar below."
+msgstr "仍可通过下方工具栏导出 G-code 文件。"
+
+msgid "G-code import warnings"
+msgstr "G-code 导入警告"
+
+msgid "Device unavailable"
+msgstr "设备不可用"
+
+msgid "Select printer"
+msgstr "选择打印机"
+
+msgid "Access required"
+msgstr "需要访问授权"
+
+msgid "Check settings"
+msgstr "检查参数"
+
+msgid "No models yet"
+msgstr "尚无模型"
+
+msgid "Reslice required"
+msgstr "需要重新切片"
+
+msgid "%1 model(s)"
+msgstr "%1 个模型"
+
+msgid "%1 mm · %2"
+msgstr "%1 mm · %2"
+
+msgid "Print Configuration: %1\nNozzle: %2 mm\nMaterials: %3\nProcess: %4"
+msgstr "打印配置：%1\n喷嘴：%2 mm\n材料：%3\n工艺：%4"
+
+msgid "Fit Scene"
+msgstr "适应场景"
+
+msgid "View Platform"
+msgstr "查看平台"
+
+msgid "AI Assistant ready. You can start chatting now."
+msgstr "AI 助手已就绪，现在可以开始对话。"

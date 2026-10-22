@@ -1,3 +1,4 @@
+#include <QCoreApplication>
 #include "ToolpathPreviewUtils.hpp"
 
 #include <algorithm>
@@ -192,6 +193,88 @@ std::string toolLabel(std::uint16_t toolId) {
 
 bool isTravelSegment(const ToolpathPreviewSegment& segment) {
     return segment.deposition == ToolpathDepositionKind::None;
+}
+
+bool isFiberTail(const ToolpathPreviewSegment& segment) {
+    return segment.fiberPhase == ToolpathFiberPhase::Tail &&
+           segment.deposition == ToolpathDepositionKind::ContinuousFiberPassive;
+}
+
+bool isFiberFinish(const ToolpathPreviewSegment& segment) {
+    return segment.fiberPhase == ToolpathFiberPhase::Finish && isTravelSegment(segment);
+}
+
+QString fiberEventDescription(const ToolpathPreviewDB& preview, const ToolpathPreviewOption& event) {
+    const auto tr = [](const char* text) { return QCoreApplication::translate("ToolpathInspectHandler", text); };
+    const auto name = event.kind == ToolpathEventKind::FiberCut ? tr("Fiber cut command") :
+        event.kind == ToolpathEventKind::FiberDepleted ? tr("Fiber depleted") : tr("Seam point");
+    auto label = tr("%1 · G-code line %2 · XYZ %3, %4, %5").arg(name).arg(event.sourceCommandId)
+        .arg(event.positionMm.x, 0, 'f', 3).arg(event.positionMm.y, 0, 'f', 3).arg(event.positionMm.z, 0, 'f', 3);
+    if (event.fiberRoute) {
+        const auto lengths = fiberRouteLengths(preview, *event.fiberRoute);
+        label += tr(" · Passive tail %1 mm · Extra finish %2 mm · Cut script lines %3–%4")
+            .arg(lengths.first, 0, 'f', 3).arg(lengths.second, 0, 'f', 3)
+            .arg(event.fiberRoute->cutSourceLine + 1).arg(event.fiberRoute->tailBeginSourceLine - 1);
+    }
+    return label;
+}
+
+bool passesSegmentFilters(const ToolpathPreviewSegment& segment,
+                          const ToolpathPreviewDB::InspectionVisibility& visibility) {
+    const bool travel = isTravelSegment(segment), finish = isFiberFinish(segment);
+    if ((finish && !visibility.fiber) || (travel && !finish && !visibility.travel)) return false;
+    const auto hidden = [](const auto& list, auto id) {
+        return std::find(list.begin(), list.end(), id) != list.end();
+    };
+    const auto role = finish ? segment.fiberDisplayRole : segment.extrusionRole;
+    return !((!travel || (finish && role != 0)) && hidden(visibility.hiddenRoles, role)) &&
+        !(segment.cpColorId != kInvalidSmallId && hidden(visibility.hiddenColors, segment.cpColorId)) &&
+        !(segment.toolId != kInvalidSmallId && hidden(visibility.hiddenTools, segment.toolId));
+}
+
+bool containsSegment(const std::vector<ToolpathSegmentRange>& ranges, std::size_t segment) {
+    return std::any_of(ranges.begin(), ranges.end(), [segment](const auto& range) {
+        return range.begin <= segment && segment < range.end;
+    });
+}
+
+std::pair<double, double> fiberRouteLengths(const ToolpathPreviewDB& preview, const ToolpathFiberRoute& route) {
+    const auto& segments = preview.getSegments();
+    const auto measure = [&](const auto& ranges) {
+        double length = 0;
+        for (const auto& range : ranges)
+            for (auto i = range.begin; i < std::min(range.end, segments.size()); ++i) {
+                const auto& s = segments[i];
+                length += std::hypot(double(s.endMm.x) - s.startMm.x,
+                                     double(s.endMm.y) - s.startMm.y,
+                                     double(s.endMm.z) - s.startMm.z);
+            }
+        return length;
+    };
+    return {measure(route.tailRanges), measure(route.finishRanges)};
+}
+
+std::shared_ptr<const ToolpathFiberRoute> inspectedFiberRoute(const ToolpathPreviewDB& preview) {
+    const int index = preview.getInspectedElementIndex();
+    if (index < 0 || !preview.inspectionElementVisible(std::size_t(index))) return {};
+    return fiberRouteForInspectionElement(preview, std::size_t(index));
+}
+
+std::shared_ptr<const ToolpathFiberRoute> fiberRouteForInspectionElement(const ToolpathPreviewDB& preview,
+                                                                      std::size_t elementIndex) {
+    if (elementIndex >= preview.inspectionElements().size()) return {};
+    const auto& item = preview.inspectionElements()[elementIndex];
+    if (item.kind == ToolpathPreviewDB::InspectionElement::Kind::Event)
+        return preview.getOptions()[item.index].fiberRoute;
+    if (item.kind == ToolpathPreviewDB::InspectionElement::Kind::Segment ||
+        item.kind == ToolpathPreviewDB::InspectionElement::Kind::Endpoint) {
+        const auto line = preview.getSegments()[item.index].sourceCommandId;
+        for (const auto& event : preview.getOptions())
+            if (event.kind == ToolpathEventKind::FiberCut && event.fiberRoute &&
+                event.fiberRoute->beginSourceLine <= line && line <= event.fiberRoute->endSourceLine)
+                return event.fiberRoute;
+    }
+    return {};
 }
 
 float segmentSpeed(const ToolpathPreviewSegment& segment) {
@@ -447,40 +530,11 @@ std::optional<RgbColor> resolveSegmentColor(const ToolpathPreviewSegment& segmen
 
 std::vector<unsigned char> collectFilterPassAlpha(const ToolpathPreviewDB& preview) {
     const auto& segments = preview.getSegments();
-    const bool showTravel = preview.getShowTravel();
-    // Fetch the hidden lists once, not per segment: getHiddenXxx() returns a fresh vector copy each
-    // call, so a per-segment lookup would allocate 3 vectors for every one of millions of segments.
-    const auto hiddenRoles = preview.getHiddenExtrusionRoles();
-    const auto hiddenColorIds = preview.getHiddenPreviewColorIds();
-    const auto hiddenToolIds = preview.getHiddenToolIds();
-    const bool hasHiddenRoles = !hiddenRoles.empty();
-    const bool hasHiddenColorIds = !hiddenColorIds.empty();
-    const bool hasHiddenToolIds = !hiddenToolIds.empty();
-    const auto isHiddenId = [](const auto& ids, auto id) {
-        return std::find(ids.begin(), ids.end(), id) != ids.end();
-    };
-
+    // Snapshot the lists once; per-segment getters would copy them millions of times.
+    const auto visibility = preview.inspectionVisibility();
     std::vector<unsigned char> alpha(segments.size(), 0);
-    for (std::size_t i = 0; i < segments.size(); ++i) {
-        const auto& segment = segments[i];
-        const bool travel = isTravelSegment(segment);
-        const bool finish = segment.fiberPhase == ToolpathFiberPhase::Finish;
-        if ((finish && !preview.getShowFiberProcess()) || (travel && !finish && !showTravel)) {
-            continue;
-        }
-        if (!travel && hasHiddenRoles && isHiddenId(hiddenRoles, segment.extrusionRole)) {
-            continue;
-        }
-        if (segment.cpColorId != kInvalidSmallId &&
-            hasHiddenColorIds && isHiddenId(hiddenColorIds, segment.cpColorId)) {
-            continue;
-        }
-        if (segment.toolId != kInvalidSmallId &&
-            hasHiddenToolIds && isHiddenId(hiddenToolIds, segment.toolId)) {
-            continue;
-        }
-        alpha[i] = 255;
-    }
+    for (std::size_t i = 0; i < segments.size(); ++i)
+        if (passesSegmentFilters(segments[i], visibility)) alpha[i] = 255;
     return alpha;
 }
 
@@ -537,6 +591,29 @@ bool isEventVisibleAtSharedStep(const ToolpathPreviewDB& preview,
         return event.afterSegment <= visibleEnd;
     }
     return false;
+}
+
+bool isEventVisible(const ToolpathPreviewDB& preview, const ToolpathPreviewOption& event,
+                    const ToolpathPreviewDB::InspectionVisibility& visibility) {
+    if (!visibility.visible || visibility.generation != preview.getPreviewDataGeneration()) return false;
+    const bool seam = event.kind == ToolpathEventKind::Seam;
+    const bool cut = event.kind == ToolpathEventKind::FiberCut || event.kind == ToolpathEventKind::FiberDepleted;
+    if (!(seam && visibility.seam) && !(cut && visibility.fiberCuts)) return false;
+    const auto hidden = [](const auto& list, auto id) {
+        return std::find(list.begin(), list.end(), id) != list.end();
+    };
+    if ((event.toolId != kInvalidSmallId && hidden(visibility.hiddenTools, event.toolId)) ||
+        (event.cpColorId != kInvalidSmallId && hidden(visibility.hiddenColors, event.cpColorId)) ||
+        (cut && event.fiberDisplayRole != 0 && hidden(visibility.hiddenRoles, event.fiberDisplayRole))) return false;
+    const auto& layers = preview.getLayers();
+    const auto it = std::lower_bound(layers.begin(), layers.end(), event.layerId,
+        [](const auto& layer, auto id) { return layer.id < id; });
+    if (it == layers.end() || it->id != event.layerId) return false;
+    const auto layer = int(it - layers.begin());
+    if (layer < visibility.firstLayer || layer > visibility.lastLayer) return false;
+    const auto count = visibility.step < 0 ? std::uint64_t(it->segmentCount) :
+        std::min<std::uint64_t>(std::uint64_t(visibility.step) + 1, it->segmentCount);
+    return event.afterSegment <= std::uint64_t(it->segmentBegin) + count;
 }
 
 const char* colorModeName(ToolpathPreviewColorMode mode) {

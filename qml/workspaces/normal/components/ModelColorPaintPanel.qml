@@ -2,10 +2,12 @@ import QtQuick
 import QtQuick.Layouts
 import SmoothUI
 import SmoothUI.Controls
+import SmoothUI.impl
 import GPlatform 1.0
 
 Item {
     id: root
+    SmoothUI.theme: Theme.of(root)
     objectName: "modelColorPaintPanel"
     anchors.fill: parent
 
@@ -41,7 +43,7 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: filamentContent.implicitHeight + 20
-                radius: 8
+                radius: Theme.panelRadius
                 color: Theme.res.subtleFillColorSecondary
 
                 ColumnLayout {
@@ -81,7 +83,7 @@ Item {
                                     onClicked: ModelColorPaintBridge.currentColorIndex = slotChip.index + 1
 
                                     background: Rectangle {
-                                        radius: 6
+                                        radius: root.SmoothUI.radius
                                         color: slotChip.selected
                                                ? Theme.res.subtleFillColorSecondary
                                                : Theme.res.controlFillColorDefault
@@ -195,7 +197,7 @@ Item {
                         icon.name: modelData.icon
                         icon.width: 17
                         icon.height: 17
-                        radius: 6
+                        radius: root.SmoothUI.radius
                         onClicked: root.selectTool(modelData.key)
 
                         ToolTip.delay: Theme.tooltipDelay

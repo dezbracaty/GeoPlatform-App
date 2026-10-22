@@ -9,7 +9,7 @@ import "../../../components"
 ToolbarSurface {
     id: rightPrintToolbar
     width: PrintWorkspaceStyle.toolbarWidth
-    height: toolbarColumn.implicitHeight + 16
+    height: toolbarColumn.implicitHeight + PrintWorkspaceStyle.space8 * 2
 
     // 信号：打开设置面板
     signal openSettingsPanel(string panelType, var triggerButton)
@@ -20,15 +20,15 @@ ToolbarSurface {
     ScrollView {
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
         anchors.fill: parent
-        anchors.leftMargin: 6
-        anchors.rightMargin: 6
-        anchors.topMargin: 8
-        anchors.bottomMargin: 8
+        anchors.leftMargin: PrintWorkspaceStyle.space8
+        anchors.rightMargin: PrintWorkspaceStyle.space8
+        anchors.topMargin: PrintWorkspaceStyle.space8
+        anchors.bottomMargin: PrintWorkspaceStyle.space8
 
         Column {
             id: toolbarColumn
-            width: rightPrintToolbar.width - 12
-            spacing: 4
+            width: rightPrintToolbar.width - PrintWorkspaceStyle.space8 * 2
+            spacing: PrintWorkspaceStyle.space8
 
             // ==================== Settings 分组 ====================
             HoverExpandableButton {

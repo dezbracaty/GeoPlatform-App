@@ -3,6 +3,12 @@
 
 REGISTER_INTERACTION_ACTION(
     SceneHandler, "scene.init", "scene.skybox.preset", "scene.skybox.colors")
+GPLATFORM_ADD_MODULE_REGISTRATION(
+    GPlatform::Interaction::moduleRegistrations,
+    ActionHandlerRegistry::instance().registerFactory(
+        QStringLiteral("scene.theme.set"), [] {
+            return std::make_shared<SceneHandler>(nullptr, HandlerType::Background);
+        }))
 #include "ActionHandlerRegistry.hpp"
 #include "SliceSettingsBridge.hpp"
 #include <DocumentManager.hpp>
@@ -16,6 +22,7 @@ REGISTER_INTERACTION_ACTION(
 #include <ModelPartDB.hpp>
 #include <MaterialDB.hpp>
 #include <LightDB.hpp>
+#include <ThemeDB.hpp>
 #include <SystemTypes.hpp>
 #include <CameraNavigationController.hpp>
 #include <STLLoader.hpp>
@@ -175,8 +182,8 @@ void configurePrintBedTemplate(
 }
 } // namespace
 
-SceneHandler::SceneHandler(QObject* parent)
-    : StandardActionHandler(parent) {
+SceneHandler::SceneHandler(QObject* parent, HandlerType handlerType)
+    : StandardActionHandler(parent), m_handlerType(handlerType) {
     QObject::connect(SliceSettingsBridge::instance(),
                      &SliceSettingsBridge::machineSelectionChanged,
                      this,
@@ -197,12 +204,37 @@ void SceneHandler::onEnter(std::shared_ptr<ActionContext> context) {
         setSkyboxPreset(params);
     } else if (actionCode == "scene.skybox.colors") {
         setSkyboxColors(params);
+    } else if (actionCode == "scene.theme.set") {
+        setTheme(params);
     } else {
         LOG_WARN("SceneHandler: Unknown action code: {}", actionCode.toStdString());
     }
 
     // 场景操作是同步的，立即调用 onExit 清理 Handler 状态
     onExit();
+}
+
+void SceneHandler::setTheme(const QVariantMap& params) {
+    const auto dark = params.constFind(QStringLiteral("dark"));
+    if (dark == params.cend() || dark->metaType().id() != QMetaType::Bool) {
+        m_context->setError(ActionErrorCode::InvalidParams,
+                            QStringLiteral("scene.theme.set requires a boolean dark parameter"));
+        return;
+    }
+
+    const auto themes = DocumentManager::instance()->getDBInstancesByType(TypeID::THEME_DB);
+    if (themes.size() != 1) {
+        m_context->setError(ActionErrorCode::SystemUnavailable,
+                            QStringLiteral("The application ThemeDB is unavailable"));
+        return;
+    }
+    const auto theme = std::dynamic_pointer_cast<ThemeDB>(themes.front());
+    if (!theme) {
+        m_context->setError(ActionErrorCode::ContractValidation,
+                            QStringLiteral("The application ThemeDB has an invalid type"));
+        return;
+    }
+    theme->setTheme(dark->toBool() ? ThemeDB::Mode::Dark : ThemeDB::Mode::Light);
 }
 
 // === 场景初始化 ===

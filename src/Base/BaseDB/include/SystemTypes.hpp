@@ -60,6 +60,7 @@ enum class TypeID : uint32_t {
 
     // Window and UI management types
     WINDOW_DB = 150,
+    THEME_DB = 151, // Application-owned runtime presentation state
 
     // Scene environment types
     SKYBOX_DB = 180,
@@ -182,6 +183,8 @@ inline QString typeIdToString(TypeID typeId) {
             return "BATCH_DATA_DB";
         case TypeID::WINDOW_DB:
             return "WINDOW_DB";
+        case TypeID::THEME_DB:
+            return "THEME_DB";
         case TypeID::SKYBOX_DB:
             return "SKYBOX_DB";
         case TypeID::WIDGET_DB:

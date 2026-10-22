@@ -9,10 +9,11 @@ class GCodeLineModel final : public QAbstractListModel {
     Q_PROPERTY(int highlightedLine READ highlightedLine NOTIFY inspectionChanged)
     Q_PROPERTY(QString description READ description NOTIFY inspectionChanged)
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
-    Q_PROPERTY(bool loading READ loading NOTIFY statusChanged)
     Q_PROPERTY(bool pinned READ pinned WRITE setPinned NOTIFY pinnedChanged)
+    Q_PROPERTY(bool hasFiberRoute READ hasFiberRoute NOTIFY inspectionChanged)
 public:
     explicit GCodeLineModel(QObject* parent = nullptr);
+    ~GCodeLineModel() override;
     enum Role { LineNumberRole = Qt::UserRole + 1,
                 TextRole,
                 HighlightRole };
@@ -20,7 +21,7 @@ public:
     QVariant data(const QModelIndex& index, int role) const override;
     QHash<int, QByteArray> roleNames() const override;
     void setPreview(std::shared_ptr<GPlatform::ToolpathPreviewDB> preview);
-    void inspect(std::uint32_t line, const QString& description);
+    void inspect(std::uint32_t line, const QString& description, int elementIndex = -1);
     void clearInspection();
     // Explicit layer/Step navigation takes precedence over hover and its pin.
     void navigate(std::uint32_t line, const QString& description);
@@ -33,14 +34,13 @@ public:
     QString status() const {
         return m_status;
     }
-    bool loading() const {
-        return m_loading;
-    }
     bool pinned() const {
         return m_pinned;
     }
     void setPinned(bool value);
     Q_INVOKABLE void copyHighlightedLine();
+    bool hasFiberRoute() const;
+    Q_INVOKABLE void navigateFiberEvent(bool depleted);
 signals:
     void inspectionChanged();
     void navigationRequested();
@@ -48,14 +48,15 @@ signals:
     void pinnedChanged();
 
 private:
-    void applyInspection(std::uint32_t line, const QString& description);
+    void applyInspection(std::uint32_t line, const QString& description, int elementIndex = -1);
     void install(std::shared_ptr<const GPlatform::GCodeSource> source);
     QString lineText(int row) const;
     std::weak_ptr<GPlatform::ToolpathPreviewDB> m_preview;
     std::shared_ptr<const GPlatform::GCodeSource> m_source;
     mutable QCache<int, QStringList> m_blocks{16};
-    std::uint64_t m_generation{0}, m_request{0};
+    std::uint64_t m_generation{0};
     int m_line{0};
     QString m_description, m_status;
-    bool m_loading{false}, m_pinned{false};
+    bool m_pinned{false};
+    std::size_t m_listener{0};
 };

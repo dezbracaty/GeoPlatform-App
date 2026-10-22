@@ -30,6 +30,10 @@ public:
     TRANSIENT_FIELD_VALUE_SIMPLE(ToolpathPreviewDB, ToolpathPreviewColorMode, ColorMode)
     TRANSIENT_FIELD_VALUE_SIMPLE(ToolpathPreviewDB, bool, ShowTravel)
     TRANSIENT_FIELD_VALUE_SIMPLE(ToolpathPreviewDB, bool, ShowFiberProcess)
+    TRANSIENT_FIELD_VALUE_SIMPLE(ToolpathPreviewDB, bool, ShowFiberCutPoints)
+    TRANSIENT_FIELD_VALUE_SIMPLE(ToolpathPreviewDB, bool, HighlightFiberTail)
+    // Projection of the inspector's generic selection into this preview generation.
+    TRANSIENT_FIELD_VALUE_SIMPLE(ToolpathPreviewDB, int, InspectedElementIndex)
     TRANSIENT_FIELD_VALUE_SIMPLE(ToolpathPreviewDB, bool, ShowFiberDiagnostics)
     TRANSIENT_FIELD_VALUE_SIMPLE(ToolpathPreviewDB, unsigned int, HiddenFiberDiagnosticKinds)
     TRANSIENT_FIELD_VALUE_SIMPLE(ToolpathPreviewDB, bool, ShowSeam)
@@ -47,7 +51,7 @@ public:
     struct InspectionVisibility {
         std::uint64_t generation{0};
         int firstLayer{0}, lastLayer{-1}, step{-1};
-        bool visible{false}, travel{false}, fiber{false}, diagnostics{false}, seam{false};
+        bool visible{false}, travel{false}, fiber{false}, diagnostics{false}, seam{false}, fiberCuts{false};
         unsigned int hiddenDiagnosticKinds{0};
         std::vector<std::uint16_t> hiddenColors, hiddenTools;
         std::vector<std::uint8_t> hiddenRoles;
@@ -57,9 +61,6 @@ public:
     bool inspectionElementVisible(std::size_t featureIndex) const;
     bool inspectionElementVisible(std::size_t featureIndex, const InspectionVisibility& visibility) const;
     std::shared_ptr<const GCodeSource> gcodeSource() const { return m_gcodeSource; }
-    void setGCodeSource(std::uint64_t generation, std::shared_ptr<const GCodeSource> source);
-    qint64 sourceByteSize() const { return m_sourceByteSize; }
-    qint64 sourceModified() const { return m_sourceModified; }
 
     void setPreviewData(ToolpathPreviewData&& data);
     void clearPreviewData();
@@ -110,7 +111,6 @@ private:
     void publishInspectionGeometry();
     std::vector<InspectionElement> m_inspectionElements;
     std::shared_ptr<const GCodeSource> m_gcodeSource;
-    qint64 m_sourceByteSize{-1}, m_sourceModified{0};
     bool m_suppressPreviewNotifications = false;
     // Monotonic identity for the immutable preview payload. Renderers use this
     // to collapse lifecycle replays of the same PreviewData notification while

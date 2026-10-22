@@ -8,6 +8,7 @@ import GPlatform
 Item {
     id: control
     objectName: "downloadedModelsContent"
+    SmoothUI.theme: Theme.of(control)
 
     property var downloadedModels: []
     property bool active: false
@@ -97,13 +98,13 @@ Item {
                     Label {
                         text: qsTr("My Models")
                         font: Typography.title
-                        color: "#FFFFFF"
+                        color: control.SmoothUI.theme.res.textFillColorPrimary
                     }
 
                     Label {
                         text: qsTr("Manage your downloaded models")
                         font: Typography.body
-                        color: "#A0B8C0"
+                        color: control.SmoothUI.theme.res.textFillColorSecondary
                     }
                 }
 
@@ -113,7 +114,7 @@ Item {
                 Label {
                     text: "(" + downloadedModels.length + "/" + LocalModelLibraryBridge.totalCount + ")"
                     font: Typography.body
-                    color: "#A0B8C0"
+                    color: control.SmoothUI.theme.res.textFillColorSecondary
                 }
 
                 // 刷新按钮
@@ -170,7 +171,7 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 1
-            color: Qt.rgba(1, 1, 1, 0.1)
+            color: control.SmoothUI.theme.res.dividerStrokeColorDefault
         }
 
         // 内容区域
@@ -189,7 +190,7 @@ Item {
                     source: FluentIcons.graph_FolderOpen
                     width: 64
                     height: 64
-                    color: "#607080"
+                    color: control.SmoothUI.theme.res.textFillColorTertiary
                 }
 
                 Label {
@@ -198,7 +199,7 @@ Item {
                           ? qsTr("No downloaded models yet")
                           : qsTr("No matching models")
                     font: Typography.subtitle
-                    color: "#A0B8C0"
+                    color: control.SmoothUI.theme.res.textFillColorSecondary
                 }
 
                 Label {
@@ -207,7 +208,7 @@ Item {
                           ? qsTr("Downloaded models will appear here")
                           : qsTr("Try a different search term")
                     font: Typography.body
-                    color: "#8090A0"
+                    color: control.SmoothUI.theme.res.textFillColorTertiary
                 }
             }
 
@@ -215,10 +216,9 @@ Item {
             ListView {
                 id: listView
                 anchors.fill: parent
-                anchors.margins: 16
                 visible: downloadedModels.length > 0
                 clip: true
-                spacing: 8
+                spacing: 0
                 model: downloadedModels
 
                 ScrollBar.vertical: ScrollBar {
@@ -228,11 +228,20 @@ Item {
                 delegate: Rectangle {
                     id: listItem
                     width: listView.width
-                    height: 112
-                    radius: 16
-                    color: itemMouseArea.containsMouse ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(1, 1, 1, 0.06)
-                    border.width: 1
-                    border.color: Qt.rgba(1, 1, 1, 0.15)
+                    height: 88
+                    radius: Theme.controlRadius
+                    color: itemMouseArea.containsMouse
+                           ? control.SmoothUI.theme.res.subtleFillColorSecondary
+                           : "transparent"
+
+                    Rectangle {
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.bottom: parent.bottom
+                        height: 1
+                        color: control.SmoothUI.theme.res.dividerStrokeColorDefault
+                        visible: index < listView.count - 1
+                    }
 
                     property var modelData: listView.model[index] || {}
                     property string previewSource: ""
@@ -289,17 +298,15 @@ Item {
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.margins: 16
-                        spacing: 16
+                        anchors.margins: 12
+                        spacing: 12
 
                         // 真实模型预览。缓存缺失时服务会异步生成，列表先显示占位状态。
                         Rectangle {
-                            Layout.preferredWidth: 104
-                            Layout.preferredHeight: 80
-                            radius: 12
-                            color: Qt.rgba(1, 1, 1, 0.055)
-                            border.width: 1
-                            border.color: Qt.rgba(1, 1, 1, 0.12)
+                            Layout.preferredWidth: 80
+                            Layout.preferredHeight: 64
+                            radius: control.SmoothUI.radius
+                            color: control.SmoothUI.theme.res.solidBackgroundFillColorSecondary
                             clip: true
 
                             Image {
@@ -321,7 +328,7 @@ Item {
                                 source: FluentIcons.graph_CubeShape
                                 width: 24
                                 height: 24
-                                color: "#7895A0"
+                                color: control.SmoothUI.theme.res.textFillColorTertiary
                                 opacity: listItem.previewPending ? 0.38 : 1.0
                                 visible: modelPreview.source === ""
                                          || listItem.previewFailed
@@ -346,7 +353,7 @@ Item {
                                 Layout.fillWidth: true
                                 text: modelData.name || "Unknown Model"
                                 font: Typography.bodyStrong
-                                color: "#FFFFFF"
+                                color: control.SmoothUI.theme.res.textFillColorPrimary
                                 elide: Text.ElideRight
                             }
 
@@ -354,7 +361,7 @@ Item {
                                 Layout.fillWidth: true
                                 text: modelData.filePath || ""
                                 font: Typography.caption
-                                color: "#8090A0"
+                                color: control.SmoothUI.theme.res.textFillColorTertiary
                                 elide: Text.ElideMiddle
                             }
 
@@ -364,19 +371,19 @@ Item {
                                 Label {
                                     text: formatFileSize(modelData.fileSize || "0")
                                     font: Typography.caption
-                                    color: "#A0B8C0"
+                                    color: control.SmoothUI.theme.res.textFillColorSecondary
                                 }
 
                                 Rectangle {
                                     width: 1
                                     height: 12
-                                    color: Qt.rgba(1, 1, 1, 0.2)
+                                    color: control.SmoothUI.theme.res.dividerStrokeColorDefault
                                 }
 
                                 Label {
                                     text: modelData.downloadDate || ""
                                     font: Typography.caption
-                                    color: "#A0B8C0"
+                                    color: control.SmoothUI.theme.res.textFillColorSecondary
                                 }
                             }
                         }
@@ -390,7 +397,6 @@ Item {
                                 icon.name: FluentIcons.graph_Import
                                 icon.width: 16
                                 icon.height: 16
-                                icon.color: hovered ? Theme.accentColor.defaultBrushFor() : "#A0B8C0"
                                 ToolTip.text: qsTr("Import Model")
                                 ToolTip.visible: hovered
                                 ToolTip.delay: Theme.tooltipDelay
@@ -404,7 +410,6 @@ Item {
                                 icon.name: FluentIcons.graph_FolderOpen
                                 icon.width: 16
                                 icon.height: 16
-                                icon.color: hovered ? Theme.accentColor.defaultBrushFor() : "#A0B8C0"
                                 ToolTip.text: qsTr("Open in Finder")
                                 ToolTip.visible: hovered
                                 ToolTip.delay: Theme.tooltipDelay
@@ -420,7 +425,6 @@ Item {
                                 icon.name: FluentIcons.graph_Delete
                                 icon.width: 16
                                 icon.height: 16
-                                icon.color: hovered ? "#FF6B6B" : "#A0B8C0"
                                 ToolTip.text: qsTr("Delete Model")
                                 ToolTip.visible: hovered
                                 ToolTip.delay: Theme.tooltipDelay

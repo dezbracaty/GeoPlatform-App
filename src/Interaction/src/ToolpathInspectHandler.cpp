@@ -10,6 +10,7 @@
 #include <QKeyEvent>
 #include "Foundation/Log.h"
 #include <SlicingPreviewBridge.hpp>
+#include <ToolpathPreviewUtils.hpp>
 #include <DocumentManager.hpp>
 #include <WindowDB.hpp>
 #include <QPointer>
@@ -262,7 +263,8 @@ void ToolpathInspectHandler::inspectResult() {
                     .arg(segment.layerId)
                     .arg(element.sourceLine);
     } else if (element.kind == Kind::Event) {
-        label = tr("Seam point · Associated G-code line %1").arg(element.sourceLine);
+        const auto& event = preview->getOptions()[element.index];
+        label = GPlatform::ToolpathPreviewUtils::fiberEventDescription(*preview, event);
     } else {
         const auto& diagnostic = preview->getFiberFillDiagnostics()[element.index];
         const auto type = diagnostic.kind == GPlatform::FiberDiagnosticKind::ContourCandidate
@@ -274,5 +276,12 @@ void ToolpathInspectHandler::inspectResult() {
                     .arg(type).arg(diagnostic.policyGroupId).arg(diagnostic.componentId)
                     .arg(QString::fromStdString(diagnostic.reason));
     }
-    model->inspect(element.sourceLine, label);
+    const auto route = GPlatform::ToolpathPreviewUtils::fiberRouteForInspectionElement(*preview, hit->featureIndex);
+    if (route && element.kind != Kind::Event) {
+        const auto lengths = GPlatform::ToolpathPreviewUtils::fiberRouteLengths(*preview, *route);
+        label += tr(" · Passive tail %1 mm · Extra finish %2 mm · Cut script lines %3–%4")
+            .arg(lengths.first, 0, 'f', 3).arg(lengths.second, 0, 'f', 3)
+            .arg(route->cutSourceLine + 1).arg(route->tailBeginSourceLine - 1);
+    }
+    model->inspect(element.sourceLine, label, int(hit->featureIndex));
 }

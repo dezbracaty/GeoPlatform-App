@@ -2,14 +2,16 @@ import QtQuick
 import QtQuick.Layouts
 import SmoothUI
 import SmoothUI.Controls
+import SmoothUI.impl
 import GPlatform
 
 Item {
     id: root
+    SmoothUI.theme: Theme.of(root)
 
     // 公共属性
     property alias icon: mainButton.icon
-    property alias enabled: mainButton.enabled
+    property alias checked: mainButton.checked
     property string tooltip: ""
 
     // 展开窗口的配置
@@ -21,28 +23,20 @@ Item {
     implicitWidth: PrintWorkspaceStyle.toolbarButtonSize
     implicitHeight: PrintWorkspaceStyle.toolbarButtonSize
 
-    // 主按钮背景 - hover 效果
-    Rectangle {
-        anchors.fill: parent
-        color: expandPopup.opened || mainButton.hovered
-               ? Theme.res.subtleFillColorSecondary
-               : "transparent"
-        radius: 8
-        z: -1
-    }
-
     // 主按钮
     IconButton {
         id: mainButton
         objectName: root.objectName.length > 0 ? root.objectName + ".button" : ""
         anchors.fill: parent
         hoverEnabled: true
+        highlighted: enabled && (checked || expandPopup.opened)
         icon.width: 20
         icon.height: 20
-        backgroundColor: Qt.rgba(0,0,0,0)  // 始终透明，去掉 disabled 时的白色背景
 
         onHoveredChanged: {
-            root.isButtonHovered = hovered
+            root.isButtonHovered = hovered && root.enabled
+            if (!root.enabled)
+                return
             if (hovered) {
                 showTimer.start()
                 hideTimer.stop()
@@ -66,12 +60,23 @@ Item {
     property bool isPopupHovered: false
     property int hoverCount: 0  // 记录有多少个按钮正在被 hover
 
+    onEnabledChanged: {
+        if (!enabled) {
+            if (showTimer) showTimer.stop()
+            if (hideTimer) hideTimer.stop()
+            isButtonHovered = false
+            isPopupHovered = false
+            hoverCount = 0
+            if (expandPopup) expandPopup.close()
+        }
+    }
+
     // 显示计时器
     Timer {
         id: showTimer
         interval: root.hoverDelay
         onTriggered: {
-            if (root.expandItems.length > 0) {
+            if (root.enabled && mainButton.hovered && root.expandItems.length > 0) {
                 expandPopup.open()
             }
         }
@@ -94,6 +99,8 @@ Item {
         id: expandPopup
 
         parent: root
+        SmoothUI.dark: root.SmoothUI.dark
+        SmoothUI.primaryColor: root.SmoothUI.primaryColor
         padding: PrintWorkspaceStyle.space4
         modal: false
         focus: false
@@ -130,10 +137,12 @@ Item {
                 anchors.fill: parent
                 hoverEnabled: true
                 onEntered: {
+                    if (!root.enabled) return
                     root.isPopupHovered = true
                     hideTimer.stop()
                 }
                 onExited: {
+                    if (!root.enabled) return
                     // 只有在所有区域都不 hover 时才关闭
                     if (root.hoverCount <= 0 && !root.isButtonHovered) {
                         root.isPopupHovered = false
@@ -156,22 +165,22 @@ Item {
                 Repeater {
                     model: root.expandItems
 
-                    delegate: Button {
+                    delegate: ItemDelegate {
+                        id: expandItemButton
                         objectName: itemData.targetName || ""
                         Layout.fillWidth: true
                         Layout.preferredHeight: PrintWorkspaceStyle.popoverRowHeight
                         Layout.minimumWidth: 136
                         Layout.maximumWidth: 232
-                        leftPadding: 10
-                        rightPadding: 10
 
                         property var itemData: modelData
 
-                        enabled: itemData.enabled !== undefined ? itemData.enabled : true
+                        enabled: root.enabled && (itemData.enabled !== undefined ? itemData.enabled : true)
                         hoverEnabled: true
 
                         // 使用计数器来跟踪 hover 状态
                         onHoveredChanged: {
+                            if (!root.enabled) return
                             if (hovered) {
                                 root.hoverCount++
                                 root.isPopupHovered = true
@@ -189,13 +198,6 @@ Item {
                             }
                         }
 
-                        background: Rectangle {
-                            color: parent.hovered
-                                   ? Theme.res.subtleFillColorSecondary
-                                   : "transparent"
-                            radius: PrintWorkspaceStyle.controlRadius
-                        }
-
                         contentItem: RowLayout {
                             spacing: 8
 
@@ -204,7 +206,7 @@ Item {
                                 Layout.preferredWidth: 16
                                 Layout.preferredHeight: 16
                                 source: itemData.icon || ""
-                                color: parent.parent.enabled ? Theme.res.textFillColorPrimary : Theme.res.textFillColorDisabled
+                                color: expandItemButton.SmoothUI.textColor
                             }
 
                             // 文字
@@ -212,7 +214,7 @@ Item {
                                 Layout.fillWidth: true
                                 text: itemData.text || ""
                                 font: Typography.body
-                                color: parent.parent.enabled ? Theme.res.textFillColorPrimary : Theme.res.textFillColorDisabled
+                                color: expandItemButton.SmoothUI.textColor
                                 elide: Text.ElideRight
                             }
 
@@ -221,7 +223,9 @@ Item {
                                 visible: itemData.shortcut !== undefined
                                 text: itemData.shortcut || ""
                                 font: Typography.caption
-                                color: Theme.res.textFillColorSecondary
+                                color: expandItemButton.enabled
+                                       ? expandItemButton.SmoothUI.theme.res.textFillColorSecondary
+                                       : expandItemButton.SmoothUI.theme.res.textFillColorDisabled
                             }
                         }
 
@@ -234,7 +238,7 @@ Item {
 
                         // 工具提示
                         ToolTip {
-                            visible: parent.hovered && itemData.tooltip
+                            visible: parent.hovered && !!itemData.tooltip
                             text: itemData.tooltip || ""
                             delay: 1000
                         }

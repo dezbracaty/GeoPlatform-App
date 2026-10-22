@@ -12,13 +12,12 @@ Popup {
     property alias footerData: footer.data
 
     SmoothUI.theme: Theme.of(control)
-    SmoothUI.radius: PrintWorkspaceStyle.menuRadius
+    SmoothUI.radius: Theme.popupRadius
 
     property Item popupAnchor: null
     property Item popupVerticalAnchor: null
     property bool centerHorizontally: popupAnchor === null
     property bool popupAbove: false
-    property bool parentRelativeVerticalAnchor: false
     property int positionRevision: 0
     property real preferredWidth: 0
     property real preferredHeight: 0
@@ -48,12 +47,12 @@ Popup {
         return false
     }
 
-    width: Math.min(preferredWidth,
-                    parent ? parent.width - PrintWorkspaceStyle.space16 * 2
-                           : preferredWidth)
-    height: Math.min(preferredHeight,
-                     parent ? parent.height - PrintWorkspaceStyle.space16 * 2
-                            : preferredHeight)
+    width: Math.max(0, Math.min(preferredWidth,
+                               parent ? parent.width - PrintWorkspaceStyle.space16 * 2
+                                      : preferredWidth))
+    height: Math.max(0, Math.min(preferredHeight,
+                                parent ? parent.height - PrintWorkspaceStyle.space16 * 2
+                                       : preferredHeight))
     x: {
         // mapToItem() does not make changes in the mapped item's ancestor
         // geometry observable to this binding. positionRevision lets a popup
@@ -61,35 +60,32 @@ Popup {
         var revision = positionRevision
         if (!parent)
             return 0
-        var parentPosition = parent.mapToItem(null, 0, 0)
         if (centerHorizontally || !popupAnchor)
-            return Math.round(parentPosition.x + (parent.width - width) / 2)
-        var position = popupAnchor.mapToItem(null, 0, 0)
+            return Math.round((parent.width - width) / 2)
+        var position = popupAnchor.mapToItem(parent, 0, 0)
         var preferredX = position.x + (popupAnchor.width - width) / 2
-        return Math.round(Math.max(parentPosition.x + PrintWorkspaceStyle.space16,
+        return Math.round(Math.max(PrintWorkspaceStyle.space16,
                                    Math.min(preferredX,
-                                            parentPosition.x + parent.width - width
+                                            parent.width - width
                                             - PrintWorkspaceStyle.space16)))
     }
     y: {
+        var revision = positionRevision
         if (!parent)
             return 0
-        var parentPosition = parentRelativeVerticalAnchor
-                ? Qt.point(0, 0) : parent.mapToItem(null, 0, 0)
         if (!popupAnchor && !popupVerticalAnchor)
-            return Math.round(parentPosition.y + (parent.height - height) / 2)
+            return Math.round((parent.height - height) / 2)
         var verticalAnchor = popupVerticalAnchor ? popupVerticalAnchor : popupAnchor
-        var coordinateItem = parentRelativeVerticalAnchor ? parent : null
         var position = popupAbove
                 ? verticalAnchor.mapToItem(
-                      coordinateItem, 0,
+                      parent, 0,
                       -height - PrintWorkspaceStyle.machinePopoverOffset)
                 : verticalAnchor.mapToItem(
-                      coordinateItem, 0,
+                      parent, 0,
                       verticalAnchor.height + PrintWorkspaceStyle.machinePopoverOffset)
-        return Math.round(Math.max(parentPosition.y + PrintWorkspaceStyle.space16,
+        return Math.round(Math.max(PrintWorkspaceStyle.space16,
                                    Math.min(position.y,
-                                            parentPosition.y + parent.height - height
+                                            parent.height - height
                                             - PrintWorkspaceStyle.space16)))
     }
     padding: 0
@@ -159,8 +155,13 @@ Popup {
             id: footer
             visible: children.length > 0
             Layout.fillWidth: true
-            Layout.preferredHeight: visible
-                                    ? PrintWorkspaceStyle.commandBarHeight : 0
+            readonly property real contentHeight: {
+                var height = PrintWorkspaceStyle.commandBarHeight
+                for (var index = 0; index < children.length; ++index)
+                    height = Math.max(height, children[index].implicitHeight)
+                return height
+            }
+            Layout.preferredHeight: visible ? contentHeight : 0
         }
     }
 

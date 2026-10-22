@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace GPlatform::ToolpathPreviewUtils {
@@ -15,6 +16,18 @@ using PreviewColorMap = std::unordered_map<std::uint16_t, Vector4>;
 using RgbColor = std::array<unsigned char, 3>;
 
 bool isTravelSegment(const ToolpathPreviewSegment& segment);
+bool isFiberTail(const ToolpathPreviewSegment& segment);
+bool isFiberFinish(const ToolpathPreviewSegment& segment);
+QString fiberEventDescription(const ToolpathPreviewDB& preview, const ToolpathPreviewOption& event);
+bool passesSegmentFilters(const ToolpathPreviewSegment& segment,
+                          const ToolpathPreviewDB::InspectionVisibility& visibility);
+bool isEventVisible(const ToolpathPreviewDB& preview, const ToolpathPreviewOption& event,
+                    const ToolpathPreviewDB::InspectionVisibility& visibility);
+std::shared_ptr<const ToolpathFiberRoute> inspectedFiberRoute(const ToolpathPreviewDB& preview);
+std::shared_ptr<const ToolpathFiberRoute> fiberRouteForInspectionElement(const ToolpathPreviewDB& preview,
+                                                                      std::size_t elementIndex);
+bool containsSegment(const std::vector<ToolpathSegmentRange>& ranges, std::size_t segment);
+std::pair<double, double> fiberRouteLengths(const ToolpathPreviewDB& preview, const ToolpathFiberRoute& route);
 float segmentSpeed(const ToolpathPreviewSegment& segment);
 PreviewColorMap buildPreviewColorMap(const std::vector<ToolpathPreviewColor>& previewColors);
 

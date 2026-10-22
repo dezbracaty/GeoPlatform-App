@@ -26,8 +26,8 @@ Rectangle {
 
     implicitWidth: 360
     implicitHeight: 72
-    radius: 10
-    color: root.SmoothUI.theme.res.cardBackgroundFillColorDefault
+    radius: Theme.panelRadius
+    color: root.SmoothUI.theme.res.cardBackgroundColor
     border.width: 1
     border.color: root.SmoothUI.theme.res.cardStrokeColorDefault
 
@@ -41,9 +41,9 @@ Rectangle {
     layer.enabled: visible
     layer.effect: MultiEffect {
         shadowEnabled: true
-        shadowColor: "#000000"
+        shadowColor: root.SmoothUI.theme.res.shadowColor
         shadowBlur: 0.5
-        shadowOpacity: 0.18
+        shadowOpacity: Theme.shadowOpacityFor(root.SmoothUI.dark, 0.18)
         shadowVerticalOffset: 3
     }
 
@@ -55,7 +55,7 @@ Rectangle {
 
     function notificationColor(kind) {
         if (kind === "warning") return root.SmoothUI.theme.res.systemFillColorCaution
-        if (kind === "fiberDebug") return Theme.accentColor.defaultBrushFor(root.SmoothUI.dark)
+        if (kind === "fiberDebug") return root.SmoothUI.theme.accentColor.defaultBrushFor(root.SmoothUI.dark)
         return root.SmoothUI.theme.res.systemFillColorCritical
     }
 
@@ -234,7 +234,7 @@ Rectangle {
         Label {
             text: qsTr("查看")
             font: Typography.caption
-            color: Theme.accentColor.defaultBrushFor(root.SmoothUI.dark)
+            color: root.SmoothUI.theme.accentColor.defaultBrushFor(root.SmoothUI.dark)
         }
 
         IconButton {
@@ -300,16 +300,16 @@ Rectangle {
 
         background: Rectangle {
             color: root.SmoothUI.theme.res.solidBackgroundFillColorBase
-            radius: 10
+            radius: Theme.popupRadius
             border.width: 1
             border.color: root.SmoothUI.theme.res.cardStrokeColorDefault
 
             layer.enabled: true
             layer.effect: MultiEffect {
                 shadowEnabled: true
-                shadowColor: "#000000"
+                shadowColor: root.SmoothUI.theme.res.shadowColor
                 shadowBlur: 0.5
-                shadowOpacity: 0.18
+                shadowOpacity: Theme.shadowOpacityFor(root.SmoothUI.dark, 0.18)
                 shadowVerticalOffset: 3
             }
         }
@@ -357,7 +357,7 @@ Rectangle {
                     id: notificationItem
                     width: ListView.view ? ListView.view.width : 0
                     implicitHeight: itemContent.implicitHeight + 20
-                    radius: 7
+                    radius: root.SmoothUI.radius
                     color: itemMouse.hovered
                            ? root.SmoothUI.theme.res.subtleFillColorSecondary
                            : "transparent"

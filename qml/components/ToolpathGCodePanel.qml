@@ -3,11 +3,13 @@ import QtQuick.Layouts
 import QtQuick.Controls as QQC
 import SmoothUI
 import SmoothUI.Controls
+import SmoothUI.impl
 import GPlatform
 
 Item {
     id: root
     objectName: "slicing.preview.gcodeContent"
+    SmoothUI.theme: Theme.of(root)
     property var codeModel: SlicingPreviewBridge.gcodeLines
     implicitWidth: 400
     implicitHeight: 320
@@ -42,6 +44,11 @@ Item {
             wrapMode: Text.WordWrap
             font: Typography.caption
         }
+        RowLayout {
+            visible: root.codeModel.hasFiberRoute
+            Button { text: qsTr("Cut command"); onClicked: root.codeModel.navigateFiberEvent(false) }
+            Button { text: qsTr("Fiber depleted"); onClicked: root.codeModel.navigateFiberEvent(true) }
+        }
         ListView {
             id: codeList
             objectName: "gcodeList"
@@ -57,7 +64,7 @@ Item {
                 required property bool highlighted
                 width: codeList.width
                 height: Math.max(24, sourceText.implicitHeight + 6)
-                color: highlighted ? "#4052a8ed" : "transparent"
+                color: highlighted ? Colors.withOpacity(Theme.of(root).accentColor.defaultBrushFor(root.SmoothUI.dark), 0.25) : "transparent"
                 RowLayout {
                     anchors.fill: parent
                     anchors.margins: 3
@@ -67,9 +74,9 @@ Item {
                         Layout.alignment: Qt.AlignTop
                         text: lineNumber
                         horizontalAlignment: Text.AlignRight
-                        color: Theme.res.textFillColorSecondary
+                        color: root.SmoothUI.theme.res.textFillColorSecondary
                         font.family: "monospace"
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.captionFontSize
                     }
                     TextEdit {
                         id: sourceText
@@ -79,9 +86,9 @@ Item {
                         readOnly: true
                         selectByMouse: true
                         wrapMode: TextEdit.WrapAnywhere
-                        color: Theme.res.textFillColorPrimary
+                        color: root.SmoothUI.theme.res.textFillColorPrimary
                         font.family: "monospace"
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.captionFontSize
                     }
                 }
             }

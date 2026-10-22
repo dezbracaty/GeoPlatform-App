@@ -143,6 +143,15 @@ Item {
             id: main_menu_bar
             height: 30
             groupName: "Menu"  // 使用 groupName 属性，菜单会自动从当前环境加载
+            delegate: MenuBarItem {
+                text: {
+                    var title = menu ? menu.title : ""
+                    if (title === "File") return qsTr("File")
+                    if (title === "Edit") return qsTr("Edit")
+                    if (title === "Help") return qsTr("Help")
+                    return title
+                }
+            }
         }
 
         autoSuggestBox: AutoSuggestBox {

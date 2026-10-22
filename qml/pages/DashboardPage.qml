@@ -400,8 +400,8 @@ ScrollablePage {
         
         Rectangle {
             anchors.fill: parent
-            color: Theme.dark ? "#1A1A1A" : "#F5F5F5"
-            radius: 8
+            color: page.SmoothUI.theme.res.solidBackgroundFillColorSecondary
+            radius: Theme.panelRadius
             
             Canvas {
                 id: canvas

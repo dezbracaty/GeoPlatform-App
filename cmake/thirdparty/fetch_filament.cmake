@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 include("${CMAKE_CURRENT_LIST_DIR}/FetchCacheHelper.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/fetch_renderer_environment.cmake")
 
 # Filament version config - can be overridden from the command line.
 if(NOT DEFINED FILAMENT_VERSION)
@@ -18,14 +19,6 @@ set(FILAMENT_KNOWN_SHA256_1.75.0_arm-linux
     "6a312705c86890840d6cdb47380524f8a96495aeafa56ae05726a630e25594db")
 set(FILAMENT_KNOWN_SHA256_1.75.0_ios
     "3b1846efcfbf6f99014e6ceeecc3449c521aad0ea53758eb9ecb7ba83242cc18")
-
-# Official repository assets consumed by the Filament integration showcase.
-# Keep these hashes versioned together with the platform package so every
-# upstream Filament input has one download and verification entry point.
-set(FILAMENT_KNOWN_MONKEY_SHA256_1.75.0
-    "7b754119aa286ff618b9ac30038c8aa9a093e2820242913728c8b20d8000ca88")
-set(FILAMENT_KNOWN_PILLARS_SHA256_1.75.0
-    "e4b5a3e432eab8104c9b8e452357655a672774516c7a36f5beab07f460588be8")
 
 if(DEFINED FILAMENT_BUILD_TYPE)
     set(FILAMENT_ACTUAL_BUILD_TYPE "${FILAMENT_BUILD_TYPE}")
@@ -231,71 +224,11 @@ if(FILAMENT_STATUS STREQUAL "ZIP_ONLY")
     endif()
 endif()
 
-# Fetch all additional official Filament inputs here as part of the same
-# dependency flow. Renderer backend CMake files only consume the resolved
-# paths and remain free of network/download implementation details.
-set(FILAMENT_ASSET_CACHE_DIR "${FILAMENT_CACHE_DIR}/assets")
-file(MAKE_DIRECTORY "${FILAMENT_ASSET_CACHE_DIR}")
-
-function(_gplatform_fetch_filament_repository_asset
-         OUTPUT_VARIABLE FILE_NAME REPOSITORY_PATH EXPECTED_SHA256)
-    set(_destination "${FILAMENT_ASSET_CACHE_DIR}/${FILE_NAME}")
-    set(_valid FALSE)
-    if(EXISTS "${_destination}")
-        file(SHA256 "${_destination}" _actual_sha256)
-        if(_actual_sha256 STREQUAL EXPECTED_SHA256)
-            set(_valid TRUE)
-        else()
-            file(REMOVE "${_destination}")
-        endif()
-    endif()
-
-    if(NOT _valid)
-        set(_url
-            "https://api.github.com/repos/google/filament/contents/${REPOSITORY_PATH}?ref=v${FILAMENT_VERSION}")
-        message(STATUS "Filament: downloading official asset ${FILE_NAME}")
-        file(DOWNLOAD
-            "${_url}"
-            "${_destination}"
-            EXPECTED_HASH "SHA256=${EXPECTED_SHA256}"
-            HTTPHEADER "Accept: application/vnd.github.raw+json"
-            HTTPHEADER "User-Agent: GPlatform-CMake"
-            STATUS _download_status
-            LOG _download_log
-            SHOW_PROGRESS)
-        list(GET _download_status 0 _status_code)
-        list(GET _download_status 1 _status_message)
-        if(NOT _status_code EQUAL 0)
-            file(REMOVE "${_destination}")
-            message(FATAL_ERROR
-                "Filament asset download failed: ${_status_message}\n"
-                "${_download_log}")
-        endif()
-    endif()
-
-    set(${OUTPUT_VARIABLE} "${_destination}" PARENT_SCOPE)
-endfunction()
-
-set(_filament_monkey_sha_variable
-    "FILAMENT_KNOWN_MONKEY_SHA256_${FILAMENT_VERSION}")
-set(_filament_pillars_sha_variable
-    "FILAMENT_KNOWN_PILLARS_SHA256_${FILAMENT_VERSION}")
-if(NOT DEFINED ${_filament_monkey_sha_variable} OR
-   NOT DEFINED ${_filament_pillars_sha_variable})
-    message(FATAL_ERROR
-        "Filament ${FILAMENT_VERSION} has no registered showcase asset hashes")
-endif()
-
-_gplatform_fetch_filament_repository_asset(
-    FILAMENT_SHOWCASE_MONKEY_OBJ
+_gplatform_fetch_renderer_environment_asset(
+    GPLATFORM_RENDERER_MONKEY_OBJ
     "monkey.obj"
     "assets/models/monkey/monkey.obj"
-    "${${_filament_monkey_sha_variable}}")
-_gplatform_fetch_filament_repository_asset(
-    FILAMENT_SHOWCASE_PILLARS_HDR
-    "pillars_2k.hdr"
-    "third_party/environments/pillars_2k.hdr"
-    "${${_filament_pillars_sha_variable}}")
+    "7b754119aa286ff618b9ac30038c8aa9a093e2820242913728c8b20d8000ca88")
 
 # Filament distributions do not ship a CMake package config. Define imported
 # targets once here so only renderer backend libraries need to know the

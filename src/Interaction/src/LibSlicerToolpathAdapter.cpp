@@ -1,6 +1,7 @@
 #include "LibSlicerToolpathAdapter.hpp"
 
 #include <libslicer/Toolpath.hpp>
+#include <stdexcept>
 
 namespace GPlatform {
 namespace {
@@ -74,6 +75,8 @@ ToolpathPreviewOptionKind optionKind(libslicer::ToolpathOptionKind value)
 
 ToolpathPreviewData adaptLibSlicerToolpath(const libslicer::ToolpathPreview& preview)
 {
+    if (preview.schema_version != libslicer::toolpath_schema_version)
+        throw std::invalid_argument("Incompatible toolpath schema; rebuild the SDK and App together");
     ToolpathPreviewData result;
     result.printGCodePath = preview.source_path;
     result.metadataJson = preview.metadata_json;
@@ -212,6 +215,7 @@ ToolpathPreviewData adaptLibSlicerToolpath(const libslicer::ToolpathPreview& pre
         output.layerId = input.layer_index;
         output.afterSegment = input.after_segment;
         output.kind = eventKind(input.kind);
+        output.toolId = input.tool_id;
         result.options.push_back(output);
     }
 

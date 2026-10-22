@@ -6,6 +6,9 @@
 #include "ScreenshotHandler.hpp"
 #include "Foundation/Log.h"
 #include <DocumentManager.hpp>
+#include <TempDBScope.hpp>
+#include <ThemeDB.hpp>
+#include <TransactionManager.hpp>
 #include <SystemTypes.hpp>
 #include <TransDBSerialization.hpp>
 #include <QGuiApplication>
@@ -17,6 +20,7 @@
 #include <QQuickWindow>
 #include <QtQml/qqmlextensionplugin.h>
 #include <QStandardPaths>
+#include <QScopeGuard>
 
 #include "ActionManager.hpp"
 #include "MenuData.hpp"
@@ -92,6 +96,9 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
 
     // 2. Create Qt application
     QGuiApplication app(argc, argv);
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [] {
+        ApplicationHelper::getInstance()->prepareForExit();
+    }, Qt::DirectConnection);
     logElapsed("QGuiApplication created");
 
     // Use platform-native glyph rasterization (CoreText on macOS) for crisp
@@ -148,6 +155,18 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
     startDefaultInteractionHandlers();
     logElapsed("Application modules registered");
 
+    TempDBScope applicationTheme;
+    // Declared before the engine: cleanup follows QML windows/renderers on
+    // every return path and never enters an outstanding document transaction.
+    const auto cleanupTheme = qScopeGuard([&applicationTheme] {
+        TransientUpdateGuard transientUpdate;
+        applicationTheme.clear();
+    });
+    {
+        TransientUpdateGuard transientUpdate;
+        applicationTheme.create<ThemeDB>();
+    }
+
     QQmlApplicationEngine engine;
     engine.addImportPath(":/qt/qml");
 
@@ -181,6 +200,7 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
 #ifdef JOURNALSYSTEM_ENABLED
     // Initialize JournalSystem for UI testing support
     JournalSystem* journal = new JournalSystem(&app);
+    AppInfo::getInstance()->setJournalService(journal);
     journal->setActionInvoker(
         [](const QString& actionCode,
            const QVariantMap& params,
@@ -226,6 +246,10 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
                             .arg(normalizedId);
                 return false;
             }
+            if (object->getTypeID() == TypeID::THEME_DB) {
+                error = QStringLiteral("ThemeDB is runtime-only and cannot be snapshotted");
+                return false;
+            }
 
             try {
                 const trans::SerializedState state = trans::serializeState(*object);
@@ -245,6 +269,7 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
     });
 
     int ghostPort = 9999;
+    const bool explicitGhostPort = args.contains(QStringLiteral("--ghost-port"));
 
     // Check for custom port
     for (int i = 0; i < args.size(); i++) {
@@ -263,7 +288,7 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
         return 1;
     }
     journal->setStartupReplayId(startupReplayId);
-    journal->setReplayPreparationHandler([args, ghostPort](const QString& replayId, QString& error) {
+    journal->setReplayPreparationHandler([args, journal](const QString& replayId, QString& error) {
         QStringList nextArguments;
         for (int i = 1; i < args.size(); ++i) {
             const QString& argument = args.at(i);
@@ -277,7 +302,7 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
                 argument == "--ghost-verify") continue;
             nextArguments.append(argument);
         }
-        nextArguments << "--ghost-port" << QString::number(ghostPort)
+        nextArguments << "--ghost-port" << QString::number(journal->serverPort())
                       << "--journal-replay-id" << replayId;
         LOG_INFO("Journal replay {}: scheduling application restart", replayId.toStdString());
         return ApplicationHelper::getInstance()->scheduleRestart(nextArguments, &error);
@@ -287,12 +312,19 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
         return 1;
     }
     // Fixed startup offset, as in the former startup replay entry. No business waits.
-    const auto startJournal = [journal, ghostPort, startupReplayId] {
-        if (journal->init(static_cast<quint16>(ghostPort)) != 0) {
+    const auto startJournal = [journal, ghostPort, explicitGhostPort, startupReplayId] {
+        int result = journal->init(static_cast<quint16>(ghostPort));
+        if (result != 0 && !explicitGhostPort) {
+            LOG_WARN("Default Journal port {} is unavailable; requesting an OS-assigned port", ghostPort);
+            result = journal->init(0);
+        }
+        if (result != 0) {
             LOG_ERROR("Journal could not listen on port {}", ghostPort);
             QCoreApplication::exit(1);
         } else {
-            LOG_INFO("Journal service ready; startup replay={}", startupReplayId.toStdString());
+            LOG_INFO("Journal service ready; pid={} port={} startup replay={}",
+                     QCoreApplication::applicationPid(), journal->serverPort(),
+                     startupReplayId.toStdString());
         }
     };
     QTimer::singleShot(startupReplayId.isEmpty() ? 0 : 500, journal, startJournal);

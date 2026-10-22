@@ -153,7 +153,7 @@ ScrollablePage {
                     required property var model
                     implicitWidth: 48
                     implicitHeight: 48
-                    radius: 4
+                    radius: Theme.controlRadius
                     border.color: model.color().darkest()
                     border.width: 1
                     color: mouse_item_accent_color.containsMouse? model.color().lightest() : model.color().normal
@@ -220,7 +220,7 @@ ScrollablePage {
             }
             Label {
                 text: qsTr("When enabled, the application will open to the last viewed page on startup")
-                font.pixelSize: 12
+                font.pixelSize: Theme.captionFontSize
                 opacity: 0.6
                 wrapMode: Label.WrapAnywhere
                 Layout.fillWidth: true

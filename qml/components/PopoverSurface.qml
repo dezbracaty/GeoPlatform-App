@@ -1,7 +1,8 @@
 import GPlatform
+import SmoothUI.Controls
 
 AppSurface {
     elevation: 4
-    surfaceRadius: PrintWorkspaceStyle.menuRadius
+    surfaceRadius: Theme.popupRadius
     shadowOpacity: 0.22
 }

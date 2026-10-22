@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Controls as QQC
 import SmoothUI
 import SmoothUI.Controls
 import GPlatform
@@ -8,15 +9,18 @@ Item {
     id: root
     property var panelData: ({})
     property string viewType: "lineType"
-    readonly property var rows: panelData.featureRows || []
+    property var rows: panelData.featureRows || []
     implicitHeight: Math.min(480, header.implicitHeight + featureList.contentHeight + 6)
 
-    readonly property int colorWidth: 18
-    readonly property int labelWidth: 76
+    readonly property int colorWidth: Math.ceil(Math.max(18, colorHeading.implicitWidth))
     readonly property int timeWidth: 50
     readonly property int percentWidth: 32
-    readonly property int usageWidth: 125
-    readonly property int displayWidth: 50
+    readonly property int displayWidth: allToggle.implicitWidth
+    readonly property real availableTextWidth: Math.max(
+                                                  0, width - colorWidth - timeWidth
+                                                  - percentWidth - displayWidth - 25)
+    readonly property real usageWidth: Math.min(125, availableTextWidth * 0.5)
+    readonly property real labelWidth: availableTextWidth - usageWidth
 
     readonly property int selectableRowCount: {
         var count = 0
@@ -81,7 +85,12 @@ Item {
 
     function setAllRowsVisible(visible) {
         var position = featureList.contentY
-        SlicingPreviewBridge.setPreviewLegendGroupVisible(viewType, visible)
+        // Snapshot the rows: each setter refreshes the bridge model synchronously.
+        var items = rows.slice()
+        for (var i = 0; i < items.length; ++i) {
+            if (items[i].displayEnabled !== false)
+                SlicingPreviewBridge.setPreviewPanelRowVisible(viewType, items[i].id, visible)
+        }
         restoreScrollPosition(position)
     }
 
@@ -95,13 +104,59 @@ Item {
             Layout.preferredHeight: 28
             columns: 6
             columnSpacing: 5
-            Label { Layout.preferredWidth: root.colorWidth; text: qsTr("Color"); font: Typography.caption; color: Theme.of(root).res.textFillColorSecondary }
-            Label { Layout.preferredWidth: root.labelWidth; text: qsTr("Type"); font: Typography.caption; color: Theme.of(root).res.textFillColorSecondary }
-            Label { Layout.preferredWidth: root.timeWidth; text: qsTr("Time"); horizontalAlignment: Text.AlignRight; font: Typography.caption; color: Theme.of(root).res.textFillColorSecondary }
-            Label { Layout.preferredWidth: root.percentWidth; text: "%"; horizontalAlignment: Text.AlignRight; font: Typography.caption; color: Theme.of(root).res.textFillColorSecondary }
-            Label { Layout.preferredWidth: root.usageWidth; text: qsTr("Usage"); horizontalAlignment: Text.AlignRight; font: Typography.caption; color: Theme.of(root).res.textFillColorSecondary }
+            Label {
+                id: colorHeading
+                Layout.preferredWidth: root.colorWidth
+                Layout.minimumWidth: root.colorWidth
+                Layout.maximumWidth: root.colorWidth
+                text: qsTr("Color")
+                font: Typography.caption
+                color: Theme.of(root).res.textFillColorSecondary
+            }
+            Label {
+                Layout.preferredWidth: root.labelWidth
+                Layout.minimumWidth: root.labelWidth
+                Layout.maximumWidth: root.labelWidth
+                text: qsTr("Type")
+                elide: Text.ElideRight
+                font: Typography.caption
+                color: Theme.of(root).res.textFillColorSecondary
+            }
+            Label {
+                Layout.preferredWidth: root.timeWidth
+                Layout.minimumWidth: root.timeWidth
+                Layout.maximumWidth: root.timeWidth
+                text: qsTr("Time")
+                elide: Text.ElideRight
+                horizontalAlignment: Text.AlignRight
+                font: Typography.caption
+                color: Theme.of(root).res.textFillColorSecondary
+            }
+            Label {
+                Layout.preferredWidth: root.percentWidth
+                Layout.minimumWidth: root.percentWidth
+                Layout.maximumWidth: root.percentWidth
+                text: "%"
+                horizontalAlignment: Text.AlignRight
+                font: Typography.caption
+                color: Theme.of(root).res.textFillColorSecondary
+            }
+            Label {
+                Layout.preferredWidth: root.usageWidth
+                Layout.minimumWidth: root.usageWidth
+                Layout.maximumWidth: root.usageWidth
+                text: qsTr("Usage")
+                elide: Text.ElideRight
+                horizontalAlignment: Text.AlignRight
+                font: Typography.caption
+                color: Theme.of(root).res.textFillColorSecondary
+            }
             CheckBox {
+                id: allToggle
+                objectName: "slicing.preview.legendAll"
                 Layout.preferredWidth: root.displayWidth
+                Layout.minimumWidth: root.displayWidth
+                Layout.maximumWidth: root.displayWidth
                 Layout.alignment: Qt.AlignHCenter
                 text: qsTr("All")
                 font: Typography.caption
@@ -117,13 +172,16 @@ Item {
 
         ListView {
             id: featureList
+            objectName: "slicing.preview.legendList"
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
+            QQC.ScrollBar.vertical: QQC.ScrollBar {}
             model: root.rows
             delegate: Rectangle {
                 required property var modelData
                 required property int index
+                objectName: "slicing.preview.legendRow." + modelData.id
                 width: featureList.width
                 height: 34
                 radius: PrintWorkspaceStyle.controlRadius
@@ -147,6 +205,8 @@ Item {
                     columnSpacing: 5
                     Item {
                         Layout.preferredWidth: root.colorWidth
+                        Layout.minimumWidth: root.colorWidth
+                        Layout.maximumWidth: root.colorWidth
                         Layout.fillHeight: true
                         Rectangle {
                             anchors.left: parent.left
@@ -162,8 +222,13 @@ Item {
                     }
                     Label {
                         Layout.preferredWidth: root.labelWidth
+                        Layout.minimumWidth: root.labelWidth
+                        Layout.maximumWidth: root.labelWidth
                         text: root.localizedLabel(modelData.label)
                         elide: Text.ElideRight
+                        QQC.ToolTip.visible: truncated && typeHover.hovered
+                        QQC.ToolTip.text: text
+                        HoverHandler { id: typeHover }
                         font: Typography.caption
                         color: modelData.visible
                                ? Theme.of(root).res.textFillColorPrimary
@@ -171,30 +236,44 @@ Item {
                     }
                     Label {
                         Layout.preferredWidth: root.timeWidth
+                        Layout.minimumWidth: root.timeWidth
+                        Layout.maximumWidth: root.timeWidth
                         text: modelData.time
+                        elide: Text.ElideRight
                         horizontalAlignment: Text.AlignRight
                         font: Typography.caption
                         color: Theme.of(root).res.textFillColorPrimary
                     }
                     Label {
                         Layout.preferredWidth: root.percentWidth
+                        Layout.minimumWidth: root.percentWidth
+                        Layout.maximumWidth: root.percentWidth
                         text: modelData.percent
+                        elide: Text.ElideRight
                         horizontalAlignment: Text.AlignRight
                         font: Typography.caption
                         color: Theme.of(root).res.textFillColorPrimary
                     }
                     Label {
                         Layout.preferredWidth: root.usageWidth
+                        Layout.minimumWidth: root.usageWidth
+                        Layout.maximumWidth: root.usageWidth
                         text: modelData.usageSecondary
                               ? modelData.usagePrimary + " · " + root.localizedUsage(modelData.usageSecondary)
                               : modelData.usagePrimary
                         horizontalAlignment: Text.AlignRight
                         elide: Text.ElideRight
+                        QQC.ToolTip.visible: truncated && usageHover.hovered
+                        QQC.ToolTip.text: text
+                        HoverHandler { id: usageHover }
                         font: Typography.caption
                         color: Theme.of(root).res.textFillColorPrimary
                     }
                     CheckBox {
+                        objectName: "slicing.preview.legendToggle." + modelData.id
                         Layout.preferredWidth: root.displayWidth
+                        Layout.minimumWidth: root.displayWidth
+                        Layout.maximumWidth: root.displayWidth
                         Layout.alignment: Qt.AlignHCenter
                         text: ""
                         checked: modelData.visible

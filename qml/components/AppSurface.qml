@@ -4,24 +4,28 @@ import SmoothUI.Controls
 import SmoothUI.impl
 import GPlatform
 
-Rectangle {
+Item {
     id: root
 
     SmoothUI.theme: Theme.of(root)
 
-    property int elevation: 2
-    property real surfaceRadius: PrintWorkspaceStyle.dialogRadius
-    property real shadowOpacity: 0.16
+    property alias color: surface.color
+    property alias border: surface.border
+    property alias radius: surface.radius
+    property alias elevation: surface.elevation
+    property alias shadowOpacity: surface.shadowOpacity
+    property real surfaceRadius: Theme.panelRadius
 
     radius: surfaceRadius
-    color: PrintWorkspaceStyle.surface(root.SmoothUI.dark)
-    border.width: 1
-    border.color: PrintWorkspaceStyle.border(root.SmoothUI.dark)
 
-    Shadow {
-        radius: root.radius
-        elevation: root.elevation
-        color: PrintWorkspaceStyle.shadow(root.SmoothUI.dark,
-                                          root.shadowOpacity)
+    Frame {
+        id: surface
+        anchors.fill: parent
+        z: -1
+        padding: 0
+        enabled: false
+        SmoothUI.dark: root.SmoothUI.dark
+        SmoothUI.primaryColor: root.SmoothUI.primaryColor
+        elevation: 2
     }
 }

@@ -119,7 +119,7 @@ Item {
         anchors.top: parent.top
         width: Math.min(260, layerText.implicitWidth + 18)
         height: 26
-        radius: 8
+        radius: root.SmoothUI.radius
         color: PrintWorkspaceStyle.secondarySurface(root.SmoothUI.dark)
         border.width: 1
         border.color: root.SmoothUI.theme.res.popupBorderColor
@@ -164,7 +164,7 @@ Item {
                 anchors.fill: parent
                 readonly property int layerIndex: slider.startValue
                 readonly property var layerData: SlicingPreviewBridge.layerInfo(layerIndex)
-                radius: 7
+                radius: root.SmoothUI.radius
                 color: root.SmoothUI.theme.res.controlSolidFillColorDefault
                 border.width: slider.firstPressed ? 2 : 1
                 border.color: slider.firstHovered || slider.firstPressed
@@ -196,7 +196,7 @@ Item {
                 anchors.fill: parent
                 readonly property int layerIndex: slider.endValue
                 readonly property var layerData: SlicingPreviewBridge.layerInfo(layerIndex)
-                radius: 7
+                radius: root.SmoothUI.radius
                 color: root.SmoothUI.theme.res.controlSolidFillColorDefault
                 border.width: slider.secondPressed ? 2 : 1
                 border.color: slider.secondHovered || slider.secondPressed

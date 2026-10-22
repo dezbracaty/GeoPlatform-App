@@ -6,6 +6,7 @@ import SmoothUI.impl
 
 Item {
     id: topBanner
+    SmoothUI.theme: Theme.of(topBanner)
 
     // 固定高度
     height: 120
@@ -25,7 +26,7 @@ Item {
         // AI驱动标签
         Rectangle {
             id: aiTag
-            color: "#5A3AC8"
+            color: topBanner.SmoothUI.theme.accentColor.defaultBrushFor(topBanner.SmoothUI.dark)
             radius: 14
             height: 28
             width: aiTagText.implicitWidth + 24
@@ -35,8 +36,8 @@ Item {
                 id: aiTagText
                 text: qsTr("✨ AI-powered 3D Generation")
                 anchors.centerIn: parent
-                color: "#FFFFFF"
-                font.pixelSize: 13
+                color: topBanner.SmoothUI.theme.res.textOnAccentFillColorPrimary
+                font.pixelSize: Theme.captionFontSize
                 font.bold: false
             }
         }
@@ -45,9 +46,9 @@ Item {
         Text {
             id: mainTitle
             text: qsTr("3D Model Workshop")
-            font.pixelSize: 36
+            font.pixelSize: Theme.pageTitleFontSize
             font.bold: true
-            color: "#FFFFFF"
+            color: topBanner.SmoothUI.theme.res.textFillColorPrimary
             anchors.horizontalCenter: parent.horizontalCenter
             horizontalAlignment: Text.AlignHCenter
         }
@@ -56,8 +57,8 @@ Item {
         Text {
             id: subTitle
             text: qsTr("Enter a description or upload reference images, and AI will generate multiple 3D model options")
-            font.pixelSize: 14
-            color: "#C0B8D9"
+            font.pixelSize: Theme.bodyFontSize
+            color: topBanner.SmoothUI.theme.res.textFillColorSecondary
             anchors.horizontalCenter: parent.horizontalCenter
             horizontalAlignment: Text.AlignHCenter
         }

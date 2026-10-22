@@ -150,10 +150,10 @@ PanelSurface {
         MachineSelectionBar {
             id: machineSelector
             Layout.fillWidth: true
-            Layout.preferredWidth: implicitWidth
+            Layout.preferredWidth: Math.min(implicitWidth, root.narrow ? 240 : 300)
             Layout.minimumWidth: minimumContentWidth
-            Layout.maximumWidth: implicitWidth
-            condensedPresetSummary: root.narrow
+            Layout.maximumWidth: Layout.preferredWidth
+            condensedPresetSummary: true
             Layout.preferredHeight: PrintWorkspaceStyle.controlHeight
             compact: true
             embedded: true
@@ -167,9 +167,9 @@ PanelSurface {
         PrinterStatusBar {
             id: deviceStatus
             Layout.fillWidth: true
-            Layout.preferredWidth: implicitWidth
+            Layout.preferredWidth: Math.min(implicitWidth, root.narrow ? 180 : 220)
             Layout.minimumWidth: minimumContentWidth
-            Layout.maximumWidth: implicitWidth
+            Layout.maximumWidth: Layout.preferredWidth
             Layout.preferredHeight: PrintWorkspaceStyle.controlHeight
             compact: true
             embedded: true
@@ -259,10 +259,10 @@ PanelSurface {
                         id: normalTitle
                         Layout.fillWidth: true
                         text: root.configurationInvalid
-                              ? qsTr("Slicing configuration needs attention")
+                              ? (root.narrow ? qsTr("Check settings") : qsTr("Slicing configuration needs attention"))
                               : (root.effectiveObjectCount > 0
-                                 ? qsTr("%1 model(s) prepared").arg(root.effectiveObjectCount)
-                                 : qsTr("No models on the build plate"))
+                                 ? (root.narrow ? qsTr("%1 model(s)") : qsTr("%1 model(s) prepared")).arg(root.effectiveObjectCount)
+                                 : (root.narrow ? qsTr("No models yet") : qsTr("No models on the build plate")))
                         elide: Text.ElideRight
                         color: root.configurationInvalid
                                ? root.SmoothUI.theme.res.systemFillColorCritical
@@ -318,23 +318,17 @@ PanelSurface {
 
                     Button {
                         id: normalPrimaryButton
+                        objectName: "printNormalPrimaryButton"
                         Layout.fillWidth: false
                         Layout.minimumWidth: implicitWidth
                         Layout.preferredWidth: implicitWidth
                         Layout.maximumWidth: implicitWidth
-                        Layout.preferredHeight: PrintWorkspaceStyle.controlHeight
-                        text: root.narrow
-                              ? ""
-                              : (root.effectiveObjectCount > 0
-                                 ? qsTr("Start Slicing") : qsTr("Add Model"))
-                        icon.name: root.narrow
-                                   ? (root.effectiveObjectCount > 0
-                                      ? FluentIcons.graph_MapLayers
-                                      : FluentIcons.graph_Add)
-                                   : ""
+                        Layout.preferredHeight: Theme.actionHeight
+                        text: root.effectiveObjectCount > 0
+                              ? qsTr("Start Slicing") : qsTr("Add Model")
                         icon.width: 14
                         icon.height: 14
-                        font: Typography.caption
+                        font: Typography.bodyStrong
                         highlighted: true
                         enabled: !root.configurationInvalid || root.effectiveObjectCount === 0
                         onClicked: root.effectiveObjectCount > 0
@@ -463,7 +457,7 @@ PanelSurface {
                         id: previewTitle
                         Layout.fillWidth: true
                         text: root.previewDirty
-                              ? qsTr("Settings changed · Reslice required")
+                              ? (root.narrow ? qsTr("Reslice required") : qsTr("Settings changed · Reslice required"))
                               : (root.previewReady
                                  ? qsTr("G-code is ready")
                                  : qsTr("No G-code generated"))
@@ -475,7 +469,7 @@ PanelSurface {
                     PreviewInspectionHint {
                         id: previewHint
                         Layout.fillWidth: true
-                        visible: root.previewReady
+                        visible: root.previewReady && SlicingPreviewBridge.geometryAvailable
                         compact: root.narrow
                     }
 
@@ -549,6 +543,7 @@ PanelSurface {
                         }
 
                         MenuItem {
+                            objectName: "printOutputExportGCode"
                             text: qsTr("G-code Files")
                             icon.name: FluentIcons.graph_Document
                             enabled: !root.previewDirty
@@ -557,6 +552,7 @@ PanelSurface {
                         }
 
                         MenuItem {
+                            objectName: "printOutputExportPackage"
                             text: qsTr("Slicing Job (Gcode.3MF)")
                             icon.name: FluentIcons.graph_ZipFolder
                             enabled: !root.previewDirty
@@ -572,15 +568,12 @@ PanelSurface {
                         Layout.minimumWidth: implicitWidth
                         Layout.preferredWidth: implicitWidth
                         Layout.maximumWidth: implicitWidth
-                        Layout.preferredHeight: PrintWorkspaceStyle.controlHeight
-                        text: root.narrow
-                              ? ""
-                              : (root.deviceConnected
-                                 ? qsTr("Send to Printer") : qsTr("Connect to Send"))
-                        icon.name: root.narrow ? FluentIcons.graph_Printer3D : ""
+                        Layout.preferredHeight: Theme.actionHeight
+                        text: root.deviceConnected
+                              ? qsTr("Send to Printer") : qsTr("Connect to Send")
                         icon.width: 14
                         icon.height: 14
-                        font: Typography.caption
+                        font: Typography.bodyStrong
                         visible: root.previewReady
                         highlighted: root.previewSendReady
                         enabled: root.previewSendReady

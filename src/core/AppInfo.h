@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QPointer>
 #include <QQmlApplicationEngine>
 
 class AppInfo : public QObject {
@@ -8,6 +9,8 @@ class AppInfo : public QObject {
     Q_PROPERTY(QString version READ version WRITE setVersion NOTIFY versionChanged)
     Q_PROPERTY(QString locale READ locale WRITE setLocale NOTIFY localeChanged)
     Q_PROPERTY(QStringList locales READ locales NOTIFY localesChanged)
+    Q_PROPERTY(qint64 processId READ processId CONSTANT)
+    Q_PROPERTY(QObject* journalService READ journalService NOTIFY journalServiceChanged)
     QML_SINGLETON
     QML_ELEMENT
 
@@ -26,6 +29,9 @@ public:
     QString locale() const;
     void setLocale(const QString& locale);
     QStringList locales() const;
+    qint64 processId() const;
+    QObject* journalService() const;
+    void setJournalService(QObject* service);
 
     void init(QQmlApplicationEngine*);
 
@@ -33,9 +39,11 @@ signals:
     void versionChanged();
     void localeChanged();
     void localesChanged();
+    void journalServiceChanged();
 
 private:
     QString m_version;
     QString m_locale;
     QStringList m_locales;
+    QPointer<QObject> m_journalService;
 };

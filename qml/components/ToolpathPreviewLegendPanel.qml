@@ -68,7 +68,6 @@ PanelSurface {
                                          shellColumn.implicitHeight + 16))
     surfaceRadius: PrintWorkspaceStyle.dialogRadius
     elevation: 2
-    clip: true
     visible: SlicingPreviewBridge.previewPanelVisible
              && SlicingPreviewBridge.previewInspectorOpen
              && SlicingPreviewBridge.currentModelId >= 0
@@ -88,6 +87,7 @@ PanelSurface {
         id: shellColumn
         anchors.fill: parent
         anchors.margins: 8
+        clip: true
         spacing: 10
 
         RowLayout {
@@ -307,9 +307,9 @@ PanelSurface {
             }
         }
 
-        RowLayout {
+        ColumnLayout {
             Layout.fillWidth: true
-            spacing: 8
+            spacing: 6
             visible: !SlicingPreviewBridge.previewPanelFolded
 
             Slider {
@@ -358,27 +358,36 @@ PanelSurface {
                 }
             }
 
-            Label {
-                Layout.preferredWidth: 82
-                text: qsTr("Visible steps %1/%2")
-                      .arg(root.shownPreviewStepNumber)
-                      .arg(root.totalPreviewSteps)
-                horizontalAlignment: Text.AlignRight
-                color: root.SmoothUI.theme.res.textFillColorSecondary
-                font: Typography.caption
-            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
 
-            Button {
-                Layout.preferredWidth: 50
-                Layout.preferredHeight: 32
-                text: qsTr("All")
-                font: Typography.caption
-                onClicked: SlicingPreviewBridge.currentStep = -1
+                Label {
+                    objectName: "slicing.preview.visibleSteps"
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    elide: Text.ElideRight
+                    text: qsTr("Visible steps %1/%2")
+                          .arg(root.shownPreviewStepNumber)
+                          .arg(root.totalPreviewSteps)
+                    horizontalAlignment: Text.AlignRight
+                    color: root.SmoothUI.theme.res.textFillColorSecondary
+                    font: Typography.caption
+                }
+
+                Button {
+                    Layout.preferredWidth: 50
+                    Layout.preferredHeight: 32
+                    text: qsTr("All")
+                    font: Typography.caption
+                    onClicked: SlicingPreviewBridge.currentStep = -1
+                }
             }
         }
 
         Loader {
             id: contentLoader
+            clip: true
             objectName: "slicing.preview.typesContent"
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -401,6 +410,16 @@ PanelSurface {
                 item.viewType = Qt.binding(function() { return root.viewType })
             }
         }
+        ToolpathPreviewFeatureTable {
+            objectName: "slicing.preview.optionsTable"
+            Layout.fillWidth: true
+            Layout.preferredHeight: implicitHeight
+            Layout.maximumHeight: implicitHeight
+            visible: !SlicingPreviewBridge.previewPanelFolded && !root.codeTab
+                     && rows.length > 0
+            rows: root.panelData.optionRows || []
+            viewType: root.viewType
+        }
         ToolpathGCodePanel {
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -412,7 +431,7 @@ PanelSurface {
     }
 
     Component { id: summaryComponent; ToolpathPreviewSummaryContent {} }
-    Component { id: featureComponent; ToolpathPreviewFeatureTable {} }
+    Component { id: featureComponent; ToolpathPreviewFeatureTable { objectName: "slicing.preview.featureTable" } }
     Component { id: filamentComponent; ToolpathPreviewFilamentTable {} }
     Component { id: rangeComponent; ToolpathPreviewRangeContent {} }
 }

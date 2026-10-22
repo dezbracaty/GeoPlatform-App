@@ -1,7 +1,8 @@
 import GPlatform
+import SmoothUI.Controls
 
 AppSurface {
     elevation: 1
-    surfaceRadius: PrintWorkspaceStyle.toolbarRadius
+    surfaceRadius: Theme.panelRadius
     shadowOpacity: 0.12
 }

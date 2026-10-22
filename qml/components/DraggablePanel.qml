@@ -27,10 +27,10 @@ Rectangle {
     // layerFillColorDefault is translucent (#80ffffff in the light theme),
     // which disappears when the native window compositor supplies white
     // behind a transparent renderer pixel.
-    property color normalColor: root.SmoothUI.theme.res.solidBackgroundFillColorBase
-    property color dragColor: root.SmoothUI.theme.res.solidBackgroundFillColorQuarternary
-    property color normalBorderColor: root.SmoothUI.theme.res.cardStrokeColorDefault
-    property color dragBorderColor: Theme.primaryColor.defaultBrushFor(root.SmoothUI.dark)
+    property color normalColor: root.SmoothUI.theme.res.cardBackgroundColor
+    property color dragColor: root.SmoothUI.theme.res.solidBackgroundFillColorSecondary
+    property color normalBorderColor: root.SmoothUI.theme.res.surfaceStrokeColorDefault
+    property color dragBorderColor: root.SmoothUI.theme.accentColor.defaultBrushFor(root.SmoothUI.dark)
     property real normalBorderWidth: 1
     property real dragBorderWidth: 2
     property real animationDuration: 150
@@ -43,7 +43,7 @@ Rectangle {
     
     // Default properties
     z: 100
-    radius: 10
+    radius: Theme.panelRadius
     color: isDragging ? dragColor : normalColor
     border.color: isDragging ? dragBorderColor : normalBorderColor
     border.width: isDragging ? dragBorderWidth : normalBorderWidth
@@ -59,9 +59,9 @@ Rectangle {
     layer.enabled: true
     layer.effect: MultiEffect {
         shadowEnabled: true
-        shadowColor: "#000000"
+        shadowColor: root.SmoothUI.theme.res.shadowColor
         shadowBlur: root.isDragging ? root.dragShadowBlur : root.shadowBlur
-        shadowOpacity: root.isDragging ? root.dragShadowOpacity : root.shadowOpacity
+        shadowOpacity: Theme.shadowOpacityFor(root.SmoothUI.dark, root.isDragging ? root.dragShadowOpacity : root.shadowOpacity)
         shadowVerticalOffset: root.isDragging ? root.dragShadowVerticalOffset : root.shadowVerticalOffset
     }
     

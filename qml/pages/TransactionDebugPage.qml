@@ -489,7 +489,7 @@ Item {
                                 required property var modelData
                                 width: ListView.view.width
                                 height: 96
-                                radius: 6
+                                radius: Theme.controlRadius
                                 color: Theme.res.layerFillColorAlt
                                 border.width: 1
                                 border.color: root.selectedTxId === modelData.id
@@ -563,7 +563,7 @@ Item {
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 50
-                            radius: 6
+                            radius: Theme.controlRadius
                             color: Theme.res.layerFillColorAlt
                             border.width: 1
                             border.color: Theme.res.cardStrokeColorDefault

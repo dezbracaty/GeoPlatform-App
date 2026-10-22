@@ -7,6 +7,7 @@ import "./generate3d" as Generate3D
 // 使用简单的Item而非Layout避免递归
 Item {
     id: root
+    SmoothUI.theme: Theme.of(root)
 
     property string currentState: "idle"
     property string inputMode: "text"
@@ -57,17 +58,17 @@ Item {
             anchors.bottom: parent.bottom
             anchors.left: parent.left
             width: (parent.width - 48) * 0.48
-            color: Qt.rgba(50/255, 30/255, 80/255, 0.6)
-            radius: 20
+            color: root.SmoothUI.theme.res.cardBackgroundColor
+            radius: Theme.panelRadius
 
             // 内阴影效果
             Rectangle {
                 anchors.fill: parent
                 anchors.margins: 1
                 color: "transparent"
-                radius: 19
-                border.color: Qt.rgba(1, 1, 1, 0.05)
-                border.width: 1
+                radius: Math.max(0, leftPanelBg.radius - 1)
+                border.color: root.SmoothUI.theme.res.surfaceStrokeColorDefault
+                border.width: Theme.borderWidth
             }
         }
 
@@ -78,17 +79,17 @@ Item {
             anchors.bottom: parent.bottom
             anchors.right: parent.right
             width: (parent.width - 48) * 0.48
-            color: Qt.rgba(50/255, 30/255, 80/255, 0.6)
-            radius: 20
+            color: root.SmoothUI.theme.res.cardBackgroundColor
+            radius: Theme.panelRadius
 
             // 内阴影效果
             Rectangle {
                 anchors.fill: parent
                 anchors.margins: 1
                 color: "transparent"
-                radius: 19
-                border.color: Qt.rgba(1, 1, 1, 0.05)
-                border.width: 1
+                radius: Math.max(0, rightPanelBg.radius - 1)
+                border.color: root.SmoothUI.theme.res.surfaceStrokeColorDefault
+                border.width: Theme.borderWidth
             }
         }
 
@@ -105,7 +106,10 @@ Item {
             isGenerating: root.isGenerating
             hasGenerated: root.hasGenerated
             onInputModeChanged: root.inputMode = inputMode
-            onSelectedStylesChanged: root.selectedStyles = selectedStyles
+            onSelectedStylesChanged: {
+                if (root.selectedStyles !== selectedStyles)
+                    root.selectedStyles = selectedStyles
+            }
             onGenerateClicked: {
                 root.isGenerating = true
                 root.currentState = "generating"

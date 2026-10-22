@@ -10,7 +10,7 @@ import "../../../components"
 ToolbarSurface {
     id: leftPrintToolbar
     width: PrintWorkspaceStyle.toolbarWidth
-    height: toolbarColumn.implicitHeight + 16
+    height: toolbarColumn.implicitHeight + PrintWorkspaceStyle.space8 * 2
 
     // 属性声明 - 从父组件传递
     property bool gridVisible: true
@@ -19,15 +19,15 @@ ToolbarSurface {
     ScrollView {
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
         anchors.fill: parent
-        anchors.leftMargin: 6
-        anchors.rightMargin: 6
-        anchors.topMargin: 8
-        anchors.bottomMargin: 8
+        anchors.leftMargin: PrintWorkspaceStyle.space8
+        anchors.rightMargin: PrintWorkspaceStyle.space8
+        anchors.topMargin: PrintWorkspaceStyle.space8
+        anchors.bottomMargin: PrintWorkspaceStyle.space8
 
         Column {
             id: toolbarColumn
-            width: leftPrintToolbar.width - 12
-            spacing: 4
+            width: leftPrintToolbar.width - PrintWorkspaceStyle.space8 * 2
+            spacing: PrintWorkspaceStyle.space8
 
             // ==================== File 分组 ====================
             HoverExpandableButton {
@@ -145,8 +145,11 @@ ToolbarSurface {
 
             // ==================== Transform 分组 ====================
             HoverExpandableButton {
+                objectName: "print.toolbar.transform"
                 icon.name: FluentIcons.graph_Move
-                enabled: SelectionBridge.hasSelection
+                checked: SelectionBridge.hasTranslateWidget
+                         || SelectionBridge.hasOrientationWidget
+                         || SelectionBridge.hasScaleWidget
                 tooltip: qsTr("Transform")
                 expandItems: [
                     {
@@ -291,7 +294,6 @@ ToolbarSurface {
             HoverExpandableButton {
                 objectName: "print.toolbar.edit"
                 icon.name: FluentIcons.graph_Edit
-                enabled: SelectionBridge.hasSelection
                 tooltip: qsTr("Edit")
                 expandItems: [
                     {

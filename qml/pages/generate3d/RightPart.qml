@@ -8,6 +8,7 @@ import GPlatform  // 导入 GPlatform 以使用 ActionManager
 
 Item {
     id: rightPart
+    SmoothUI.theme: Theme.of(rightPart)
 
     // 状态属性
     property string currentState: "idle"  // idle, generating, completed
@@ -68,6 +69,8 @@ Item {
 
             // 3D立方体图标
             Canvas {
+                property color strokeColor: rightPart.SmoothUI.theme.res.textFillColorTertiary
+                onStrokeColorChanged: requestPaint()
                 width: 80
                 height: 80
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -75,7 +78,7 @@ Item {
                 onPaint: {
                     var ctx = getContext("2d")
                     ctx.lineWidth = 2
-                    ctx.strokeStyle = "#A096C0"
+                    ctx.strokeStyle = strokeColor
                     ctx.beginPath()
 
                     // 绘制3D立方体线框
@@ -106,16 +109,16 @@ Item {
 
             Text {
                 text: qsTr("Waiting to Generate")
-                font.pixelSize: 24
+                font.pixelSize: Theme.pageTitleFontSize
                 font.bold: true
-                color: "#FFFFFF"
+                color: rightPart.SmoothUI.theme.res.textFillColorPrimary
                 anchors.horizontalCenter: parent.horizontalCenter
             }
 
             Text {
                 text: qsTr("Enter a description or upload reference images, then click Generate to create a 3D model")
-                font.pixelSize: 14
-                color: "#C0B8D9"
+                font: Typography.body
+                color: rightPart.SmoothUI.theme.res.textFillColorSecondary
                 anchors.horizontalCenter: parent.horizontalCenter
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.Wrap
@@ -142,7 +145,7 @@ Item {
                     anchors.centerIn: parent
                     radius: 25
                     color: "transparent"
-                    border.color: "#4FC3F7"
+                    border.color: rightPart.SmoothUI.theme.accentColor.defaultBrushFor(rightPart.SmoothUI.dark)
                     border.width: 3
 
                     RotationAnimator on rotation {
@@ -159,16 +162,16 @@ Item {
                     width: 16
                     height: 16
                     radius: 8
-                    color: "#4FC3F7"
+                    color: rightPart.SmoothUI.theme.accentColor.defaultBrushFor(rightPart.SmoothUI.dark)
                     anchors.centerIn: parent
                 }
             }
 
             Text {
                 text: qsTr("AI is generating the model...")
-                font.pixelSize: 20
+                font.pixelSize: Theme.panelTitleFontSize
                 font.bold: true
-                color: "#FFFFFF"
+                color: rightPart.SmoothUI.theme.res.textFillColorPrimary
                 anchors.horizontalCenter: parent.horizontalCenter
             }
 
@@ -176,7 +179,7 @@ Item {
             Rectangle {
                 width: 220
                 height: 8
-                color: "#3A3A5A"
+                color: rightPart.SmoothUI.theme.res.controlStrongFillColorDisabled
                 radius: 4
                 anchors.horizontalCenter: parent.horizontalCenter
 
@@ -184,7 +187,7 @@ Item {
                     id: progressBar
                     width: 0
                     height: 8
-                    color: "#4FC3F7"
+                    color: rightPart.SmoothUI.theme.accentColor.defaultBrushFor(rightPart.SmoothUI.dark)
                     radius: 4
 
                     NumberAnimation on width {
@@ -200,8 +203,8 @@ Item {
             Text {
                 id: countdownText
                 text: qsTr("About %1 seconds remaining").arg(rightPart.remainingSeconds)
-                font.pixelSize: 14
-                color: "#B0B0D0"
+                font: Typography.body
+                color: rightPart.SmoothUI.theme.res.textFillColorSecondary
                 anchors.horizontalCenter: parent.horizontalCenter
             }
         }
@@ -232,9 +235,9 @@ Item {
             // 标题
             Text {
                 text: qsTr("Generation complete! Select a model to import:")
-                font.pixelSize: 16
+                font.pixelSize: Theme.panelTitleFontSize
                 font.bold: true
-                color: "#FFFFFF"
+                color: rightPart.SmoothUI.theme.res.textFillColorPrimary
             }
 
             // 模型网格 - 2行3列
@@ -255,8 +258,10 @@ Item {
                             id: modelCard
                             anchors.fill: parent
                             color: modelData.color
-                            radius: 12
-                            border.color: index === rightPart.selectedModelIndex ? "#4FC3F7" : "transparent"
+                            radius: Theme.panelRadius
+                            border.color: index === rightPart.selectedModelIndex
+                                          ? rightPart.SmoothUI.theme.accentColor.defaultBrushFor(rightPart.SmoothUI.dark)
+                                          : "transparent"
                             border.width: index === rightPart.selectedModelIndex ? 3 : 0
 
                             // 模型图标
@@ -286,13 +291,13 @@ Item {
                                 width: 20
                                 height: 20
                                 radius: 10
-                                color: "#4FC3F7"
+                                color: rightPart.SmoothUI.theme.accentColor.defaultBrushFor(rightPart.SmoothUI.dark)
                                 visible: index === rightPart.selectedModelIndex
 
                                 Text {
                                     anchors.centerIn: parent
                                     text: "✓"
-                                    color: "#FFFFFF"
+                                    color: rightPart.SmoothUI.theme.res.textOnAccentFillColorPrimary
                                     font.bold: true
                                     font.pixelSize: 12
                                 }
@@ -318,73 +323,59 @@ Item {
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
                     text: qsTr("Select a model above to view details, then click Import Now")
-                    font.pixelSize: 12
-                    color: "#A0A0C0"
+                    font: Typography.caption
+                    color: rightPart.SmoothUI.theme.res.textFillColorTertiary
                 }
 
                 // 一键导入按钮
-                Rectangle {
+                Button {
                     id: importButton
                     anchors.horizontalCenter: parent.horizontalCenter
-                    width: 120
-                    height: 36
-                    color: rightPart.selectedModelIndex !== -1 ? "#4FC3F7" : "#4A4A6A"
-                    radius: 18
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: qsTr("Import Now")
-                        color: rightPart.selectedModelIndex !== -1 ? "#FFFFFF" : "#8080A0"
-                        font.pixelSize: 14
-                        font.bold: true
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-
-                        onClicked: {
-                            // 检查是否选中了模型
-                            if (rightPart.selectedModelIndex === -1) {
-                                console.log("请先选择一个模型")
-                                return
-                            }
-
-                            var selectedModel = rightPart.demoModels[rightPart.selectedModelIndex]
-                            console.log("导入模型: " + selectedModel.name)
-
-                            // 执行模型导入操作（避免硬编码本机绝对路径）
-                            var filePath = rightPart.resolveDemoModelPath(selectedModel)
-                            var fileName = rightPart.extractFileName(filePath)
-                            if (!filePath || filePath.length === 0) {
-                                console.warn("未能解析导入模型路径")
-                                return
-                            }
-
-                            console.log("开始导入模型: " + fileName)
-                            ActionManager.triggerAction("import_model", {
-                                "filePath": filePath,
-                                "fileName": fileName
-                            })
-
-                            // 动态查找 router 并跳转到 3DPrint 页面
-                            var p = rightPart.parent
-                            while (p) {
-                                if (p.router !== undefined) {
-                                    console.log("找到 router，跳转到 /dock")
-                                    p.router.go("/dock")
-                                    return
-                                }
-                                if (p.pageRouter !== undefined) {
-                                    console.log("找到 pageRouter，跳转到 /dock")
-                                    p.pageRouter.go("/dock")
-                                    return
-                                }
-                                p = p.parent
-                            }
-                            console.log("未找到 router 或 pageRouter")
+                    implicitWidth: Math.max(120, implicitContentWidth + leftPadding + rightPadding)
+                    implicitHeight: Math.max(Theme.actionHeight, implicitContentHeight + topPadding + bottomPadding)
+                    text: qsTr("Import Now")
+                    highlighted: true
+                    enabled: rightPart.selectedModelIndex !== -1
+                    onClicked: {
+                        // 检查是否选中了模型
+                        if (rightPart.selectedModelIndex === -1) {
+                            console.log("请先选择一个模型")
+                            return
                         }
+
+                        var selectedModel = rightPart.demoModels[rightPart.selectedModelIndex]
+                        console.log("导入模型: " + selectedModel.name)
+
+                        // 执行模型导入操作（避免硬编码本机绝对路径）
+                        var filePath = rightPart.resolveDemoModelPath(selectedModel)
+                        var fileName = rightPart.extractFileName(filePath)
+                        if (!filePath || filePath.length === 0) {
+                            console.warn("未能解析导入模型路径")
+                            return
+                        }
+
+                        console.log("开始导入模型: " + fileName)
+                        ActionManager.triggerAction("import_model", {
+                            "filePath": filePath,
+                            "fileName": fileName
+                        })
+
+                        // 动态查找 router 并跳转到 3DPrint 页面
+                        var p = rightPart.parent
+                        while (p) {
+                            if (p.router !== undefined) {
+                                console.log("找到 router，跳转到 /dock")
+                                p.router.go("/dock")
+                                return
+                            }
+                            if (p.pageRouter !== undefined) {
+                                console.log("找到 pageRouter，跳转到 /dock")
+                                p.pageRouter.go("/dock")
+                                return
+                            }
+                            p = p.parent
+                        }
+                        console.log("未找到 router 或 pageRouter")
                     }
                 }
             }

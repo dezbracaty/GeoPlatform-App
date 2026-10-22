@@ -4,17 +4,16 @@
 REGISTER_INTERACTION_ACTION(GCodeImportHandler, "load_gcode_file")
 #include "ActionHandlerRegistry.hpp"
 #include "ToolpathPreviewDB.hpp"
-#include "ToolpathPreviewRelations.hpp"
-#include "LibSlicerToolpathAdapter.hpp"
+#include "ToolpathPreviewPreparation.hpp"
+#include "ToolpathResultPublication.hpp"
 #include <DocumentManager.hpp>
-#include <PrintBedDB.hpp>
-#include "TransactionManager.hpp"
 #include "Foundation/Log.h"
 #include "MenuData.hpp"
 #include "EnvironmentSwitchHandler.hpp"
 #include <SlicingPreviewBridge.hpp>
 #include "SlicingBackend.hpp"
 #include "AIDescriptorHelper.hpp"
+#include "NotificationManager.h"
 
 #include <QFileInfo>
 #include <QMetaObject>
@@ -22,14 +21,13 @@ REGISTER_INTERACTION_ACTION(GCodeImportHandler, "load_gcode_file")
 #include <QTimer>
 #include <QVariantList>
 #include <QtConcurrent>
-#include <algorithm>
 
 GCodeImportHandler::GCodeImportHandler(QObject* parent)
     : StandardBackgroundHandler(parent),
-      m_parseWatcher(std::make_unique<QFutureWatcher<libslicer::GCodePreviewResult>>()),
+      m_parseWatcher(std::make_unique<QFutureWatcher<GPlatform::PreparedToolpathPreview>>()),
       m_cancelRequested(std::make_shared<std::atomic_bool>(false)) {
     connect(m_parseWatcher.get(),
-            &QFutureWatcher<libslicer::GCodePreviewResult>::finished,
+            &QFutureWatcher<GPlatform::PreparedToolpathPreview>::finished,
             this,
             &GCodeImportHandler::onParseFinished);
 }
@@ -39,12 +37,12 @@ GCodeImportHandler::~GCodeImportHandler() {
         m_cancelRequested->store(true, std::memory_order_release);
     }
     if (m_parseWatcher && m_parseWatcher->isRunning()) {
-        m_parseWatcher->waitForFinished();
+        try { m_parseWatcher->waitForFinished(); } catch (...) { /* Discard cancelled worker errors during destruction. */ }
     }
 }
 
 bool GCodeImportHandler::onInitialize() {
-    if (m_parseWatcher && m_parseWatcher->isRunning()) {
+    if (m_parsePending || (m_parseWatcher && m_parseWatcher->isRunning())) {
         if (m_context) {
             m_context->setError(ActionErrorCode::Internal, "A GCode import is already running");
         }
@@ -52,8 +50,14 @@ bool GCodeImportHandler::onInitialize() {
         return false;
     }
 
+    auto* bridge = SlicingPreviewBridge::instance();
+    m_publicationEpoch = bridge->publicationEpoch();
+    if (!bridge->acceptsPublication(m_publicationEpoch)) return false;
     m_cancelRequested = std::make_shared<std::atomic_bool>(false);
-    m_preview.reset();
+    m_prepared = {};
+    m_pendingOutput.reset();
+    m_acceptedOutput.reset();
+    m_completionEpoch = 0;
     m_createdObjectId.clear();
     m_success = false;
     m_errorMessage.clear();
@@ -120,6 +124,13 @@ bool GCodeImportHandler::onInitialize() {
         m_name = fileInfo.fileName();
     }
 
+    // Pin a managed input before the deferred start can release the old result.
+    m_publicationEpoch = bridge->beginOutputTask();
+    m_pendingOutput = std::make_shared<GPlatform::SliceOutputRecord>();
+    m_pendingOutput->setArtifacts(m_filePath, false, {}, false, bridge->currentOutput());
+    m_pendingOutput->name = m_name;
+    m_pendingOutput->sourceScope = GPlatform::ToolpathPreviewSourceScope::ImportedGCode;
+
     // 发送开始信号
     emit importProgress(0, QString("Starting import of %1").arg(m_name));
 
@@ -168,11 +179,17 @@ void GCodeImportHandler::onBackgroundStarted() {
     updateTaskDescription(QString("正在解析 %1...").arg(m_name));
 
     // 延迟 300ms 后开始解析，让进度条有时间显示
-    QTimer::singleShot(300, this, [this]() {
+    const auto epoch = m_publicationEpoch;
+    QTimer::singleShot(300, this, [this, epoch]() {
         if (getState() == State::Background &&
             m_cancelRequested &&
             !m_cancelRequested->load(std::memory_order_acquire)) {
-            parseGCodeInBackground();
+            if (SlicingPreviewBridge::instance()->acceptsPublication(epoch)) parseGCodeInBackground();
+            else {
+                m_pendingOutput.reset();
+                m_success = false; m_errorMessage = QStringLiteral("G-code import cancelled or superseded");
+                requestResumeFromBackground();
+            }
         }
     });
 }
@@ -186,155 +203,119 @@ void GCodeImportHandler::parseGCodeInBackground() {
     const auto cancelRequested = m_cancelRequested;
     const QPointer<GCodeImportHandler> handler(this);
 
-    auto future = QtConcurrent::run([filePath, cancelRequested, handler]() {
-        libslicer::GCodePreviewRequest request;
-        request.gcode_path = filePath;
+    auto* bridge = SlicingPreviewBridge::instance();
+    const auto epoch = m_publicationEpoch;
+    const auto inputLease = m_pendingOutput;
+    auto future = QtConcurrent::run([filePath, cancelRequested, handler, epoch, bridge, inputLease]() {
+        (void)inputLease; // Pins an existing temporary input throughout parsing.
         libslicer::SliceCallbacks callbacks;
-        callbacks.is_cancelled = [cancelRequested]() {
-            return !cancelRequested || cancelRequested->load(std::memory_order_acquire);
+        callbacks.is_cancelled = [cancelRequested, epoch, bridge] {
+            return !cancelRequested || cancelRequested->load(std::memory_order_acquire) || !bridge->acceptsPublication(epoch);
         };
-        callbacks.progress = [handler, cancelRequested](float progress, std::string_view stage) {
-            if (!handler || !cancelRequested || cancelRequested->load(std::memory_order_acquire)) {
-                return;
-            }
-            const QString description = QString::fromUtf8(
-                stage.data(), static_cast<qsizetype>(stage.size()));
-            QMetaObject::invokeMethod(
-                handler,
-                [handler, cancelRequested, progress, description]() {
-                    if (!handler || !cancelRequested ||
-                        cancelRequested->load(std::memory_order_acquire) ||
-                        handler->getState() != State::Background) {
-                        return;
-                    }
-                    handler->updateTaskProgress(progress);
-                    handler->updateTaskDescription(description);
-                },
-                Qt::QueuedConnection);
+        callbacks.progress = [handler, cancelRequested, epoch, bridge](float progress, std::string_view stage) {
+            if (!handler || cancelRequested->load() || !bridge->acceptsPublication(epoch)) return;
+            const QString description = QString::fromUtf8(stage.data(), qsizetype(stage.size()));
+            QMetaObject::invokeMethod(handler, [handler, cancelRequested, epoch, bridge, progress, description] {
+                if (!handler || cancelRequested->load() || !bridge->acceptsPublication(epoch) ||
+                    handler->getState() != State::Background) return;
+                handler->updateTaskProgress(progress); handler->updateTaskDescription(description);
+            }, Qt::QueuedConnection);
         };
-        return GPlatform::SlicingBackend::instance().loadGCodePreview(request, callbacks);
+        return GPlatform::prepareImportedToolpath(QString::fromStdString(filePath),
+            [&](const std::string& source) {
+                libslicer::GCodePreviewRequest request; request.gcode_path = source;
+                return GPlatform::SlicingBackend::instance().loadGCodePreview(request, callbacks);
+            }, callbacks.is_cancelled);
     });
+    m_parsePending = true;
     m_parseWatcher->setFuture(future);
 }
 
 void GCodeImportHandler::onParseFinished() {
-    if (getState() != State::Background) {
+    m_parsePending = false;
+    try {
+        m_prepared = m_parseWatcher->future().takeResult();
+    } catch (const std::exception& error) {
+        m_prepared = {};
+        m_prepared.error = QString::fromUtf8(error.what());
+    } catch (...) {
+        m_prepared = {};
+        m_prepared.error = QStringLiteral("Unexpected G-code preparation failure");
+    }
+    if (getState() != State::Background || !m_cancelRequested || m_cancelRequested->load(std::memory_order_acquire) ||
+        !SlicingPreviewBridge::instance()->acceptsPublication(m_publicationEpoch)) {
         LOG_INFO("GCode parse finished after handler left background state; result discarded");
+        m_prepared = {};
+        m_pendingOutput.reset();
+        m_success = false; m_errorMessage = QStringLiteral("G-code import cancelled");
+        if (getState() == State::Background) requestResumeFromBackground();
         return;
     }
 
-    const auto loaded = m_parseWatcher->result();
-    m_success = loaded.success;
-    m_preview = loaded.preview;
-    if (!m_success || !m_preview) {
-        QStringList errors;
-        for (const auto& diagnostic : loaded.diagnostics) {
-            if (!diagnostic.warning) {
-                errors.push_back(QString::fromStdString(diagnostic.message));
-            }
-        }
-        m_errorMessage = loaded.cancelled
-            ? QStringLiteral("GCode import cancelled")
-            : errors.join(QStringLiteral("; "));
-        if (m_errorMessage.isEmpty()) {
-            m_errorMessage = QStringLiteral("GCode contains no drawable toolpath");
-        }
+    m_success = m_prepared.geometryAvailable && !m_prepared.cancelled && m_prepared.error.isEmpty();
+    if (!m_success) {
+        m_errorMessage = m_prepared.cancelled ? QStringLiteral("GCode import cancelled") : m_prepared.error;
         LOG_ERROR("GCode import failed: {}", m_errorMessage.toStdString());
         requestResumeFromBackground();
         return;
     }
-
-    const auto& statistics = m_preview->statistics;
-    m_layerCount = static_cast<int>(statistics.total_layers);
-    m_segmentCount = static_cast<int>(statistics.render_segment_count);
+    for (const auto& warning : m_prepared.warnings) LOG_WARN("{}", warning.toStdString());
+    const auto& statistics = m_prepared.data.stats;
+    m_layerCount = statistics.totalLayers;
+    m_segmentCount = statistics.renderSegmentCount;
     m_pointCount = m_segmentCount * 2;
-    m_totalTime = static_cast<float>(statistics.total_time_seconds);
-    m_totalExtrusion = static_cast<float>(statistics.total_extrusion_mm);
+    m_totalTime = statistics.totalTimeS;
+    m_totalExtrusion = statistics.totalExtrusionMm;
 
     LOG_INFO("GCode parsed by libslicer: {} layers, {} render segments",
              m_layerCount, m_segmentCount);
     updateTaskProgress(0.7f);
     updateTaskDescription(QStringLiteral("正在创建刀路预览..."));
     emit importProgress(70, QStringLiteral("Creating toolpath preview..."));
-    createToolpathPreviewDB();
+    try { createToolpathPreviewDB(); }
+    catch (const std::exception& error) {
+        m_success = false; m_errorMessage = QString::fromUtf8(error.what());
+        m_pendingOutput.reset(); requestResumeFromBackground();
+    } catch (...) {
+        m_success = false; m_errorMessage = QStringLiteral("Unexpected toolpath publication failure");
+        m_pendingOutput.reset(); requestResumeFromBackground();
+    }
 }
 
 void GCodeImportHandler::createToolpathPreviewDB() {
-    if (!m_preview) {
-        m_success = false;
-        m_errorMessage = QStringLiteral("libslicer returned no toolpath preview");
-        requestResumeFromBackground();
-        return;
-    }
-
-    TransactionGuard guard("Load GCode Toolpath Preview");
-    auto preview = trans::TransDB::create<GPlatform::ToolpathPreviewDB>();
-    if (!preview) {
-        m_success = false;
-        m_errorMessage = QStringLiteral("Failed to create ToolpathPreviewDB");
-        requestResumeFromBackground();
-        return;
-    }
-
-    auto data = GPlatform::adaptLibSlicerToolpath(*m_preview);
-    data.printGCodePath = m_filePath.toStdString();
-    preview->setSourceModelName(m_name.toStdString());
-    preview->setSourceScope(
-        GPlatform::ToolpathPreviewSourceScope::ImportedGCode);
-    preview->setSourceModelDBId(INVALID_DB_ID);
-    preview->setPreviewData(std::move(data));
-    preview->setVisible(true);
-
-    if (auto* manager = DocumentManager::instance()) {
-        manager->registerDBInstance(preview, TypeID::TOOLPATH_PREVIEW_DB);
-        const auto beds = manager->getDBInstancesByType(
-            TypeID::PRINT_BED_DB);
-        const auto bed = std::min_element(
-            beds.begin(), beds.end(),
-            [](const auto& lhs, const auto& rhs) {
-                if (!lhs) return false;
-                if (!rhs) return true;
-                return lhs->getDBInstanceID().getValue() <
-                    rhs->getDBInstanceID().getValue();
-            });
-        if (bed == beds.end() || !*bed ||
-            !manager->attachOwnedChild(
-                (*bed)->getDBInstanceID(),
-                preview->getDBInstanceID(),
-                ToolpathPreviewRelations::PrintBedPreviewsRelation)) {
-            m_success = false;
-            m_errorMessage = QStringLiteral(
-                "Failed to attach imported GCode preview to print bed");
-            guard.rollback();
-            requestResumeFromBackground();
-            return;
-        }
-    } else {
-        m_success = false;
-        m_errorMessage = QStringLiteral("DocumentManager is unavailable");
-        requestResumeFromBackground();
-        return;
-    }
-
-    m_createdObjectId = QString::number(preview->getDBInstanceID().getValue());
-    if (auto* bridge = SlicingPreviewBridge::instance()) {
-        const int previewId = static_cast<int>(preview->getDBInstanceID().getValue());
-        bridge->completePreviewLoad(QString(), m_filePath, previewId, m_name, preview);
-    }
-
-    updateTaskProgress(0.95f);
-    updateTaskDescription(QStringLiteral("正在完成..."));
+    if (!m_success || !m_pendingOutput) { requestResumeFromBackground(); return; }
+    auto* document = DocumentManager::instance();
+    const auto beds = document->getDBInstancesByType(TypeID::PRINT_BED_DB);
+    for (const auto& bed : beds) if (bed) { m_pendingOutput->printBedId = bed->getDBInstanceID(); break; }
+    m_pendingOutput->stats = m_prepared.data.stats;
+    auto published = GPlatform::publishToolpathResult(m_pendingOutput, std::move(m_prepared), m_publicationEpoch);
+    m_success = published.accepted;
+    if (!m_success) { m_errorMessage = published.error; m_pendingOutput.reset(); requestResumeFromBackground(); return; }
+    m_createdObjectId = QString::fromStdString(published.preview->getDBInstanceID().toString());
+    m_acceptedOutput = SlicingPreviewBridge::instance()->currentOutput();
+    m_completionEpoch = SlicingPreviewBridge::instance()->publicationEpoch();
+    m_pendingOutput.reset();
+    updateTaskProgress(0.95f); updateTaskDescription(QStringLiteral("正在完成..."));
     QTimer::singleShot(0, this, [this]() { requestResumeFromBackground(); });
 }
 
 void GCodeImportHandler::onBackgroundCompleted() {
     LOG_INFO("GCode import background task completed");
 
+    auto* bridge = SlicingPreviewBridge::instance();
+    const auto accepted = m_acceptedOutput.lock();
+    if (m_success && (!bridge->acceptsPublication(m_completionEpoch) || !accepted || bridge->currentOutput() != accepted)) {
+        m_success = false;
+        m_errorMessage = QStringLiteral("G-code import cancelled or superseded");
+    }
+
     if (m_success) {
         // 更新进度：完成
         updateTaskProgress(1.0f);
         updateTaskDescription(QString("加载完成"));
         emit importProgress(100, "Import completed successfully");
+        if (!accepted->warnings.isEmpty())
+            NotificationManager::instance()->showWarning(tr("G-code import warnings"), accepted->warnings.join(QStringLiteral("\n")));
         emit importCompleted(m_createdObjectId, true);
 
         LOG_INFO("GCode imported successfully with ID: {}", m_createdObjectId.toStdString());
@@ -354,7 +335,9 @@ void GCodeImportHandler::onCleanup() {
         m_cancelRequested->store(true, std::memory_order_release);
     }
     m_createdObjectId.clear();
-    m_preview.reset();
+    m_prepared = {};
+    m_pendingOutput.reset();
+    m_acceptedOutput.reset();
     StandardBackgroundHandler::onCleanup();
 }
 

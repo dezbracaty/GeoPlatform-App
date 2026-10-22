@@ -22,13 +22,13 @@ Page {
                                                && suggestionTags.length > 0
                                                && hotSearches.length > 0
                                                && hotPrints.length > 0
-    property color accentColor: Theme.accentColor.defaultBrushFor()
-    property color pageColor: control.SmoothUI.dark ? "#17191D" : "#F4F6F8"
-    property color surfaceColor: control.SmoothUI.dark ? "#22252B" : "#FFFFFF"
-    property color surfaceMutedColor: control.SmoothUI.dark ? "#292D34" : "#F6F7F9"
-    property color primaryTextColor: control.SmoothUI.dark ? "#F3F5F7" : "#202328"
-    property color secondaryTextColor: control.SmoothUI.dark ? "#AEB4BE" : "#69717D"
-    property color borderColor: control.SmoothUI.dark ? "#383D46" : "#E5E8EC"
+    property color accentColor: control.SmoothUI.theme.accentColor.defaultBrushFor(control.SmoothUI.dark)
+    property color pageColor: control.SmoothUI.theme.res.solidBackgroundFillColorBase
+    property color surfaceColor: control.SmoothUI.theme.res.cardBackgroundColor
+    property color surfaceMutedColor: control.SmoothUI.theme.res.solidBackgroundFillColorSecondary
+    property color primaryTextColor: control.SmoothUI.theme.res.textFillColorPrimary
+    property color secondaryTextColor: control.SmoothUI.theme.res.textFillColorSecondary
+    property color borderColor: control.SmoothUI.theme.res.controlStrokeColorDefault
 
     property var sectionTabs: [
         { key: "featured", title: qsTr("Recommended") },
@@ -124,51 +124,15 @@ Page {
 
     background: Rectangle { color: control.pageColor }
 
-    component HeaderActionButton: Rectangle {
+    component HeaderActionButton: StandardButton {
         id: actionButton
-        property string text: ""
-        property var iconSource: ""
+        property alias iconSource: actionButton.icon.name
         property bool primary: false
-        signal clicked()
 
-        implicitWidth: buttonRow.implicitWidth + 28
-        implicitHeight: 38
-        radius: 8
-        color: primary
-               ? control.accentColor
-               : (buttonMouse.containsMouse ? control.surfaceMutedColor : control.surfaceColor)
-        border.width: primary ? 0 : 1
-        border.color: control.borderColor
-
-        Row {
-            id: buttonRow
-            anchors.centerIn: parent
-            spacing: 7
-
-            Icon {
-                width: 15
-                height: 15
-                anchors.verticalCenter: parent.verticalCenter
-                source: actionButton.iconSource
-                color: actionButton.primary ? "white" : control.primaryTextColor
-            }
-
-            Text {
-                anchors.verticalCenter: parent.verticalCenter
-                text: actionButton.text
-                color: actionButton.primary ? "white" : control.primaryTextColor
-                font.pixelSize: 13
-                font.weight: Font.Medium
-            }
-        }
-
-        MouseArea {
-            id: buttonMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: actionButton.clicked()
-        }
+        highlighted: primary
+        implicitHeight: Math.max(Theme.actionHeight,
+                                 implicitContentHeight + topPadding + bottomPadding,
+                                 implicitBackgroundHeight + topInset + bottomInset)
     }
 
     component ModelCard: Item {
@@ -183,18 +147,19 @@ Page {
             NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
         }
 
-        Rectangle {
+        Shadow {
             anchors.fill: cardSurface
-            anchors.topMargin: 5
             radius: cardSurface.radius
-            color: control.SmoothUI.dark ? "#26000000" : "#120D1B2A"
+            elevation: 2
+            color: control.SmoothUI.theme.res.shadowColor
+            opacity: Theme.shadowOpacityFor(control.SmoothUI.dark, 0.16)
         }
 
         Rectangle {
             id: cardSurface
             anchors.fill: parent
             anchors.bottomMargin: 5
-            radius: 14
+            radius: Theme.panelRadius
             color: control.surfaceColor
             border.width: 1
             border.color: cardMouse.containsMouse ? control.accentColor : control.borderColor
@@ -241,7 +206,7 @@ Page {
                     width: 42
                     height: 42
                     source: FluentIcons.graph_CubeShape
-                    color: "white"
+                    color: control.SmoothUI.theme.res.textFillColorTertiary
                     opacity: 0.72
                     visible: previewImage.source === "" || previewImage.status === Image.Error
                 }
@@ -260,7 +225,7 @@ Page {
                         anchors.centerIn: parent
                         text: modelCard.entry.format || qsTr("3D")
                         color: "white"
-                        font.pixelSize: 11
+                        font.pixelSize: Theme.captionFontSize
                         font.weight: Font.DemiBold
                     }
                 }
@@ -284,7 +249,7 @@ Page {
                     width: parent.width
                     text: modelCard.entry.name || qsTr("Untitled Model")
                     color: control.primaryTextColor
-                    font.pixelSize: 14
+                    font.pixelSize: Theme.bodyFontSize
                     font.weight: Font.DemiBold
                     elide: Text.ElideRight
                     maximumLineCount: 1
@@ -329,7 +294,7 @@ Page {
                         anchors.verticalCenter: parent.children[0].verticalCenter
                         text: modelCard.entry.author || qsTr("GPlatform Community")
                         color: control.secondaryTextColor
-                        font.pixelSize: 11
+                        font.pixelSize: Theme.captionFontSize
                         elide: Text.ElideRight
                     }
 
@@ -348,7 +313,7 @@ Page {
                             Text {
                                 text: control.formatNumber(modelCard.entry.likes)
                                 color: control.secondaryTextColor
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.captionFontSize
                             }
                         }
 
@@ -362,7 +327,7 @@ Page {
                             Text {
                                 text: control.formatNumber(modelCard.entry.downloads)
                                 color: control.secondaryTextColor
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.captionFontSize
                             }
                         }
                     }
@@ -377,34 +342,20 @@ Page {
                 onClicked: control.openModel(modelCard.entry)
             }
 
-            Rectangle {
+            IconButton {
                 anchors.right: parent.right
                 anchors.top: parent.top
                 anchors.margins: 10
                 width: 34
                 height: 34
-                radius: 9
-                color: downloadMouse.containsMouse ? control.accentColor : "#D9FFFFFF"
-                visible: cardMouse.containsMouse || downloadMouse.containsMouse
+                icon.width: 16
+                icon.height: 16
+                icon.name: modelCard.entry.downloadUrl
+                           ? FluentIcons.graph_Download
+                           : FluentIcons.graph_OpenInNewWindow
+                visible: cardMouse.containsMouse || hovered
                 z: 3
-
-                Icon {
-                    anchors.centerIn: parent
-                    width: 16
-                    height: 16
-                    source: modelCard.entry.downloadUrl
-                            ? FluentIcons.graph_Download
-                            : FluentIcons.graph_OpenInNewWindow
-                    color: downloadMouse.containsMouse ? "white" : "#30343A"
-                }
-
-                MouseArea {
-                    id: downloadMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: control.downloadModel(modelCard.entry)
-                }
+                onClicked: control.downloadModel(modelCard.entry)
             }
         }
     }
@@ -436,7 +387,7 @@ Page {
                 id: hero
                 width: parent.width
                 height: 218
-                radius: 18
+                radius: Theme.panelRadius
                 clip: true
 
                 gradient: Gradient {
@@ -492,14 +443,14 @@ Page {
                     Text {
                         text: qsTr("Discover models worth printing")
                         color: control.primaryTextColor
-                        font.pixelSize: 25
+                        font.pixelSize: Theme.pageTitleFontSize
                         font.weight: Font.DemiBold
                     }
 
                     Text {
                         text: qsTr("Find inspiration in curated community models and bring downloads directly into your printing workflow.")
                         color: control.secondaryTextColor
-                        font.pixelSize: 13
+                        font.pixelSize: Theme.bodyFontSize
                     }
 
                     Row {
@@ -511,7 +462,7 @@ Page {
                             id: searchShell
                             width: Math.min(parent.width - quickActions.width - 12, 620)
                             height: 42
-                            radius: 9
+                            radius: control.SmoothUI.radius
                             color: control.surfaceColor
                             border.width: searchField.activeFocus ? 2 : 1
                             border.color: searchField.activeFocus
@@ -541,7 +492,7 @@ Page {
                                 placeholderText: qsTr("Search models, creators, or categories")
                                 color: control.primaryTextColor
                                 placeholderTextColor: control.secondaryTextColor
-                                font.pixelSize: 13
+                                font.pixelSize: Theme.bodyFontSize
                                 selectByMouse: true
                                 background: null
                                 onTextEdited: control.searchText = text
@@ -623,7 +574,7 @@ Page {
                         anchors.verticalCenter: parent.children[0].verticalCenter
                         text: qsTr("Recommended Models")
                         color: control.primaryTextColor
-                        font.pixelSize: 20
+                        font.pixelSize: Theme.panelTitleFontSize
                         font.weight: Font.DemiBold
                     }
 
@@ -633,7 +584,7 @@ Page {
                         anchors.verticalCenter: parent.children[0].verticalCenter
                         text: qsTr("Pick something for your next print")
                         color: control.secondaryTextColor
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.captionFontSize
                     }
                 }
 
@@ -644,36 +595,14 @@ Page {
                     Repeater {
                         model: control.sectionTabs
 
-                        Rectangle {
+                        StandardButton {
                             id: sectionTab
                             required property var modelData
-                            width: tabText.implicitWidth + 24
-                            height: 34
-                            radius: 8
-                            color: control.selectedSection === modelData.key
-                                   ? control.surfaceColor
-                                   : (tabMouse.containsMouse ? control.surfaceMutedColor : "transparent")
-                            border.width: control.selectedSection === modelData.key ? 1 : 0
-                            border.color: control.borderColor
-
-                            Text {
-                                id: tabText
-                                anchors.centerIn: parent
-                                text: sectionTab.modelData.title
-                                color: control.selectedSection === sectionTab.modelData.key
-                                       ? control.primaryTextColor : control.secondaryTextColor
-                                font.pixelSize: 13
-                                font.weight: control.selectedSection === sectionTab.modelData.key
-                                             ? Font.DemiBold : Font.Normal
-                            }
-
-                            MouseArea {
-                                id: tabMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: control.selectedSection = sectionTab.modelData.key
-                            }
+                            text: modelData.title
+                            flat: control.selectedSection !== modelData.key
+                            font: control.selectedSection === modelData.key
+                                  ? Typography.bodyStrong : Typography.body
+                            onClicked: control.selectedSection = modelData.key
                         }
                     }
                 }
@@ -687,7 +616,7 @@ Page {
                         id: searchResultLabel
                         text: qsTr("Found %1 related models").arg(ModelService.totalCount)
                         color: control.secondaryTextColor
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.captionFontSize
                     }
 
                     Item {
@@ -700,7 +629,7 @@ Page {
                         id: clearResult
                         text: qsTr("Clear Search")
                         color: control.accentColor
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.captionFontSize
 
                         MouseArea {
                             anchors.fill: parent
@@ -739,7 +668,7 @@ Page {
                 Rectangle {
                     width: parent.width
                     height: 148
-                    radius: 14
+                    radius: Theme.panelRadius
                     color: control.surfaceColor
                     border.width: 1
                     border.color: control.borderColor
@@ -760,14 +689,14 @@ Page {
                             anchors.horizontalCenter: parent.horizontalCenter
                             text: qsTr("No matching models found")
                             color: control.primaryTextColor
-                            font.pixelSize: 14
+                            font.pixelSize: Theme.bodyFontSize
                             font.weight: Font.DemiBold
                         }
                         Text {
                             anchors.horizontalCenter: parent.horizontalCenter
                             text: qsTr("Try other keywords or recommended categories")
                             color: control.secondaryTextColor
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.captionFontSize
                         }
                     }
                 }
@@ -794,7 +723,7 @@ Page {
                         anchors.verticalCenter: parent.children[0].verticalCenter
                         text: qsTr("Loading online models…")
                         color: control.secondaryTextColor
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.captionFontSize
                     }
                 }
 
@@ -816,18 +745,18 @@ Page {
         y: 0
         width: searchShell.width
         height: 252
-        radius: 12
+        radius: Theme.popupRadius
         color: control.surfaceColor
         border.width: 1
         border.color: control.borderColor
         visible: control.suggestionsRequested && searchField.activeFocus
         z: 60
 
-        Rectangle {
-            anchors.fill: parent
-            anchors.topMargin: 5
+        Shadow {
             radius: parent.radius
-            color: control.SmoothUI.dark ? "#24000000" : "#160D1B2A"
+            elevation: 4
+            color: control.SmoothUI.theme.res.shadowColor
+            opacity: Theme.shadowOpacityFor(control.SmoothUI.dark, 0.22)
             z: -1
         }
 
@@ -839,7 +768,7 @@ Page {
             Text {
                 text: qsTr("Suggested Searches")
                 color: control.primaryTextColor
-                font.pixelSize: 13
+                font.pixelSize: Theme.bodyFontSize
                 font.weight: Font.DemiBold
             }
 
@@ -866,7 +795,7 @@ Page {
                             anchors.centerIn: parent
                             text: suggestionChip.modelData
                             color: control.secondaryTextColor
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.captionFontSize
                         }
 
                         MouseArea {
@@ -897,7 +826,7 @@ Page {
                     Text {
                         text: qsTr("Popular Searches")
                         color: control.primaryTextColor
-                        font.pixelSize: 13
+                        font.pixelSize: Theme.bodyFontSize
                         font.weight: Font.DemiBold
                     }
 
@@ -918,15 +847,15 @@ Page {
                                 Text {
                                     text: hotSearchItem.index + 1
                                     color: hotSearchItem.index < 3
-                                           ? "#E04B3F" : control.secondaryTextColor
-                                    font.pixelSize: 12
+                                           ? control.SmoothUI.theme.res.systemFillColorCritical : control.secondaryTextColor
+                                    font.pixelSize: Theme.captionFontSize
                                     font.weight: Font.DemiBold
                                 }
                                 Text {
                                     width: hotSearchItem.width - 24
                                     text: hotSearchItem.modelData
                                     color: control.secondaryTextColor
-                                    font.pixelSize: 12
+                                    font.pixelSize: Theme.captionFontSize
                                     elide: Text.ElideRight
                                 }
                             }
@@ -951,7 +880,7 @@ Page {
                     Text {
                         text: qsTr("Popular Prints")
                         color: control.primaryTextColor
-                        font.pixelSize: 13
+                        font.pixelSize: Theme.bodyFontSize
                         font.weight: Font.DemiBold
                     }
 
@@ -972,15 +901,15 @@ Page {
                                 Text {
                                     text: hotPrintItem.index + 1
                                     color: hotPrintItem.index < 3
-                                           ? "#E04B3F" : control.secondaryTextColor
-                                    font.pixelSize: 12
+                                           ? control.SmoothUI.theme.res.systemFillColorCritical : control.secondaryTextColor
+                                    font.pixelSize: Theme.captionFontSize
                                     font.weight: Font.DemiBold
                                 }
                                 Text {
                                     width: hotPrintItem.width - 24
                                     text: hotPrintItem.modelData
                                     color: control.secondaryTextColor
-                                    font.pixelSize: 12
+                                    font.pixelSize: Theme.captionFontSize
                                     elide: Text.ElideRight
                                 }
                             }

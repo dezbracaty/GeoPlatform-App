@@ -84,8 +84,8 @@ Button {
     implicitHeight: compact ? PrintWorkspaceStyle.controlHeight
                             : PrintWorkspaceStyle.machineSelectorHeight
     padding: 0
-    leftPadding: 8
-    rightPadding: compact ? 8 : 12
+    leftPadding: Theme.space8
+    rightPadding: compact ? Theme.space8 : Theme.controlHorizontalPadding
     flat: true
     enabled: root.selectionEnabled
     activeFocusOnTab: root.selectionEnabled
@@ -298,7 +298,7 @@ Button {
 
     background: Rectangle {
         anchors.fill: parent
-        radius: root.embedded ? PrintWorkspaceStyle.controlRadius : 10
+        radius: root.embedded ? root.SmoothUI.radius : Theme.panelRadius
         color: root.embedded
                ? (root.hovered || selectorPopup.opened
                   ? root.SmoothUI.theme.res.subtleFillColorSecondary
@@ -321,7 +321,7 @@ Button {
             Layout.preferredWidth: 42
             Layout.preferredHeight: 36
             visible: !root.compact
-            radius: 8
+            radius: root.SmoothUI.radius
             color: root.SmoothUI.theme.res.subtleFillColorSecondary
 
             Image {
@@ -347,7 +347,8 @@ Button {
                     if (root.compact) {
                         if (modelName.indexOf("Flashforge ") === 0)
                             modelName = modelName.substring(11)
-                        return qsTr("Print Configuration · %1").arg(modelName)
+                        return root.condensedPresetSummary
+                                ? modelName : qsTr("Print Configuration · %1").arg(modelName)
                     }
                     return modelName
                 }
@@ -357,7 +358,7 @@ Button {
 
                 HoverHandler { id: compactMachineNameHover }
                 ToolTip {
-                    visible: compactMachineNameHover.hovered && compactMachineName.truncated
+                    visible: !root.condensedPresetSummary && compactMachineNameHover.hovered && compactMachineName.truncated
                     text: compactMachineName.text
                 }
             }
@@ -367,9 +368,8 @@ Button {
                 Layout.fillWidth: true
                 text: root.compact
                       ? (root.condensedPresetSummary
-                         ? qsTr("%1 mm · %2 · %3")
+                         ? qsTr("%1 mm · %2")
                                .arg(root.selectedMachine.nozzleDiameter || "—")
-                               .arg(root.filamentSummary())
                                .arg(SliceSettingsBridge.selectedProcessPresetName || qsTr("No Process Selected"))
                          : qsTr("Nozzle %1 mm · Bed %2")
                                .arg(root.selectedMachine.nozzleDiameter || "—")
@@ -386,7 +386,7 @@ Button {
 
                 HoverHandler { id: machineDetailHover }
                 ToolTip {
-                    visible: machineDetailHover.hovered && machineDetailText.truncated
+                    visible: !root.condensedPresetSummary && machineDetailHover.hovered && machineDetailText.truncated
                     text: machineDetailText.text
                 }
             }
@@ -505,7 +505,7 @@ Button {
             visible: !root.compact
             Layout.preferredWidth: nozzleText.implicitWidth + 16
             Layout.preferredHeight: 26
-            radius: 7
+            radius: root.SmoothUI.radius
             color: root.SmoothUI.theme.res.subtleFillColorSecondary
 
             Label {
@@ -549,6 +549,16 @@ Button {
         }
     }
 
+    ToolTip {
+        visible: root.hovered && root.compact && root.condensedPresetSummary
+        delay: Theme.tooltipDelay
+        text: qsTr("Print Configuration: %1\nNozzle: %2 mm\nMaterials: %3\nProcess: %4")
+            .arg(root.selectedMachine.printerModel || qsTr("Select Printer"))
+            .arg(root.selectedMachine.nozzleDiameter || "—")
+            .arg(root.filamentSummary())
+            .arg(SliceSettingsBridge.selectedProcessPresetName || qsTr("No Process Selected"))
+    }
+
     onClicked: root.togglePopup()
 
     AppPopup {
@@ -561,7 +571,6 @@ Button {
         popupVerticalAnchor: root.popupVerticalAnchor
         centerHorizontally: root.detailedSettingsVisible
         popupAbove: root.popupAbove
-        parentRelativeVerticalAnchor: true
         preferredWidth: root.detailedSettingsVisible
                         ? PrintWorkspaceStyle.slicingSettingsPopoverWidth
                         : PrintWorkspaceStyle.machineSelectorWidth

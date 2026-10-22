@@ -306,6 +306,7 @@ AppPopup {
 
     footerData: DialogButtonBox {
         anchors.fill: parent
+        SmoothUI.radius: control.SmoothUI.radius
         alignment: Qt.AlignRight
 
         Button {

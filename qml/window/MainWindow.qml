@@ -264,12 +264,14 @@ FramelessWindow {
         }
         footer: DialogButtonBox {
             Button {
+                implicitWidth: Math.max(76, implicitContentWidth + leftPadding + rightPadding)
                 text: qsTr("Cancel")
                 onClicked: {
                     dialog_close.close()
                 }
             }
             Button {
+                implicitWidth: Math.max(76, implicitContentWidth + leftPadding + rightPadding)
                 text: qsTr("Minimize")
                 onClicked: {
                     window.hide()
@@ -277,6 +279,7 @@ FramelessWindow {
                 }
             }
             Button {
+                implicitWidth: Math.max(76, implicitContentWidth + leftPadding + rightPadding)
                 text: qsTr("Ok")
                 highlighted: true
                 onClicked: {

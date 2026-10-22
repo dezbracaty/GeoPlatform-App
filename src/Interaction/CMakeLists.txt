@@ -38,6 +38,8 @@ set(INTERACTION_SOURCES
     src/UnifiedModelImportHandler.cpp
     src/FileImportHandler.cpp
     src/GCodeImportHandler.cpp
+    src/ToolpathPreviewPreparation.cpp
+    src/ToolpathResultPublication.cpp
     src/LibSlicerToolpathAdapter.cpp
     src/ModelOrientationWidgetHandler.cpp
     src/ModelScaleWidgetHandler.cpp
@@ -92,6 +94,8 @@ set(INTERACTION_HEADERS
     include/UnifiedModelImportHandler.hpp
     include/FileImportHandler.hpp
     include/GCodeImportHandler.hpp
+    include/ToolpathPreviewPreparation.hpp
+    include/ToolpathResultPublication.hpp
     include/LibSlicerToolpathAdapter.hpp
     include/ModelOrientationWidgetHandler.hpp
     include/ModelScaleWidgetHandler.hpp

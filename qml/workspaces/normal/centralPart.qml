@@ -127,17 +127,45 @@ Item {
         }
     }
 
+    RowLayout {
+        anchors.top: parent.top
+        anchors.topMargin: 64
+        anchors.right: rightPrintToolbar.left
+        anchors.rightMargin: PrintWorkspaceStyle.space12
+        spacing: PrintWorkspaceStyle.space8
+        visible: centralFragment.width >= 760
+                 && x >= leftPrintToolbar.x + leftPrintToolbar.width + PrintWorkspaceStyle.space12
+        z: 20
+
+        Button {
+            objectName: "print.viewport.fitScene"
+            text: qsTr("Fit Scene")
+            icon.name: FluentIcons.graph_Zoom
+            enabled: centralFragment.objectCount > 0
+            onClicked: ActionManager.triggerAction("camera.fitScene", {})
+        }
+        Button {
+            objectName: "print.viewport.viewPlatform"
+            text: qsTr("View Platform")
+            icon.name: FluentIcons.graph_GridView
+            onClicked: ActionManager.triggerAction("camera.resetDefault", {})
+        }
+    }
+
     ModelInspectorPanel {
         id: modelInspector
         objectName: "modelInspectorPanel"
         anchors.top: parent.top
         anchors.topMargin: 132
-        visible: !FiberMaskBridge.active
+        visible: !FiberMaskBridge.active && maximumHeight >= 42
+                 && x >= leftPrintToolbar.x + leftPrintToolbar.width + PrintWorkspaceStyle.space12
         anchors.right: rightPrintToolbar.left
         anchors.rightMargin: 12
         z: 50
         expanded: centralFragment.propertiesExpanded
-        maximumHeight: Math.max(240, centralFragment.height - 220)
+        maximumHeight: Math.max(0, centralFragment.height - anchors.topMargin
+                                - PrintWorkspaceStyle.globalCommandBarHeight
+                                - PrintWorkspaceStyle.space16 * 2)
 
         onExpandRequested: {
             if (!ModelPropertyBridge.hasSelectedModel)

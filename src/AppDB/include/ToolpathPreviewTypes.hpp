@@ -2,10 +2,12 @@
 
 #include "SystemTypes.hpp"
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
 namespace GPlatform {
+enum class ToolpathAnnotationStatus : std::uint8_t { NotApplicable, Ready, Partial, Unavailable };
 
 enum class ToolpathMotionKind : std::uint8_t {
     Travel = 0,
@@ -18,7 +20,9 @@ enum class ToolpathEventKind : std::uint8_t {
     ToolChange,
     ColorChange,
     Pause,
-    CustomGCode
+    CustomGCode,
+    FiberCut,
+    FiberDepleted
 };
 
 enum class ToolpathPreviewColorMode : int {
@@ -149,6 +153,7 @@ struct ToolpathPreviewSegment {
     float pressureAdvance = 0.0f;
     float accelerationMmS2 = 0.0f;
     float jerkMmS = 0.0f;
+    std::uint8_t fiberDisplayRole = 0;
 };
 
 struct ToolpathPreviewFeatureStats {
@@ -243,6 +248,16 @@ struct ToolpathPreviewLegendItem {
     bool visible = true;
 };
 
+struct ToolpathSegmentRange {
+    std::size_t begin = 0, end = 0;
+};
+
+struct ToolpathFiberRoute {
+    std::uint32_t beginSourceLine = 0, cutSourceLine = 0, tailBeginSourceLine = 0;
+    std::uint32_t depletedSourceLine = 0, endSourceLine = 0;
+    std::vector<ToolpathSegmentRange> tailRanges, finishRanges;
+};
+
 // Point-like event rendered independently from path segments, e.g. a Z seam.
 struct ToolpathPreviewOption {
     Vector3 positionMm;
@@ -251,6 +266,9 @@ struct ToolpathPreviewOption {
     std::uint64_t afterSegment = 0;
     ToolpathEventKind kind = ToolpathEventKind::CustomGCode;
     std::uint32_t sourceCommandId = 0;
+    std::uint16_t toolId = 0xffffu, cpColorId = 0xffffu;
+    std::uint8_t fiberDisplayRole = 0;
+    std::shared_ptr<const ToolpathFiberRoute> fiberRoute;
 };
 
 inline constexpr float kSeamMarkerGrey = 0.902f;
@@ -274,7 +292,10 @@ struct FiberFillDiagnosticPath {
     std::size_t componentId{0};
 };
 
+struct GCodeSource;
+
 struct ToolpathPreviewData {
+    std::shared_ptr<const GCodeSource> gcodeSource;
     std::string artifactPath;
     std::string printGCodePath;
     ToolpathArtifactOwnership printGCodeOwnership{ToolpathArtifactOwnership::External};

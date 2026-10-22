@@ -1,7 +1,8 @@
 #pragma once
 
 #include "StandardBackgroundHandler.hpp"
-#include <libslicer/Toolpath.hpp>
+#include "ToolpathPreviewPreparation.hpp"
+#include <SliceOutputRecord.hpp>
 #include <libslicer/Library.hpp>
 #include <QFutureWatcher>
 #include <QString>
@@ -67,12 +68,17 @@ private:
     float m_totalTime{0.0f};
     float m_totalExtrusion{0.0f};
     bool m_success{false};
+    bool m_parsePending{false};
     QString m_errorMessage;
 
     // 创建的对象 ID
     QString m_createdObjectId;
-    libslicer::ToolpathPreviewPtr m_preview;
-    std::unique_ptr<QFutureWatcher<libslicer::GCodePreviewResult>> m_parseWatcher;
+    GPlatform::PreparedToolpathPreview m_prepared;
+    std::shared_ptr<GPlatform::SliceOutputRecord> m_pendingOutput;
+    std::weak_ptr<const GPlatform::SliceOutputRecord> m_acceptedOutput;
+    std::uint64_t m_completionEpoch{0};
+    std::uint64_t m_publicationEpoch{0};
+    std::unique_ptr<QFutureWatcher<GPlatform::PreparedToolpathPreview>> m_parseWatcher;
     std::shared_ptr<std::atomic_bool> m_cancelRequested;
 
     // 在 QtConcurrent 工作线程中请求 libslicer 生成统一刀路预览。

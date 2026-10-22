@@ -6,98 +6,74 @@ import SmoothUI.impl
 
 Item {
     id: root
+    SmoothUI.theme: Theme.of(root)
 
-    // 外部传入的 FPSMonitor 对象
     property var fpsMonitor: null
     property int targetRefreshRate: 60
     property bool expanded: false
 
-    width: expanded ? 260 : 104
-    height: expanded ? 136 : 34
-    
-    Rectangle {
+    implicitWidth: expanded ? Math.max(260, details.implicitWidth + 24) : compactButton.implicitWidth
+    implicitHeight: expanded ? details.implicitHeight + 24 : compactButton.implicitHeight
+    width: parent ? Math.min(implicitWidth, Math.max(0, parent.width - 32)) : implicitWidth
+    height: parent ? Math.min(implicitHeight, Math.max(0, parent.height - 32)) : implicitHeight
+
+    PanelSurface {
         anchors.fill: parent
-        color: Qt.rgba(
-            Theme.res.cardBackgroundFillColorDefault.r,
-            Theme.res.cardBackgroundFillColorDefault.g,
-            Theme.res.cardBackgroundFillColorDefault.b,
-            0.92
-        )
-        border.color: Theme.res.cardStrokeColorDefault
-        border.width: 1
-        radius: 9
+        SmoothUI.dark: root.SmoothUI.dark
+        SmoothUI.primaryColor: root.SmoothUI.primaryColor
     }
-    
+
     Behavior on width {
         NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
     }
-    
     Behavior on height {
         NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
     }
-    
+
     Button {
-        anchors.fill: parent
-        visible: root.expanded
-        flat: true
-        padding: 0
-        background: Item {}
-        contentItem: Item {}
-        onClicked: root.expanded = !root.expanded
-    }
-    
-    // 简单视图
-    Button {
+        id: compactButton
         visible: !root.expanded
         anchors.fill: parent
         flat: true
         padding: 7
+        clip: true
         background: Item {}
         onClicked: root.expanded = true
 
         contentItem: RowLayout {
             spacing: 5
-
             Icon {
                 source: FluentIcons.graph_SpeedHigh
-                width: 14
-                height: 14
-                color: {
-                    if (!root.fpsMonitor) return Theme.res.textFillColorSecondary
-                    if (root.fpsMonitor.currentFPS < 30) return Theme.res.systemFillColorCritical
-                    if (root.fpsMonitor.currentFPS < 50) return Theme.res.systemFillColorCaution
-                    return Theme.res.systemFillColorSuccess
-                }
+                Layout.preferredWidth: 14
+                Layout.preferredHeight: 14
+                color: currentValue.color
             }
-
             Label {
                 text: root.fpsMonitor ? root.fpsMonitor.currentFPS.toFixed(1) + " FPS" : "-- FPS"
                 font: Typography.caption
-                color: Theme.res.textFillColorPrimary
+                color: root.SmoothUI.theme.res.textFillColorPrimary
             }
         }
     }
-    
-    // 详细视图
-    Column {
+
+    ColumnLayout {
+        id: details
         visible: root.expanded
-        z: 1
         anchors.fill: parent
         anchors.margins: 12
         spacing: 8
-        
-        // 标题行
+        clip: true
+
         RowLayout {
-            width: parent.width
-            
+            Layout.fillWidth: true
+            spacing: 12
             Label {
                 text: qsTr("Performance Monitor")
                 font: Typography.bodyStrong
-                color: Theme.res.textFillColorPrimary
+                color: root.SmoothUI.theme.res.textFillColorPrimary
+                Layout.fillWidth: true
+                elide: Text.ElideRight
             }
-            
-            Item { Layout.fillWidth: true }
-            
             IconButton {
                 implicitWidth: 24
                 implicitHeight: 24
@@ -107,103 +83,122 @@ Item {
                 onClicked: root.expanded = false
             }
         }
-        
-        // 分隔线
+
         Rectangle {
-            width: parent.width
-            height: 1
-            color: Theme.res.dividerStrokeColorDefault
+            Layout.fillWidth: true
+            implicitHeight: 1
+            color: root.SmoothUI.theme.res.dividerStrokeColorDefault
         }
-        
-        // FPS 信息
-        GridLayout {
-            width: parent.width
-            columns: 2
-            rowSpacing: 4
-            columnSpacing: 12
-            
-            Label {
-                text: qsTr("Current FPS:")
-                font: Typography.caption
-                color: Theme.res.textFillColorSecondary
-            }
-            
-            Label {
-                text: root.fpsMonitor ? root.fpsMonitor.currentFPS.toFixed(1) : "--"
-                font: Typography.bodyStrong
-                color: {
-                    if (!root.fpsMonitor) return Theme.res.textFillColorSecondary
-                    if (root.fpsMonitor.currentFPS < 30) return Theme.res.systemFillColorCritical
-                    if (root.fpsMonitor.currentFPS < 50) return Theme.res.systemFillColorCaution
-                    return Theme.res.systemFillColorSuccess
+
+        ScrollView {
+            id: scroll
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.minimumHeight: 0
+            implicitWidth: metrics.implicitWidth
+            implicitHeight: metrics.implicitHeight
+            contentWidth: Math.max(availableWidth, metrics.implicitWidth)
+            clip: true
+
+            ColumnLayout {
+                id: metrics
+                width: scroll.contentWidth
+                spacing: 12
+
+                GridLayout {
+                    Layout.fillWidth: true
+                    columns: 3
+                    rowSpacing: 6
+                    columnSpacing: 12
+
+                    Label {
+                        text: qsTr("Current FPS:")
+                        font: Typography.caption
+                        color: root.SmoothUI.theme.res.textFillColorSecondary
+                        Layout.fillWidth: true
+                    }
+                    Label {
+                        id: currentValue
+                        text: root.fpsMonitor ? root.fpsMonitor.currentFPS.toFixed(1) : "--"
+                        font: Typography.bodyStrong
+                        Layout.alignment: Qt.AlignRight
+                        color: {
+                            if (!root.fpsMonitor) return root.SmoothUI.theme.res.textFillColorSecondary
+                            if (root.fpsMonitor.currentFPS < 30) return root.SmoothUI.theme.res.systemFillColorCritical
+                            if (root.fpsMonitor.currentFPS < 50) return root.SmoothUI.theme.res.systemFillColorCaution
+                            return root.SmoothUI.theme.res.systemFillColorSuccess
+                        }
+                    }
+                    Label { text: "FPS"; font: Typography.caption; color: root.SmoothUI.theme.res.textFillColorSecondary }
+
+                    Label {
+                        text: qsTr("Average FPS:")
+                        font: Typography.caption
+                        color: root.SmoothUI.theme.res.textFillColorSecondary
+                        Layout.fillWidth: true
+                    }
+                    Label {
+                        text: root.fpsMonitor ? root.fpsMonitor.averageFPS.toFixed(1) : "--"
+                        font: Typography.body
+                        color: root.SmoothUI.theme.res.textFillColorPrimary
+                        Layout.alignment: Qt.AlignRight
+                    }
+                    Label { text: "FPS"; font: Typography.caption; color: root.SmoothUI.theme.res.textFillColorSecondary }
+
+                    Label {
+                        text: qsTr("Frame Time:")
+                        font: Typography.caption
+                        color: root.SmoothUI.theme.res.textFillColorSecondary
+                        Layout.fillWidth: true
+                    }
+                    Label {
+                        text: root.fpsMonitor ? root.fpsMonitor.frameTime.toFixed(2) : "--"
+                        font: Typography.body
+                        color: root.SmoothUI.theme.res.textFillColorPrimary
+                        Layout.alignment: Qt.AlignRight
+                    }
+                    Label { text: "ms"; font: Typography.caption; color: root.SmoothUI.theme.res.textFillColorSecondary }
+
+                    Label {
+                        text: qsTr("Dropped:")
+                        font: Typography.caption
+                        color: root.SmoothUI.theme.res.textFillColorSecondary
+                        Layout.fillWidth: true
+                    }
+                    Label {
+                        text: root.fpsMonitor ? root.fpsMonitor.droppedFrames.toString() : "0"
+                        font: Typography.body
+                        Layout.alignment: Qt.AlignRight
+                        color: !root.fpsMonitor || root.fpsMonitor.droppedFrames === 0
+                               ? root.SmoothUI.theme.res.textFillColorPrimary
+                               : root.SmoothUI.theme.res.systemFillColorCaution
+                    }
+                    Item {}
+
+                    Label {
+                        text: qsTr("Target:")
+                        font: Typography.caption
+                        color: root.SmoothUI.theme.res.textFillColorSecondary
+                        Layout.fillWidth: true
+                    }
+                    Label {
+                        text: root.targetRefreshRate.toString()
+                        font: Typography.body
+                        color: root.SmoothUI.theme.res.textFillColorPrimary
+                        Layout.alignment: Qt.AlignRight
+                    }
+                    Label { text: "Hz"; font: Typography.caption; color: root.SmoothUI.theme.res.textFillColorSecondary }
                 }
-            }
-            
-            Label {
-                text: qsTr("Average FPS:")
-                font: Typography.caption
-                color: Theme.res.textFillColorSecondary
-            }
-            
-            Label {
-                text: root.fpsMonitor ? root.fpsMonitor.averageFPS.toFixed(1) : "--"
-                font: Typography.body
-                color: Theme.res.textFillColorPrimary
-            }
-            
-            Label {
-                text: qsTr("Frame Time:")
-                font: Typography.caption
-                color: Theme.res.textFillColorSecondary
-            }
-            
-            Label {
-                text: root.fpsMonitor ? root.fpsMonitor.frameTime.toFixed(2) + " ms" : "-- ms"
-                font: Typography.body
-                color: Theme.res.textFillColorPrimary
-            }
-            
-            Label {
-                text: qsTr("Dropped:")
-                font: Typography.caption
-                color: Theme.res.textFillColorSecondary
-            }
-            
-            Label {
-                text: root.fpsMonitor ? root.fpsMonitor.droppedFrames.toString() : "0"
-                font: Typography.body
-                color: {
-                    if (!root.fpsMonitor || root.fpsMonitor.droppedFrames === 0)
-                        return Theme.res.textFillColorPrimary
-                    return Theme.res.systemFillColorCaution
+
+                Button {
+                    text: qsTr("Reset")
+                    Layout.alignment: Qt.AlignRight
+                    enabled: !!root.fpsMonitor && typeof root.fpsMonitor.reset === "function"
+                    onClicked: {
+                        if (root.fpsMonitor && typeof root.fpsMonitor.reset === "function")
+                            root.fpsMonitor.reset()
+                    }
                 }
-            }
-        }
-        
-        // 刷新率信息
-        RowLayout {
-            width: parent.width
-            spacing: 8
-            
-            Label {
-                text: qsTr("Target:")
-                font: Typography.caption
-                color: Theme.res.textFillColorSecondary
-            }
-            
-            Label {
-                text: root.targetRefreshRate + " Hz"
-                font: Typography.body
-                color: Theme.res.textFillColorPrimary
-            }
-            
-            Item { Layout.fillWidth: true }
-            
-            Button {
-                text: qsTr("Reset")
-                height: 24
-                enabled: root.fpsMonitor !== null
-                onClicked: if (root.fpsMonitor) root.fpsMonitor.reset()
             }
         }
     }

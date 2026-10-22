@@ -22,6 +22,7 @@ private:
     static ApplicationHelper* m_instance;
     QQmlApplicationEngine* m_engine = nullptr;
     QStringList m_restartArguments;
+    bool m_shutdownPrepared = false;
 
 public:
     static ApplicationHelper* getInstance() {
@@ -75,6 +76,7 @@ public:
     }
 
     Q_INVOKABLE void exit(int code = 0);
+    void prepareForExit();
 
 private:
     // 安全清理所有 Handler 的方法

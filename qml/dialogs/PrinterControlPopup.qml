@@ -191,6 +191,7 @@ AppPopup {
             Layout.preferredWidth: 252
             Layout.fillHeight: true
             color: PrintWorkspaceStyle.secondarySurface(control.SmoothUI.dark)
+            bottomLeftRadius: control.SmoothUI.radius
 
             ColumnLayout {
                 anchors.fill: parent

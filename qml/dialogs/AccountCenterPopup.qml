@@ -37,7 +37,7 @@ AppPopup {
             content.contentY = 0
             return
         }
-        var target = showingFlashforge ? flashforgeCard : aiCard
+        var target = showingFlashforge ? flashforgeSectionTitle : aiSectionTitle
         var maximumY = Math.max(0, content.contentHeight - content.height)
         content.contentY = Math.max(
                     0, Math.min(cards.y + target.y - 20, maximumY))
@@ -87,33 +87,29 @@ AppPopup {
                 width: parent.width - 40
                 x: 20
                 y: 20
-                spacing: 14
+                spacing: 20
 
                 Label {
+                    id: flashforgeSectionTitle
                     Layout.fillWidth: true
                     Layout.topMargin: 4
                     text: qsTr("Printing Service")
                     font: Typography.bodyStrong
-                    color: control.SmoothUI.theme.res.textFillColorPrimary
+                    color: control.showingFlashforge
+                           ? control.SmoothUI.theme.accentColor.defaultBrushFor(control.SmoothUI.dark)
+                           : control.SmoothUI.theme.res.textFillColorPrimary
                 }
 
-                Rectangle {
+                Item {
                     id: flashforgeCard
                     Layout.fillWidth: true
-                    Layout.preferredHeight: flashforgeCardContent.implicitHeight + 32
-                    radius: PrintWorkspaceStyle.menuRadius
-                    color: control.SmoothUI.theme.res.cardBackgroundFillColorDefault
-                    border.width: 1
-                    border.color: control.showingFlashforge
-                                  ? control.SmoothUI.theme.accentColor.defaultBrushFor()
-                                  : control.SmoothUI.theme.res.cardStrokeColorDefault
+                    Layout.preferredHeight: flashforgeCardContent.implicitHeight
 
                     ColumnLayout {
                         id: flashforgeCardContent
                         anchors.left: parent.left
                         anchors.right: parent.right
                         anchors.top: parent.top
-                        anchors.margins: 16
                         spacing: 12
 
                         RowLayout {
@@ -276,31 +272,31 @@ AppPopup {
                     }
                 }
 
+                MenuSeparator {
+                    Layout.fillWidth: true
+                }
+
                 Label {
+                    id: aiSectionTitle
                     Layout.fillWidth: true
                     Layout.topMargin: 4
                     text: qsTr("AI Service")
                     font: Typography.bodyStrong
-                    color: control.SmoothUI.theme.res.textFillColorPrimary
+                    color: control.showingAi
+                           ? control.SmoothUI.theme.accentColor.defaultBrushFor(control.SmoothUI.dark)
+                           : control.SmoothUI.theme.res.textFillColorPrimary
                 }
 
-                Rectangle {
+                Item {
                     id: aiCard
                     Layout.fillWidth: true
-                    Layout.preferredHeight: Math.max(142, aiCardContent.implicitHeight + 32)
-                    radius: PrintWorkspaceStyle.menuRadius
-                    color: control.SmoothUI.theme.res.cardBackgroundFillColorDefault
-                    border.width: 1
-                    border.color: control.showingAi
-                                  ? control.SmoothUI.theme.accentColor.defaultBrushFor()
-                                  : control.SmoothUI.theme.res.cardStrokeColorDefault
+                    Layout.preferredHeight: aiCardContent.implicitHeight
 
                     ColumnLayout {
                         id: aiCardContent
                         anchors.left: parent.left
                         anchors.right: parent.right
                         anchors.top: parent.top
-                        anchors.margins: 16
                         spacing: 12
 
                         RowLayout {
@@ -426,7 +422,7 @@ AppPopup {
                             Rectangle {
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 54
-                                radius: 8
+                                radius: control.SmoothUI.radius
                                 visible: AIAccountBridge.userCode.length > 0
                                 color: control.SmoothUI.theme.res.subtleFillColorSecondary
                                 border.width: 1
@@ -447,7 +443,7 @@ AppPopup {
                                 text: AIAccountBridge.verificationUrl
                                 elide: Text.ElideMiddle
                                 font: Typography.caption
-                                color: control.SmoothUI.theme.accentColor.defaultBrushFor()
+                                color: control.SmoothUI.theme.accentColor.defaultBrushFor(control.SmoothUI.dark)
                             }
 
                             RowLayout {
@@ -502,7 +498,7 @@ AppPopup {
                             Rectangle {
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: errorText.implicitHeight + 20
-                                radius: 8
+                                radius: control.SmoothUI.radius
                                 color: control.SmoothUI.theme.res.systemFillColorCriticalBackground
                                 Label {
                                     id: errorText

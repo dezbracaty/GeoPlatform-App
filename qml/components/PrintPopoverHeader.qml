@@ -66,7 +66,7 @@ Rectangle {
         Label {
             Layout.fillWidth: true
             text: root.title
-            font: Typography.bodyStrong
+            font: Typography.subtitle
             color: root.SmoothUI.theme.res.textFillColorPrimary
             elide: Text.ElideRight
         }

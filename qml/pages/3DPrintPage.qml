@@ -15,18 +15,6 @@ ContentPage {
     title: ""
     padding: 0
 
-    // NavigationView only inspects the routed page for these settings. Keep
-    // them on the Dock host rather than on a page nested inside DockWidget.
-    property var appBarBackground: ({
-        type: "gradient",
-        colors: ["#30FFFFFF", "#5087CEEB"],
-        direction: "vertical"
-    })
-    property var sideBarBackground: ({
-        type: "gradient",
-        colors: ["#CCFFFFFF", "#D087CEEB"],
-        direction: "vertical"
-    })
 
     property bool dockReady: false
     property bool changingPage: false
@@ -274,7 +262,7 @@ ContentPage {
                             checkable: false
 
                             background: Rectangle {
-                                radius: 8
+                                radius: tabShell.SmoothUI.radius
                                 color: workspaceTab.selected
                                        ? PrintWorkspaceStyle.surface(tabShell.SmoothUI.dark)
                                        : (workspaceTab.hovered
@@ -466,7 +454,7 @@ ContentPage {
         }
     }
 
-    PillButton {
+    Button {
         id: accountWorkspaceButton
         objectName: "accountWorkspaceButton"
         readonly property bool signedIn:
@@ -497,8 +485,9 @@ ContentPage {
                 radius: 12
                 color: accountWorkspaceButton.signedIn
                        ? Colors.withOpacity(
-                             Theme.accentColor.defaultBrushFor(), 0.14)
-                       : Theme.res.subtleFillColorSecondary
+                             accountWorkspaceButton.SmoothUI.theme.accentColor.defaultBrushFor(
+                                 accountWorkspaceButton.SmoothUI.dark), 0.14)
+                       : accountWorkspaceButton.SmoothUI.theme.res.subtleFillColorSecondary
 
                 Icon {
                     anchors.centerIn: parent
@@ -507,9 +496,7 @@ ContentPage {
                     source: accountWorkspaceButton.signedIn
                             ? FluentIcons.graph_ContactSolid
                             : FluentIcons.graph_Contact
-                    color: accountWorkspaceButton.signedIn
-                           ? Theme.accentColor.defaultBrushFor()
-                           : Theme.res.textFillColorPrimary
+                    color: accountWorkspaceButton.SmoothUI.textColor
                 }
             }
 
@@ -518,7 +505,7 @@ ContentPage {
                       ? qsTr("Account") : qsTr("Sign In")
                 font.pixelSize: 14
                 font.weight: Font.DemiBold
-                color: Theme.res.textFillColorPrimary
+                color: accountWorkspaceButton.SmoothUI.textColor
             }
 
             Icon {
@@ -526,7 +513,7 @@ ContentPage {
                 Layout.preferredWidth: visible ? 12 : 0
                 Layout.preferredHeight: visible ? 12 : 0
                 source: FluentIcons.graph_ChevronDown
-                color: Theme.res.textFillColorSecondary
+                color: accountWorkspaceButton.SmoothUI.textColor
             }
         }
 

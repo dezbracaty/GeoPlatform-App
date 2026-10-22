@@ -1,8 +1,27 @@
 include_guard(GLOBAL)
 
-# Ninja parses /showIncludes output. Preserve the actual compiler output bytes:
-# older CMake versions can mis-decode UTF-8 diagnostics using the Windows ANSI
-# code page. VSLANG alone is insufficient when only a Chinese VS pack exists.
+# Compiler identification, rather than shell variables, selects the target ABI.
+if(WIN32 AND NOT MSVC)
+    message(FATAL_ERROR "Windows builds require MSVC and a matching Qt SDK.")
+endif()
+set(_compiler_arch "${CMAKE_SYSTEM_PROCESSOR}")
+if(MSVC)
+    set(_compiler_arch "${CMAKE_CXX_COMPILER_ARCHITECTURE_ID}")
+elseif(APPLE AND CMAKE_OSX_ARCHITECTURES)
+    set(_compiler_arch "${CMAKE_OSX_ARCHITECTURES}")
+endif()
+if(GPLATFORM_TARGET_ARCH)
+    string(TOLOWER "${_compiler_arch}" _actual_arch)
+    string(TOLOWER "${GPLATFORM_TARGET_ARCH}" _requested_arch)
+    string(REGEX REPLACE "^(amd64|x86_64)$" "x64" _actual_arch "${_actual_arch}")
+    string(REGEX REPLACE "^(amd64|x86_64)$" "x64" _requested_arch "${_requested_arch}")
+    if(NOT _actual_arch STREQUAL _requested_arch)
+        message(FATAL_ERROR "GPLATFORM_TARGET_ARCH=${GPLATFORM_TARGET_ARCH} does not match compiler target ${_compiler_arch}.")
+    endif()
+endif()
+
+# Ninja compares /showIncludes prefixes as raw bytes. Preserve the compiler's
+# actual output; decoding AUTO can corrupt UTF-8 from Chinese MSVC under an IDE.
 if(MSVC AND CMAKE_GENERATOR MATCHES "^Ninja")
     set(_probe_dir "${CMAKE_BINARY_DIR}/CMakeFiles/GPlatformMsvcDependencies")
     file(MAKE_DIRECTORY "${_probe_dir}")
@@ -27,7 +46,9 @@ if(MSVC AND CMAKE_GENERATOR MATCHES "^Ninja")
     set(CMAKE_CL_SHOWINCLUDES_PREFIX "${CMAKE_MATCH_2}")
     foreach(_language C CXX)
         set(CMAKE_${_language}_CL_SHOWINCLUDES_PREFIX "${CMAKE_CL_SHOWINCLUDES_PREFIX}")
-        set(_launcher "${CMAKE_COMMAND};-E;env;--unset=VS_UNICODE_OUTPUT;VSLANG=1033")
+        # The explicit command delimiter also refreshes dependency records
+        # produced by the previous launcher with an incorrectly decoded prefix.
+        set(_launcher "${CMAKE_COMMAND};-E;env;--unset=VS_UNICODE_OUTPUT;VSLANG=1033;--")
         if(CMAKE_${_language}_COMPILER_LAUNCHER)
             list(APPEND _launcher ${CMAKE_${_language}_COMPILER_LAUNCHER})
         endif()

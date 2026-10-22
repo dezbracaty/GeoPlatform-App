@@ -61,4 +61,8 @@ endif()
 
 if(GPLATFORM_BUILD_TESTS)
     set_tests_properties(PrinterQtFacadeCheck PROPERTIES TIMEOUT 15)
+    if(WIN32)
+        set_tests_properties(PrinterQtFacadeCheck PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>;PATH=path_list_prepend:$<TARGET_FILE_DIR:GPlatform>")
+    endif()
 endif()

@@ -735,6 +735,11 @@ bool SliceSettingsBridge::refreshActiveConfig() {
     return replaceConfig(bridgeActivationResult(std::move(*active)), true);
 }
 
+void SliceSettingsBridge::markAsSlicedForRevision(std::uint64_t sliced, std::optional<std::uint64_t> active) {
+    if (sliced && active && sliced == *active) markCurrentAsSliced();
+    else markNeedsReslice();
+}
+
 void SliceSettingsBridge::markCurrentAsSliced() {
     bool changed = false;
     {

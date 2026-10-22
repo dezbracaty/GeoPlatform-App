@@ -26,8 +26,7 @@ PanelSurface {
     height: expanded
             ? Math.min(maximumHeight, header.height + inspectorColumn.implicitHeight + 20)
             : 42
-    clip: true
-    surfaceRadius: 10
+    surfaceRadius: Theme.panelRadius
 
     Behavior on width {
         NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
@@ -79,14 +78,14 @@ PanelSurface {
 
                 Label {
                     Layout.fillWidth: true
-                    text: ModelPropertyBridge.displayName || qsTr("Selected Model")
+                    text: qsTr("Model Properties")
                     font: Typography.bodyStrong
                     color: Theme.res.textFillColorPrimary
                     elide: Text.ElideMiddle
                 }
                 Label {
                     Layout.fillWidth: true
-                    text: ModelPropertyBridge.modelType
+                    text: ModelPropertyBridge.displayName || qsTr("Select a model to inspect it")
                     font: Typography.caption
                     color: Theme.res.textFillColorTertiary
                     elide: Text.ElideRight
@@ -97,7 +96,7 @@ PanelSurface {
                 Layout.preferredWidth: 32
                 Layout.preferredHeight: 32
                 flat: true
-                radius: 6
+                radius: root.SmoothUI.radius
                 enabled: root.expanded || ModelPropertyBridge.hasSelectedModel
                 icon.name: root.expanded
                            ? FluentIcons.graph_ChevronRightSmall
@@ -147,7 +146,7 @@ PanelSurface {
         ColumnLayout {
             id: inspectorColumn
             width: scrollView.availableWidth
-            spacing: 10
+            spacing: PrintWorkspaceStyle.space12
 
             Label {
                 text: qsTr("Dimensions")
@@ -243,7 +242,7 @@ PanelSurface {
                     Accessible.name: qsTr("Change model appearance color")
                     onClicked: appearanceColorDialog.open()
                     background: Rectangle {
-                        radius: 6
+                        radius: root.SmoothUI.radius
                         color: root.authoredColor
                         border.width: 1
                         border.color: Theme.res.controlStrokeColorDefault
@@ -336,7 +335,7 @@ PanelSurface {
                         onClicked: ModelPropertyBridge.assignFilamentSlot(index + 1)
 
                         background: Rectangle {
-                            radius: 6
+                            radius: root.SmoothUI.radius
                             color: slotButton.selected
                                    ? Theme.res.subtleFillColorSecondary
                                    : Theme.res.controlFillColorDefault
@@ -397,7 +396,7 @@ PanelSurface {
         property string value: ""
         Layout.fillWidth: true
         Layout.preferredHeight: 48
-        radius: 6
+        radius: root.SmoothUI.radius
         color: Theme.res.subtleFillColorSecondary
 
         ColumnLayout {

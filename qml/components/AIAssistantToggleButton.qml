@@ -1,10 +1,12 @@
 import QtQuick
 import SmoothUI
 import SmoothUI.Controls
+import SmoothUI.impl
 import GPlatform 1.0
 
 Item {
     id: root
+    SmoothUI.theme: Theme.of(root)
     implicitWidth: 38
     implicitHeight: 38
 
@@ -13,7 +15,7 @@ Item {
 
     signal clicked()
 
-    readonly property color accentColor: Theme.accentColor.defaultBrushFor()
+    readonly property color accentColor: root.SmoothUI.theme.accentColor.defaultBrushFor(root.SmoothUI.dark)
 
     Rectangle {
         id: pulseRing
@@ -38,25 +40,8 @@ Item {
         focusPolicy: Qt.StrongFocus
         scale: down ? 0.94 : 1
 
-        background: Rectangle {
-            radius: width / 2
-            color: root.opened
-                   ? root.accentColor
-                   : (assistantButton.hovered
-                      ? Theme.accentColor.tertiaryBrushFor()
-                      : Theme.res.subtleFillColorSecondary)
-            border.width: 1
-            border.color: root.opened || assistantButton.hovered
-                          ? root.accentColor
-                          : Theme.res.cardStrokeColorDefaultSolid
-
-            Behavior on color {
-                ColorAnimation { duration: 160 }
-            }
-            Behavior on border.color {
-                ColorAnimation { duration: 160 }
-            }
-        }
+        radius: width / 2
+        highlighted: root.opened
 
         contentItem: Item {
             Icon {
@@ -66,7 +51,7 @@ Item {
                 width: 17
                 height: 17
                 source: FluentIcons.graph_ChatBubbles
-                color: root.opened ? "#FFFFFF" : root.accentColor
+                color: assistantButton.SmoothUI.textColor
 
                 Behavior on color {
                     ColorAnimation { duration: 160 }
@@ -81,7 +66,7 @@ Item {
                 width: 8
                 height: 8
                 source: FluentIcons.graph_FavoriteStarFill
-                color: root.opened ? "#FFFFFF" : root.accentColor
+                color: assistantButton.SmoothUI.textColor
 
                 SequentialAnimation on scale {
                     running: root.streaming
@@ -123,9 +108,9 @@ Item {
         width: 7
         height: 7
         radius: width / 2
-        color: root.streaming ? "#00B77A" : root.accentColor
+        color: root.streaming ? root.SmoothUI.theme.res.systemFillColorSuccess : root.accentColor
         border.width: 1
-        border.color: "#FFFFFF"
+        border.color: root.SmoothUI.theme.res.cardBackgroundColor
         anchors.right: assistantButton.right
         anchors.bottom: assistantButton.bottom
         anchors.rightMargin: -1

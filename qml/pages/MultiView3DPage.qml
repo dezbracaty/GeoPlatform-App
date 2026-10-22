@@ -161,7 +161,7 @@ Item {
                 color: Theme.res.layerFillColorDefault
                 border.color: Theme.res.cardStrokeColorDefault
                 border.width: 1
-                radius: 8
+                radius: Theme.panelRadius
                 clip: true
 
                 // 视图标题
@@ -172,7 +172,7 @@ Item {
                         anchors.right: parent.right
                         height: 32
                         color: Theme.res.layerFillColorAlt
-                        radius: 8
+                        radius: Theme.panelRadius
 
                         Rectangle {
                             anchors.bottom: parent.bottom
@@ -299,7 +299,7 @@ Item {
                 color: Theme.res.layerFillColorDefault
                 border.color: Theme.res.cardStrokeColorDefault
                 border.width: 1
-                radius: 8
+                radius: Theme.panelRadius
                 clip: true
 
                 Rectangle {
@@ -309,7 +309,7 @@ Item {
                     anchors.right: parent.right
                     height: 32
                     color: Theme.res.layerFillColorAlt
-                    radius: 8
+                    radius: Theme.panelRadius
 
                     Rectangle {
                         anchors.bottom: parent.bottom
@@ -426,7 +426,7 @@ Item {
                 color: Theme.res.layerFillColorDefault
                 border.color: Theme.res.cardStrokeColorDefault
                 border.width: 1
-                radius: 8
+                radius: Theme.panelRadius
                 clip: true
 
                 Rectangle {
@@ -436,7 +436,7 @@ Item {
                     anchors.right: parent.right
                     height: 32
                     color: Theme.res.layerFillColorAlt
-                    radius: 8
+                    radius: Theme.panelRadius
 
                     Rectangle {
                         anchors.bottom: parent.bottom
@@ -553,7 +553,7 @@ Item {
                 color: Theme.res.layerFillColorDefault
                 border.color: Theme.res.cardStrokeColorDefault
                 border.width: 1
-                radius: 8
+                radius: Theme.panelRadius
                 clip: true
 
                 Rectangle {
@@ -563,7 +563,7 @@ Item {
                     anchors.right: parent.right
                     height: 32
                     color: Theme.res.layerFillColorAlt
-                    radius: 8
+                    radius: Theme.panelRadius
 
                     Rectangle {
                         anchors.bottom: parent.bottom
@@ -689,7 +689,7 @@ Item {
                     color: Theme.res.layerFillColorDefault
                     border.color: Theme.res.cardStrokeColorDefault
                     border.width: 1
-                    radius: 8
+                    radius: Theme.panelRadius
                     clip: true
 
                     ThreadRendererQmlItem {
@@ -737,7 +737,7 @@ Item {
                     color: Theme.res.layerFillColorDefault
                     border.color: Theme.res.cardStrokeColorDefault
                     border.width: 1
-                    radius: 8
+                    radius: Theme.panelRadius
                     clip: true
 
                     ThreadRendererQmlItem {
@@ -776,7 +776,7 @@ Item {
             color: Theme.res.layerFillColorDefault
             border.color: Theme.res.cardStrokeColorDefault
             border.width: 1
-            radius: 8
+            radius: Theme.panelRadius
             clip: true
             visible: layoutSelector.currentIndex === 3
 
@@ -788,7 +788,7 @@ Item {
                 anchors.right: parent.right
                 height: 32
                 color: Theme.res.layerFillColorAlt
-                radius: 8
+                radius: Theme.panelRadius
                 z: 1
 
                 Rectangle {

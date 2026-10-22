@@ -88,7 +88,7 @@ AppPopup {
     y: userPositioned
        ? boundedY(draggedY)
        : centeredY
-    SmoothUI.radius: 14
+    SmoothUI.radius: Theme.dialogRadius
     showHeader: false
     surfaceElevation: 10
     surfaceShadowOpacity: 0.30
@@ -164,6 +164,7 @@ AppPopup {
         Pane {
             id: titleBar
             objectName: "aiAssistantTitleBar"
+            background: null
             Layout.fillWidth: true
             Layout.preferredHeight: 60
             padding: 0
@@ -220,7 +221,7 @@ AppPopup {
                         Layout.preferredWidth: 28
                         Layout.preferredHeight: 28
                         source: FluentIcons.graph_ChatBubbles
-                        color: control.SmoothUI.theme.accentColor.defaultBrushFor()
+                        color: control.SmoothUI.theme.accentColor.defaultBrushFor(control.SmoothUI.dark)
                     }
 
                     ColumnLayout {
@@ -238,7 +239,7 @@ AppPopup {
                                   : qsTr("Press Alt+I to open or collapse anytime")
                             font: Typography.caption
                             color: AIChatBridge.streaming
-                                   ? control.SmoothUI.theme.accentColor.defaultBrushFor()
+                                   ? control.SmoothUI.theme.accentColor.defaultBrushFor(control.SmoothUI.dark)
                                    : control.SmoothUI.theme.res.textFillColorSecondary
                         }
                     }
@@ -303,7 +304,7 @@ AppPopup {
                         Layout.preferredWidth: 42
                         Layout.preferredHeight: 42
                         source: FluentIcons.graph_ChatBubbles
-                        color: control.SmoothUI.theme.accentColor.defaultBrushFor()
+                        color: control.SmoothUI.theme.accentColor.defaultBrushFor(control.SmoothUI.dark)
                     }
                     Label {
                         Layout.fillWidth: true
@@ -388,7 +389,7 @@ AppPopup {
                             anchors.right: isUser ? parent.right : undefined
                             anchors.left: isUser ? undefined : parent.left
                             padding: 8
-                            SmoothUI.radius: 10
+                            SmoothUI.radius: Theme.panelRadius
 
                             contentItem: ColumnLayout {
                                 id: messageColumn
@@ -452,7 +453,7 @@ AppPopup {
                                     Layout.fillWidth: true
                                     visible: isToolTrace && toolExpanded
                                     padding: 6
-                                    SmoothUI.radius: 7
+                                    SmoothUI.radius: Theme.controlRadius
 
                                     contentItem: ColumnLayout {
                                         id: toolDetails
@@ -490,7 +491,11 @@ AppPopup {
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: contentHeight
                                     visible: !isToolTrace
-                                    text: entry && entry.text ? entry.text : ""
+                                    text: index === 0 && roleName === "assistant"
+                                          && entry && !entry.turnId
+                                          && entry.text === "AI Assistant ready. You can start chatting now."
+                                          ? qsTr("AI Assistant ready. You can start chatting now.")
+                                          : (entry && entry.text ? entry.text : "")
                                     selectByKeyboard: true
                                     wrapMode: TextEdit.Wrap
                                     textFormat: TextEdit.PlainText
@@ -517,7 +522,7 @@ AppPopup {
                                                     : FluentIcons.graph_CommandPrompt
                                             color: actionExecution && !actionExecution.success
                                                    ? control.SmoothUI.theme.res.systemFillColorCritical
-                                                   : control.SmoothUI.theme.accentColor.defaultBrushFor()
+                                                   : control.SmoothUI.theme.accentColor.defaultBrushFor(control.SmoothUI.dark)
                                         }
                                         Label {
                                             Layout.fillWidth: true
@@ -559,7 +564,7 @@ AppPopup {
 
                                             Layout.fillWidth: true
                                             padding: 6
-                                            SmoothUI.radius: 7
+                                            SmoothUI.radius: Theme.controlRadius
 
                                             contentItem: ColumnLayout {
                                                 id: actionStepColumn
@@ -653,7 +658,7 @@ AppPopup {
                 Frame {
                     Layout.fillWidth: true
                     padding: 8
-                    SmoothUI.radius: 10
+                    SmoothUI.radius: Theme.panelRadius
 
                     contentItem: ColumnLayout {
                         id: composer

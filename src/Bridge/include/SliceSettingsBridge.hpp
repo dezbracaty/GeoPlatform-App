@@ -1,4 +1,6 @@
 #pragma once
+#include <optional>
+#include <cstdint>
 
 #include <BridgeBase.hpp>
 #include "SlicingBackend.hpp"
@@ -51,6 +53,7 @@ public:
     Q_INVOKABLE void removeSetting(const QString& key);
     Q_INVOKABLE void resetToDefaults();
     Q_INVOKABLE void markCurrentAsSliced();
+    void markAsSlicedForRevision(std::uint64_t sliced, std::optional<std::uint64_t> active);
     Q_INVOKABLE void markNeedsReslice();
     Q_INVOKABLE QVariantList machineModels() const;
     Q_INVOKABLE QVariantList buildPlateOptions() const;

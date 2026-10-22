@@ -10,6 +10,7 @@ import "../workspaces/normal/components"
 
 Item {
     id: root
+    SmoothUI.theme: Theme.of(root)
 
     // Each concrete page fixes these values once. Separate page instances own
     // separate renderers while sharing this pixel-identical presentation.
@@ -22,21 +23,7 @@ Item {
     required property QtObject workspaceContext
     signal workspaceRequested(string workspaceName)
 
-    // 声明标题栏背景配置（渐变：上方偏白 → 下方天蓝色，高透明度）
-    // #30 = 19% 不透明度，#50 = 31% 不透明度
-    property var appBarBackground: ({
-        type: "gradient",
-        colors: ["#30FFFFFF", "#5087CEEB"],
-        direction: "vertical"
-    })
 
-    // 声明侧边栏背景配置（与标题栏风格一致，80%以上不透明度）
-    // #CC = 80% 不透明度，#D0 = 82% 不透明度
-    property var sideBarBackground: ({
-        type: "gradient",
-        colors: ["#CCFFFFFF", "#D087CEEB"],
-        direction: "vertical"
-    })
 
     property bool gridVisible: true
     property bool showBedBounds: true
@@ -232,7 +219,7 @@ Item {
                 // 拖拽提示覆盖层
                 Rectangle {
                     anchors.fill: parent
-                    color: "#80000000"  // 半透明黑色背景
+                    color: root.SmoothUI.theme.res.smokeFillColorDefault
                     visible: dropArea.isDragging
                     z: 1000
 
@@ -240,9 +227,9 @@ Item {
                         anchors.centerIn: parent
                         width: 300
                         height: 150
-                        radius: 16
-                        color: "#F3F3F3"  // 浅灰背景
-                        border.color: "#0078D4"  // 蓝色边框
+                        radius: Theme.dialogRadius
+                        color: root.SmoothUI.theme.res.cardBackgroundColor
+                        border.color: root.SmoothUI.theme.accentColor.defaultBrushFor(root.SmoothUI.dark)
                         border.width: 2
 
                         Column {
@@ -255,7 +242,7 @@ Item {
                                 text: dropArea.dragFileType === "gcode" ? "\uE8E5" : "\uE8E4"  // 文档或模型图标
                                 font.family: "Segoe Fluent Icons"
                                 font.pixelSize: 48
-                                color: "#0078D4"  // 蓝色
+                                color: root.SmoothUI.theme.accentColor.defaultBrushFor(root.SmoothUI.dark)
                             }
 
                             // 提示文字
@@ -265,7 +252,7 @@ Item {
                                     qsTr("Drop to load a G-code file") :
                                     qsTr("Drop to import a model file")
                                 font: Typography.subtitle
-                                color: "#1A1A1A"
+                                color: root.SmoothUI.theme.res.textFillColorPrimary
                             }
 
                             // 文件类型说明
@@ -275,7 +262,7 @@ Item {
                                     qsTr("Supports .gcode and .gco files") :
                                     qsTr("Supports .stl, .obj, .3mf, and other formats")
                                 font: Typography.caption
-                                color: "#666666"
+                                color: root.SmoothUI.theme.res.textFillColorSecondary
                             }
                         }
                     }

@@ -53,9 +53,23 @@ Button {
         return displayName
     }
 
+    readonly property string conciseStatusText: {
+        if (!agentAvailable || (serviceError && !accessRequired))
+            return qsTr("Device unavailable")
+        if (!hasSelectedDevice)
+            return qsTr("Select printer")
+        if (!selectedDeviceOnline)
+            return qsTr("Offline")
+        if (accessRequired)
+            return qsTr("Access required")
+        if (loading)
+            return qsTr("Loading")
+        return displayName
+    }
+
     signal controlPanelRequested()
 
-    implicitHeight: compact ? PrintWorkspaceStyle.controlHeight : 40
+    implicitHeight: compact ? PrintWorkspaceStyle.controlHeight : Theme.actionHeight
     implicitWidth: contentRow.implicitWidth + leftPadding + rightPadding
     readonly property real minimumContentWidth: contentRow.Layout.minimumWidth + leftPadding + rightPadding
     padding: 0
@@ -67,7 +81,7 @@ Button {
         anchors.fill: parent
         color: root.embedded ? "transparent"
                              : root.SmoothUI.theme.res.solidBackgroundFillColorBase
-        radius: root.embedded ? PrintWorkspaceStyle.controlRadius : 10
+        radius: root.embedded ? root.SmoothUI.radius : Theme.panelRadius
         border.color: root.SmoothUI.theme.res.cardStrokeColorDefault
         border.width: root.embedded ? 0 : 1
 
@@ -133,7 +147,7 @@ Button {
             Layout.fillWidth: true
             Layout.minimumWidth: 0
             elide: Text.ElideRight
-            text: root.statusText
+            text: root.compact && root.embedded ? root.conciseStatusText : root.statusText
             font: Typography.body
             color: (!root.agentAvailable || root.serviceError)
                    ? root.SmoothUI.theme.res.systemFillColorCritical

@@ -28,6 +28,7 @@ target_link_libraries(GPlatformCore
         Foundation::QmlRegistration
         BaseUI
     PRIVATE
+        Bridge
         BaseInteraction
         Document
         GPlatform::Tr
