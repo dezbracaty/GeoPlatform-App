@@ -11,6 +11,9 @@ SettingsHelper* SettingsHelper::m_instance = nullptr;
 
 SettingsHelper::SettingsHelper(QObject* parent)
     : QObject(parent) {
+    // This process singleton must survive QML engine reloads. The application
+    // owns its lifetime and flushes its QSettings during normal destruction.
+    QQmlEngine::setObjectOwnership(this, QQmlEngine::CppOwnership);
 }
 
 SettingsHelper::~SettingsHelper() = default;

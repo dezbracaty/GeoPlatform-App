@@ -7,10 +7,33 @@
 #include <QQmlEngine>
 #include <QJSEngine>
 #include <QFileInfo>
+#include <QEvent>
+#include <QGuiApplication>
+#include <QPointer>
 #include <QTimer>
 #include <utility>
 
 ApplicationHelper* ApplicationHelper::m_instance = nullptr;
+
+void ApplicationHelper::releaseQmlWindows(QQmlEngine& engine) {
+    QList<QPointer<QQuickWindow>> windows;
+    for (auto* candidate : QGuiApplication::allWindows()) {
+        auto* window = qobject_cast<QQuickWindow*>(candidate);
+        if (window && qmlEngine(window) == &engine &&
+            QQmlEngine::objectOwnership(window) == QQmlEngine::JavaScriptOwnership &&
+            !window->QObject::parent()) {
+            windows.append(window);
+        }
+    }
+    // Deleting a window can destroy another candidate through QML ownership.
+    // Snapshot every candidate first and observe cascading deletion safely.
+    for (const auto& window : windows) {
+        if (window) delete window.data();
+    }
+    // The application event loop has stopped. Window owners such as KDD Group
+    // queue visual deletion during destruction; finish it before QML singletons.
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+}
 
 bool ApplicationHelper::scheduleRestart(const QStringList& arguments, QString* error) {
     if (arguments.isEmpty() || !m_restartArguments.isEmpty() ||

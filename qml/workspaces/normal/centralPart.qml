@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Effects
 import Qt.labs.platform as Platform
@@ -20,6 +21,15 @@ Item {
                                          ? threadRenderer.renderActive
                                          : false
     onRenderActiveChanged: {
+        if (!renderActive && !(Global.mainScreen && Global.mainScreen.userGuide.switchingWorkspace)) {
+            const guide = Global.mainScreen ? Global.mainScreen.userGuide : null
+            const session = guide ? guide.saved : null
+            // Restore after the external activatePage call finishes, not inside its binding update.
+            Qt.callLater(function() {
+                if (guide && guide.saved === session && !centralFragment.renderActive)
+                    centralFragment.closeGuide()
+            })
+        }
         if (!renderActive && FiberMaskBridge.active)
             FiberMaskBridge.cancel()
         if (!renderActive && CutToolBridge.active)
@@ -60,6 +70,46 @@ Item {
     property bool rotationWidgetActive: false  // 跟踪旋转widget是否真正激活
     property bool cellHighlightActive: false  // 跟踪面片高亮功能是否激活
 
+    readonly property Item guideViewport: threadRenderer
+    readonly property Item guideOverlay: Overlay.overlay
+    readonly property var guideGroups: leftPrintToolbar.guideGroups
+    readonly property Item guideLeftToolbar: leftPrintToolbar
+    readonly property Item guideRightToolbar: rightPrintToolbar
+
+    function startGuide() {
+        if (renderActive && Global.mainScreen)
+            Global.mainScreen.startUserGuide(centralFragment)
+    }
+    function closeGuide() {
+        if (Global.mainScreen && Global.mainScreen.userGuide.sourceWorkspace === centralFragment)
+            Global.mainScreen.userGuide.close("interrupted")
+    }
+    function guideState() {
+        return { inspector: propertiesExpanded, scene: sceneSettingsPopup.visible,
+                 selection: SelectionBridge.selectedId }
+    }
+    function guideSummary() {
+        return { inspector: propertiesExpanded, scene: sceneSettingsPopup.visible,
+                 selection: SelectionBridge.selectedId, selectionCount: SelectionBridge.selectionCount,
+                 modelCount: objectCount, rendererRole: threadRenderer ? threadRenderer.rendererRole : -1,
+                 camera: [CameraBridge.cameraX, CameraBridge.cameraY, CameraBridge.cameraZ,
+                          CameraBridge.focalX, CameraBridge.focalY, CameraBridge.focalZ],
+                 fiberEditing: FiberMaskBridge.active, cutEditing: CutToolBridge.active }
+    }
+    function restoreGuideState(state) {
+        if (SelectionBridge.selectedId === state.selection)
+            propertiesExpanded = state.inspector
+        if (!state.scene && sceneSettingsPopup.visible)
+            sceneSettingsPopup.close()
+        else if (state.scene && !sceneSettingsPopup.visible)
+            sceneSettingsPopup.open()
+    }
+    Component.onDestruction: closeGuide()
+    Connections {
+        target: centralFragment.Window
+        function onWindowChanged() { centralFragment.closeGuide() }
+    }
+
     function openSceneSettingsPanel() {
         sceneSettingsPopup.triggerButton = rightPrintToolbar
         sceneSettingsPopup.open()
@@ -99,6 +149,7 @@ Item {
     // Left Print Toolbar
     LeftPrintToolbar {
         id: leftPrintToolbar
+        objectName: "print.toolbar.left"
         x: 16
         y: Math.max(70, (parent.height - height) / 2)
         z: 10
@@ -112,9 +163,11 @@ Item {
     // Right Print Toolbar
     RightPrintToolbar {
         id: rightPrintToolbar
+        objectName: "print.toolbar.right"
         x: parent.width - width - 16
         y: Math.max(70, (parent.height - height) / 2)
         z: 10
+        onGuideRequested: centralFragment.startGuide()
 
         // 连接打开设置面板信号
         onOpenSettingsPanel: function(panelType, triggerButton) {
@@ -182,6 +235,9 @@ Item {
 
     FloatingSettingsPanel {
         id: sceneSettingsPopup
+        objectName: "sceneSettingsPopup"
+        guideMode: Global.mainScreen && Global.mainScreen.userGuide.running
+                   && Global.mainScreen.userGuide.sourceWorkspace === centralFragment
         viewportItem: centralFragment
         title: qsTr("Scene Settings")
         panelWidth: 400

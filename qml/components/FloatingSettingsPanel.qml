@@ -9,6 +9,8 @@ AppPopup {
     property int panelHeight: 480
     property bool integratedTitleBar: false
     property bool lazyContent: false
+    property bool guideMode: false
+    focus: !guideMode
     property var viewportItem: null
     property var triggerButton: null
 
@@ -56,7 +58,7 @@ AppPopup {
               : viewportLeftInset
     y: viewportTopInset
 
-    onOpened: root.forceActiveFocus()
+    onOpened: if (!root.guideMode) root.forceActiveFocus()
 
     Loader {
         id: contentLoader

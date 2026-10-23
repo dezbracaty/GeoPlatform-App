@@ -13,6 +13,8 @@ class SettingsHelper : public QObject {
     Q_OBJECT
     QML_SINGLETON
     QML_ELEMENT
+    Q_PROPERTY(bool printGuideHandled READ printGuideHandled NOTIFY printGuideHandledChanged)
+    Q_PROPERTY(bool printGuideAutoAttempted READ printGuideAutoAttempted NOTIFY printGuideAutoAttemptedChanged)
 
 private:
     explicit SettingsHelper(QObject* parent = nullptr);
@@ -21,7 +23,7 @@ private:
 public:
     static SettingsHelper* getInstance() {
         if (!m_instance) {
-            m_instance = new SettingsHelper();
+            m_instance = new SettingsHelper(QCoreApplication::instance());
         }
         return m_instance;
     }
@@ -43,7 +45,7 @@ public:
         save("locale", locale);
     }
     Q_INVOKABLE QString getLocale() {
-        return get("locale", QVariant("en_US")).toString();
+        return get("locale", QVariant("zh_CN")).toString();
     }
     Q_INVOKABLE void saveDisplayMode(int mode) {
         save("displayMode", mode);
@@ -84,8 +86,29 @@ public:
         return get("lastPage", QVariant("")).toString();
     }
 
+    bool printGuideHandled() { return get("printGuide/handled", false).toBool(); }
+    bool printGuideAutoAttempted() const { return m_printGuideAutoAttempted; }
+    Q_INVOKABLE bool claimPrintGuideAutoAttempt() {
+        if (m_printGuideAutoAttempted || printGuideHandled())
+            return false;
+        m_printGuideAutoAttempted = true;
+        emit printGuideAutoAttemptedChanged();
+        return true;
+    }
+    Q_INVOKABLE void markPrintGuideHandled() {
+        if (printGuideHandled())
+            return;
+        save("printGuide/handled", true);
+        m_settings->sync();
+        emit printGuideHandledChanged();
+    }
+
     Q_INVOKABLE QVariantMap getImportFileDialogState();
     Q_INVOKABLE void saveImportFileDialogState(const QVariantMap& state);
+
+signals:
+    void printGuideHandledChanged();
+    void printGuideAutoAttemptedChanged();
 
 private:
     void save(const QString& key, QVariant val);
@@ -93,4 +116,5 @@ private:
 
 private:
     QScopedPointer<QSettings> m_settings;
+    bool m_printGuideAutoAttempted{false};
 };

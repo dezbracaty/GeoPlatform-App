@@ -14,6 +14,21 @@ foreach(_path_input CMAKE_FETCH_CACHE CMAKE_TOOLCHAIN_FILE
         file(TO_CMAKE_PATH "${${_path_input}}" ${_path_input})
     endif()
 endforeach()
+if(CMAKE_HOST_WIN32)
+    if(NOT Qt6_DIR)
+        message(FATAL_ERROR
+            "Qt6_DIR is required on Windows. Set it to the directory containing Qt6Config.cmake.\n"
+            "VS Code: set cmake.configureEnvironment.Qt6_DIR in .vscode/settings.json.\n"
+            "CLI: set the Qt6_DIR environment variable or pass -DQt6_DIR=\"<Qt>/lib/cmake/Qt6\".")
+    endif()
+    if(NOT IS_DIRECTORY "${Qt6_DIR}" OR NOT EXISTS "${Qt6_DIR}/Qt6Config.cmake"
+            OR IS_DIRECTORY "${Qt6_DIR}/Qt6Config.cmake")
+        message(FATAL_ERROR
+            "Qt6_DIR does not contain Qt6Config.cmake: ${Qt6_DIR}\n"
+            "Select the matching MSVC Qt installation's lib/cmake/Qt6 directory.\n"
+            "Update Qt6_DIR in .vscode/settings.json, the environment, or the CMake cache.")
+    endif()
+endif()
 if(GPLATFORM_TARGET_ARCH AND CMAKE_HOST_APPLE)
     set(_requested_arch "${GPLATFORM_TARGET_ARCH}")
     if(_requested_arch STREQUAL "x64")
@@ -43,6 +58,12 @@ if(CMAKE_TOOLCHAIN_FILE AND NOT EXISTS "${CMAKE_TOOLCHAIN_FILE}")
     message(FATAL_ERROR "CMAKE_TOOLCHAIN_FILE does not exist: ${CMAKE_TOOLCHAIN_FILE}")
 endif()
 if(CMAKE_GENERATOR STREQUAL "Ninja")
+    if(NOT CMAKE_MAKE_PROGRAM AND CMAKE_HOST_WIN32)
+        # VS ships Ninja alongside CMake; prefer it over unrelated PATH tools.
+        get_filename_component(_gplatform_cmake_bin "${CMAKE_COMMAND}" DIRECTORY)
+        find_program(CMAKE_MAKE_PROGRAM NAMES ninja
+            PATHS "${_gplatform_cmake_bin}/../../Ninja" NO_DEFAULT_PATH)
+    endif()
     if(NOT CMAKE_MAKE_PROGRAM)
         find_program(CMAKE_MAKE_PROGRAM NAMES ninja)
     endif()

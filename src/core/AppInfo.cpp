@@ -5,6 +5,7 @@
 #include "GettextBridge.h"
 #include "Tr.hpp"
 #include <QJSEngine>
+#include <QCoreApplication>
 
 #include <QQmlContext>
 #include <QGuiApplication>
@@ -13,7 +14,7 @@
 
 AppInfo::AppInfo(QObject* parent)
     : QObject{parent} {
-    setVersion(PROJECT_VERSION);
+    setVersion(QCoreApplication::applicationVersion());
     m_locales << "en_US";
     m_locales << "zh_CN";
     // Load saved locale from settings

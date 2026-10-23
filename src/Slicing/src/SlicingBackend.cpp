@@ -2,6 +2,10 @@
 
 #include "Foundation/Log.h"
 
+#ifdef _WIN32
+#include <QCoreApplication>
+#endif
+
 #include <atomic>
 #include <condition_variable>
 #include <deque>
@@ -140,7 +144,12 @@ SlicingBackend::SlicingBackend()
 {
     std::vector<libslicer::ConfigDiagnostic> diagnostics;
     m_available = m_impl->invoke([this, &diagnostics]() {
-        m_impl->library = libslicer::Library::open({}, &diagnostics);
+        libslicer::LibraryOptions options;
+#ifdef _WIN32
+        options.resource_directory =
+            (QCoreApplication::applicationDirPath() + "/resources/libslicer").toStdString();
+#endif
+        m_impl->library = libslicer::Library::open(options, &diagnostics);
         if (!m_impl->library) {
             return false;
         }

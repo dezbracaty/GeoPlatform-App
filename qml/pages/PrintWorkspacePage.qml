@@ -72,6 +72,7 @@ Item {
             // Page-role-selected renderer
             ThreadRendererQmlItem {
                 id: threadRenderer
+                objectName: "print.viewport." + root.workspaceName + ".renderer"
                 anchors.fill: parent
                 rendererRole: root.rendererRole
                 renderActive: root.renderActive
@@ -130,6 +131,26 @@ Item {
                         color: Theme.res.textFillColorPrimary
                         anchors.horizontalCenter: parent.horizontalCenter
                     }
+                }
+            }
+
+            Rectangle {
+                anchors.top: parent.top
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.topMargin: 16
+                width: Math.min(parent.width - 32, 560)
+                height: renderErrorLabel.implicitHeight + 24
+                radius: 6
+                z: 60
+                visible: threadRenderer.renderingError.length > 0
+                color: Theme.res.solidBackgroundFillColorBase
+                Label {
+                    id: renderErrorLabel
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    text: threadRenderer.renderingError
+                    wrapMode: Text.Wrap
+                    color: Theme.res.textFillColorPrimary
                 }
             }
 

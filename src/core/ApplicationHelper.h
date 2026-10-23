@@ -40,6 +40,10 @@ public:
         m_engine = engine;
     }
 
+    // After the event loop stops, release parentless JavaScript-owned router
+    // windows while their engine's theme singletons are still available.
+    static void releaseQmlWindows(QQmlEngine& engine);
+
     Q_INVOKABLE void restart() {
         // Start a new instance
         QProcess::startDetached(QCoreApplication::applicationFilePath(),

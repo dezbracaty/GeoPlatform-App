@@ -23,7 +23,7 @@ ScrollablePage {
         }
         
         Label {
-            text: "Version 1.0.0"
+            text: "Version " + AppInfo.version
             font: Typography.subtitle
         }
         

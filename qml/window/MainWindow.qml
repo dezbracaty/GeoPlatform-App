@@ -280,6 +280,7 @@ FramelessWindow {
             }
             Button {
                 implicitWidth: Math.max(76, implicitContentWidth + leftPadding + rightPadding)
+                objectName: "window.quit.confirm"
                 text: qsTr("Ok")
                 highlighted: true
                 onClicked: {

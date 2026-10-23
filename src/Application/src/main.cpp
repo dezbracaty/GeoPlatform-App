@@ -168,6 +168,9 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
     }
 
     QQmlApplicationEngine engine;
+    const auto cleanupQmlWindows = qScopeGuard([&engine] {
+        ApplicationHelper::releaseQmlWindows(engine);
+    });
     engine.addImportPath(":/qt/qml");
 
     // Set the engine reference in ApplicationHelper for QML engine restart functionality

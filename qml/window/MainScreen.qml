@@ -11,6 +11,72 @@ Item {
     id: root
     property alias pageRouter: page_router
     property bool debugWindowOpened: false
+    property alias userGuide: workspaceGuide
+    property bool automaticGuidePending: false
+
+    function currentPrintHost() {
+        const routed = navigation_view.routerView.currentItem
+        const page = routed ? (routed.singleton && routed.singletonItem
+                               ? routed.singletonItem.item : (routed.item || routed)) : null
+        return page && page.objectName === "printWorkspaceHost"
+                && typeof page.rendererForPage === "function"
+                && page.activeWorkspaceContent ? page : null
+    }
+    function startUserGuide(workspace) {
+        return workspaceGuide.start(workspace, currentPrintHost())
+    }
+    function automaticGuideHost() {
+        const window = root.Window.window
+        const host = currentPrintHost()
+        if (!window || !window.visible || !window.active || !root.visible
+                || !host || !host.visible || !host.dockReady || host.activePageName !== "prepare")
+            return null
+        const workspace = host.activeWorkspaceContent
+        const renderer = host.rendererForPage("prepare")
+        const overlay = workspace ? workspace.guideOverlay : null
+        if (!workspace || !workspace.renderActive || !renderer || !renderer.visible
+                || !renderer.renderActive || !renderer.hasPresentedFrame
+                || renderer.width <= 0 || renderer.height <= 0
+                || workspace.guideViewport !== renderer || renderer.Window.window !== window
+                || !overlay || overlay.Window.window !== window
+                || overlay.width <= 0 || overlay.height <= 0)
+            return null
+        return host
+    }
+    function tryAutomaticGuide() {
+        if (automaticGuidePending || workspaceGuide.running || SettingsHelper.printGuideHandled
+                || SettingsHelper.printGuideAutoAttempted || !automaticGuideHost())
+            return
+        automaticGuidePending = true
+        // Recheck after dock/layout callbacks, before consuming the one process attempt.
+        Qt.callLater(function() {
+            automaticGuidePending = false
+            const host = automaticGuideHost()
+            if (!host || workspaceGuide.running || !SettingsHelper.claimPrintGuideAutoAttempt())
+                return
+            workspaceGuide.start(host.activeWorkspaceContent, host)
+        })
+    }
+    Timer {
+        interval: 200
+        repeat: true
+        running: !SettingsHelper.printGuideHandled && !SettingsHelper.printGuideAutoAttempted
+                 && !workspaceGuide.running
+        onTriggered: root.tryAutomaticGuide()
+    }
+    UserGuide {
+        id: workspaceGuide
+        navigation: navigation_view
+        aiPanel: aiAssistantPanel
+        onSessionEnded: function(reason, shown) {
+            if (shown && (reason === "complete" || reason === "dismissed"))
+                SettingsHelper.markPrintGuideHandled()
+        }
+    }
+    Connections {
+        target: navigation_view.routerView
+        function onCurrentItemChanged() { workspaceGuide.close("interrupted") }
+    }
 
     Component.onCompleted: Global.mainScreen = root
     Component.onDestruction: {
@@ -19,7 +85,7 @@ Item {
     }
 
     function openSliceSettings(params) {
-        var page = navigation_view.routerView.currentItem
+        var page = currentPrintHost()
         if (!page || page.objectName !== "printWorkspaceHost"
                 || typeof page.openSliceSettings !== "function") {
             console.error("Slice settings are unavailable on the current page")
@@ -240,6 +306,7 @@ Item {
         id: aiAssistantShortcut
         objectName: "aiAssistantShortcut"
         sequence: "Alt+I"
+        enabled: !workspaceGuide.running
         context: Qt.ApplicationShortcut
         onActivated: {
             if (!ActionManager.triggerAction("ui.ai.toggle"))
@@ -249,12 +316,14 @@ Item {
 
     Shortcut {
         sequence: "Ctrl+O"
+        enabled: !workspaceGuide.running
         context: Qt.ApplicationShortcut
         onActivated: Global.starter.chooseModel({})
     }
 
     Shortcut {
         sequence: "Ctrl+I"
+        enabled: !workspaceGuide.running
         context: Qt.ApplicationShortcut
         onActivated: Global.starter.chooseStl({})
     }

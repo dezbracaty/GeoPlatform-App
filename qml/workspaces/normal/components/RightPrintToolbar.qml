@@ -13,6 +13,7 @@ ToolbarSurface {
 
     // 信号：打开设置面板
     signal openSettingsPanel(string panelType, var triggerButton)
+    signal guideRequested()
 
     // 当前选中的面板类型
     property string currentPanelType: ""
@@ -57,20 +58,27 @@ ToolbarSurface {
                 color: Theme.res.dividerStrokeColorDefault
             }
 
+            IconButton {
+                objectName: "print.guide.start"
+                width: PrintWorkspaceStyle.toolbarButtonSize
+                height: PrintWorkspaceStyle.toolbarButtonSize
+                icon.name: FluentIcons.graph_ReadingMode
+                icon.width: 20
+                icon.height: 20
+                onClicked: rightPrintToolbar.guideRequested()
+
+                ToolTip {
+                    visible: parent.hovered
+                    text: qsTr("User Guide")
+                    delay: Theme.tooltipDelay
+                }
+            }
+
             // ==================== 帮助 ====================
             HoverExpandableButton {
                 icon.name: FluentIcons.graph_Help
                 tooltip: qsTr("Help")
                 expandItems: [
-                    {
-                        icon: FluentIcons.graph_Help,
-                        text: qsTr("User Guide"),
-                        tooltip: qsTr("View User Guide"),
-                        enabled: true,
-                        action: function() {
-                            console.log("Help clicked")
-                        }
-                    },
                     {
                         icon: FluentIcons.graph_Info,
                         text: qsTr("About"),

@@ -1,6 +1,6 @@
 {
   "OrcaSlicer": {
-    "content_sha256": "4ca56f0c43027c0da87eabdf84be1bb90c52ed6424213f679bb641525021d395",
+    "content_sha256": "bcf1f5227dcbc76a790e1a51e239c7edc4895fa61316ba207ea4c6e1c2e22945",
     "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "dirty": false,
     "files": {
@@ -14924,7 +14924,7 @@
       "src/libslic3r/Config.hpp": "455eb2c24a4b25cd8f089d3f020991ab6a1ca4d4d952b10b49fd10b3da5702e4",
       "src/libslic3r/ContinuousFiber/ContinuousFiberConfig.cpp": "3a6e5d53901ce2357974f187833d3df805b38db48b013dba58eafa4b3513d0b9",
       "src/libslic3r/ContinuousFiber/ContinuousFiberConfig.hpp": "d1a7160eb62f18a8a282360d7fccd5367754e7558c7324e3c13a919f5a2e0d46",
-      "src/libslic3r/ContinuousFiber/ContinuousFiberFillStrategy.cpp": "cc6113e20134dab85abe8408b4fa35dbbb6e267b094c9f95c084585bbb7e8a9a",
+      "src/libslic3r/ContinuousFiber/ContinuousFiberFillStrategy.cpp": "81917aa9daeb549c71900ca9daa2c27f3690520c38d4733aff45acf12233e221",
       "src/libslic3r/ContinuousFiber/ContinuousFiberFillStrategy.hpp": "a3b27b530645e26515a43f887396dc5df45edd267b6f4e189267a68f18fd049d",
       "src/libslic3r/ContinuousFiber/ContinuousFiberRectilinear.cpp": "9b660b037b151401cf6ea006423ff05517dd142c677d0c80a27ba874df1b8b59",
       "src/libslic3r/ContinuousFiber/FiberCoverageLedger.cpp": "dc5d48d15dc10541d32f6f2b48075bd96064a782db2861896dab0d655ba313ef",
@@ -14933,7 +14933,7 @@
       "src/libslic3r/ContinuousFiber/FiberIsland.hpp": "84e09d1bce59a9755513e925e9779f18f132f0b97d06430ace73b3f7bdea3a8f",
       "src/libslic3r/ContinuousFiber/FiberPathFinalizer.cpp": "bcfab233db2ccd9373dce645b1e94eb31d4744bf00fc4e22b7d328f417d988b6",
       "src/libslic3r/ContinuousFiber/FiberPathFinalizer.hpp": "d5a468b2e2e6ff0d37d0fd3904bbffa6cc057d663f9a72ff08e9f2acb2c4e77e",
-      "src/libslic3r/ContinuousFiber/FiberPathValidator.cpp": "d288608c41ac684bd6c39b367d32b4e8816fe66f4fff336e982504e65c1397fb",
+      "src/libslic3r/ContinuousFiber/FiberPathValidator.cpp": "affb25c6091fe14ea880ca23ac555d5dbbd57811275b54fcfd28f5a9fee4ce52",
       "src/libslic3r/ContinuousFiber/FiberPathValidator.hpp": "1b5ad3576191055da322511b3c710027e0bee0c086906cc9c54886130a135a95",
       "src/libslic3r/ContinuousFiber/FiberPolicyKey.hpp": "63cca4380215beaab26151cd8f3c52dfe60b7a4e6c9a4a427762be947c81cf56",
       "src/libslic3r/ContinuousFiber/FiberSource.hpp": "1a1f0eb9880febf5dcda19005dd1ec75b27848cf60e4e3f731ec1826f71c9b3c",
@@ -15355,7 +15355,7 @@
       "src/libslicer_api/CMakeLists.txt": "c28d6189e9ce424aa3c756124240de160ebb327aee60bdd30af32c0b7e60192d",
       "src/libslicer_api/Config.cpp": "7a9dbee11dbf6745231c009f8de5ee678ac3de9b56e15e4cd58845592537ce28",
       "src/libslicer_api/Library.cpp": "7353015aa035d88b16ac716aca16594522ea0fb965ec343b20d085896086a65a",
-      "tests/CMakeLists.txt": "acf92c17f754724f88e7e5ea8533e1b3ec3db3e5108cd15de3e1d8476eb56265",
+      "tests/CMakeLists.txt": "d033933a9c2ec45805cac0cf343604fbac05d93b809eee283110377937a7b0d6",
       "tests/catch2/CMake/Catch2Config.cmake.in": "15f22f3dbd4a75c6c7f11f30c845a0bbf7f445a136afb619d097f3491e3c360a",
       "tests/catch2/CMake/CatchConfigOptions.cmake": "7e8302d8bfe0a220f936b25715e399dda618009ba06d6c8cc8f27616b12f1696",
       "tests/catch2/CMake/CatchMiscFunctions.cmake": "72e35db469a524dfbbbf2172c128eb85ea70914c2efb60cb0ca0b503f90eb74d",
@@ -15734,7 +15734,7 @@
       "tests/data/two_hollow_squares.obj": "e74581f49f9df30cb362019d9382ac1829d2636c4f03198c3145d1f388aeaa4f",
       "tests/libnest2d/printer_parts.cpp": "cc6ceab7a2c273f2e010a193a12786a95f59c29be84efd983cc66f5a4fe719c4",
       "tests/libnest2d/printer_parts.hpp": "e71aae9c50f7421ae803a5c7bd053f4c34edf84942ec646f37405f95ffaf39a5",
-      "tests/libslic3r/CMakeLists.txt": "78f5051e5a2ef691a124644337b0ea7886e753be42d1e5bddec23df77d522d65",
+      "tests/libslic3r/CMakeLists.txt": "9acb5376ca5883f7a71a28a6520660c1c2992b78a12a916495bfd25642b365f9",
       "tests/libslic3r/libslic3r_tests.cpp": "1460a023be3bceec2f82be8f5dccc188b77681d3e40a034e9e89573f7cb819ae",
       "tests/libslic3r/test_3mf.cpp": "1dad6c39e4aacc9e76b68f3654c11e2ffe3468d5de6059568059599aaf3f0c34",
       "tests/libslic3r/test_aabbindirect.cpp": "cba9ab16e3966a696ffc4722973b04572ee86f53aa0e30ab18a408243e4945c3",
@@ -15745,7 +15745,7 @@
       "tests/libslic3r/test_clipper_offset.cpp": "6641d3f6a729e6a01f02435bb9b58e0eae3ce90b2fac854d11ab31db6f95f4bb",
       "tests/libslic3r/test_clipper_utils.cpp": "71929efb2e3b4690e1b63c41397b3154111015fb96695f9bfd7399b56f286c8e",
       "tests/libslic3r/test_config.cpp": "880aa47b0f5db6b43f55e6f546146ba867e693a6a9c5b7428e9396e3ca2f5810",
-      "tests/libslic3r/test_continuous_fiber.cpp": "fbc65d3e929847316f9402ab8f3c51999f6b36109fb7c224edbf90d11a4a56e3",
+      "tests/libslic3r/test_continuous_fiber.cpp": "7c472b9ebf1c2012310111db129c6f59ebde15bd75572f8a0d7b8c807bffe683",
       "tests/libslic3r/test_elephant_foot_compensation.cpp": "19a3e6895b50c106c5c2aed69f6b64906056e6a91ac5ce663f387009e2aaf48f",
       "tests/libslic3r/test_geometry.cpp": "9848e46f9e126bf917c4c0ed58f25c46d8ab4c62c825e1d9cdf1863f45ff4b77",
       "tests/libslic3r/test_hollowing.cpp": "361816887832c268d4a20c18aaaced1d5e44063ee9a34b77d32d24c7cfdae60e",
@@ -15764,22 +15764,22 @@
       "tests/libslic3r/test_stl.cpp": "4d0e3b592c36c7e620c79cdfbbfe44d3738c145c4a92c3e300d22e78bbb2492c",
       "tests/libslic3r/test_timeutils.cpp": "3666e65d41d96ce336165847b0ab73a150f8fd676e668173e90dcb607756379e",
       "tests/libslic3r/test_voronoi.cpp": "79d7a6e328ca1d01851528d312c68b3b4ae30c7224e2f428a07879dec01fc973",
-      "tests/libslicer_api/CMakeLists.txt": "fd91317f809cf0ad2a31674c0d259f4112fdf897112ab6600e4fa3a137f02d7e",
+      "tests/libslicer_api/CMakeLists.txt": "889eafba5072fb75db3b2848bbe5fe8a89c7f731ec9dd463a5ab84bbd64ba915",
       "tests/libslicer_api/capture_legacy_entry.py": "bd86f4667f24328510ea92e1d83f5fc63c7fbd2ee7a196ae59c844ff3653856c",
       "tests/libslicer_api/check_fiber_resin.py": "383cae847dad974040155f7dbe8ea26ed69f5aa3038242c5cfb0682b9f0c3996",
       "tests/libslicer_api/compare_legacy_landing.py": "a80d127cbd0f0b87dc1f84b11c37d94e565b75a140e85dabea23af91237136e4",
-      "tests/libslicer_api/fiber_4xiao_acceptance.cpp": "c1521346fecff220a9fd554edbb8cc872d3a40f0121bf584571f369f5275e5b0",
+      "tests/libslicer_api/fiber_4xiao_acceptance.cpp": "002e21acc96f6ec43e8ab3c7f9ea6296fd5bb8928ada68afa3c5d4501b6656d4",
       "tests/libslicer_api/fiber_entry_comparison.txt": "a448137b368592c5fd4d4537c549bdd5d26db641381ec1d588e57b969dbde631",
       "tests/libslicer_api/test_compare_legacy_landing.py": "76c2fa37024554f38de59d430a965057579cee09355915e1cc223e5850727ff9",
-      "tests/libslicer_api/test_config_api.cpp": "4f7195c356305d308e5ea001039937e3202895ddc62d8c80ace22bb0795806a7",
+      "tests/libslicer_api/test_config_api.cpp": "1ca4219da82ec7ff881b8288205ad3e56f566d2ff8677cb44f28429b3767c6da",
       "tests/test_utils.hpp": "85020d379b15bf3625fa46800fb1dc3e556a63eb4a0339ef14c92f948d4f5700",
       "tests/update_catch2.sh": "30f9cbe13b38def7c080e92354851309f7ba2c7218aa612ebbfba8b7d0c3876b",
       "version.inc": "1f46ff7f55bbee3ae74b970ee072177a7f1b21fd0963c97c7689957842fe2142"
     },
-    "revision": "0cdaad07ae17e65a944633ce2c333b0f184030c2"
+    "revision": "3ca34334a87e214744f4b53b90ebedc46fa4aef0"
   },
   "SmoothUI": {
-    "content_sha256": "dded10e7c026893252633bef43cabea2c2d14eeeb855baca24b7aabdd5d93369",
+    "content_sha256": "e92913a101987feeb0f73e588506e006a03f41f52aaeef300ece986f546d72c7",
     "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "dirty": false,
     "files": {
@@ -15872,7 +15872,7 @@
       "Controls/MultiTreeSelectComboBox.qml": "ee945945a55f284d09e15f87810e353995db76ba307a1f8422e2a5b22a82e2c3",
       "Controls/NavigationMenu.qml": "493bf5d7fd024c45d079a0e445dee4851134425843785db4314e4ea941eb7217",
       "Controls/NavigationMenuItem.qml": "8396e43d108a469e2251d9c11144b6a9915af742869a7bf9fe0c409399dfb02f",
-      "Controls/NavigationView.qml": "de9df65f6cb0573b7428d9d1147f52373d6788531838ed75f4215a3217087690",
+      "Controls/NavigationView.qml": "276a97d0d00244acfed77840a9afa7b414e8ccb33dc2a66d8dee7499de791c1b",
       "Controls/NumberBox.qml": "00e072b0c5373fdb70cc4625a37c2b46e35081fc6780a325c71f170bf31ac549",
       "Controls/OpacityMask.qml": "808de49c111b41c83c7961b68de3ea235ac21ec1caae1b634cb8bb9014a519a6",
       "Controls/PageContext.qml": "a1f538a38b92abb332299dffc477ef236a771fa169bad32dd51c7c6b9fbfa8ea",
@@ -15929,7 +15929,7 @@
       "Controls/TimePicker.qml": "1cb33df6cf9c092344fada792fb4c90cf2513257181f1e34d42368fe7858d335",
       "Controls/Timeline.qml": "79002924fccf01035310c34643be7987ac4a71a1075cb02e26cd4ed51c8fb8c0",
       "Controls/ToggleButton.qml": "d4c600cecf1993e89100e0a2688fa3f8b62751269cf1808749ed2a0bb04ce7eb",
-      "Controls/Tour.qml": "e179dd05c55844f32d4bc7771d1b214443254001955a70b4b58430ef34d39cae",
+      "Controls/Tour.qml": "d56e754f61102410eadca04502ed013b4e7e572a1fc450cfd0c15255325bf68e",
       "Controls/TreeDataGrid.qml": "4f5e82746d841560d809b5bfdbd50b4486e7d11eab8818f3840bad9d8f2bc8fd",
       "Controls/TreeView.qml": "4717e2f959849b80f7519c3b1148cfd0df3cbe176a3a36cb244ac4a59fde66f9",
       "Controls/Typography.qml": "6f79f929850e24692a3ace9cebabcd9b40b07f5660253a37f172fd2675c9915b",
@@ -17889,7 +17889,7 @@
       "impl/EnvironmentManager.hpp": "96e060110dcd9d356c7e626c8fee01e48a57735ec00d0fcf9cb08bfc54d2b841",
       "impl/FileWatcher.cpp": "abb69b5d63b1ad5b2abe718f6572d4fca195488272642b1ae197b1791a84c42b",
       "impl/FileWatcher.h": "231620c057a15c287450b20bafc4f2ea049e3c5d9a663b09c78e3e098b07100f",
-      "impl/Frameless.cpp": "9db797720fb16a2cac16fda13c2faef8f14b45cd2a79c59188119e697919bf55",
+      "impl/Frameless.cpp": "e4761513b314ee7534631ad8615b2e0133832f3e6733842393b2c5bdc18265a6",
       "impl/Frameless.h": "47a5d1168361117e44d08bff72c3a37c69d02d46258e6545afdaa7a9703032c1",
       "impl/ImageItem.cpp": "c0a90b25c57021ad9668d30cd94cbdcaa7141a7229c02642b35137a0a8e4aed8",
       "impl/ImageItem.h": "97a5b2f3bb779fd49a138edfafb2da77fb8d5a6ceb96e11a6caa74194cf0de23",
@@ -17965,7 +17965,7 @@
       "tests/qml/tst_RadiusConfig.qml": "006964c79fa7470d0255111cd44dc14649e8b6f51f86b3861ffd95a68f01ed81",
       "tests/qml/tst_ThemeStyle.qml": "0ced3b7a39d72844ea4cde715a6ed9735c833d1625c8d86a3b79122e63ee8c5e"
     },
-    "revision": "bb796a216b736a6a70a9a58d95f2284be8913f44"
+    "revision": "aad0ff2035abd1ecd1fc320621fd26dd95227935"
   },
   "SmoothUIDock": {
     "content_sha256": "a8ec973cc56d588373207a4537650a500c1e83611dce1a3bbdab86cc0065a96f",

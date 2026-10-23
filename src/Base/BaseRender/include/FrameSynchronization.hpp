@@ -8,9 +8,12 @@ namespace GPlatform::Rendering {
 
 using FrameId = quint64;
 
+enum class CompletionStatus { Pending, Complete, Failed };
+
 class IFrameCompletion {
 public:
     virtual ~IFrameCompletion() = default;
+    virtual CompletionStatus poll() noexcept = 0;
     virtual bool wait() noexcept = 0;
 };
 

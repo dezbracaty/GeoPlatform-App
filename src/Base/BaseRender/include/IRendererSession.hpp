@@ -35,6 +35,10 @@ struct RendererSessionCreateInfo {
     // transferred Context and is immediately graphics-ready. On failure the
     // caller retains responsibility for releasing the native handle.
     GraphicsContextHandle graphicsContext;
+    // Optional GUI-created platform surface. The native handle is interpreted
+    // by the selected API; lifetime extends through deferred backend drain.
+    quintptr nativeRenderSurface{0};
+    std::shared_ptr<void> renderSurfaceOwner;
 };
 
 class IRendererSession : public QObject {
@@ -52,6 +56,9 @@ public:
     virtual bool isRunning() const noexcept = 0;
     virtual bool shutdownBlocking(
         unsigned long waitMs, unsigned long terminateWaitMs) = 0;
+    // Deferred backends stop producing immediately but keep accepting releases
+    // until every presenter lease and GPU completion has drained.
+    virtual bool supportsDeferredShutdown() const noexcept { return false; }
 
     virtual void requestResize(const QSize& physicalSize) = 0;
     virtual void requestRender() = 0;
@@ -88,6 +95,7 @@ signals:
     void frameReady();
     void framePreparationStarted();
     void framePreparationFinished();
+    void renderingFailed(const QString& reason);
 };
 
 } // namespace GPlatform::Rendering

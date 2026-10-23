@@ -2053,7 +2053,7 @@ msgid "User"
 msgstr "用户"
 
 msgid "User Guide"
-msgstr "使用指南"
+msgstr "向导"
 
 msgid "VTK Ready"
 msgstr "VTK 就绪"
@@ -2092,7 +2092,7 @@ msgid "View Report"
 msgstr "查看报告"
 
 msgid "View User Guide"
-msgstr "查看使用指南"
+msgstr "启动界面向导"
 
 msgid "View elements, background, and build plate appearance"
 msgstr "视图元素、背景、打印床外观"
@@ -3048,6 +3048,26 @@ msgstr "当前纤维选项下不可用"
 msgid "Cannot save the mask while another document operation is active."
 msgstr "其他文档操作正在进行，暂时无法保存蒙版。"
 
+msgid "3D View"
+msgstr "三维视图"
+
+msgid "Rotate, pan and zoom to inspect models on the build plate."
+msgstr "通过旋转、平移和缩放，查看打印平台上的模型。"
+
+msgid "Model Tools"
+msgstr "模型工具"
+
+msgid "Import models and use editing tools from this toolbar."
+msgstr "从左侧工具栏导入模型，并使用模型编辑工具。"
+
+msgid "Model Properties"
+msgstr "模型属性"
+
+msgid "Select a model, then open this panel to view and edit its properties."
+msgstr "选中模型后，打开此面板查看和编辑模型属性。"
+
+msgid "Adjust scene settings here. Use the guide button to repeat this tour."
+msgstr "在这里调整场景设置。需要时可再次点击向导按钮，重新查看引导。"
 msgid "Runtime information"
 msgstr "运行信息"
 
