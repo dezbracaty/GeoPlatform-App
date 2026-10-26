@@ -1,0 +1,39 @@
+选框同步修复方案独立审核
+审核对象：selection-box-repair-design.json revision 1（包括其事实纠正）；2026-10-26。
+结论：修复方向正确，但初稿需修订后通过。以下只审查代码与设计，未实施修复、未构建或运行测试。
+
+P1：延迟删除后的选框索引生命周期遗漏，会导致撤销删除后再次选择仍无选框。
+证据：ModelWidgetRelations.cpp:72-78 通过 DocumentManager 延迟删除选框；ModelInteractionHandler.cpp:487 只要 m_selectionBoxes 存在 actorId 就拒绝创建，493 写入映射，507 仅 destroySelectionBox 删除该映射。SelectionBridge.cpp:1073-1097 删除选中对象时只更新自身选中列表，不通知 ModelInteractionHandler 清理选框索引；DeleteHandler.cpp:94 以后直接清 bridge 选择。原模型删除后执行队列清理，撤销恢复模型，再点选原模型时，该旧映射可能指向已不存在的选框。
+可执行修订：将 ModelInteractionHandler.cpp 纳入范围。createSelectionBox 必须验证映射指向的对象仍是存活 SelectionBoxWidgetDB 且 LinkedActorID 正确，失效映射先清理再创建；同选集恢复如果需要补选框，不应被 applySelection:439 的相等提前返回绕过。增加真实交互 delete→processEvents→undo→重新选中回归，明确删除后不会自动恢复选择，但下一次选中必须重建有效选框。该检查也应避免删除已经被其他 actor 重新关联的存活 widget。
+
+P1：实例感知 resolver 不能解引用现有伪造的 AutoRegisterDB 指针。
+证据：配套 Core/tests/Relation/validation/ChainUpdateRelationCheck.cpp:18-22 的 makeFakeDB 将 int 内存 reinterpret_cast 为 AutoRegisterDB*；Core/tests/Relation/fakes/DocumentManager.hpp:23-38 将类型元数据和身份占位指针分别存储。新接口如果从所有实例读取 getTypeID 或 dynamic_cast，将产生未定义行为。生产 resolver 合法性检查与这些测试占位数据必须有清晰边界。
+可执行修订：ExactType 路径保持使用传入 TypeID 元数据，实例非空检查不需要解引用；只有 family 候选需要调用实例谓词。family 测试使用真实安全的多态对象，或真实 AppDB 集成目标。不能让假对象通过 family matcher，也不能只改假 DocumentManager 使其绕过生产规则。
+
+P2：初始化注册约束与 clear/re-register 无损承诺相矛盾。
+证据：DBRelationRegistry.cpp:226-233 的 clear 重置 ruleId 并清空规则，DependencyRuleUpdater.hpp:26-27 将 ruleId 纳入 updater 身份；DocumentManager.cpp:595-596 如果依赖边已存在直接返回 true，无法根据新规则重建 updater。只重置 registry 不重置活跃 edge/updater 时，重复身份、过期 callback 或新规则未挂接均可能出现。
+可执行修订：本轮限制 registry clear 为初始化及隔离测试操作：先清空所有实例依赖边、chain updater，再 clear 和重新注册。不承诺运行时热重注册已有关系。保留重复 registerModule 的幂等测试；另测无活跃关系时 clear/re-register 后新对象正常挂接。若要活跃热重注册，必须单列协调重建设计，本次无必要。
+
+事实纠正：WidgetDB 并不继承 ActorDB。
+证据：src/AppDB/include/WidgetDB.hpp:23 是 class WidgetDB : public AutoRegisterDB。因此真实 widget 不属于 ActorDB family；不能用 widget→widget actor-family 自引用作为真实类型示例。通用关系引擎仍应保留自环及反向路径检查，可用安全测试类型定义可重叠 family 来验证。
+
+其余设计判断与实施约束：
+1. 根因完整。ModelWidgetRelations.cpp:91-149 的四组依赖/引用写死 MODEL_INSTANCE_DB，而回调:26 已接受 ActorDB；DocumentManager.cpp:698、771 与 DBRelationRegistry.cpp:186 的精确比较共同阻断基础模型。SelectionBoxWidgetDB.cpp:35-43 的初始化主动更新解释了首次选中正常。不能只改成 ACTOR_DB 的编号。
+2. 显式 opt-in family matcher 合理。注册留在 DBRelations，Document 只处理 AutoRegisterDB 谓词，符合 Document/CMakeLists.txt:4 与 DBRelations/CMakeLists.txt:5 的依赖方向；不必为此修改 ActorDB 虚接口。按具体 primitive 复制规则无法覆盖未来 Actor 派生类，不如统一约束。
+3. 四路径应共用同一约束匹配及规则选择函数；引用源枚举先在依赖锁内复制候选边，再释放锁，获取 shared_ptr 并匹配。DocumentManager.cpp:696 当前在依赖共享锁内获取实例类型，不应把用户谓词也搬进该锁。实例与规则快照应在 DocumentManager 和 ChainUpdateSystem 间一致；初始化后规则只读可缩小竞态范围。所有实例关系写操作按现有 UI 线程模型串行，不能仅凭 shared_ptr 存活就声称对象仍在文档中。
+4. exact 优先同名 family 的策略可实现，但本轮没有实际使用该重叠的需求。建议最小化为：不同 ruleName 可并存；同一 target/relation/ruleName 的多个匹配先判冲突并拒绝整个挂接，不允许部分边/updater 留下；若坚持 exact 优先，必须独立测 exact 与多 family 重叠、稳定次序和无重复 callback，且两处 attachment 使用同一已解析结果。家族谓词之间没有普遍可计算的继承深度，不应声称能自动选“最具体”家族。
+5. 源删除延迟清理改成 TransientUpdateGuard 合理，但队列回调执行前须重新取真实 widget 并验证当前关联源是否存活；undo-before-cleanup 与 relink-before-cleanup 必测。应区分“存活原 box 不被陈旧回调删除”和“已被 transient 删除的 box 不进历史、由下一次选择重建”，不要承诺 transient 删除后的 box 自动参与对象撤销复活。
+6. 现有实时通知已经足够。ModelInteractionHandler.cpp:570 直接拖动、634 回退均使用 ImmediateNotifyGuard；平移572、旋转599、缩放765 也有。DocumentManager.cpp:966-971 对其绕过 transaction batch。方案无需改全局 batch 或在 mouseMove 强制更新选框；真实多帧拖动验证仍必要，必须在事务尚未提交时验证每次拖动更新。
+7. 框架单元测试和真实集成测试应分层。配套 Core/tests/Relation/CMakeLists.txt:1-25 的前两个目标直接编译生产 registry/chain 配合 fake DocumentManager，覆盖规则选择、callback 次数及循环；同文件 ModelWidgetRelationCheck 链接真实 AppDB/Document/DBRelations，应承载真实引用重建、撤销与 QCoreApplication 队列清理。现有 ModelWidgetRelationCheck.cpp:67 没有 QCoreApplication，新增队列用例须先建立应用。App 可复现目标是有用的交付，但复用实际源/公共测试 fixture，避免新建测试专用弱化关系逻辑。
+8. 构建范围应按依赖图增量，不保证只会编译固定文件数。Document 公共规则结构变化后相关 AppDB/Bridge/renderer 编译单元可能重建。先关系测试，再应用及实际 UI；不需要清空 Orca 或第三方缓存。只有确有 SDK 边界影响时按实际产物发布一致 Windows 包；macOS 不冒充已验证。
+
+建议验收门槛：六种 actor 的有效引用各只生成一条对应关系；四控件更新无重复 callback；无重新选择的多帧拖动/旋转/非均匀缩放/几何变更；旧源不再驱动重新关联的控件；类型错误、缺失 family/实例和循环拒绝且回滚；正常 undo/redo 不增加派生历史；队列清理前 undo/relink 安全；队列清理后 undo 再选中可重建；原有精确和 ownership 用例通过；逐项保存测试、增量构建、部署退出码以及真实画面证据。
+
+以上必要修订纳入 revision 2 后，可通过设计审核；并不代表实现或运行结果已经通过。
+
+revision 2 复核
+已重新读取修订版完整方案，并确认 git diff --stat 为空，生产代码未修改。
+最终结论：设计审核通过，无仍需阻止实施的实质问题。
+初审发现的必要修订均已落实：真实 widget 继承事实纠正；exact-only 元数据与 family 真实实例边界；registry reset 仅限清空活跃状态之后；延迟回调同时校验源和 widget；ModelInteractionHandler 陈旧缓存验证和同选集视觉恢复；delete→flush→undo→重新选中→drag 集成验收。
+实施时须遵守的解释边界：registered family 没有定义继承深度，因此“multiple equally specific family matches”应理解为所有同时匹配的 family 候选同级并发生冲突，不额外发明 family 排序；exact 同名规则覆盖 family 的明确策略须有独立测试。关系实例读写沿现有 UI 线程串行处理；获取候选 shared_ptr 和实例判定均不在依赖边锁中调用用户代码。queue 清理的短暂删除与正常 transform undo 恢复 bounds 为不同场景，前者通过重新选择恢复派生选框，不能把它宣称为 box 对象随 undo 自动复活。
+该结论仅为方案审核通过；没有实施、编译、测试或 UI 验收完成的含义。

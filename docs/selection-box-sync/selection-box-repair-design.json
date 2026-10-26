@@ -1,0 +1,91 @@
+{
+  "revision": 2,
+  "status": "Revision 2 passed independent agent design review; no implementation blockers reported; design only, no production edits or new build/test runs",
+  "review": {
+    "agent": "/root/review_selection_box_plan",
+    "report": "docs/selection-box-sync/selection-box-repair-agent-review.txt",
+    "verdict": "Approved for implementation after revision 2; this is not runtime validation",
+    "resolvedFindings": ["Stale selection-box map after deletion and undo", "Exact-path fake pointer dereference hazard", "Registry reset and active rule identity lifecycle conflict", "Incorrect WidgetDB inheritance assumption"],
+    "implementationNotes": ["Family predicates have no inheritance-depth ordering: multiple matching families for the same logical rule are equal-specificity conflicts", "Exact-source override for a same-name family rule requires a focused test", "Preserve existing ImmediateNotifyGuard and transaction batch behavior"]
+  },
+  "baseline": "App feature/gplatform-ui 61d288ffc36403e4317da2a60a033057ba0d775d",
+  "goal": "Every selected ActorDB with valid bounds keeps its selection box synchronized after transform or geometry changes without re-selection; existing relations and undo history retain their behavior.",
+  "evidence": [
+    "src/DBRelations/ModelWidgetRelations.cpp declares ModelInstanceDB as source in all four widget dependency and reference declarations, although callbacks already dynamic-cast to ActorDB.",
+    "src/Document/src/DocumentManager.cpp rejects mismatching exact TypeID in reference reconciliation and current-source lookup.",
+    "src/Document/src/DBRelationRegistry.cpp findDependencyRules performs exact source/target TypeID comparisons; both DocumentManager and ChainUpdateSystem call it.",
+    "ActorDB emits Transform and WorldBounds. SelectionBoxWidgetDB explicitly updates once on initialization, explaining initial visibility despite missing dependency.",
+    "Existing native ModelWidgetRelationCheck checks Cube bounds but links the selection box only to ModelInstanceDB. Existing real-window screenshots and runtime.log in actor-scene-verification demonstrate Cube movement with a stationary box."
+  ],
+  "scope": {
+    "include": ["Selection box and translation/orientation/scale widget ActorDB-source dependency declarations", "Explicit opt-in source-family matching within dependency rules and dependency references", "Transient selection-box cleanup, stale UI selection-box map repair and focused regression coverage"],
+    "exclude": ["Ownership inheritance matching", "Global changes to TypeID equality", "ActorDB virtual interface or object-layout changes just for relation typing", "Per-primitive rule copies", "Mouse-event forced selection-box refresh", "Broad merge of untested upstream UI changes"]
+  },
+  "design": [
+    {
+      "step": 1,
+      "files": ["src/Document/include/DBRelationTypes.hpp", "src/Document/include/DBRelationRegistry.hpp", "src/Document/src/DBRelationRegistry.cpp"],
+      "change": "Introduce an explicit source constraint with ExactType as the default and RegisteredFamily as an opt-in for dependency declarations and dependency-only references. Register a family predicate under TypeID::ACTOR_DB from App DBRelations using dynamic_cast<const ActorDB*>. Document only stores/invokes the AutoRegisterDB predicate and never includes ActorDB.hpp.",
+      "contract": [
+        "Preserve existing exact-type registration APIs/defaults and target matching. Ownership declarations and ownership references remain exact.",
+        "Unknown family, absent source, null source, or predicate mismatch fails closed. Validate referenced families at registration; register Actor family before widget declarations.",
+        "One reference declaration per child type and field remains enforced; matching mode participates in duplicate/conflict checks.",
+        "Family predicates are stateless type checks and cannot mutate the document or acquire document locks. Registry clear resets families as well as rules. Clear/re-register is supported only during initialization or a test reset after all document relation edges and chain updaters have been removed; it is not a live hot-reload mechanism. A repeated identical module registration without clear remains idempotent and retains rule IDs.",
+        "Within one relation/target/ruleName, exact-source match overrides a family match; different rule names remain additive. Multiple equally specific family matches for one logical rule fail with a diagnostic rather than firing duplicate callbacks. Resolve ambiguity before attaching any edge or updater.",
+        "Rule selection has stable ordering and retains selected registered rule IDs for updater identity. Family registration is initialization-only, not modified while dependencies are live."
+      ]
+    },
+    {
+      "step": 2,
+      "files": ["src/Document/src/DocumentManager.cpp", "src/Document/include/DocumentManager.hpp", "src/Document/src/ChainUpdateSystem.cpp"],
+      "change": "Use the same source constraint matcher and instance-aware dependency resolver for reference-parent validation, current dependency-source discovery, DocumentManager attachment, and ChainUpdateSystem updater creation. Resolve objects before callbacks and avoid invoking predicates/callbacks under relation locks.",
+      "contract": [
+        "Do not leave a type-only lookup path for family relations in one of these four entry points. Keep exact-only lookup compatible for existing callers/tests. The resolver takes actual TypeID metadata plus an optional real source instance; exact-only checks never dereference or dynamic-cast the source. The existing ChainUpdateRelationCheck int-backed alias pointers are identity placeholders only and cannot be cast to a real object; family tests must use safe real polymorphic objects.",
+        "A re-link from Actor A to Actor B removes A's edge and updater and creates exactly one B edge/updater; invalid-parent behavior remains explicit and leaves no stale active updater.",
+        "Preserve failed-attachment rollback, idempotent attachment, instance existence checks, deletion reasons and rebuilding from reference fields.",
+        "Keep existing exact-type static cycle checks; do not claim the TypeID graph proves absence of cycles through arbitrary family predicates. Runtime instance cycle detection, including self edges and reverse paths through a family, remains mandatory before attachment and applies to all attachment paths.",
+        "WidgetDB actually inherits AutoRegisterDB, not ActorDB. A widget used as an Actor-family source must be rejected by the predicate. Keep generic self-edge and family-cycle tests using appropriate test-only dependency declarations."
+      ]
+    },
+    {
+      "step": 3,
+      "files": ["src/DBRelations/ModelWidgetRelations.cpp", "src/Interaction/src/ModelInteractionHandler.cpp"],
+      "change": "Register the ActorDB family and opt all four widget dependency/reference pairs into that same constraint. Keep selection-box WorldBounds and other widgets' Transform watches and existing ActorDB callbacks.",
+      "contract": [
+        "Do not auto-create transform widgets for new actor types; this only fixes existing linked-widget relations.",
+        "Keep DerivedUpdateGuard on synchronous derived callbacks. Change deferred selection-box deletion to TransientUpdateGuard rather than a new TransactionGuard, adapting the already observed upstream cleanup correction.",
+        "Before deferred deletion, capture and re-check both deleted source ID and widget ID: the same widget must still be linked to that deleted source and the source must still be absent. A stale queued callback must not delete a restored/relinked selection box. Test with a QCoreApplication event loop.",
+        "Fix ModelInteractionHandler::createSelectionBox so a cached actor-to-widget entry prevents creation only when the actual SelectionBoxWidgetDB still exists and its LinkedActorID matches. Erase stale/mismatched entries and create the needed box without deleting another actor's valid box. Verify the actor exists before creating. SelectionBridge deletion currently removes selected IDs without clearing this map, so deletion/undo must not rely on that notification to clear it.",
+        "If a selection-visual restoration path reaches applySelection with unchanged IDs, validate/reconcile its visuals rather than assuming cached boxes exist. Do not change product selection semantics: undo need not automatically restore selection, but selecting a restored actor must recreate a valid box."
+      ]
+    },
+    {
+      "step": 4,
+      "files": ["Core/tests/Relation/validation/DBRelationRegistryCheck.cpp (companion full source)", "Core/tests/Relation/validation/ChainUpdateRelationCheck.cpp (companion full source)", "Core/tests/Relation/validation/ModelWidgetRelationCheck.cpp (companion full source)", "Core/tests/Relation/fakes/DocumentManager.hpp and CMakeLists.txt if instance-aware APIs require updates"],
+      "change": "Extend existing meaningful relation checks before rebuilding the application. Add an App-consumable relation regression target if needed so SDK consumers can reproduce the failing scenario without private Core sources.",
+      "acceptance": [
+        "Reproduce the old Cube-linked box failure with an assertion that checks the actual dependency edge and bounds after a change, rather than checking only initial bounds.",
+        "Cube, sphere, cylinder, cone, imported ModelInstance and GLB each link all four applicable widget types exactly once; transformed actor/box world bounds agree within 0.001 world units after the notification batch drains.",
+        "Exercise direct translation, rotation, nonuniform scale and a supported geometry-bound mutation; verify old actor no longer drives a rebound widget and the new actor does.",
+        "Exact-only relations and ownership tests retain their behavior; non-Actor references, unknown families and unresolved objects are rejected; exact/family overlap follows the declared resolution policy with no duplicate callback.",
+        "Repeated identical module registration retains rule IDs and does not duplicate live dependencies. A separate reset test first clears document edges and chain updaters, then clears/re-registers the registry. Rebuilding references with an intact registry restores exactly one dependency per relation; live registry hot-reload is out of scope.",
+        "Exercise duplicate attachment, self reference, concrete reverse-cycle through family matching, rollback and source/target deletion.",
+        "Undo/redo restores actor and box bounds; deleting a selected actor and processing queued cleanup does not add an undo entry or erase redo; undo-before-cleanup and relink-before-cleanup never delete the live box.",
+        "Exercise delete selected actor -> process deferred cleanup -> undo deletion -> select restored actor -> drag: stale actor-to-widget cache must not suppress recreation. Also cover selection visual hide/restore and mismatched cached widget links."
+      ]
+    },
+    {
+      "step": 5,
+      "files": ["Existing incremental producer build and real-window scene scenario artifacts"],
+      "change": "Reuse the current producer build and caches. Build affected relation targets first, then incrementally build and deploy App, and exercise actual UI scenarios.",
+      "acceptance": [
+        "Record each focused test exit code plus incremental build and deployment exit codes separately; report failures honestly.",
+        "In the real window, for all four primitives and an imported model, select and drag through several positions, rotate/scale through applicable widgets or properties, then undo/redo. Capture intermediate drag frames, final frame, selected actor ID, world bounds and box bounds after each processed update; no re-selection to make the test pass. Include delete -> queued cleanup -> undo -> select again -> drag, checking a new valid selection box is created.",
+        "Click the old location and new location to check picking remains correct; rerun existing primitive/GLB picking regression.",
+        "Only after verification publish matched Windows SDK artifacts and pin them in App and companion source. State separately that macOS requires its own build; do not ship mismatched binaries."
+      ]
+    }
+  ],
+  "delivery": "Separate commits for relation matching, widget lifecycle integration and regression coverage when practical; publish matched SDK only after the incremental build and scene checks pass.",
+  "reviewRequest": "Review the root cause against actual code, API layering, exact/family resolution semantics, generic cycle safety (real widgets are not Actors), lock ordering, deferred deletion/undo races, stale UI maps, fake test dependencies, registry reset boundaries and realistic build scope. Identify blockers and propose a simpler equivalent design where justified. Do not implement the fix."
+}
