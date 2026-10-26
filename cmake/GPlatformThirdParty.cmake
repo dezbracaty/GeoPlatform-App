@@ -9,6 +9,7 @@ get_filename_component(GPLATFORM_THIRDPARTY_SOURCE_DIR
 if(NOT Qt6_FOUND)
     message(FATAL_ERROR "Find the required local Qt6 before configuring third-party dependencies.")
 endif()
+find_package(Qt6 REQUIRED COMPONENTS QmlPrivate)
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     # Preserve the former ThirdParty default for a root configure without a preset.
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)

@@ -549,7 +549,8 @@ if(WIN32)
         endif()
         # Qt deployment must run last so its output is not overwritten by raw DLLs.
         list(APPEND commands COMMAND "${WINDEPLOYQT_EXECUTABLE}"
-            --qmldir "${CMAKE_CURRENT_SOURCE_DIR}" --no-translations --compiler-runtime
+            --qmldir "${CMAKE_CURRENT_SOURCE_DIR}" --qmlimporttimeout 300000
+            --no-translations --compiler-runtime
             "${destination}/$<TARGET_FILE_NAME:${PROJECT_NAME}>")
         set(${output} "${commands}" PARENT_SCOPE)
     endfunction()
