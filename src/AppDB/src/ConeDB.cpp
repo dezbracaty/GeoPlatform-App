@@ -1,6 +1,8 @@
 #include "../include/ConeDB.hpp"
 #include <DocumentManager.hpp>
 #include "Foundation/Log.h"
+#include <vtkConeSource.h>
+#include <vtkPolyData.h>
 #include <algorithm>
 
 ConeDB::ConeDB()
@@ -110,6 +112,33 @@ bool ConeDB::deserialize(const PropertyMap& properties) {
 }
 
 void ConeDB::markGeometryChanged(const trans::Prop& prop) {
+    m_pickQuery.invalidate();
     // 直接通知变化，不需要设置标志
     notifyGeometryChange(prop.name());
+}
+
+vtkSmartPointer<vtkPolyData> ConeDB::createPickGeometry() const {
+    if (!(getRadius() > 0 && getHeight() > 0)) return nullptr;
+    const auto source = vtkSmartPointer<vtkConeSource>::New();
+    configureSource(*source);
+    source->Update();
+    vtkSmartPointer<vtkPolyData> geometry = source->GetOutput();
+    return geometry;
+}
+
+void ConeDB::configureSource(vtkConeSource& source) const {
+    const auto center = getCenter();
+    source.SetCenter(center.x, center.y, center.z);
+    source.SetRadius(getRadius());
+    source.SetHeight(getHeight());
+    source.SetResolution(getResolution());
+    source.SetCapping(getCapping());
+    const int axis = getDirection();
+    source.SetDirection(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0);
+}
+
+std::optional<ActorDB::PickHit> ConeDB::intersectPickRay(
+    const Vector3& origin, const Vector3& direction, float maxDistance) const {
+    return m_pickQuery.intersect(*this, serialize(),
+        [this] { return createPickGeometry(); }, origin, direction, maxDistance);
 }

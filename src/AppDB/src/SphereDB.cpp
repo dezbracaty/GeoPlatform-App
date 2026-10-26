@@ -1,6 +1,8 @@
 #include "../include/SphereDB.hpp"
 #include <DocumentManager.hpp>
 #include "Foundation/Log.h"
+#include <vtkSphereSource.h>
+#include <vtkPolyData.h>
 #include <cmath>
 #include <algorithm>
 
@@ -122,6 +124,35 @@ bool SphereDB::deserialize(const PropertyMap& properties) {
 // === 私有方法 ===
 
 void SphereDB::markGeometryChanged(const trans::Prop& prop) {
+    m_pickQuery.invalidate();
     // 直接通知变化，不需要设置标志
     notifyGeometryChange(prop.name());
+}
+
+vtkSmartPointer<vtkPolyData> SphereDB::createPickGeometry() const {
+    if (!(getRadius() > 0)) return nullptr;
+    const auto source = vtkSmartPointer<vtkSphereSource>::New();
+    configureSource(*source);
+    source->Update();
+    vtkSmartPointer<vtkPolyData> geometry = source->GetOutput();
+    return geometry;
+}
+
+void SphereDB::configureSource(vtkSphereSource& source) const {
+    const auto center = getCenter();
+    source.SetCenter(center.x, center.y, center.z);
+    source.SetRadius(getRadius());
+    source.SetThetaResolution(getThetaResolution());
+    source.SetPhiResolution(getPhiResolution());
+    source.SetStartTheta(getStartTheta());
+    source.SetEndTheta(getEndTheta());
+    source.SetStartPhi(getStartPhi());
+    source.SetEndPhi(getEndPhi());
+    source.SetLatLongTessellation(getLatLongTessellation());
+}
+
+std::optional<ActorDB::PickHit> SphereDB::intersectPickRay(
+    const Vector3& origin, const Vector3& direction, float maxDistance) const {
+    return m_pickQuery.intersect(*this, serialize(),
+        [this] { return createPickGeometry(); }, origin, direction, maxDistance);
 }

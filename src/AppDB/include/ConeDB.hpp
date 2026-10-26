@@ -1,6 +1,9 @@
 #pragma once
 
 #include "ActorDB.hpp"
+#include "ActorPicking.hpp"
+
+class vtkConeSource;
 
 /**
  * @brief ConeDB - 圆锥数据库类
@@ -25,10 +28,16 @@ public:
         return TypeID::CONE_DB;
     }
 
+    std::optional<PickHit> intersectPickRay(
+        const Vector3& origin, const Vector3& direction,
+        float maxDistance = std::numeric_limits<float>::infinity()) const override;
+
+    void configureSource(vtkConeSource& source) const;
     BoundingBox localBounds() const override;
     std::shared_ptr<AutoRegisterDB> clone() const override;
 
 protected:
+    vtkSmartPointer<vtkPolyData> createPickGeometry() const;
     // === 实现 ActorDB 的钩子函数 ===
 
     /**
@@ -52,5 +61,6 @@ protected:
     bool deserialize(const PropertyMap& properties) override;
 
 private:
+    mutable ActorPicking::PolyDataRayPicker m_pickQuery;
     void markGeometryChanged(const trans::Prop& prop);
 };

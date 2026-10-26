@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ActorDB.hpp"
+#include "ActorPicking.hpp"
 #include "ToolpathPreviewTypes.hpp"
 #include "GCodeSource.hpp"
 #include <cstdint>
@@ -99,6 +100,13 @@ public:
 
     TypeID getTypeID() const override {
         return TypeID::TOOLPATH_PREVIEW_DB;
+    }
+
+    // Toolpath elements use the dedicated inspection picking path.
+    std::optional<PickHit> intersectPickRay(
+        const Vector3&, const Vector3&,
+        float = std::numeric_limits<float>::infinity()) const override {
+        return ActorPicking::rejectNonPickable(*this);
     }
 
     BoundingBox localBounds() const override;

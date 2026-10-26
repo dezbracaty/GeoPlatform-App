@@ -18,6 +18,7 @@ endif()
 
 # AppDB library sources
 set(APPDB_HEADERS
+    include/ActorPicking.hpp
     include/SnapPreviewDB.hpp
     include/GCodeSource.hpp
     include/SliceOutputRecord.hpp
@@ -68,6 +69,7 @@ set(APPDB_HEADERS
 )
 
 set(APPDB_SOURCES
+    src/ActorPicking.cpp
     src/SnapPreviewDB.cpp
     src/GCodeSource.cpp
     src/SliceOutputRecord.cpp

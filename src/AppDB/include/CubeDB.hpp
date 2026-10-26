@@ -1,6 +1,9 @@
 #pragma once
 
 #include "ActorDB.hpp"
+#include "ActorPicking.hpp"
+
+class vtkCubeSource;
 
 /**
  * @brief CubeDB - 立方体数据库类
@@ -67,6 +70,11 @@ public:
         return TypeID::CUBE_DB;
     }
 
+    std::optional<PickHit> intersectPickRay(
+        const Vector3& origin, const Vector3& direction,
+        float maxDistance = std::numeric_limits<float>::infinity()) const override;
+
+    void configureSource(vtkCubeSource& source) const;
     BoundingBox localBounds() const override;
     std::shared_ptr<AutoRegisterDB> clone() const override;
 
@@ -77,6 +85,7 @@ public:
     bool deserialize(const PropertyMap& properties) override;
 
 protected:
+    vtkSmartPointer<vtkPolyData> createPickGeometry() const;
     // === 实现 ActorDB 的钩子函数 ===
 
     /**
@@ -94,6 +103,7 @@ protected:
     void afterSubActorPropertiesInitialized() override;
 
 private:
+    mutable ActorPicking::PolyDataRayPicker m_pickQuery;
     /**
      * @brief 标记几何体变化
      * @param prop 变化的属性

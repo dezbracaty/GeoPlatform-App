@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ActorDB.hpp"
+#include "ActorPicking.hpp"
 #include <Geometry.hpp>
 #include <memory>
 #include <string>
@@ -30,6 +31,13 @@ public:
     GeometrySnapshot getGeneratedGeometry() const;
     int getGeneratedGeometryRevision() const;
     bool hasGeneratedGeometry() const;
+
+    // Support editing queries the source model and dedicated preview actors.
+    std::optional<PickHit> intersectPickRay(
+        const Vector3&, const Vector3&,
+        float = std::numeric_limits<float>::infinity()) const override {
+        return ActorPicking::rejectNonPickable(*this);
+    }
 
     BoundingBox localBounds() const override;
     std::shared_ptr<AutoRegisterDB> clone() const override;

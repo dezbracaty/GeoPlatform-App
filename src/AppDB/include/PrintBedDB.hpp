@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ActorDB.hpp"
+#include "ActorPicking.hpp"
 
 #include <cstdint>
 #include <string>
@@ -94,6 +95,13 @@ public:
     void cycleToNextMaterialPreset();
 
     TypeID getTypeID() const override { return TypeID::PRINT_BED_DB; }
+    // The print platform is presentation, not a selectable model surface.
+    std::optional<PickHit> intersectPickRay(
+        const Vector3&, const Vector3&,
+        float = std::numeric_limits<float>::infinity()) const override {
+        return ActorPicking::rejectNonPickable(*this);
+    }
+
     BoundingBox localBounds() const override;
     std::shared_ptr<AutoRegisterDB> clone() const override;
     std::vector<DBRelationRef> reportRelations() const override;

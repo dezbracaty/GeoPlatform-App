@@ -1,6 +1,8 @@
 #include "../include/CubeDB.hpp"
 #include <DocumentManager.hpp>
 #include "Foundation/Log.h"
+#include <vtkCubeSource.h>
+#include <vtkPolyData.h>
 
 CubeDB::CubeDB()
     : ActorDB() {
@@ -106,6 +108,30 @@ bool CubeDB::deserialize(const PropertyMap& properties) {
 // === 私有方法 ===
 
 void CubeDB::markGeometryChanged(const trans::Prop& prop) {
+    m_pickQuery.invalidate();
     // 直接通知变化，不需要设置标志
     notifyGeometryChange(prop.name());
+}
+
+vtkSmartPointer<vtkPolyData> CubeDB::createPickGeometry() const {
+    if (!(getXLength() > 0 && getYLength() > 0 && getZLength() > 0)) return nullptr;
+    const auto source = vtkSmartPointer<vtkCubeSource>::New();
+    configureSource(*source);
+    source->Update();
+    vtkSmartPointer<vtkPolyData> geometry = source->GetOutput();
+    return geometry;
+}
+
+void CubeDB::configureSource(vtkCubeSource& source) const {
+    const auto center = getCenter();
+    source.SetCenter(center.x, center.y, center.z);
+    source.SetXLength(getXLength());
+    source.SetYLength(getYLength());
+    source.SetZLength(getZLength());
+}
+
+std::optional<ActorDB::PickHit> CubeDB::intersectPickRay(
+    const Vector3& origin, const Vector3& direction, float maxDistance) const {
+    return m_pickQuery.intersect(*this, serialize(),
+        [this] { return createPickGeometry(); }, origin, direction, maxDistance);
 }

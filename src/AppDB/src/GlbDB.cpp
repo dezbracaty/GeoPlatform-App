@@ -1,6 +1,8 @@
 #include "GlbDB.hpp"
 
 #include <vtkPolyData.h>
+#include <vtkPoints.h>
+#include <vtkCellArray.h>
 #include <vtkSmartPointer.h>
 
 #include <atomic>
@@ -40,6 +42,7 @@ bool GlbDB::replaceImportedAsset(GlbImportResult result) {
     }
 
     m_printableTriangles = std::move(result.printableTriangles);
+    m_pickQuery.invalidate();
     setBoundingBoxMin(result.boundingBoxMin);
     setBoundingBoxMax(result.boundingBoxMax);
     setVertexCount(result.vertexCount);
@@ -110,4 +113,23 @@ std::shared_ptr<AutoRegisterDB> GlbDB::clone() const {
 ActorDB::BoundingBox GlbDB::localBounds() const {
     return {getBoundingBoxMin(), getBoundingBoxMax(),
             !m_printableTriangles.empty()};
+}
+
+std::optional<ActorDB::PickHit> GlbDB::intersectPickRay(
+    const Vector3& origin, const Vector3& direction, float maxDistance) const {
+    return m_pickQuery.intersect(*this, serialize(), [this] {
+        auto points = vtkSmartPointer<vtkPoints>::New();
+        auto cells = vtkSmartPointer<vtkCellArray>::New();
+        for (const auto& triangle : m_printableTriangles) {
+            const vtkIdType ids[3]{
+                points->InsertNextPoint(triangle.vertex1.x, triangle.vertex1.y, triangle.vertex1.z),
+                points->InsertNextPoint(triangle.vertex2.x, triangle.vertex2.y, triangle.vertex2.z),
+                points->InsertNextPoint(triangle.vertex3.x, triangle.vertex3.y, triangle.vertex3.z)};
+            cells->InsertNextCell(3, ids);
+        }
+        auto geometry = vtkSmartPointer<vtkPolyData>::New();
+        geometry->SetPoints(points);
+        geometry->SetPolys(cells);
+        return geometry;
+    }, origin, direction, maxDistance);
 }

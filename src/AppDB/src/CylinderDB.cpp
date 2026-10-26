@@ -1,6 +1,8 @@
 #include "../include/CylinderDB.hpp"
 #include <DocumentManager.hpp>
 #include "Foundation/Log.h"
+#include <vtkCylinderSource.h>
+#include <vtkPolyData.h>
 
 CylinderDB::CylinderDB()
     : ActorDB() {
@@ -98,6 +100,31 @@ bool CylinderDB::deserialize(const PropertyMap& properties) {
 }
 
 void CylinderDB::markGeometryChanged(const trans::Prop& prop) {
+    m_pickQuery.invalidate();
     // 直接通知变化，不需要设置标志
     notifyGeometryChange(prop.name());
+}
+
+vtkSmartPointer<vtkPolyData> CylinderDB::createPickGeometry() const {
+    if (!(getRadius() > 0 && getHeight() > 0)) return nullptr;
+    const auto source = vtkSmartPointer<vtkCylinderSource>::New();
+    configureSource(*source);
+    source->Update();
+    vtkSmartPointer<vtkPolyData> geometry = source->GetOutput();
+    return geometry;
+}
+
+void CylinderDB::configureSource(vtkCylinderSource& source) const {
+    const auto center = getCenter();
+    source.SetCenter(center.x, center.y, center.z);
+    source.SetRadius(getRadius());
+    source.SetHeight(getHeight());
+    source.SetResolution(getResolution());
+    source.SetCapping(getCapping());
+}
+
+std::optional<ActorDB::PickHit> CylinderDB::intersectPickRay(
+    const Vector3& origin, const Vector3& direction, float maxDistance) const {
+    return m_pickQuery.intersect(*this, serialize(),
+        [this] { return createPickGeometry(); }, origin, direction, maxDistance);
 }

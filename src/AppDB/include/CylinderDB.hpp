@@ -1,6 +1,9 @@
 #pragma once
 
 #include "ActorDB.hpp"
+#include "ActorPicking.hpp"
+
+class vtkCylinderSource;
 
 /**
  * @brief CylinderDB - 圆柱体数据库类
@@ -24,10 +27,16 @@ public:
         return TypeID::CYLINDER_DB;
     }
 
+    std::optional<PickHit> intersectPickRay(
+        const Vector3& origin, const Vector3& direction,
+        float maxDistance = std::numeric_limits<float>::infinity()) const override;
+
+    void configureSource(vtkCylinderSource& source) const;
     BoundingBox localBounds() const override;
     std::shared_ptr<AutoRegisterDB> clone() const override;
 
 protected:
+    vtkSmartPointer<vtkPolyData> createPickGeometry() const;
     // === 实现 ActorDB 的钩子函数 ===
 
     /**
@@ -50,5 +59,6 @@ protected:
     bool deserialize(const PropertyMap& properties) override;
 
 private:
+    mutable ActorPicking::PolyDataRayPicker m_pickQuery;
     void markGeometryChanged(const trans::Prop& prop);
 };

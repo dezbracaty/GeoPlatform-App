@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ActorDB.hpp"
+#include "ActorPicking.hpp"
 #include "GlbAssetData.hpp"
 #include <Geometry.hpp>
 
@@ -27,6 +28,9 @@ public:
     const std::vector<GeomTriangle>& printableTriangles() const noexcept {
         return m_printableTriangles;
     }
+    std::optional<PickHit> intersectPickRay(
+        const Vector3& origin, const Vector3& direction,
+        float maxDistance = std::numeric_limits<float>::infinity()) const override;
     BoundingBox localBounds() const override;
 
     FIELD_VALUE(GlbDB, std::string, SourceFile)
@@ -54,6 +58,7 @@ protected:
 private:
     void publishAsset(std::shared_ptr<const GlbAssetData> asset);
 
+    mutable ActorPicking::PolyDataRayPicker m_pickQuery;
     CreationOptions m_creationOptions;
     std::shared_ptr<const GlbAssetSnapshot> m_assetSnapshot;
     std::vector<GeomTriangle> m_printableTriangles;

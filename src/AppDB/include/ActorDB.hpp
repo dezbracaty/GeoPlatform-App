@@ -98,7 +98,7 @@ public:
     };
     virtual std::optional<PickHit> intersectPickRay(
         const Vector3&, const Vector3&,
-        float = std::numeric_limits<float>::infinity()) const { return std::nullopt; }
+        float = std::numeric_limits<float>::infinity()) const = 0;
     /**
      * @brief 边界框结构体
      */

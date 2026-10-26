@@ -1,5 +1,6 @@
 #pragma once
 #include "ActorDB.hpp"
+#include "ActorPicking.hpp"
 
 // Authored region owned by one ModelInstance. Transform stores mask-to-model.
 // The editing tool supplies presentation through ordinary temporary actors.
@@ -32,6 +33,13 @@ public:
     }
     Region region() const;
     Transform::Matrix4 worldTransform() const;
+    // Authored mask data is picked through the editing tool's temporary actors.
+    std::optional<PickHit> intersectPickRay(
+        const Vector3&, const Vector3&,
+        float = std::numeric_limits<float>::infinity()) const override {
+        return ActorPicking::rejectNonPickable(*this);
+    }
+
     BoundingBox localBounds() const override;
     BoundingBox worldBounds() const override;
     std::shared_ptr<AutoRegisterDB> clone() const override;

@@ -1,5 +1,6 @@
 #pragma once
 #include "ActorDB.hpp"
+#include "ActorPicking.hpp"
 #include <memory>
 #include <vector>
 
@@ -21,6 +22,13 @@ public:
     void setPreview(DBInstanceID ownerViewId, std::vector<Line> lines);
     PreviewPtr preview() const;
     DBInstanceID ownerViewId() const;
+    // Snap feedback is not itself a source of selectable geometry.
+    std::optional<PickHit> intersectPickRay(
+        const Vector3&, const Vector3&,
+        float = std::numeric_limits<float>::infinity()) const override {
+        return ActorPicking::rejectNonPickable(*this);
+    }
+
     BoundingBox localBounds() const override;
     std::shared_ptr<AutoRegisterDB> clone() const override;
 
