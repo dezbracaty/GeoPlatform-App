@@ -14,6 +14,7 @@
 #include <QQmlEngine>
 #include <QJSEngine>
 #include <QHash>
+#include <functional>
 #include "InteractionInputEvent.hpp"
 
 // 前向声明
@@ -37,6 +38,13 @@ public:
                                    const QVariantMap& params = QVariantMap());
 
     Q_INVOKABLE QVariantMap lastActionOutcome() const { return m_lastActionOutcome; }
+
+    // Application-owned admission, evaluated before constructing a handler.
+    using AdmissionPolicy = std::function<QString(const QString&, bool)>;
+    void setAdmissionPolicy(AdmissionPolicy policy) { m_admissionPolicy = std::move(policy); }
+    QVariantMap invokeActionWithReceipt(const QString& actionCode,
+                                       const QVariantMap& params = {},
+                                       const QVariantMap& metadata = {});
 
     // AI-facing APIs
     Q_INVOKABLE QVariantList listActionsForAI();
@@ -106,7 +114,11 @@ private:
                                const QVariantMap& params,
                                bool aiInvoke,
                                const QString& invocationId = QString(),
-                               const QVariantMap& invocationMetadata = QVariantMap());
+                               const QVariantMap& invocationMetadata = QVariantMap(),
+                               QVariantMap* receipt = nullptr);
+    bool checkAdmission(const QString& actionCode, bool aiInvoke, QVariantMap* receipt = nullptr,
+                        const QVariantMap& metadata = {});
+    AdmissionPolicy m_admissionPolicy;
     // 注册Handler（由Registry调用）
     void registerHandler(const QString& actionCode, HandlerPtr handler);
 

@@ -323,6 +323,29 @@ void ActionManager::cleanupBeforeShutdown() {
     ActionHandlerRegistry::instance().clearCache();
 }
 
+bool ActionManager::checkAdmission(const QString& actionCode, bool aiInvoke,
+                                   QVariantMap* receipt, const QVariantMap& metadata) {
+    const QString error = m_admissionPolicy ? m_admissionPolicy(actionCode, aiInvoke) : QString();
+    if (error.isEmpty()) return true;
+    auto rejected = buildActionOutcome(++m_lastActionOutcomeSeq, actionCode,
+        false, false, error, {}, aiInvoke, HandlerType::Exclusive, false,
+        ActionErrorCode::SystemUnavailable);
+    rejected.insert("metadata", metadata);
+    if (metadata.contains("invocationId")) rejected.insert("invocationId", metadata.value("invocationId"));
+    if (receipt) *receipt = rejected;
+    m_lastActionOutcome = std::move(rejected);
+    return false;
+}
+
+QVariantMap ActionManager::invokeActionWithReceipt(const QString& actionCode,
+                                                   const QVariantMap& params,
+                                                   const QVariantMap& metadata) {
+    QVariantMap receipt;
+    triggerActionInternal(actionCode, params, false, {}, metadata, &receipt);
+    receipt.insert("metadata", metadata);
+    return receipt;
+}
+
 bool ActionManager::triggerAction(const QString& actionCode, const QVariantMap& params) {
     return triggerActionInternal(actionCode, params, false);
 }
@@ -331,20 +354,28 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
                                           const QVariantMap& params,
                                           bool isAIInvoke,
                                           const QString& invocationId,
-                                          const QVariantMap& invocationMetadata) {
+                                          const QVariantMap& invocationMetadata,
+                                          QVariantMap* receipt) {
+    const auto setOutcome = [this, receipt](QVariantMap value) {
+        if (receipt) *receipt = value;
+        m_lastActionOutcome = std::move(value);
+    };
+    if (!checkAdmission(actionCode, isAIInvoke, receipt, invocationMetadata)) {
+        return false;
+    }
     const qulonglong invokeSeq = ++m_lastActionOutcomeSeq;
 
     // 检查是否接受新的 actions
     if (!m_acceptingActions) {
         LOG_WARN("ActionManager is not accepting new actions (shutting down). Action: {}", actionCode.toStdString());
-        m_lastActionOutcome = buildActionOutcome(invokeSeq,
+        setOutcome(buildActionOutcome(invokeSeq,
                                                  actionCode,
                                                  false,
                                                  false,
                                                  "ActionManager is not accepting new actions",
                                                  {},
                                                  isAIInvoke,
-                                                 HandlerType::Exclusive, false, ActionErrorCode::SystemUnavailable);
+                                                 HandlerType::Exclusive, false, ActionErrorCode::SystemUnavailable));
         return false;
     }
 
@@ -353,14 +384,14 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
     auto handler = ActionHandlerRegistry::instance().getOrCreateHandler(actionCode);
     if (!handler) {
         LOG_WARN("No handler registered for action: {}", actionCode.toStdString());
-        m_lastActionOutcome = buildActionOutcome(invokeSeq,
+        setOutcome(buildActionOutcome(invokeSeq,
                                                  actionCode,
                                                  false,
                                                  false,
                                                  "No handler registered for action",
                                                  {},
                                                  isAIInvoke,
-                                                 HandlerType::Exclusive, false, ActionErrorCode::InvalidParams);
+                                                 HandlerType::Exclusive, false, ActionErrorCode::InvalidParams));
         return false;
     }
 
@@ -369,7 +400,7 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
                                     .arg(m_currentEnvironment);
         LOG_WARN("Action '{}' rejected in environment '{}'",
                  actionCode.toStdString(), m_currentEnvironment.toStdString());
-        m_lastActionOutcome = buildActionOutcome(invokeSeq,
+        setOutcome(buildActionOutcome(invokeSeq,
                                                  actionCode,
                                                  false,
                                                  false,
@@ -378,20 +409,20 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
                                                  isAIInvoke,
                                                  handler->getHandlerType(),
                                                  false,
-                                                 ActionErrorCode::SystemUnavailable);
+                                                 ActionErrorCode::SystemUnavailable));
         return false;
     }
 
     if (isAIInvoke && !handler->getAIDescriptor(actionCode).has_value()) {
         LOG_WARN("Action '{}' is not available for AI invocation", actionCode.toStdString());
-        m_lastActionOutcome = buildActionOutcome(invokeSeq,
+        setOutcome(buildActionOutcome(invokeSeq,
                                                  actionCode,
                                                  false,
                                                  false,
                                                  "Action is not available for AI invocation",
                                                  {},
                                                  true,
-                                                 handler->getHandlerType(), false, ActionErrorCode::InvalidParams);
+                                                 handler->getHandlerType(), false, ActionErrorCode::InvalidParams));
         return false;
     }
 
@@ -402,10 +433,10 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
 
     const auto activeHandler = m_activeHandler;
     if (activeHandler && !activeHandler->prepareForAction(actionCode, handlerType)) {
-        m_lastActionOutcome = buildActionOutcome(invokeSeq, actionCode, false, false,
+        setOutcome(buildActionOutcome(invokeSeq, actionCode, false, false,
                                                 "The current edit could not be saved", {},
                                                 isAIInvoke, handlerType, false,
-                                                ActionErrorCode::ContractValidation);
+                                                ActionErrorCode::ContractValidation));
         return false;
     }
 
@@ -424,14 +455,14 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
             m_activeHandler = nullptr;
         } else {
             LOG_DEBUG("Cannot trigger action while another handler is active: {}", actionCode.toStdString());
-            m_lastActionOutcome = buildActionOutcome(invokeSeq,
+            setOutcome(buildActionOutcome(invokeSeq,
                                                      actionCode,
                                                      false,
                                                      false,
                                                      "Another handler is active",
                                                      {},
                                                      isAIInvoke,
-                                                     handlerType, false, ActionErrorCode::SystemUnavailable);
+                                                     handlerType, false, ActionErrorCode::SystemUnavailable));
             return false;
         }
     }
@@ -447,14 +478,14 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
     if (m_suspendedHandler && isExclusiveHandler) {
         LOG_WARN("🚫 Cannot trigger action while a handler is suspended. Action: {}", actionCode.toStdString());
         LOG_WARN("🚫 Returning false - action blocked (Exclusive handler)");
-        m_lastActionOutcome = buildActionOutcome(invokeSeq,
+        setOutcome(buildActionOutcome(invokeSeq,
                                                  actionCode,
                                                  false,
                                                  false,
                                                  "A handler is suspended",
                                                  {},
                                                  isAIInvoke,
-                                                 handlerType, false, ActionErrorCode::SystemUnavailable);
+                                                 handlerType, false, ActionErrorCode::SystemUnavailable));
         return false;
     }
 
@@ -512,7 +543,7 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
             } else {
                 LOG_DEBUG("Background handler already registered in background layer");
             }
-            m_lastActionOutcome = buildActionOutcome(invokeSeq,
+            setOutcome(buildActionOutcome(invokeSeq,
                                                      actionCode,
                                                      true,
                                                      !context->hasError(),
@@ -521,7 +552,7 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
                                                      isAIInvoke,
                                                      handlerType,
                                                      true,
-                                                     context->getErrorCode());
+                                                     context->getErrorCode()));
             emit actionCompleted(actionCode, true);
         } else if (isMiddlewareHandler) {
             auto it = std::find(m_middlewareHandlers.begin(), m_middlewareHandlers.end(), handler);
@@ -540,7 +571,7 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
                 m_middlewareHandlers.erase(
                     std::remove(m_middlewareHandlers.begin(), m_middlewareHandlers.end(), handler),
                     m_middlewareHandlers.end());
-                m_lastActionOutcome = buildActionOutcome(invokeSeq,
+                setOutcome(buildActionOutcome(invokeSeq,
                                                          actionCode,
                                                          true,
                                                          !context->hasError(),
@@ -549,11 +580,11 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
                                                          isAIInvoke,
                                                          handlerType,
                                                          false,
-                                                         context->getErrorCode());
+                                                         context->getErrorCode()));
                 emit actionCompleted(actionCode, !context->hasError());
             } else if (handler->isPersistent()) {
                 LOG_INFO("🔒 Middleware handler is persistent, keeping it active");
-                m_lastActionOutcome = buildActionOutcome(invokeSeq,
+                setOutcome(buildActionOutcome(invokeSeq,
                                                          actionCode,
                                                          true,
                                                          !context->hasError(),
@@ -562,11 +593,11 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
                                                          isAIInvoke,
                                                          handlerType,
                                                          true,
-                                                         context->getErrorCode());
+                                                         context->getErrorCode()));
                 emit actionCompleted(actionCode, true);
             } else {
                 LOG_INFO("⏳ Middleware handler still active, scheduling cleanup");
-                m_lastActionOutcome = buildActionOutcome(invokeSeq,
+                setOutcome(buildActionOutcome(invokeSeq,
                                                          actionCode,
                                                          true,
                                                          !context->hasError(),
@@ -575,7 +606,7 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
                                                          isAIInvoke,
                                                          handlerType,
                                                          true,
-                                                         context->getErrorCode());
+                                                         context->getErrorCode()));
                 QTimer::singleShot(0, this, [this, handler, actionCode, context]() {
                     auto it = std::find(m_middlewareHandlers.begin(), m_middlewareHandlers.end(), handler);
                     if (it == m_middlewareHandlers.end()) {
@@ -597,7 +628,7 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
             if (m_suspendedHandler == handler) {
                 // A suspended importer is inactive in the foreground, but its
                 // background work is still pending. Do not report completion.
-                m_lastActionOutcome = buildActionOutcome(invokeSeq,
+                setOutcome(buildActionOutcome(invokeSeq,
                                                          actionCode,
                                                          true,
                                                          !context->hasError(),
@@ -606,12 +637,12 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
                                                          isAIInvoke,
                                                          handlerType,
                                                          true,
-                                                         context->getErrorCode());
+                                                         context->getErrorCode()));
             } else if (!handlerStillActive) {
                 // Handler已经自己完成并调用了onExit，直接清理
                 LOG_DEBUG("Handler completed synchronously, cleaning up immediately");
                 m_activeHandler = nullptr;
-                m_lastActionOutcome = buildActionOutcome(invokeSeq,
+                setOutcome(buildActionOutcome(invokeSeq,
                                                          actionCode,
                                                          true,
                                                          !context->hasError(),
@@ -620,12 +651,12 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
                                                          isAIInvoke,
                                                          handlerType,
                                                          false,
-                                                         context->getErrorCode());
+                                                         context->getErrorCode()));
                 emit actionCompleted(actionCode, !context->hasError());
             } else if (handler->isPersistent()) {
                 // 持久性Handler，不自动清理
                 LOG_INFO("🔒 Handler is persistent, keeping it active");
-                m_lastActionOutcome = buildActionOutcome(invokeSeq,
+                setOutcome(buildActionOutcome(invokeSeq,
                                                          actionCode,
                                                          true,
                                                          !context->hasError(),
@@ -634,14 +665,14 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
                                                          isAIInvoke,
                                                          handlerType,
                                                          true,
-                                                         context->getErrorCode());
+                                                         context->getErrorCode()));
                 emit actionCompleted(actionCode, true);
                 // 注意：m_activeHandler 保持不变，Handler持续处理事件
             } else {
                 // Handler仍然活跃，使用QTimer::singleShot延迟清理
                 // 这适用于需要异步执行的Handler
                 LOG_INFO("⏳ Handler still active, scheduling cleanup");
-                m_lastActionOutcome = buildActionOutcome(invokeSeq,
+                setOutcome(buildActionOutcome(invokeSeq,
                                                          actionCode,
                                                          true,
                                                          !context->hasError(),
@@ -650,7 +681,7 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
                                                          isAIInvoke,
                                                          handlerType,
                                                          true,
-                                                         context->getErrorCode());
+                                                         context->getErrorCode()));
                 QTimer::singleShot(0, this, [this, handler, actionCode, context]() {
                     if (m_activeHandler == handler && handler->isActive()) {
                         // Handler同步完成，调用onExit然后清理
@@ -673,7 +704,7 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
         }
 
         LOG_WARN("💥 Handler execution failed: {}", e.what());
-        m_lastActionOutcome = buildActionOutcome(invokeSeq,
+        setOutcome(buildActionOutcome(invokeSeq,
                                                  actionCode,
                                                  false,
                                                  false,
@@ -682,13 +713,15 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
                                                  isAIInvoke,
                                                  handlerType,
                                                  false,
-                                                 ActionErrorCode::Internal);
+                                                 ActionErrorCode::Internal));
         emit actionCompleted(actionCode, false);
         return false;
     }
 }
 
 QVariantList ActionManager::listActionsForAI() {
+    if (!checkAdmission(QStringLiteral("@capabilities"), true)) return {};
+
     QVariantList list;
     auto actions = ActionHandlerRegistry::instance().getRegisteredActions();
     std::sort(actions.begin(), actions.end());
@@ -727,6 +760,8 @@ QVariantList ActionManager::listActionsForAI() {
 }
 
 QVariantList ActionManager::listActionSummariesForAI() {
+    if (!checkAdmission(QStringLiteral("@capabilities"), true)) return {};
+
     QVariantList list;
     auto actions = ActionHandlerRegistry::instance().getRegisteredActions();
     std::sort(actions.begin(), actions.end());
@@ -759,6 +794,8 @@ QVariantList ActionManager::listActionSummariesForAI() {
 }
 
 QVariantMap ActionManager::describeActionForAI(const QString& actionCode) {
+    if (!checkAdmission(actionCode, true)) return m_lastActionOutcome;
+
     QVariantMap info;
     info.insert("actionCode", actionCode);
 
@@ -789,6 +826,8 @@ QVariantMap ActionManager::describeActionForAI(const QString& actionCode) {
 bool ActionManager::triggerActionByAI(const QString& actionCode,
                                       const QVariantMap& params,
                                       const QVariantMap& meta) {
+    if (!checkAdmission(actionCode, true, nullptr, meta)) return false;
+
     const qulonglong invokeSeq = ++m_lastActionOutcomeSeq;
     auto handler = ActionHandlerRegistry::instance().getOrCreateHandler(actionCode);
     if (!handler) {
@@ -876,6 +915,8 @@ bool ActionManager::triggerActionByAI(const QString& actionCode,
 QVariantMap ActionManager::invokeActionByAI(const QString& actionCode,
                                             const QVariantMap& params,
                                             const QVariantMap& meta) {
+    if (!checkAdmission(actionCode, true, nullptr, meta)) return m_lastActionOutcome;
+
     auto handler = ActionHandlerRegistry::instance().getOrCreateHandler(actionCode);
     auto descriptor = handler ? handler->getAIDescriptor(actionCode) : std::nullopt;
     const bool isAsync = descriptor && descriptor->value("async", false).toBool();
@@ -958,6 +999,8 @@ void ActionManager::onHandlerInvocationCompleted(const QString& invocationId,
 
 QVariantMap ActionManager::triggerActionSequenceByAI(const QVariantList& steps,
                                                      const QVariantMap& meta) {
+    if (!checkAdmission(QStringLiteral("@sequence"), true, nullptr, meta)) return m_lastActionOutcome;
+
     QVariantMap result;
     result.insert("success", false);
     result.insert("totalSteps", steps.size());

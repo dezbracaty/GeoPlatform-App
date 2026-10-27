@@ -11,7 +11,7 @@ ContentDialog {
     property string errorMessage: ""
     property string optionKey: ""
 
-    title: qsTr("切片失败")
+    title: qsTr("Slicing failed")
     width: 560
 
     ColumnLayout {
@@ -20,7 +20,7 @@ ContentDialog {
 
         Label {
             Layout.fillWidth: true
-            text: qsTr("OrcaSlicer 返回以下错误：")
+            text: qsTr("OrcaSlicer returned the following errors:")
             font: Typography.body
             color: Theme.res.textFillColorPrimary
         }
@@ -66,7 +66,7 @@ ContentDialog {
         Label {
             Layout.fillWidth: true
             visible: dialog.presetName.length > 0
-            text: qsTr("当前配置：%1").arg(dialog.presetName)
+            text: qsTr("Current configuration: %1").arg(dialog.presetName)
             elide: Text.ElideMiddle
             font: Typography.caption
             color: Theme.res.textFillColorSecondary
@@ -75,13 +75,13 @@ ContentDialog {
 
     footer: DialogButtonBox {
         Button {
-            text: qsTr("关闭")
+            text: qsTr("Close")
             onClicked: dialog.close()
         }
 
         Button {
             visible: dialog.optionKey.length > 0
-            text: qsTr("跳转到设置")
+            text: qsTr("Go to settings")
             highlighted: true
             onClicked: {
                 const targetKey = dialog.optionKey

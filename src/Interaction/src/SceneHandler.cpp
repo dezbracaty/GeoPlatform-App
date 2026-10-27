@@ -30,6 +30,7 @@ GPLATFORM_ADD_MODULE_REGISTRATION(
 #include "TaskStateNotifier.hpp"
 
 #include <QFileInfo>
+#include <limits>
 #include <QCoreApplication>
 #include <QStandardPaths>
 #include <QtConcurrent/QtConcurrent>
@@ -240,97 +241,114 @@ void SceneHandler::setTheme(const QVariantMap& params) {
 // === 场景初始化 ===
 
 void SceneHandler::initScene(const QVariantMap& params) {
-    LOG_INFO("SceneHandler::initScene - Initializing scene with defaults");
-
-    // 1. 环境必须由同一个 SkyboxDB 驱动。Filament 和 VTK 都从这里获取
-    //    可见背景、IBL 资源与强度，避免后端各自使用隐式默认值。
-    const bool enableSkybox = params.value("enableSkybox", true).toBool();
-    QVariantMap skyboxParams = params.value("skybox").toMap();
-    if (!skyboxParams.contains("preset")) {
-        skyboxParams.insert("preset", "print-studio");
+    const QVariantMap bedParams = params.value("printBed").toMap();
+    const auto positive = [&bedParams](const char* key, double fallback) {
+        bool ok = false;
+        const double value = bedParams.value(key, fallback).toDouble(&ok);
+        return ok && std::isfinite(value) && value > 0 && value <= std::numeric_limits<float>::max();
+    };
+    if (!positive("width", 200) || !positive("height", 200) ||
+        !positive("printHeight", 200) || !positive("thickness", .08)) {
+        m_context->setError(ActionErrorCode::InvalidParams, tr("Invalid printable volume"));
+        return;
     }
-    const bool skyboxCreated = !enableSkybox || createSkybox(skyboxParams);
-    if (!enableSkybox) {
-        LOG_INFO("SceneHandler::initScene - Skybox explicitly disabled");
-    }
-
-    // 2. 默认创建程序化 PrintBedDB（快速路径）
-    QVariantMap printBedParams;
-    if (params.contains("printBed")) {
-        printBedParams = params.value("printBed").toMap();
-    }
-    const bool printBedCreated = createPrintBed(printBedParams);
-
-    // 3. 可选创建打印机 STL 模型（默认关闭，避免启动慢）
-    bool printerModelCreated = false;
-    bool enablePrinterModel = params.value("enablePrinterModel", false).toBool();
-    QVariantMap printerParams;
-    if (params.contains("printerModel")) {
-        printerParams = params.value("printerModel").toMap();
-        if (printerParams.contains("enabled")) {
-            enablePrinterModel = printerParams.value("enabled").toBool();
-        } else {
-            // 显式提供 printerModel 参数时，默认视为启用。
-            enablePrinterModel = true;
+    for (const auto* coordinate : {"x", "y", "z"}) {
+        bool ok = false;
+        const double value = bedParams.value(coordinate, 0).toDouble(&ok);
+        if (!ok || !std::isfinite(value) || std::abs(value) > std::numeric_limits<float>::max()) {
+            m_context->setError(ActionErrorCode::InvalidParams, tr("Invalid print origin"));
+            return;
         }
     }
-
-    if (enablePrinterModel) {
-        auto printerConfig = SceneDefaults::PrinterModelConfig::getDefault();
-        if (printerParams.isEmpty()) {
-            if (!printerConfig.filePath.isEmpty()) {
-                printerParams["filePath"] = printerConfig.filePath;
-                printerParams["name"] = printerConfig.name;
-                QVariantMap posMap;
-                posMap["x"] = printerConfig.position.x;
-                posMap["y"] = printerConfig.position.y;
-                posMap["z"] = printerConfig.position.z;
-                printerParams["position"] = posMap;
-                QVariantMap colorMap;
-                colorMap["r"] = printerConfig.color.x;
-                colorMap["g"] = printerConfig.color.y;
-                colorMap["b"] = printerConfig.color.z;
-                printerParams["color"] = colorMap;
-                printerParams["zOffset"] = printerConfig.zOffset;
+    const auto area = bedParams.value("printableArea").toList();
+    if (bedParams.contains("printableArea")) {
+        if (area.size() < 3) {
+            m_context->setError(ActionErrorCode::InvalidParams, tr("Invalid printable polygon"));
+            return;
+        }
+        double twiceArea = 0;
+        for (qsizetype index = 0; index < area.size(); ++index) {
+            const auto& point = area[index];
+            const auto coordinates = point.toMap();
+            for (const auto* axis : {"x", "y"}) {
+                bool ok = false;
+                const double value = coordinates.value(axis).toDouble(&ok);
+                if (!ok || !std::isfinite(value) || std::abs(value) > std::numeric_limits<float>::max()) {
+                    m_context->setError(ActionErrorCode::InvalidParams, tr("Invalid printable polygon coordinate"));
+                    return;
+                }
             }
+            const auto next = area[(index + 1) % area.size()].toMap();
+            twiceArea += coordinates.value("x").toDouble() * next.value("y").toDouble()
+                - coordinates.value("y").toDouble() * next.value("x").toDouble();
         }
-
-        if (!printerParams.value("filePath").toString().trimmed().isEmpty()) {
-            printerModelCreated = createPrinterModel(printerParams);
-        } else {
-            LOG_WARN("SceneHandler::initScene - enablePrinterModel=true but filePath is empty, skip printer model");
+        if (!std::isfinite(twiceArea) || std::abs(twiceArea) < 1e-6) {
+            m_context->setError(ActionErrorCode::InvalidParams, tr("Printable polygon has no area"));
+            return;
         }
-    } else {
-        LOG_INFO("SceneHandler::initScene - Printer STL model disabled by default, using PrintBedDB only");
     }
-
-    // 4. 创建默认灯光
-    bool lightsCreated = createDefaultLights();
-
-    if (skyboxCreated && printBedCreated && lightsCreated) {
-        LOG_INFO(
-            "SceneHandler::initScene - Scene initialized successfully (printBed={}, printerModel={}, lights={})",
-            printBedCreated,
-            printerModelCreated,
-            lightsCreated);
-    } else {
-        LOG_WARN(
-            "SceneHandler::initScene - Scene initialization incomplete: skybox={}, printBed={}, printerModel={}, lights={}",
-            skyboxCreated,
-            printBedCreated,
-            printerModelCreated,
-            lightsCreated);
+    auto* document = DocumentManager::instance();
+    if (!document || TransactionManager::instance().isInTransaction()) {
+        m_context->setError(ActionErrorCode::SystemUnavailable,
+                            tr("Scene initialization requires an idle document"));
+        return;
     }
+    TransactionGuard transaction("Initialize print scene");
+    try {
+        auto sky = params.value("skybox").toMap();
+        if (!sky.contains("preset")) sky.insert("preset", "print-studio");
+        const bool skyReady = !params.value("enableSkybox", true).toBool() || createSkybox(sky);
+        const bool bedReady = createPrintBed(bedParams);
+        const bool lightsReady = createDefaultLights();
+        const auto beds = document->getDBInstancesByType(TypeID::PRINT_BED_DB);
+        const auto bed = beds.size() == 1 ? std::dynamic_pointer_cast<PrintBedDB>(beds.front()) : nullptr;
+        const auto definition = bed ? bed->getTemplateDB() : nullptr;
+        const bool matches = definition &&
+            definition->getModelId() == bedParams.value("modelId").toString().toStdString() &&
+            definition->getVariantId() == bedParams.value("variantId").toString().toStdString() &&
+            sameFloat(bed->getWidth(), bedParams.value("width", 200).toFloat()) &&
+            sameFloat(bed->getHeight(), bedParams.value("height", 200).toFloat()) &&
+            sameFloat(bed->getPrintHeight(), bedParams.value("printHeight", 200).toFloat()) &&
+            sameFloat(definition->getThickness(), bedParams.value("thickness", .08).toFloat()) &&
+            bed->getOrigin() == Vector3(bedParams.value("x", 0).toFloat(),
+                bedParams.value("y", 0).toFloat(), bedParams.value("z", 0).toFloat()) &&
+            bed->getPrintableArea() == printableAreaFromParams(bedParams,
+                bedParams.value("x", 0).toFloat(), bedParams.value("y", 0).toFloat(),
+                bedParams.value("width", 200).toFloat(), bedParams.value("height", 200).toFloat());
+        const bool cameraReady = !document->getDBInstancesByType(TypeID::CAMERA_DB).empty();
+        if (!skyReady || !bedReady || !lightsReady || !matches || !cameraReady) {
+            transaction.rollback();
+            m_context->setError(ActionErrorCode::Internal,
+                                tr("Print scene initialization is incomplete or does not match the machine"));
+            return;
+        }
+        transaction.commit();
+        m_context->setResult(QVariantMap{{"sceneReady", true},
+            {"printBedId", QString::number(bed->getDBInstanceID().getValue())},
+            {"machineModelId", bedParams.value("modelId")},
+            {"machineVariantId", bedParams.value("variantId")},
+            {"skyboxReady", skyReady}, {"lightsReady", lightsReady}});
+        LOG_INFO("SceneHandler::initScene - Scene initialized successfully");
+    } catch (...) {
+        transaction.rollback();
+        throw;
+    }
+    // Optional STL scenery is independent from the core print scene contract.
+    const auto printer = params.value("printerModel").toMap();
+    if (params.value("enablePrinterModel", printer.value("enabled", false)).toBool() &&
+        !printer.value("filePath").toString().isEmpty()) createPrinterModel(printer);
 }
 
 bool SceneHandler::createSkybox(const QVariantMap& params) {
     // 幂等性检查：如果已存在 SkyboxDB，直接返回成功
     if (hasObjectOfType(static_cast<int>(TypeID::SKYBOX_DB))) {
         LOG_DEBUG("SceneHandler::createSkybox - Skybox already exists, skipping creation");
-        return true;
+        return DocumentManager::instance()->getDBInstancesByType(TypeID::SKYBOX_DB).size() == 1;
     }
 
-    TransactionGuard guard("Create Skybox");
+    std::unique_ptr<TransactionGuard> transaction;
+    if (!TransactionManager::instance().isInTransaction())
+        transaction = std::make_unique<TransactionGuard>("Create Skybox");
 
     auto skyboxDB = trans::TransDB::create<SkyboxDB>();
     if (!skyboxDB) {
@@ -397,7 +415,6 @@ bool SceneHandler::createPrintBed(const QVariantMap& params) {
         return true;
     }
 
-    TransactionGuard guard("Create Print Bed");
 
     const std::string modelId =
         params.value("modelId").toString().toStdString();
@@ -717,11 +734,18 @@ bool SceneHandler::createPrinterModel(const QVariantMap& params) {
 bool SceneHandler::createDefaultLights() {
     // 幂等性检查：如果已存在灯光，跳过创建
     if (hasObjectOfType(static_cast<int>(TypeID::LIGHT_DB))) {
-        LOG_DEBUG("SceneHandler::createDefaultLights - Lights already exist, skipping creation");
-        return true;
+        LOG_DEBUG("SceneHandler::createDefaultLights - Checking existing startup lights");
+        bool top = false, front = false;
+        for (const auto& object : DocumentManager::instance()->getDBInstancesByType(TypeID::LIGHT_DB)) {
+            const auto light = std::dynamic_pointer_cast<LightDB>(object);
+            if (!light || !light->isSceneLight() || !light->getEnabled() || !std::isfinite(light->getIntensity()) ||
+                light->getIntensity() <= 0) continue;
+            top |= light->getName() == "Orca Top Light";
+            front |= light->getName() == "Orca Front Light";
+        }
+        return top && front;
     }
 
-    TransactionGuard guard("Create Default Lights");
 
     // OrcaSlicer gouraud_light.vs:
     // LIGHT_TOP_DIR=(-0.457, 0.457, 0.762), diffuse=0.48, specular=0.075

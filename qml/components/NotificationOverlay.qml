@@ -93,7 +93,7 @@ Rectangle {
             "message": message,
             "optionKey": optionKey,
             "previewToken": "",
-            "title": qsTr("切片失败")
+            "title": qsTr("Slicing failed")
         })
     }
 
@@ -104,10 +104,10 @@ Rectangle {
         notifications.insert(0, {
             "kind": "fiberDebug",
             "presetName": "", "optionKey": "", "previewToken": previewToken,
-            "title": qsTr("铺纤填充调试"),
+            "title": qsTr("Fiber infill diagnostics"),
             "message": count > 0
-                ? qsTr("已采集 %1 项铺纤诊断，点击显示。青色：原始轮廓区域；红色：候选轮廓未生成区域；橙色：被拒绝路径。诊断内容不会打印。").arg(count)
-                : qsTr("没有可显示的铺纤诊断。未生成区域仅比较已有候选轮廓与最终纤维覆盖，不包含从未生成候选的部分。")
+                ? qsTr("Collected %1 fiber diagnostics. Click to display them. Cyan: original contour regions; red: candidate regions without fiber coverage; orange: rejected paths. Diagnostics are not printed.").arg(count)
+                : qsTr("No fiber diagnostics to display. Uncovered regions compare existing candidate contours with final fiber coverage; regions without candidates are excluded.")
         })
     }
 
@@ -232,7 +232,7 @@ Rectangle {
         }
 
         Label {
-            text: qsTr("查看")
+            text: qsTr("View")
             font: Typography.caption
             color: root.SmoothUI.theme.accentColor.defaultBrushFor(root.SmoothUI.dark)
         }
@@ -247,7 +247,7 @@ Rectangle {
             onClicked: root.dismiss(0)
 
             ToolTip {
-                text: qsTr("关闭")
+                text: qsTr("Close")
                 visible: parent.hovered
                 delay: Theme.tooltipDelay
             }
@@ -326,7 +326,7 @@ Rectangle {
 
                 Label {
                     Layout.fillWidth: true
-                    text: qsTr("通知")
+                    text: qsTr("Notifications")
                     font: Typography.bodyStrong
                     color: root.SmoothUI.theme.res.textFillColorPrimary
                 }
@@ -407,7 +407,7 @@ Rectangle {
                             Label {
                                 Layout.fillWidth: true
                                 visible: model.presetName.length > 0
-                                text: qsTr("当前：%1").arg(model.presetName)
+                                text: qsTr("Current: %1").arg(model.presetName)
                                 elide: Text.ElideMiddle
                                 font: Typography.caption
                                 color: root.SmoothUI.theme.res.textFillColorTertiary
@@ -415,7 +415,7 @@ Rectangle {
 
                             Label {
                                 visible: model.kind === "configurationError" || model.previewToken.length > 0
-                                text: qsTr("查看详情")
+                                text: qsTr("View details")
                                 font: Typography.caption
                                 color: Theme.accentColor.defaultBrushFor(
                                            root.SmoothUI.dark)
@@ -432,7 +432,7 @@ Rectangle {
                             onClicked: root.dismiss(index)
 
                             ToolTip {
-                                text: qsTr("关闭")
+                                text: qsTr("Close")
                                 visible: parent.hovered
                                 delay: Theme.tooltipDelay
                             }

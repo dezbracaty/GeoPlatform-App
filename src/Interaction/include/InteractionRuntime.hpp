@@ -21,4 +21,4 @@ const GPlatform::Interaction::SnapService& interactionSnapService();
 
 // Starts process-wide default interaction handlers after module registration.
 // Renderer backends must never own this lifecycle responsibility.
-void startDefaultInteractionHandlers();
+bool startDefaultInteractionHandlers();

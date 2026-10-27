@@ -224,6 +224,8 @@ gplatform_generate_application_module_registration(
 
 set(SOURCE_FILES
     src/Application/src/main.cpp
+    src/Application/src/StartupCoordinator.cpp
+    src/Application/include/StartupCoordinator.hpp
     src/Application/include/ApplicationModuleRegistration.hpp
     ${GENERATED_APPLICATION_MODULE_REGISTRATION}
 )
@@ -233,6 +235,9 @@ set(SOURCE_FILES
 set_property(SOURCE src/Application/src/main.cpp APPEND PROPERTY
     COMPILE_DEFINITIONS PROJECT_VERSION="${PROJECT_VERSION}")
 
+
+set_source_files_properties(qml/startup/StartupWindow.qml PROPERTIES QT_RESOURCE_ALIAS StartupWindow.qml)
+set_source_files_properties(qml/startup/spinner.svg PROPERTIES QT_RESOURCE_ALIAS spinner.svg)
 
 set_source_files_properties(${PACKAGED_QML_SINGLETONS} PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
@@ -266,6 +271,10 @@ else()
 endif()
 
 gplatform_add_renderer_resources(${PROJECT_NAME})
+
+qt_add_resources(${PROJECT_NAME} startup_resources
+    PREFIX "/gplatform/startup"
+    FILES qml/startup/StartupWindow.qml qml/startup/spinner.svg)
 
 qt_add_qml_module(${PROJECT_NAME}
     URI "GPlatform"
@@ -746,6 +755,10 @@ endif()
 option(GPLATFORM_BUILD_SDK_CHECKS "Verify application extensions against the binary SDK" OFF)
 if(GPLATFORM_BUILD_SDK_CHECKS)
     enable_testing()
+    add_executable(StartupAdmissionCheck tests/StartupAdmissionCheck.cpp)
+    target_link_libraries(StartupAdmissionCheck PRIVATE BaseInteraction Qt6::Gui)
+    add_test(NAME StartupAdmissionCheck COMMAND StartupAdmissionCheck)
+    set_tests_properties(StartupAdmissionCheck PROPERTIES TIMEOUT 30)
     add_executable(SDKConsumerExtensionCheck tests/SDKConsumerExtensionCheck.cpp)
     target_link_libraries(SDKConsumerExtensionCheck PRIVATE BaseDB Document BaseGeometry BaseRender Render)
     add_test(NAME SDKConsumerExtensionCheck COMMAND SDKConsumerExtensionCheck)

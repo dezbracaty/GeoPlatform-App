@@ -96,11 +96,28 @@ FramelessWindow {
     }
     
     Component.onCompleted: {
+        StartupState.attachMainWindow(window)
         // Trigger layout recalculation
         width = width
         height = height
     }
     
+    // Keep the native surface mapped for Prepare's first frame, while blocking
+    // all ordinary content interaction behind the startup Tool window.
+    MouseArea {
+        parent: window.contentItem
+        anchors.fill: parent
+        z: 100000
+        visible: !StartupState.ready
+        acceptedButtons: Qt.AllButtons
+        hoverEnabled: true
+        preventStealing: true
+        onWheel: function(event) { event.accepted = true }
+        focus: visible
+        Keys.onPressed: function(event) { event.accepted = true }
+        Keys.onReleased: function(event) { event.accepted = true }
+    }
+
     InfoBarManager {
         id: infobar_manager
         target: window.contentItem
@@ -121,7 +138,7 @@ FramelessWindow {
             if (SlicingPreviewBridge.showFiberFillDiagnostics(previewToken)) {
                 ActionManager.triggerAction("environment.switch", { "environment": "preview" })
             } else {
-                infobar_manager.showInfo(qsTr("铺纤填充调试"), 3000, qsTr("这次切片结果已失效，请重新切片。"))
+                infobar_manager.showInfo(qsTr("Fiber infill diagnostics"), 3000, qsTr("These slicing results are no longer valid. Please slice again."))
             }
         }
 

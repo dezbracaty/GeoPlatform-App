@@ -29,22 +29,6 @@ Item {
     property bool showBedBounds: true
     property string currentSettingsPanel: ""  // 当前打开的设置面板类型
 
-    // 初始化场景
-    function initScene() {
-        if (workspaceContext.sceneInitialized) {
-            return;
-        }
-
-        // App 选择默认机型，床面尺寸与资源全部来自 libslicer 内置 preset。
-        var success = ActionManager.triggerAction("scene.init", {
-            "printBed": SliceSettingsBridge.selectedMachine
-        });
-
-        if (success) {
-            workspaceContext.sceneInitialized = true;
-        }
-    }
-
     // 主布局 - 使用 RowLayout
     RowLayout {
         anchors.fill: parent
@@ -76,24 +60,6 @@ Item {
                 anchors.fill: parent
                 rendererRole: root.rendererRole
                 renderActive: root.renderActive
-
-                Component.onCompleted: {
-                    if (root.initializeScene) {
-                        sceneInitTimer.start()
-                    }
-                }
-
-                Timer {
-                    id: sceneInitTimer
-                    interval: 100
-                    repeat: true
-                    onTriggered: {
-                        initScene()
-                        if (workspaceContext.sceneInitialized) {
-                            stop()
-                        }
-                    }
-                }
 
                 // 鼠标控制区域
                 ControlMouseArea {

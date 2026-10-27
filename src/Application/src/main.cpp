@@ -1,4 +1,8 @@
 #include "AppInfo.h"
+#include "StartupCoordinator.hpp"
+#include "SliceSettingsBridge.hpp"
+#include "SlicingPreviewBridge.hpp"
+#include <QQmlContext>
 #include "SettingsHelper.h"
 #include "ApplicationHelper.h"
 #include "CrashHandler.hpp"
@@ -96,8 +100,9 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
 
     // 2. Create Qt application
     QGuiApplication app(argc, argv);
-    QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [] {
-        ApplicationHelper::getInstance()->prepareForExit();
+    bool runtimeServicesReady = false;
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [&runtimeServicesReady] {
+        if (runtimeServicesReady) ApplicationHelper::getInstance()->prepareForExit();
     }, Qt::DirectConnection);
     logElapsed("QGuiApplication created");
 
@@ -147,191 +152,237 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
 
     GPlatform::Rendering::configureGraphicsAfterApplication();
 
-    // Initialize settings
+    // Load the saved locale and gettext catalogs before the splash engine.
     SettingsHelper::getInstance()->init(argv);
+    AppInfo::getInstance()->initializeTranslations();
 
-    LOG_INFO("Registering application modules...");
-    registerApplicationModules();
-    startDefaultInteractionHandlers();
-    logElapsed("Application modules registered");
+    StartupCoordinator startup(!startupReplayId.isEmpty());
+    app.setQuitOnLastWindowClosed(false);
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, &startup,
+                     &StartupCoordinator::beginShutdown, Qt::DirectConnection);
+    QObject::connect(&startup, &StartupCoordinator::restartRequested, &app, [&args] {
+        auto arguments = args.mid(1);
+        if (arguments.isEmpty()) arguments << "--restart";
+        QString error;
+        if (!ApplicationHelper::getInstance()->scheduleRestart(arguments, &error)) {
+            LOG_ERROR("Cannot restart application: {}", error.toStdString());
+            QCoreApplication::exit(1);
+        }
+    });
+    QQmlApplicationEngine splashEngine;
+    splashEngine.rootContext()->setContextProperty("StartupState", &startup);
+    splashEngine.load(QUrl("qrc:/gplatform/startup/StartupWindow.qml"));
+    if (splashEngine.rootObjects().isEmpty()) return 1;
+    startup.setSplash(qobject_cast<QQuickWindow*>(splashEngine.rootObjects().first()));
 
     TempDBScope applicationTheme;
-    // Declared before the engine: cleanup follows QML windows/renderers on
-    // every return path and never enters an outstanding document transaction.
-    const auto cleanupTheme = qScopeGuard([&applicationTheme] {
-        TransientUpdateGuard transientUpdate;
-        applicationTheme.clear();
+    bool themeCreated = false;
+    const auto cleanupTheme = qScopeGuard([&] {
+        if (themeCreated) {
+            TransientUpdateGuard transientUpdate;
+            applicationTheme.clear();
+        }
     });
-    {
-        TransientUpdateGuard transientUpdate;
-        applicationTheme.create<ThemeDB>();
-    }
-
     QQmlApplicationEngine engine;
     const auto cleanupQmlWindows = qScopeGuard([&engine] {
         ApplicationHelper::releaseQmlWindows(engine);
     });
     engine.addImportPath(":/qt/qml");
+    engine.rootContext()->setContextProperty("StartupState", &startup);
+#ifdef JOURNALSYSTEM_ENABLED
+    JournalSystem* journal = nullptr;
+#endif
+    ActionManager::getInstance()->setAdmissionPolicy(
+        [&startup](const QString& code, bool ai) { return startup.admissionError(code, ai); });
+    const auto clearAdmission = qScopeGuard([] { ActionManager::getInstance()->setAdmissionPolicy({}); });
+    QObject::connect(&startup, &StartupCoordinator::bootstrapPresented, &app, [&] {
+        startup.enqueue("Configuration", StartupCoordinator::tr("Reading configuration…"), [&] {
+            startup.preparePresets([&] {
+            startup.enqueue("Modules", StartupCoordinator::tr("Loading application modules…"), [&] {
+                registerApplicationModules();
+                logElapsed("Application modules registered");
+                {
+                    TransientUpdateGuard transientUpdate;
+                    applicationTheme.create<ThemeDB>();
+                    themeCreated = true;
+                }
+                startup.enqueue("Services", StartupCoordinator::tr("Preparing workspace services…"), [&] {
+                    SliceSettingsBridge::instance();
+                    SlicingPreviewBridge::instance();
+                    runtimeServicesReady = true;
+                    if (!startDefaultInteractionHandlers()) {
+                        startup.fail(StartupCoordinator::tr("Cannot activate default interaction handlers"));
+                        return;
+                    }
+                    startup.enqueue("UiShell", StartupCoordinator::tr("Creating workspace…"), [&] {
+                        // Set the engine reference in ApplicationHelper for QML engine restart functionality
+                        ApplicationHelper::getInstance()->setEngine(&engine);
 
-    // Set the engine reference in ApplicationHelper for QML engine restart functionality
-    ApplicationHelper::getInstance()->setEngine(&engine);
+                        // Module QML types are registered before the engine loads components.
 
-    // Module QML types are registered before the engine loads components.
+                        AppInfo::getInstance()->init(&engine);
+                        logElapsed("AppInfo initialized");
 
-    AppInfo::getInstance()->init(&engine);
-    logElapsed("AppInfo initialized");
+                        const QUrl url(u"qrc:/qt/qml/GPlatform/qml/global/App.qml"_s);
+                        QObject::connect(
+                            &engine, &QQmlApplicationEngine::objectCreated, &app,
+                            [url, &startup](QObject* obj, const QUrl& objUrl) {
+                                if (!obj && url == objUrl)
+                                    startup.fail(StartupCoordinator::tr("Cannot load the application interface"));
+                                else if (obj && url == objUrl)
+                                    LOG_INFO("[STARTUP TIMING] QML App.qml loaded");
+                            },
+                            Qt::QueuedConnection);
+                        // Load application menus before QML captures groups from MenuData.
+                        LOG_INFO("Loading application menu configuration...");
+                        MenuData::getInstance()->loadMenusFromFile(":/qt/qml/GPlatform/config/app_menus.json");
+                        LOG_INFO("Application menu configuration loaded successfully");
+                        logElapsed("Menu configuration loaded");
 
-    const QUrl url(u"qrc:/qt/qml/GPlatform/qml/global/App.qml"_s);
-    QObject::connect(
-        &engine, &QQmlApplicationEngine::objectCreated, &app,
-        [url, &logElapsed](QObject* obj, const QUrl& objUrl) {
-            if (!obj && url == objUrl)
-                QCoreApplication::exit(-1);
-            else if (obj && url == objUrl)
-                LOG_INFO("[STARTUP TIMING] QML App.qml loaded");
-        },
-        Qt::QueuedConnection);
-    // Load application menus before QML captures groups from MenuData.
-    LOG_INFO("Loading application menu configuration...");
-    MenuData::getInstance()->loadMenusFromFile(":/qt/qml/GPlatform/config/app_menus.json");
-    LOG_INFO("Application menu configuration loaded successfully");
-    logElapsed("Menu configuration loaded");
-
-    engine.load(url);
-    logElapsed("QML engine load started");
+                        engine.load(url);
+                        logElapsed("QML engine load started");
 
 #ifdef JOURNALSYSTEM_ENABLED
-    // Initialize JournalSystem for UI testing support
-    JournalSystem* journal = new JournalSystem(&app);
-    AppInfo::getInstance()->setJournalService(journal);
-    journal->setActionInvoker(
-        [](const QString& actionCode,
-           const QVariantMap& params,
-           QString& error) {
-            if (actionCode.trimmed().isEmpty()) {
-                error = QStringLiteral("Action code is empty");
-                return false;
-            }
-            auto* manager = ActionManager::getInstance();
-            if (!manager) {
-                error = QStringLiteral("ActionManager is unavailable");
-                return false;
-            }
-            if (!manager->triggerAction(actionCode, params)) {
-                error = QStringLiteral("Action was not accepted: %1")
-                            .arg(actionCode);
-                return false;
-            }
-            return true;
-        });
-    journal->setDbStateProvider(
-        QString::fromLatin1(trans::SerializedStateFormat),
-        [](const QString& dbInstanceId,
-           QByteArray& serialized,
-           QString& error) {
-            const QString normalizedId = dbInstanceId.trimmed();
-            bool parsed = false;
-            const qlonglong rawId = normalizedId.toLongLong(&parsed);
-            if (!parsed || rawId == 0 || QString::number(rawId) != normalizedId) {
-                error = QStringLiteral("Invalid DBInstanceID: %1")
-                            .arg(dbInstanceId);
-                return false;
-            }
+                        // Initialize JournalSystem for UI testing support
+                        journal = new JournalSystem(&app);
+                        AppInfo::getInstance()->setJournalService(journal);
+                        journal->setActionInvoker(
+                            [](const QString& actionCode,
+                               const QVariantMap& params,
+                               QString& error) {
+                                if (actionCode.trimmed().isEmpty()) {
+                                    error = QStringLiteral("Action code is empty");
+                                    return false;
+                                }
+                                auto* manager = ActionManager::getInstance();
+                                if (!manager) {
+                                    error = QStringLiteral("ActionManager is unavailable");
+                                    return false;
+                                }
+                                if (!manager->triggerAction(actionCode, params)) {
+                                    error = QStringLiteral("Action was not accepted: %1")
+                                                .arg(actionCode);
+                                    return false;
+                                }
+                                return true;
+                            });
+                        journal->setDbStateProvider(
+                            QString::fromLatin1(trans::SerializedStateFormat),
+                            [](const QString& dbInstanceId,
+                               QByteArray& serialized,
+                               QString& error) {
+                                const QString normalizedId = dbInstanceId.trimmed();
+                                bool parsed = false;
+                                const qlonglong rawId = normalizedId.toLongLong(&parsed);
+                                if (!parsed || rawId == 0 || QString::number(rawId) != normalizedId) {
+                                    error = QStringLiteral("Invalid DBInstanceID: %1")
+                                                .arg(dbInstanceId);
+                                    return false;
+                                }
 
-            auto* document = DocumentManager::instance();
-            if (!document) {
-                error = QStringLiteral("DocumentManager is unavailable");
-                return false;
-            }
-            const auto object = document->getDBInstance(DBInstanceID(rawId));
-            if (!object) {
-                error = QStringLiteral("DBInstanceID does not exist: %1")
-                            .arg(normalizedId);
-                return false;
-            }
-            if (object->getTypeID() == TypeID::THEME_DB) {
-                error = QStringLiteral("ThemeDB is runtime-only and cannot be snapshotted");
-                return false;
-            }
+                                auto* document = DocumentManager::instance();
+                                if (!document) {
+                                    error = QStringLiteral("DocumentManager is unavailable");
+                                    return false;
+                                }
+                                const auto object = document->getDBInstance(DBInstanceID(rawId));
+                                if (!object) {
+                                    error = QStringLiteral("DBInstanceID does not exist: %1")
+                                                .arg(normalizedId);
+                                    return false;
+                                }
+                                if (object->getTypeID() == TypeID::THEME_DB) {
+                                    error = QStringLiteral("ThemeDB is runtime-only and cannot be snapshotted");
+                                    return false;
+                                }
 
-            try {
-                const trans::SerializedState state = trans::serializeState(*object);
-                serialized = QByteArray(
-                    reinterpret_cast<const char*>(state.data()),
-                    static_cast<qsizetype>(state.size()));
-                return true;
-            } catch (const std::exception& exception) {
-                error = QStringLiteral("Cannot serialize DB %1: %2")
-                            .arg(normalizedId,
-                                 QString::fromUtf8(exception.what()));
-                return false;
-            }
-        });
-    journal->setScreenshotProvider([] {
-        return ScreenshotHandler::captureApplicationWindow();
-    });
+                                try {
+                                    const trans::SerializedState state = trans::serializeState(*object);
+                                    serialized = QByteArray(
+                                        reinterpret_cast<const char*>(state.data()),
+                                        static_cast<qsizetype>(state.size()));
+                                    return true;
+                                } catch (const std::exception& exception) {
+                                    error = QStringLiteral("Cannot serialize DB %1: %2")
+                                                .arg(normalizedId,
+                                                     QString::fromUtf8(exception.what()));
+                                    return false;
+                                }
+                            });
+                        journal->setScreenshotProvider([] {
+                            return ScreenshotHandler::captureApplicationWindow();
+                        });
 
-    int ghostPort = 9999;
-    const bool explicitGhostPort = args.contains(QStringLiteral("--ghost-port"));
+                        int ghostPort = 9999;
+                        const bool explicitGhostPort = args.contains(QStringLiteral("--ghost-port"));
 
-    // Check for custom port
-    for (int i = 0; i < args.size(); i++) {
-        if (args[i] == "--ghost-port") {
-            bool parsed = false;
-            ghostPort = args.value(i + 1).toInt(&parsed);
-            if (!parsed) ghostPort = -1;
-            break;
-        }
-    }
+                        // Check for custom port
+                        for (int i = 0; i < args.size(); i++) {
+                            if (args[i] == "--ghost-port") {
+                                bool parsed = false;
+                                ghostPort = args.value(i + 1).toInt(&parsed);
+                                if (!parsed) ghostPort = -1;
+                                break;
+                            }
+                        }
 
-    // Python owns Journal timing and validation; the application owns its restart.
-    if (ghostPort < 1 || ghostPort > 65535) {
-        LOG_ERROR("Invalid Journal port: {}", ghostPort);
-        delete journal;
-        return 1;
-    }
-    journal->setStartupReplayId(startupReplayId);
-    journal->setReplayPreparationHandler([args, journal](const QString& replayId, QString& error) {
-        QStringList nextArguments;
-        for (int i = 1; i < args.size(); ++i) {
-            const QString& argument = args.at(i);
-            if (argument == "--ghost-port" || argument == "--journal-replay-id" ||
-                argument == "--ghost-file") {
-                ++i;
-                continue;
-            }
-            if (argument == "--restart" || argument == "--ghost-play" ||
-                argument == "--ghost-record" ||
-                argument == "--ghost-verify") continue;
-            nextArguments.append(argument);
-        }
-        nextArguments << "--ghost-port" << QString::number(journal->serverPort())
-                      << "--journal-replay-id" << replayId;
-        LOG_INFO("Journal replay {}: scheduling application restart", replayId.toStdString());
-        return ApplicationHelper::getInstance()->scheduleRestart(nextArguments, &error);
-    });
-    if (engine.rootObjects().isEmpty()) {
-        delete journal;
-        return 1;
-    }
-    // Fixed startup offset, as in the former startup replay entry. No business waits.
-    const auto startJournal = [journal, ghostPort, explicitGhostPort, startupReplayId] {
-        int result = journal->init(static_cast<quint16>(ghostPort));
-        if (result != 0 && !explicitGhostPort) {
-            LOG_WARN("Default Journal port {} is unavailable; requesting an OS-assigned port", ghostPort);
-            result = journal->init(0);
-        }
-        if (result != 0) {
-            LOG_ERROR("Journal could not listen on port {}", ghostPort);
-            QCoreApplication::exit(1);
-        } else {
-            LOG_INFO("Journal service ready; pid={} port={} startup replay={}",
-                     QCoreApplication::applicationPid(), journal->serverPort(),
-                     startupReplayId.toStdString());
-        }
-    };
-    QTimer::singleShot(startupReplayId.isEmpty() ? 0 : 500, journal, startJournal);
+                        // Python owns Journal timing and validation; the application owns its restart.
+                        if (ghostPort < 1 || ghostPort > 65535) {
+                            LOG_ERROR("Invalid Journal port: {}", ghostPort);
+                            startup.fail(StartupCoordinator::tr("Invalid Journal port"));
+                            return;
+                        }
+                        journal->setStartupReplayId(startupReplayId);
+                        journal->setReplayPreparationHandler([args, journal](const QString& replayId, QString& error) {
+                            QStringList nextArguments;
+                            for (int i = 1; i < args.size(); ++i) {
+                                const QString& argument = args.at(i);
+                                if (argument == "--ghost-port" || argument == "--journal-replay-id" ||
+                                    argument == "--ghost-file") {
+                                    ++i;
+                                    continue;
+                                }
+                                if (argument == "--restart" || argument == "--ghost-play" ||
+                                    argument == "--ghost-record" ||
+                                    argument == "--ghost-verify") continue;
+                                nextArguments.append(argument);
+                            }
+                            nextArguments << "--ghost-port" << QString::number(journal->serverPort())
+                                          << "--journal-replay-id" << replayId;
+                            LOG_INFO("Journal replay {}: scheduling application restart", replayId.toStdString());
+                            return ApplicationHelper::getInstance()->scheduleRestart(nextArguments, &error);
+                        });
+                        if (engine.rootObjects().isEmpty()) {
+                            startup.fail(StartupCoordinator::tr("The application QML did not load"));
+                            return;
+                        }
+                        // Transport becomes available only after the real scene and Prepare frame.
+
+                        const auto startJournal = [journal, ghostPort, explicitGhostPort, startupReplayId] {
+                            int result = journal->init(static_cast<quint16>(ghostPort));
+                            if (result != 0 && !explicitGhostPort) {
+                                LOG_WARN("Default Journal port {} is unavailable; requesting an OS-assigned port", ghostPort);
+                                result = journal->init(0);
+                            }
+                            if (result != 0) {
+                                LOG_ERROR("Journal could not listen on port {}", ghostPort);
+                                QCoreApplication::exit(1);
+                            } else {
+                                LOG_INFO("Journal service ready; pid={} port={} startup replay={}",
+                                         QCoreApplication::applicationPid(), journal->serverPort(),
+                                         startupReplayId.toStdString());
+                            }
+                        };
+                        QObject::connect(&startup, &StartupCoordinator::startupReady, journal, startJournal, Qt::SingleShotConnection);
 #endif
+
+
+                    });
+                });
+            });
+            });
+        });
+    });
 
     const int exec = QGuiApplication::exec();
 

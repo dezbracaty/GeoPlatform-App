@@ -1,5 +1,6 @@
 #pragma once
 #include <optional>
+#include <QFuture>
 #include <cstdint>
 
 #include <BridgeBase.hpp>
@@ -39,6 +40,10 @@ class SliceSettingsBridge final : public bridge::BridgeBase {
     QML_SINGLETON
 
 public:
+    // Capture persisted selection on the GUI thread, load only backend data in
+    // a worker, then supply the result before module registration constructs us.
+    static QFuture<GPlatform::SlicingConfigActivationResult> prepareStartupConfiguration();
+    static void supplyStartupConfiguration(GPlatform::SlicingConfigActivationResult result);
     static SliceSettingsBridge* instance();
     static SliceSettingsBridge* create(QQmlEngine* qmlEngine, QJSEngine* jsEngine);
 

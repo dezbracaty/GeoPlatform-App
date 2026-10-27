@@ -33,6 +33,8 @@ public:
     QObject* journalService() const;
     void setJournalService(QObject* service);
 
+    // Available before either QML engine loads its first component.
+    void initializeTranslations();
     void init(QQmlApplicationEngine*);
 
 signals:
@@ -42,6 +44,7 @@ signals:
     void journalServiceChanged();
 
 private:
+    bool m_translationsInitialized{false};
     QString m_version;
     QString m_locale;
     QStringList m_locales;

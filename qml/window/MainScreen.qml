@@ -44,7 +44,7 @@ Item {
         return host
     }
     function tryAutomaticGuide() {
-        if (automaticGuidePending || workspaceGuide.running || SettingsHelper.printGuideHandled
+        if (!StartupState.ready || StartupState.replayMode || automaticGuidePending || workspaceGuide.running || SettingsHelper.printGuideHandled
                 || SettingsHelper.printGuideAutoAttempted || !automaticGuideHost())
             return
         automaticGuidePending = true
@@ -60,7 +60,7 @@ Item {
     Timer {
         interval: 200
         repeat: true
-        running: !SettingsHelper.printGuideHandled && !SettingsHelper.printGuideAutoAttempted
+        running: StartupState.ready && !StartupState.replayMode && !SettingsHelper.printGuideHandled && !SettingsHelper.printGuideAutoAttempted
                  && !workspaceGuide.running
         onTriggered: root.tryAutomaticGuide()
     }
@@ -95,6 +95,7 @@ Item {
     }
 
     function handleMenuAction(item) {
+        if (!StartupState.ready) return
         if (!item || !item.actionCode)
             return
         var actionCode = String(item.actionCode)
@@ -284,17 +285,8 @@ Item {
                 }
             }
 
-            // Check if we should restore last page
-            if (SettingsHelper.getRememberLastPage()) {
-                var lastPage = SettingsHelper.getLastPage()
-                if (lastPage && lastPage !== "") {
-                    page_router.go(lastPage)
-                } else {
-                    page_router.go("/dock")
-                }
-            } else {
-                page_router.go("/dock")
-            }
+            // Always instantiate Prepare for the initial scene/frame barrier.
+            page_router.go("/dock")
         }
     }
 
@@ -306,9 +298,10 @@ Item {
         id: aiAssistantShortcut
         objectName: "aiAssistantShortcut"
         sequence: "Alt+I"
-        enabled: !workspaceGuide.running
+        enabled: StartupState.ready && !workspaceGuide.running
         context: Qt.ApplicationShortcut
         onActivated: {
+            if (!StartupState.ready) return
             if (!ActionManager.triggerAction("ui.ai.toggle"))
                 AIChatBridge.togglePanel()
         }
@@ -316,14 +309,14 @@ Item {
 
     Shortcut {
         sequence: "Ctrl+O"
-        enabled: !workspaceGuide.running
+        enabled: StartupState.ready && !workspaceGuide.running
         context: Qt.ApplicationShortcut
         onActivated: Global.starter.chooseModel({})
     }
 
     Shortcut {
         sequence: "Ctrl+I"
-        enabled: !workspaceGuide.running
+        enabled: StartupState.ready && !workspaceGuide.running
         context: Qt.ApplicationShortcut
         onActivated: Global.starter.chooseStl({})
     }

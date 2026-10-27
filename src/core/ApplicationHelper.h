@@ -45,11 +45,11 @@ public:
     static void releaseQmlWindows(QQmlEngine& engine);
 
     Q_INVOKABLE void restart() {
-        // Start a new instance
-        QProcess::startDetached(QCoreApplication::applicationFilePath(),
-                                QStringList() << "--restart");
-        // Exit current instance
-        QCoreApplication::exit(0);
+        auto arguments = QCoreApplication::arguments().mid(1);
+        if (arguments.isEmpty()) arguments << "--restart";
+        QString error;
+        if (!scheduleRestart(arguments, &error))
+            LOG_ERROR("Application restart rejected: {}", error.toStdString());
     }
 
     // Deferred restart: main launches only after the old application is destroyed.
@@ -57,26 +57,7 @@ public:
     QStringList takeRestartArguments();
 
     Q_INVOKABLE void restartQmlEngine() {
-        if (m_engine) {
-            LOG_DEBUG("ApplicationHelper: Starting QML engine restart...");
-
-            // Clear component cache to force reload
-            m_engine->clearComponentCache();
-            LOG_DEBUG("ApplicationHelper: Component cache cleared");
-
-            // Trigger garbage collection
-            m_engine->collectGarbage();
-
-            // Emit a signal to notify that we need to reload
-            // For now, just log that restart was requested
-            LOG_DEBUG("ApplicationHelper: QML engine cache cleared and garbage collected");
-            LOG_DEBUG("ApplicationHelper: Note: Full QML restart requires application restart");
-
-            // Alternative: Just restart the whole application
-            restart();
-        } else {
-            LOG_DEBUG("ApplicationHelper: No engine set, cannot restart");
-        }
+        restart();
     }
 
     Q_INVOKABLE void exit(int code = 0);

@@ -20,6 +20,7 @@ Starter {
     function chooseStl(params) { return chooseModelFile("import_stl", params) }
 
     function chooseModelFile(actionCode, params) {
+        if (!StartupState.ready) return false
         if (params && params.filePath !== undefined)
             return false
         var parentWindow = null
@@ -57,6 +58,7 @@ Starter {
                 SettingsHelper.saveImportFileDialogState(state)
         }
         function onAccepted(requestId, urls) {
+            if (!StartupState.ready) return
             var request = starter.pendingModelFiles[requestId]
             if (!request) return
             delete starter.pendingModelFiles[requestId]

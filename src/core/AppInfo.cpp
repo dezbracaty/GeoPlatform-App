@@ -86,8 +86,12 @@ void AppInfo::setJournalService(QObject* service) {
     emit journalServiceChanged();
 }
 
+void AppInfo::initializeTranslations() {
+    if (!m_translationsInitialized) initTranslator();
+}
+
 void AppInfo::init(QQmlApplicationEngine* engine) {
-    initTranslator();
+    initializeTranslations();
     if ("ON" == QString(PROJECT_HOTLOAD_ENABLED)) {
         engine->setBaseUrl(QUrl(QString("file:///%1/").arg(PROJECT_SOURCE_DIR)));
     } else {
@@ -117,6 +121,7 @@ void AppInfo::initTranslator() {
 
     // Set the default locale
     QLocale::setDefault(QLocale(this->m_locale));
+    m_translationsInitialized = true;
 }
 
 REGISTER_CORE_QML_SINGLETON(AppInfo, "AppInfo")

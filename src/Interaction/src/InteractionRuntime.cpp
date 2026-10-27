@@ -37,7 +37,8 @@ const GPlatform::Interaction::SnapService& interactionSnapService() {
     return service;
 }
 
-void startDefaultInteractionHandlers() {
+bool startDefaultInteractionHandlers() {
+    static bool initialized = false;
     static std::once_flag once;
     std::call_once(once, []() {
         auto* actionManager = ActionManager::getInstance();
@@ -57,8 +58,11 @@ void startDefaultInteractionHandlers() {
         }
         if (!actionManager->triggerAction("preview.inspect")) {
             LOG_ERROR("InteractionRuntime: failed to activate preview inspection");
+            return;
         }
+        initialized = true;
         LOG_INFO(
             "InteractionRuntime: default interaction handlers activated");
     });
+    return initialized;
 }

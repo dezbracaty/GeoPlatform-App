@@ -13,6 +13,8 @@
 #include <QSet>
 #include <QSettings>
 #include <QUrl>
+#include <QtConcurrent/QtConcurrentRun>
+#include <QThread>
 
 #include <algorithm>
 #include <limits>
@@ -305,15 +307,17 @@ namespace {
     }
 } // namespace
 
-SliceSettingsBridge::SliceSettingsBridge(QObject* parent)
-    : bridge::BridgeBase(parent) {
+namespace {
+std::optional<GPlatform::SlicingConfigActivationResult> startupConfiguration;
+
+GPlatform::SlicingConfigActivationResult loadStartupConfiguration(libslicer::ConfigSelection selection) {
     auto& backend = GPlatform::SlicingBackend::instance();
     if (!backend.available()) {
-        LOG_ERROR("SliceSettingsBridge: slicing backend is unavailable");
-        return;
+        GPlatform::SlicingConfigActivationResult result;
+        result.diagnostics.push_back({"initialization", "slicing backend is unavailable"});
+        return result;
     }
 
-    libslicer::ConfigSelection selection = restoredSelection();
     if (selection.machine_model_id.empty() || selection.machine_variant_id.empty()) {
         selection.machine_model_id = "Flashforge AD5X";
         selection.machine_variant_id = "0.4";
@@ -334,10 +338,30 @@ SliceSettingsBridge::SliceSettingsBridge(QObject* parent)
         selection.machine_variant_id = "0.4";
         result = backend.activateConfig(selection);
     }
-    if (!replaceConfig(std::move(result), false)) {
-        LOG_ERROR("SliceSettingsBridge: failed to restore or select fallback machine '{} / {}'",
-                  selection.machine_model_id, selection.machine_variant_id);
-    }
+    return result;
+}
+}
+
+QFuture<GPlatform::SlicingConfigActivationResult> SliceSettingsBridge::prepareStartupConfiguration() {
+    Q_ASSERT(QThread::currentThread() == QCoreApplication::instance()->thread());
+    const auto selection = restoredSelection();
+    // Prime the cached Qt path before entering the backend-only worker.
+    QCoreApplication::applicationDirPath();
+    return QtConcurrent::run([selection] { return loadStartupConfiguration(selection); });
+}
+
+void SliceSettingsBridge::supplyStartupConfiguration(GPlatform::SlicingConfigActivationResult result) {
+    Q_ASSERT(QThread::currentThread() == QCoreApplication::instance()->thread());
+    startupConfiguration = std::move(result);
+}
+
+SliceSettingsBridge::SliceSettingsBridge(QObject* parent)
+    : bridge::BridgeBase(parent) {
+    auto result = startupConfiguration
+        ? std::move(*startupConfiguration) : loadStartupConfiguration(restoredSelection());
+    startupConfiguration.reset();
+    if (!replaceConfig(std::move(result), false))
+        LOG_ERROR("SliceSettingsBridge: failed to restore or select fallback machine");
 }
 
 SliceSettingsBridge* SliceSettingsBridge::instance() {

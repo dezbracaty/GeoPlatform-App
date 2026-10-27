@@ -3136,3 +3136,141 @@ msgstr "查看平台"
 
 msgid "AI Assistant ready. You can start chatting now."
 msgstr "AI 助手已就绪，现在可以开始对话。"
+
+msgid "Starting GPlatform…"
+msgstr "正在启动 GPlatform…"
+
+msgid "Reading configuration…"
+msgstr "正在读取配置…"
+
+msgid "Loading application modules…"
+msgstr "正在加载应用模块…"
+
+msgid "Preparing workspace services…"
+msgstr "正在准备工作区服务…"
+
+msgid "Creating workspace…"
+msgstr "正在创建工作区…"
+
+msgid "Loading printer and filament presets…"
+msgstr "正在加载打印机和耗材预设…"
+
+msgid "Initializing print platform…"
+msgstr "正在初始化打印平台…"
+
+msgid "Preparing 3D view…"
+msgstr "正在准备三维视图…"
+
+msgid "Startup failed"
+msgstr "启动失败"
+
+msgid "Logs"
+msgstr "查看日志"
+
+msgid "Restart"
+msgstr "重启"
+
+msgid "Exit"
+msgstr "退出"
+
+msgid "Startup is taking longer. See logs for details."
+msgstr "启动耗时较长，请查看日志了解详情。"
+
+msgid "Unexpected startup error"
+msgstr "发生意外的启动错误"
+
+msgid "Unknown preset error"
+msgstr "未知的预设错误"
+
+msgid "Cannot load the slicing presets"
+msgstr "无法加载切片预设"
+
+msgid "Cannot create the startup window"
+msgstr "无法创建启动窗口"
+
+msgid "Application is not ready (%1): %2"
+msgstr "应用尚未就绪（%1）：%2"
+
+msgid "Prepare view has no document identity"
+msgstr "准备视图缺少文档标识"
+
+msgid "Prepare view was destroyed during startup"
+msgstr "准备视图在启动过程中被销毁"
+
+msgid "Prepare view has no valid camera binding"
+msgstr "准备视图没有有效的相机关联"
+
+msgid "Printer, process or filament configuration is unavailable: %1"
+msgstr "打印机、工艺或耗材配置不可用：%1"
+
+msgid "Print platform initialization failed: %1"
+msgstr "打印平台初始化失败：%1"
+
+msgid "Timed out while creating the print workspace"
+msgstr "创建打印工作区超时"
+
+msgid "Timed out while waiting for the first visible frame"
+msgstr "等待首个可见帧超时"
+
+msgid "Cannot activate default interaction handlers"
+msgstr "无法启用默认交互处理器"
+
+msgid "Cannot load the application interface"
+msgstr "无法加载应用界面"
+
+msgid "Invalid Journal port"
+msgstr "Journal 端口无效"
+
+msgid "The application QML did not load"
+msgstr "应用 QML 界面未能加载"
+
+msgid "Invalid printable volume"
+msgstr "打印体积参数无效"
+
+msgid "Invalid print origin"
+msgstr "打印原点无效"
+
+msgid "Invalid printable polygon"
+msgstr "打印区域多边形无效"
+
+msgid "Invalid printable polygon coordinate"
+msgstr "打印区域多边形坐标无效"
+
+msgid "Printable polygon has no area"
+msgstr "打印区域多边形面积为零"
+
+msgid "Scene initialization requires an idle document"
+msgstr "场景初始化需要文档处于空闲状态"
+
+msgid "Print scene initialization is incomplete or does not match the machine"
+msgstr "打印场景初始化不完整，或与当前机型不匹配"
+
+msgid "Fiber infill diagnostics"
+msgstr "铺纤填充调试"
+
+msgid "Collected %1 fiber diagnostics. Click to display them. Cyan: original contour regions; red: candidate regions without fiber coverage; orange: rejected paths. Diagnostics are not printed."
+msgstr "已采集 %1 项铺纤诊断，点击显示。青色：原始轮廓区域；红色：候选轮廓未生成区域；橙色：被拒绝路径。诊断内容不会打印。"
+
+msgid "No fiber diagnostics to display. Uncovered regions compare existing candidate contours with final fiber coverage; regions without candidates are excluded."
+msgstr "没有可显示的铺纤诊断。未生成区域仅比较已有候选轮廓与最终纤维覆盖，不包含从未生成候选的部分。"
+
+msgid "Notifications"
+msgstr "通知"
+
+msgid "Current: %1"
+msgstr "当前：%1"
+
+msgid "View details"
+msgstr "查看详情"
+
+msgid "OrcaSlicer returned the following errors:"
+msgstr "OrcaSlicer 返回以下错误："
+
+msgid "Current configuration: %1"
+msgstr "当前配置：%1"
+
+msgid "Go to settings"
+msgstr "跳转到设置"
+
+msgid "These slicing results are no longer valid. Please slice again."
+msgstr "这次切片结果已失效，请重新切片。"

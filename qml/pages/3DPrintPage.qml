@@ -322,7 +322,7 @@ ContentPage {
 
     QtObject {
         id: sharedWorkspaceContext
-        property bool sceneInitialized: false
+        readonly property bool sceneInitialized: StartupState.sceneReady
     }
 
     Connections {
@@ -413,7 +413,7 @@ ContentPage {
             Prepare3DPrintPage {
                 id: preparePage
                 workspaceContext: sharedWorkspaceContext
-                renderActive: root.dockReady && root.activePageName === "prepare"
+                renderActive: StartupState.sceneReady && root.dockReady && root.activePageName === "prepare"
                 onWorkspaceRequested: function(workspaceName) {
                     root.activatePage(workspaceName, true)
                 }
@@ -429,7 +429,7 @@ ContentPage {
             Preview3DPrintPage {
                 id: previewPage
                 workspaceContext: sharedWorkspaceContext
-                renderActive: root.dockReady && root.activePageName === "preview"
+                renderActive: StartupState.ready && root.dockReady && root.activePageName === "preview"
                 onWorkspaceRequested: function(workspaceName) {
                     root.activatePage(workspaceName, true)
                 }
@@ -445,7 +445,7 @@ ContentPage {
             Realistic3DPrintPage {
                 id: realisticPage
                 workspaceContext: sharedWorkspaceContext
-                renderActive: root.dockReady &&
+                renderActive: StartupState.ready && root.dockReady &&
                               root.activePageName === "realistic"
                 onWorkspaceRequested: function(workspaceName) {
                     root.activatePage(workspaceName, true)
@@ -459,9 +459,10 @@ ContentPage {
             prepareDock.addDockWidgetAsTab(previewDock)
             prepareDock.addDockWidgetAsTab(realisticDock)
             dockReady = true
+            StartupState.attachWorkspace(preparePage.renderer)
             Qt.callLater(function() {
                 root.activatePage(
-                    root.pageForEnvironment(MenuData.currentEnvironment),
+                    StartupState.ready ? root.pageForEnvironment(MenuData.currentEnvironment) : "prepare",
                     false)
             })
         }
