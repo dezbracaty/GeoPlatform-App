@@ -181,6 +181,7 @@ PanelSurface {
             Layout.preferredHeight: PrintWorkspaceStyle.controlHeight
             compact: true
             embedded: true
+            connected: PrinterService.connected
             agentAvailable: PrinterService.agentAvailable
             hasSelectedDevice: PrinterService.selectedDeviceId.length > 0
             selectedDeviceOnline: PrinterService.selectedDeviceOnline

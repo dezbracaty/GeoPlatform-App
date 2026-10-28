@@ -153,6 +153,8 @@ public:
         if (wrapped) respond(index, result); // Legacy/wrapped compatibility fixture.
         else raw(index, QJsonDocument(result).toJson(QJsonDocument::Compact), 201);
     }
+    bool dualNozzle{false};
+    QString activeExtruder{"extruder"};
     void respondDefault(int index) {
         if (is(index, "/server/info")) {
             respond(index, QJsonObject{{"klippy_connected", true}, {"klippy_state", klippyState},
@@ -160,14 +162,20 @@ public:
         } else if (is(index, "/printer/info")) {
             respond(index, QJsonObject{{"state", klippyState}});
         } else if (is(index, "/printer/objects/list")) {
-            respond(index, QJsonObject{{"objects", printerObjects}});
+            QJsonArray objects = printerObjects;
+            if (dualNozzle) { objects.append("extruder1"); objects.append("toolhead"); objects.append("gcode_move"); objects.append("configfile"); }
+            respond(index, QJsonObject{{"objects", objects}});
         } else if (is(index, "/printer/objects/query")) {
             respond(index, QJsonObject{{"status", QJsonObject{
                 {"webhooks", QJsonObject{{"state", klippyState}}},
                 {"print_stats", QJsonObject{{"state", state}, {"filename", filename}, {"print_duration", 12.0}, {"message", stateMessage}}},
                 {"virtual_sdcard", QJsonObject{{"progress", progress}}},
                 {"extruder", QJsonObject{{"temperature", 190.0}, {"target", 200.0}}},
+                {"extruder1", QJsonObject{{"temperature", 35.0}, {"target", 0.0}}},
+                {"toolhead", QJsonObject{{"extruder", activeExtruder}, {"homed_axes", ""}}},
                 {"heater_bed", QJsonObject{{"temperature", 55.0}, {"target", 60.0}}}}}});
+        } else if (is(index, "/printer/gcode/script")) {
+            respond(index, "ok");
         } else if (is(index, "/server/files/upload")) {
             uploadResponse(index);
         } else if (is(index, "/printer/print/start")) {
@@ -669,9 +677,9 @@ void disconnectOrSwitchPreventsLateStart(bool switchSession) {
 }
 
 void snapshotAndShutdown() {
-    // This checks immutable bytes, not loopback throughput under build load.
-    // Dedicated deadline cases above retain their short upload timeouts.
-    Fixture f(100000, 400, 2000);
+    // This case verifies file identity, not the upload deadline. Large loopback
+    // transfers on Windows need a separate deadline from short JSON requests.
+    Fixture f(100000, 400, 10000);
     f.ready();
     QByteArray original("G90\n; immutable-original\n");
     original += QByteArray(2 * 1024 * 1024, ';');
@@ -822,6 +830,79 @@ void reentrantSinkShutdown() {
 }
 } // namespace
 
+void deviceTemperatureCommands() {
+    Fixture f; f.ready();
+    DeviceCommand command;command.requestId = 91;command.action = "nozzle";command.value = 210;
+    f.agent->controlDevice(command);
+    until([&] { return f.has(EventType::DeviceCommandFinished); }, "temperature completion missing");
+    check(f.http.count("/printer/gcode/script") == 1, "temperature command did not use the G-code endpoint");
+    const auto request = std::find_if(f.http.requests.begin(), f.http.requests.end(), [](const auto& r) { return r.path.endsWith("/printer/gcode/script"); });
+    check(QJsonDocument::fromJson(request->body).object().value("script").toString()
+        == "SET_HEATER_TEMPERATURE HEATER=extruder TARGET=210.000", "unexpected temperature G-code");
+    const auto event = std::find_if(f.events.begin(), f.events.end(), [](const auto& e) { return e.type == EventType::DeviceCommandFinished; });
+    check(event->requestId == 91 && event->success, "temperature acknowledgement lost request identity");
+    f.events.clear();command.requestId++;command.value = 999;f.agent->controlDevice(command);
+    until([&] { return f.has(EventType::DeviceCommandFinished); }, "invalid limit completion missing");
+    check(f.http.count("/printer/gcode/script") == 1, "invalid temperature reached the device");
+    f.events.clear();command.requestId++;command.action = "move";command.axis = "x";command.value = 1;f.agent->controlDevice(command);
+    until([&] { return f.has(EventType::DeviceCommandFinished); }, "unsupported motion completion missing");
+    check(f.http.count("/printer/gcode/script") == 1, "unsupported motion reached the device");
+}
+
+void activeNozzleIdentity() {
+    Fixture f;f.http.dualNozzle = true;f.http.activeExtruder = "extruder1";f.ready();
+    const auto status = std::find_if(f.events.rbegin(), f.events.rend(), [](const auto& e) { return e.type == EventType::StatusChanged; });
+    check(status != f.events.rend() && status->status.nozzleName == "extruder1"
+        && status->status.nozzleTemperature == 35.0 && status->status.targetNozzleTemperature == 0,
+        "active second-nozzle telemetry was mapped to the first nozzle");
+    check(!status->status.controls.motion && status->status.controls.homing, "unhomed motion was exposed as available");
+    DeviceCommand command;command.requestId = 101;command.action = "nozzle";command.value = 210;command.heater = "extruder1";
+    f.agent->controlDevice(command);
+    until([&] { return f.has(EventType::DeviceCommandFinished); }, "second-nozzle command completion missing");
+    const auto request = std::find_if(f.http.requests.begin(), f.http.requests.end(), [](const auto& r) { return r.path.endsWith("/printer/gcode/script"); });
+    check(request != f.http.requests.end() && QJsonDocument::fromJson(request->body).object().value("script").toString()
+        == "SET_HEATER_TEMPERATURE HEATER=extruder1 TARGET=210.000", "second-nozzle control targeted the first heater");
+    f.events.clear();command.requestId++;f.http.activeExtruder = "extruder";
+    f.agent->controlDevice(command);
+    until([&] { return f.has(EventType::DeviceCommandFinished); }, "changed-nozzle rejection missing");
+    const auto rejected = std::find_if(f.events.begin(), f.events.end(), [](const auto& e) { return e.type == EventType::DeviceCommandFinished; });
+    check(!rejected->success && f.http.count("/printer/gcode/script") == 1, "a tool change redirected a command to an unintended nozzle");
+}
+
+void manualRefreshDoesNotReconnectOrMutate() {
+    Fixture f(100000);
+    f.ready();
+    check(!f.agent->capabilities().discovery, "address-based backend unexpectedly advertises discovery");
+    const int handshakes = f.http.count("/printer/info");
+    const int queries = f.http.count("/printer/objects/query");
+    f.events.clear();
+    f.agent->refreshDevices();
+    f.agent->refreshDevices(); // Rapid repeated clicks must share one refresh.
+    until([&] { return f.has(EventType::ScanFinished) && f.has(EventType::StatusChanged); }, "manual refresh did not read device status");
+    check(f.has(EventType::ScanStarted), "manual refresh did not signal its busy state");
+    const auto scan = std::find_if(f.events.begin(), f.events.end(), [](const auto& e) { return e.type == EventType::ScanFinished; });
+    check(scan->success && scan->devices.size() == 1 && scan->devices.front().online, "manual refresh lost the configured device");
+    check(f.http.count("/server/info") == 2 && f.http.count("/printer/info") == handshakes,
+          "manual refresh duplicated a probe or reconnected the printer");
+    check(f.http.count("/printer/objects/query") == queries + 1 && !f.has(EventType::ConnectionChanged),
+          "manual refresh replaced the current device session");
+    check(f.http.count("/printer/gcode/script") == 0 && f.http.count("/printer/print/start") == 0 && f.http.count("/server/files/upload") == 0,
+          "manual refresh sent a mutating request");
+    f.agent->releaseDevice();
+    f.events.clear();
+    f.agent->refreshDevices();
+    until([&] { return f.has(EventType::ScanFinished); }, "disconnected device refresh did not finish");
+    check(f.http.count("/printer/info") == handshakes && f.http.count("/printer/objects/query") == queries + 1
+          && !f.has(EventType::ConnectionChanged), "refresh reconnected a deliberately disconnected printer");
+    f.http.klippyState = "shutdown";
+    f.events.clear();
+    f.agent->refreshDevices();
+    until([&] { return f.has(EventType::ScanFinished); }, "unready device refresh did not finish");
+    const auto offline = std::find_if(f.events.begin(), f.events.end(), [](const auto& e) { return e.type == EventType::ScanFinished; });
+    check(!offline->success && offline->devices.size() == 1 && !offline->devices.front().online,
+          "refresh reported an unready device as online or removed the configured address");
+}
+
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     const std::vector<std::pair<const char*, std::function<void()>>> tests{
@@ -829,6 +910,7 @@ int main(int argc, char** argv) {
         {"lost cancel ACK and read-only reconnect recover automatically", deviceStateRecoversWithoutAcknowledgement},
         {"start dispatch and old-query identity fences", startingAndOldPollBoundaries},
         {"paused/completed/error and changed object capabilities", stateKindsAndChangedCapabilities},
+        {"manual refresh without discovery, reconnect or mutation", manualRefreshDoesNotReconnectOrMutate},
         {"handshake/key/path prefix/upload-only/unique name/progress", handshakeAndUpload},
         {"readable Unicode names and direct-agent filename validation", readableUploadNames},
         {"wrapped upload response compatibility", wrappedUploadCompatibility},
@@ -847,6 +929,8 @@ int main(int argc, char** argv) {
         {"authorization challenge and API-key retry", authorizationRetry},
         {"lost start and unexpected upload identity", lostStartAndMalformedUpload},
         {"source changes during snapshot preparation", sourceChangeDuringPreparation},
+        {"active nozzle telemetry, target identity and tool-change rejection", activeNozzleIdentity},
+        {"device temperature commands and capability limits", deviceTemperatureCommands},
         {"pause/resume/cancel lifecycle", controlLifecycle},
         {"reentrant sink destruction", reentrantSinkShutdown},
     };

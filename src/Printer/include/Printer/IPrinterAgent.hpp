@@ -23,6 +23,8 @@ public:
     virtual void initialize() = 0;
     virtual void shutdown() = 0;
     virtual void scan() = 0;
+    // Refresh known devices; address-based backends may probe without discovery.
+    virtual void refreshDevices() { scan(); }
     virtual void login(const std::string& username, const std::string& password) = 0;
     virtual void logout() = 0;
     virtual void selectDevice(const Device& device) = 0;
@@ -34,9 +36,13 @@ public:
     // Request ids are unique within a selected-device session. False means unsupported
     // or already beyond the local upload cancellation boundary, never "print stopped".
     virtual bool cancelSubmission(uint64_t requestId) { return false; }
+    // Explicit confirmation applies only to physical device control, never job submission.
+    virtual void acknowledgeDeviceControlOutcome() {}
     virtual bool refreshStatus() { return false; }
     virtual void controlJob(const std::string& action, uint64_t requestId) = 0;
     virtual void setCameraStreamEnabled(bool enabled) = 0;
+    // Implementations must report completion, including unsupported operations.
+    virtual void controlDevice(const DeviceCommand& command) = 0;
 };
 
 } // namespace GPlatform::PrinterCore

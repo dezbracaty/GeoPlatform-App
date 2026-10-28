@@ -23,6 +23,21 @@ struct Device {
     uint64_t sessionId{0}; // Assigned by the facade on each connection attempt.
 };
 
+// Per-device support is populated from device telemetry, not vendor-wide guesses.
+struct DeviceControls {
+    bool nozzle{false}, bed{false}, motion{false}, homing{false};
+    bool extrusion{false}, light{false}, fan{false}, fanPercentage{false};
+    double maxNozzleTemperature{280}, maxBedTemperature{110}, minExtrudeTemperature{170};
+};
+
+struct DeviceCommand {
+    uint64_t requestId{0};
+    std::string action; // nozzle, bed, heatersOff, move, home, extrude, light, fan
+    std::string axis;
+    std::string heater; // Identity shown in the UI when the command was requested.
+    double value{0};
+};
+
 struct Status {
     std::string deviceId;
     std::string name;
@@ -42,6 +57,13 @@ struct Status {
     int currentLayer{0};
     int totalLayers{0};
     bool cameraAvailable{false};
+    DeviceControls controls;
+    std::string nozzleName;
+    std::string firmware;
+    double position[3]{0, 0, 0};
+    bool positionAvailable{false};
+    bool lightOn{false};
+    double fanSpeed{0};
 };
 
 struct PrintJob {
@@ -83,6 +105,7 @@ enum class EventType {
     TransferProgress,
     JobCommandFinished,
     CameraStreamCommandFinished,
+    DeviceCommandFinished,
 };
 
 struct Event {

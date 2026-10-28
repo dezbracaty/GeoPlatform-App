@@ -6,14 +6,14 @@ import SmoothUI.impl
 import GPlatform
 
 // Compact entry for selecting a physical printer and opening its details.
-// Device selection is the public interaction; transport sessions stay inside
-// the printer agent and are deliberately not exposed as connect buttons.
+// Discovery availability and the active connection are distinct device states.
 Button {
     id: root
     objectName: "printerStatusButton"
 
     SmoothUI.theme: Theme.of(root)
 
+    property bool connected: false
     property bool agentAvailable: true
     property bool hasSelectedDevice: false
     property bool selectedDeviceOnline: false
@@ -35,13 +35,13 @@ Button {
     property real printProgress: 0
 
     readonly property bool deviceReady:
-        hasSelectedDevice && selectedDeviceOnline && !loading
+        connected && hasSelectedDevice && selectedDeviceOnline && !loading
         && !serviceError && !accessRequired
     readonly property string displayName:
         printerName.length > 0 ? printerName : qsTr("Printing device")
     readonly property string statusText: {
         if (!agentAvailable || (serviceError && !accessRequired))
-            return qsTr("Device service unavailable")
+            return qsTr("Connection unavailable")
         if (!hasSelectedDevice)
             return qsTr("Select a printer")
         if (!selectedDeviceOnline)
@@ -50,12 +50,14 @@ Button {
             return qsTr("%1 · Access required").arg(displayName)
         if (loading)
             return qsTr("Loading %1").arg(displayName)
+        if (!connected)
+            return qsTr("%1 · Disconnected").arg(displayName)
         return displayName
     }
 
     readonly property string conciseStatusText: {
         if (!agentAvailable || (serviceError && !accessRequired))
-            return qsTr("Device unavailable")
+            return qsTr("Select printer")
         if (!hasSelectedDevice)
             return qsTr("Select printer")
         if (!selectedDeviceOnline)
@@ -119,7 +121,7 @@ Button {
             Layout.preferredHeight: 8
             radius: 4
             color: (!root.agentAvailable || root.serviceError)
-                   ? root.SmoothUI.theme.res.systemFillColorCritical
+                   ? root.SmoothUI.theme.res.textFillColorTertiary
                    : (root.accessRequired || root.loading
                       ? root.SmoothUI.theme.res.systemFillColorCaution
                       : (root.deviceReady
@@ -150,7 +152,7 @@ Button {
             text: root.compact && root.embedded ? root.conciseStatusText : root.statusText
             font: Typography.body
             color: (!root.agentAvailable || root.serviceError)
-                   ? root.SmoothUI.theme.res.systemFillColorCritical
+                   ? root.SmoothUI.theme.res.textFillColorSecondary
                    : root.SmoothUI.theme.res.textFillColorPrimary
         }
 
@@ -193,8 +195,7 @@ Button {
         delay: Theme.tooltipDelay
         text: {
             if (!root.agentAvailable || root.serviceError)
-                return root.errorText.length > 0
-                        ? root.errorText : qsTr("Device service unavailable")
+                return qsTr("Open printing devices to configure a connection")
             if (!root.hasSelectedDevice)
                 return qsTr("Choose an online or offline printer")
             if (!root.selectedDeviceOnline)

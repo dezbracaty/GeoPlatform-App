@@ -5,6 +5,7 @@
 #include <QFileInfo>
 #include <QHttpMultiPart>
 #include <QJsonArray>
+#include <QRegularExpression>
 #include <QJsonDocument>
 #include <QTemporaryFile>
 #include <QUuid>
@@ -53,10 +54,14 @@ void MoonrakerPrinterAgentImpl::shutdown() {
     m_apiKey.clear();
 }
 void MoonrakerPrinterAgentImpl::releaseDevice() {
+    const bool refreshCanceled = m_refreshPending;
+    const bool wasOnline = m_device.online;
     ++m_generation;
+    m_refreshPending = false;
     m_poll.stop();
     m_connected = m_queryPending = m_busy = m_fileManager = m_statusFresh = m_handshakePending = false;
     m_startDispatched = false;
+    m_uncertain = false;
     m_activeReply.clear();
     m_activeCommand.clear();
     m_activeFileName.clear();
@@ -68,21 +73,44 @@ void MoonrakerPrinterAgentImpl::releaseDevice() {
     m_activeRequestId = 0;
     m_device = {};
     m_caps = {false, false, false, false, false, false, false, false, false};
+    if (refreshCanceled) publishConfiguredDevice(wasOnline);
 }
 void MoonrakerPrinterAgentImpl::scan() {
+    publishConfiguredDevice(true);
+}
+void MoonrakerPrinterAgentImpl::publishConfiguredDevice(bool online, const QString& error) {
     Event event;
     event.type = EventType::ScanFinished;
-    event.success = validEndpoint(m_endpoint);
-    if (event.success) {
+    event.success = validEndpoint(m_endpoint) && error.isEmpty();
+    event.error = error.toStdString();
+    if (validEndpoint(m_endpoint)) {
         Device device;
         device.deviceId = "moonraker:" + m_endpoint.toString(QUrl::FullyEncoded).toStdString();
         device.name = "Moonraker";
         device.model = "Klipper";
         device.ip = m_endpoint.toString().toStdString();
         device.route = DeviceRoute::LocalNetwork;
+        device.online = online;
         event.devices.push_back(device);
     }
     publish(event);
+}
+void MoonrakerPrinterAgentImpl::refreshDevices() {
+    if (m_refreshPending) return;
+    m_refreshPending = true;
+    Event started; started.type = EventType::ScanStarted; started.success = true;
+    publish(started);
+    json("/server/info", {}, false, false, [this](const Response& response) {
+        m_refreshPending = false;
+        const auto info = response.result.toObject();
+        const bool online = response.ok && info.value("klippy_connected").toBool()
+            && info.value("klippy_state").toString() == "ready";
+        const QString error = online ? QString{} : response.ok ? QStringLiteral("Klipper is not ready") : response.error;
+        if (!online && m_connected)
+            connectionFailed(error, response.code == 401 || response.code == 403);
+        publishConfiguredDevice(online, error);
+        if (online && m_connected) queryStatus();
+    });
 }
 void MoonrakerPrinterAgentImpl::login(const std::string&, const std::string&) {
     Event event; event.type = EventType::LoginFinished;
@@ -135,7 +163,8 @@ void MoonrakerPrinterAgentImpl::watch(QNetworkReply* reply, bool mutating, Compl
     connect(reply, &QIODevice::readyRead, reply, [reply] {
         if (reply->bytesAvailable() > 2 * 1024 * 1024) reply->abort();
     });
-    connect(reply, &QNetworkReply::finished, this, [this, reply, generation, mutating, allowBareUpload, requestId, done = std::move(done)] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, deadline, generation, mutating, allowBareUpload, requestId, done = std::move(done)] {
+        deadline->stop(); // Completion ends the deadline, even if deleteLater is deferred.
         m_replies.remove(reply);
         reply->deleteLater();
         if (m_activeReply == reply) m_activeReply.clear();
@@ -162,11 +191,13 @@ void MoonrakerPrinterAgentImpl::watch(QNetworkReply* reply, bool mutating, Compl
                  || response.code == 404 || response.code == 405);
         if (!response.ok) response.error = response.code == 401 || response.code == 403
             ? QStringLiteral("Moonraker authorization failed. Check the API key.")
-            : QStringLiteral("Moonraker HTTP request failed (%1). Check the printer before retrying.").arg(response.code);
+            : QStringLiteral("Moonraker HTTP request failed (HTTP %1, network %2). Check the printer before retrying.").arg(response.code).arg(static_cast<int>(reply->error()));
         done(response);
-    });
+    }, Qt::SingleShotConnection);
 }
 void MoonrakerPrinterAgentImpl::connectionFailed(const QString& error, bool access) {
+    const bool refreshCanceled = m_refreshPending;
+    m_refreshPending = false;
     ++m_generation;
     m_connected = m_statusFresh = m_queryPending = m_handshakePending = false;
     m_state.clear();
@@ -183,6 +214,7 @@ void MoonrakerPrinterAgentImpl::connectionFailed(const QString& error, bool acce
     event.error = error.toStdString(); event.accessRequired = access;
     publish(event);
     if (!m_device.deviceId.empty()) m_poll.start();
+    if (refreshCanceled) publishConfiguredDevice(false, error);
 }
 void MoonrakerPrinterAgentImpl::handshake() {
     if (m_handshakePending || m_device.deviceId.empty()) return;
@@ -232,8 +264,12 @@ void MoonrakerPrinterAgentImpl::queryStatus(bool initial) {
     m_queryPending = true;
     const auto queryId = ++m_querySerial;
     QJsonObject objects;
-    for (const auto* name : {"webhooks", "print_stats", "virtual_sdcard", "pause_resume", "extruder", "heater_bed"})
+    for (const auto* name : {"webhooks", "print_stats", "virtual_sdcard", "pause_resume", "extruder", "heater_bed", "toolhead", "gcode_move", "fan", "configfile"})
         if (m_objects.contains(QString::fromLatin1(name))) objects.insert(QString::fromLatin1(name), QJsonValue::Null);
+    if (m_objects.contains("configfile")) objects.insert("configfile", QJsonArray{"settings"});
+    static const QRegularExpression extruderObject(QStringLiteral("^extruder[0-9]*$"));
+    for (const auto& name : m_objects)
+        if (extruderObject.match(name).hasMatch()) objects.insert(name, QJsonValue::Null);
     json("/printer/objects/query", {{"objects", objects}}, true, false, [this, initial, queryId](const Response& response) {
         m_queryPending = false;
         if (queryId <= m_statusFence) { queryStatus(initial); return; }
@@ -271,7 +307,11 @@ void MoonrakerPrinterAgentImpl::queryStatus(bool initial) {
         out.estimatedTimeSeconds = -1.0; // No metadata estimate was requested or inferred.
         const double progress = status.value("virtual_sdcard").toObject().value("progress").toDouble();
         out.progress = std::isfinite(progress) ? 100.0 * std::clamp(progress, 0.0, 1.0) : 0.0;
-        const auto extruder = status.value("extruder").toObject();
+        const auto active = status.value("toolhead").toObject().value("extruder").toString("extruder");
+        const bool validHeater = m_objects.contains(active) && QRegularExpression("^extruder[0-9]*$").match(active).hasMatch();
+        m_activeExtruder = validHeater ? active : QString();
+        out.nozzleName = m_activeExtruder.toStdString();
+        const auto extruder = validHeater ? status.value(active).toObject() : QJsonObject{};
         const auto bed = status.value("heater_bed").toObject();
         out.nozzleTemperature = extruder.value("temperature").toDouble();
         out.targetNozzleTemperature = extruder.value("target").toDouble();
@@ -298,6 +338,26 @@ void MoonrakerPrinterAgentImpl::queryStatus(bool initial) {
             finishCommand("cancel", m_activeRequestId, observed, m_activeFileName);
             if (reply) reply->abort();
         }
+        auto& c = out.controls;
+        c.nozzle = validHeater;
+        c.bed = m_objects.contains("heater_bed");
+        c.homing = m_objects.contains("toolhead");
+        const auto homed = status.value("toolhead").toObject().value("homed_axes").toString();
+        c.motion = c.homing && m_objects.contains("gcode_move") && homed.contains('x') && homed.contains('y') && homed.contains('z');
+        c.extrusion = c.nozzle && m_objects.contains("gcode_move");
+        c.fan = m_objects.contains("fan");
+        c.fanPercentage = c.fan;
+        const auto config = status.value("configfile").toObject().value("settings").toObject();
+        auto bounded = [](double value, double fallback) { return std::isfinite(value) && value > 0 ? std::min(value, fallback) : fallback; };
+        c.maxNozzleTemperature = bounded(config.value(active).toObject().value("max_temp").toDouble(), 280);
+        c.maxBedTemperature = bounded(config.value("heater_bed").toObject().value("max_temp").toDouble(), 110);
+        c.minExtrudeTemperature = std::max(170.0, config.value(active).toObject().value("min_extrude_temp").toDouble());
+        const auto positions = status.value("toolhead").toObject().value("position").toArray();
+        out.positionAvailable = positions.size() >= 3;
+        for (int i = 0; i < 3 && out.positionAvailable; ++i) out.position[i] = positions[i].toDouble();
+        out.fanSpeed = status.value("fan").toObject().value("speed").toDouble() * 100;
+        m_lastStatus = out;
+        m_homedAxes = status.value("toolhead").toObject().value("homed_axes").toString();
         publish(event);
     });
 }
@@ -317,8 +377,10 @@ void MoonrakerPrinterAgentImpl::finishCommand(const std::string& command, uint64
         m_statusFence = m_querySerial;
         updateCapabilities();
     }
-    Event event; event.type = EventType::JobCommandFinished;
-    event.requestId = id; event.command = completedCommand; event.success = response.ok;
+    const bool deviceCommand = completedCommand.rfind("device:", 0) == 0;
+    if (deviceCommand) m_uncertain |= response.unknown;
+    Event event; event.type = deviceCommand ? EventType::DeviceCommandFinished : EventType::JobCommandFinished;
+    event.requestId = id; event.command = deviceCommand ? completedCommand.substr(7) : completedCommand; event.success = response.ok;
     event.cancelled = response.cancelled;
     event.outcomeUnknown = response.unknown; event.error = response.error.toStdString();
     event.status.fileName = fileName.toStdString();
@@ -339,7 +401,7 @@ bool MoonrakerPrinterAgentImpl::refreshStatus() {
 }
 void MoonrakerPrinterAgentImpl::submitJob(const PrintJob& job) {
     Response invalid; invalid.error = "Moonraker submission is unavailable or unsupported";
-    if (job.requestId == 0 || m_busy || !m_statusFresh || !m_caps.upload || (job.printNow && !m_caps.start)
+    if (job.requestId == 0 || m_uncertain || m_busy || !m_statusFresh || !m_caps.upload || (job.printNow && !m_caps.start)
         || m_state == "printing" || m_state == "paused" || job.formatId != "gcode"
         || job.levelingBeforePrint || job.flowCalibration || job.firstLayerInspection
         || job.timeLapseVideo || job.useMaterialStation) {
@@ -479,7 +541,7 @@ void MoonrakerPrinterAgentImpl::controlJob(const std::string& action, uint64_t r
     const bool resume = action == "continue";
     const bool pause = action == "pause";
     const bool cancel = action == "cancel";
-    if (requestId == 0 || m_busy || !m_statusFresh || !m_connected || (!(resume || pause || cancel))
+    if (requestId == 0 || m_uncertain || m_busy || !m_statusFresh || !m_connected || (!(resume || pause || cancel))
         || ((resume || pause) && !m_caps.pauseResume) || (cancel && !m_caps.cancel)
         || (pause && m_state != "printing") || (resume && m_state != "paused")
         || (cancel && m_state != "printing" && m_state != "paused")) {
@@ -500,6 +562,78 @@ void MoonrakerPrinterAgentImpl::controlJob(const std::string& action, uint64_t r
         queryStatus();
     }, requestId);
 }
+void MoonrakerPrinterAgentImpl::controlDevice(const DeviceCommand& command) {
+    const auto reject = [this, command](const char* error) {
+        Event event; event.type = EventType::DeviceCommandFinished;
+        event.command = command.action; event.requestId = command.requestId; event.error = error;
+        publish(event);
+    };
+    if (!m_connected || !m_statusFresh || m_busy || m_uncertain || !command.requestId || !std::isfinite(command.value)) {
+        reject("Device control is unavailable"); return;
+    }
+    m_busy = true;
+    m_activeRequestId = command.requestId;
+    m_activeCommand = "device:" + command.action;
+    // Refresh readiness and interlocks at dispatch time, not only on the GUI.
+    QJsonObject objects;
+    for (const auto* name : {"webhooks", "print_stats", "toolhead", "extruder"})
+        if (m_objects.contains(name)) objects.insert(name, QJsonValue::Null);
+    if (!m_activeExtruder.isEmpty()) objects.insert(m_activeExtruder, QJsonValue::Null);
+    json("/printer/objects/query", {{"objects", objects}}, true, false, [this, command, reject](const Response& checked) {
+        const auto s = checked.result.toObject().value("status").toObject();
+        const auto job = s.value("print_stats").toObject().value("state").toString();
+        const bool idle = QStringList{"standby", "complete", "cancelled"}.contains(job);
+        const auto& c = m_lastStatus.controls;
+        const auto& a = command.action;
+        const double v = command.value;
+        const bool numeric = std::isfinite(v);
+        const auto homed = s.value("toolhead").toObject().value("homed_axes").toString();
+        const auto active = s.value("toolhead").toObject().value("extruder").toString("extruder");
+        const bool heaterUnchanged = active == m_activeExtruder
+            && (command.heater.empty() || QString::fromStdString(command.heater) == active);
+        const double temp = s.value(m_activeExtruder).toObject().value("temperature").toDouble();
+        const bool valid = numeric && (
+            (a == "nozzle" && c.nozzle && v >= 0 && v <= c.maxNozzleTemperature)
+            || (a == "bed" && c.bed && v >= 0 && v <= c.maxBedTemperature)
+            || (a == "preheatPLA" && c.nozzle && c.bed && c.maxNozzleTemperature >= 210 && c.maxBedTemperature >= 60)
+            || (a == "preheatPETG" && c.nozzle && c.bed && c.maxNozzleTemperature >= 240 && c.maxBedTemperature >= 80)
+            || (a == "heatersOff" && (c.nozzle || c.bed))
+            || (a == "home" && c.homing && idle)
+            || (a == "move" && c.motion && idle && (command.axis == "x" || command.axis == "y" || command.axis == "z")
+                && homed.contains(QString::fromStdString(command.axis)) && v != 0 && std::abs(v) <= 10)
+            || (a == "extrude" && c.extrusion && idle && temp >= c.minExtrudeTemperature && v != 0 && std::abs(v) <= 100)
+            || (a == "fan" && c.fan && v >= 0 && v <= 100));
+        const bool heaterOperation = a == "nozzle" || a == "extrude" || a == "preheatPLA" || a == "preheatPETG";
+        if (!checked.ok || s.value("webhooks").toObject().value("state").toString() != "ready" || !valid || (heaterOperation && !heaterUnchanged)) {
+            m_busy = false; m_activeRequestId = 0; m_activeCommand.clear(); m_activeReply.clear();
+            reject("Device state changed or operation is unsupported"); return;
+        }
+        const QString number = QString::number(v, 'f', 3);
+        QString script;
+        if (a == "nozzle") script = "SET_HEATER_TEMPERATURE HEATER=" + m_activeExtruder + " TARGET=" + number;
+        else if (a == "bed") script = "SET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=" + number;
+        else if (a == "preheatPLA" || a == "preheatPETG") script = "SET_HEATER_TEMPERATURE HEATER=" + m_activeExtruder + " TARGET=" + QString(a == "preheatPLA" ? "210" : "240") + "\nSET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=" + QString(a == "preheatPLA" ? "60" : "80");
+        else if (a == "heatersOff") {
+            for (const auto& name : m_objects)
+                if (QRegularExpression("^extruder[0-9]*$").match(name).hasMatch()) script += "SET_HEATER_TEMPERATURE HEATER=" + name + " TARGET=0\n";
+            if (c.bed) script += "SET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=0";
+        } else if (a == "home") script = "G28";
+        else if (a == "fan") script = "M106 S" + QString::number(std::round(v * 255 / 100));
+        else {
+            script = "SAVE_GCODE_STATE NAME=GPLATFORM_CONTROL\n";
+            if (a == "move") script += "G91\nG1 " + QString::fromStdString(command.axis).toUpper() + number + " F600\n";
+            else script += "M83\nG1 E" + number + " F120\n";
+            script += "RESTORE_GCODE_STATE NAME=GPLATFORM_CONTROL";
+        }
+        m_statusFresh = false; m_statusFence = m_querySerial;
+        json("/printer/gcode/script", {{"script", script}}, true, true, [this, command](Response response) {
+            if (response.ok && response.result.toString() != "ok") { response.ok = false; response.unknown = true; }
+            finishCommand("device:" + command.action, command.requestId, response);
+            queryStatus();
+        }, command.requestId);
+    }, command.requestId);
+}
+
 void MoonrakerPrinterAgentImpl::setCameraStreamEnabled(bool enabled) {
     Event event; event.type = EventType::CameraStreamCommandFinished;
     event.command = enabled ? "open" : "close"; event.success = !enabled;
@@ -527,6 +661,7 @@ void MoonrakerPrinterAgent::setEventSink(EventSink sink) { m_impl->setEventSink(
 void MoonrakerPrinterAgent::initialize() { m_impl->initialize(); }
 void MoonrakerPrinterAgent::shutdown() { m_impl->shutdown(); }
 void MoonrakerPrinterAgent::scan() { m_impl->scan(); }
+void MoonrakerPrinterAgent::refreshDevices() { m_impl->refreshDevices(); }
 void MoonrakerPrinterAgent::login(const std::string& a, const std::string& b) { m_impl->login(a, b); }
 void MoonrakerPrinterAgent::logout() { m_impl->logout(); }
 void MoonrakerPrinterAgent::selectDevice(const PrinterCore::Device& device) { m_impl->selectDevice(device); }
@@ -536,7 +671,9 @@ std::vector<std::string> MoonrakerPrinterAgent::supportedPrintFormats() const { 
 PrinterCore::Capabilities MoonrakerPrinterAgent::capabilities() const { return m_impl->capabilities(); }
 void MoonrakerPrinterAgent::submitJob(const PrinterCore::PrintJob& job) { m_impl->submitJob(job); }
 bool MoonrakerPrinterAgent::cancelSubmission(uint64_t id) { return m_impl->cancelSubmission(id); }
+void MoonrakerPrinterAgent::acknowledgeDeviceControlOutcome() { m_impl->acknowledgeDeviceControlOutcome(); }
 bool MoonrakerPrinterAgent::refreshStatus() { return m_impl->refreshStatus(); }
 void MoonrakerPrinterAgent::controlJob(const std::string& action, uint64_t id) { m_impl->controlJob(action, id); }
+void MoonrakerPrinterAgent::controlDevice(const PrinterCore::DeviceCommand& command) { m_impl->controlDevice(command); }
 void MoonrakerPrinterAgent::setCameraStreamEnabled(bool enabled) { m_impl->setCameraStreamEnabled(enabled); }
 } // namespace GPlatform::Printer

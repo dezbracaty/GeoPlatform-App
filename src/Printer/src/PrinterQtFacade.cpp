@@ -70,6 +70,13 @@ PrinterStatus fromCore(const PrinterCore::Status& value) {
     status.currentLayer = value.currentLayer;
     status.totalLayers = value.totalLayers;
     status.cameraAvailable = value.cameraAvailable;
+    status.controls = value.controls;
+    status.nozzleName = fromStd(value.nozzleName);
+    status.firmware = fromStd(value.firmware);
+    std::copy(std::begin(value.position), std::end(value.position), status.position);
+    status.positionAvailable = value.positionAvailable;
+    status.lightOn = value.lightOn;
+    status.fanSpeed = value.fanSpeed;
     return status;
 }
 
@@ -147,12 +154,26 @@ void PrinterQtFacade::initializeAgent() {
             m_agent->refreshStatus();
         }
     });
+    disconnect(&m_deviceCommandTimer, nullptr, this, nullptr);
+    m_deviceCommandTimer.setSingleShot(true);
+    m_deviceCommandTimer.setInterval(30000);
+    connect(&m_deviceCommandTimer, &QTimer::timeout, this, [this] {
+        if (!m_deviceRequestId) return;
+        m_deviceRequestId = 0;
+        m_deviceOutcomeUnknown = true;
+        m_deviceControlError = tr("Command outcome is unknown. Check the printer before retrying.");
+        emit deviceControlChanged();
+        emit jobChanged();
+    });
+    connect(this, &PrinterQtFacade::connectionChanged, this, &PrinterQtFacade::deviceControlChanged, Qt::UniqueConnection);
+    connect(this, &PrinterQtFacade::statusChanged, this, &PrinterQtFacade::deviceControlChanged, Qt::UniqueConnection);
+    connect(this, &PrinterQtFacade::jobChanged, this, &PrinterQtFacade::deviceControlChanged, Qt::UniqueConnection);
     refreshCapabilities();
     m_agent->initialize();
 }
 
 bool PrinterQtFacade::canConfigureBackend() const {
-    return (!transferBusy() || (!connected() && (m_transferState == TransferUnknown || m_controlOutcomeUnknown)))
+    return !deviceControlBusy() && !m_deviceOutcomeUnknown && (!transferBusy() || (!connected() && (m_transferState == TransferUnknown || m_controlOutcomeUnknown)))
         && !printing() && m_controlRequestId == 0
         && !(qEnvironmentVariableIntValue("GPLATFORM_JOURNAL_SESSION") == 1
              && !qEnvironmentVariable("GPLATFORM_JOURNAL_PRINTER_FIXTURE").trimmed().isEmpty());
@@ -177,6 +198,11 @@ void PrinterQtFacade::replaceAgent(std::unique_ptr<PrinterCore::IPrinterAgent> a
     m_devices.replaceDevices({});
     m_selectedDevice = {};
     m_status = {};
+    m_hasStatus = false;
+    m_deviceRequestId = 0;
+    m_deviceOutcomeUnknown = false;
+    m_deviceControlError.clear();
+    m_deviceControlMessage.clear();
     m_agentAvailable = false;
     m_agentVersion.clear();
     m_agentError.clear();
@@ -277,7 +303,8 @@ void PrinterQtFacade::handleAgentEvent(const PrinterCore::Event& event) {
     const bool deviceEvent = event.type == EventType::CapabilitiesChanged
         || event.type == EventType::ConnectionChanged
         || event.type == EventType::StatusChanged || event.type == EventType::TransferProgress
-        || event.type == EventType::JobCommandFinished || event.type == EventType::CameraStreamCommandFinished;
+        || event.type == EventType::JobCommandFinished || event.type == EventType::CameraStreamCommandFinished
+        || event.type == EventType::DeviceCommandFinished;
     if (deviceEvent && (event.sessionId == 0 || event.sessionId != m_sessionId
         || fromStd(event.deviceId) != m_selectedDevice.deviceId)) return;
     QString error = fromStd(event.error);
@@ -326,6 +353,14 @@ void PrinterQtFacade::handleAgentEvent(const PrinterCore::Event& event) {
             devices.push_back(fromCore(value));
         }
         m_devices.replaceDevices(devices);
+        for (const auto& device : devices) {
+            if (device.deviceId == m_selectedDevice.deviceId && device.online != m_selectedDevice.online) {
+                m_selectedDevice.online = device.online;
+                emit selectedDeviceChanged();
+                emit connectionChanged(); // canReconnect depends on the refreshed online state.
+                break;
+            }
+        }
         m_discoveryError = error;
         m_discoveryState = !error.isEmpty()
             ? (event.success ? DiscoveryWarning : DiscoveryError)
@@ -361,6 +396,14 @@ void PrinterQtFacade::handleAgentEvent(const PrinterCore::Event& event) {
         if (!event.success) {
             resetCameraSession(false);
             if (!m_capabilities.automaticStatusRecovery) { m_status = {}; m_jobState = JobIdle; }
+            m_hasStatus = false; // Keep the last job for context, but never treat it as live telemetry.
+            if (m_controlRequestId) m_controlOutcomeUnknown = true;
+            if (m_deviceRequestId) {
+                m_deviceOutcomeUnknown = true;
+                m_deviceRequestId = 0;
+                m_deviceCommandTimer.stop();
+                m_deviceControlError = tr("Connection lost. Check the printer before retrying the operation.");
+            }
             m_controlRequestId = 0;
             if (m_transferState == TransferUploading || m_transferState == TransferStarting)
                 markTransferUnknown(tr("The connection was lost. Reconnecting to read the current printer state."));
@@ -427,6 +470,21 @@ void PrinterQtFacade::handleAgentEvent(const PrinterCore::Event& event) {
             // Commands were already marked pending when dispatched. A newer
             // device status is authoritative; late success must not regress it.
         }
+        emit jobChanged();
+        break;
+    case EventType::DeviceCommandFinished:
+        if (!connected() || !m_deviceRequestId || event.requestId != m_deviceRequestId
+            || fromStd(event.command) != m_deviceAction) break;
+        m_deviceCommandTimer.stop();
+        m_deviceRequestId = 0;
+        m_deviceOutcomeUnknown = event.outcomeUnknown;
+        m_deviceControlError = event.outcomeUnknown
+            ? tr("Command outcome is unknown. Check the printer before retrying.")
+            : (event.success ? QString() : tr("The device operation failed. See connection diagnostics for details."));
+        m_deviceControlMessage = event.success ? tr("Command accepted. Waiting for device feedback.") : QString();
+        LOG_INFO("Printer device command completed action={} request={} success={} unknown={}", event.command, event.requestId, event.success, event.outcomeUnknown);
+        if (!event.error.empty()) LOG_WARN("Printer device command failed: {}", event.error);
+        emit deviceControlChanged();
         emit jobChanged();
         break;
     case EventType::CameraStreamCommandFinished:
@@ -527,11 +585,14 @@ QString PrinterQtFacade::remainingTime() const {
         .arg((seconds % 3600) / 60, 2, 10, QLatin1Char('0'));
 }
 
+void PrinterQtFacade::refreshDevices() {
+    if (!m_agentAvailable || m_discoveryState == DiscoveryScanning || m_connectionState == Connecting) return;
+    m_agent->refreshDevices();
+}
+
 void PrinterQtFacade::startDiscovery() {
     if (!m_capabilities.discovery) return;
-    m_connectionError.clear();
-    m_deviceAccessRequired = false;
-    if (m_connectionState == ConnectionError) {
+    if (m_connectionState == ConnectionError && !m_deviceAccessRequired) {
         m_connectionState = Disconnected;
     }
     emit connectionChanged();
@@ -564,6 +625,9 @@ void PrinterQtFacade::logout() {
     m_deviceAccessRequired = false;
     m_selectedDevice = {};
     m_status = {};
+    m_hasStatus = false;
+    m_deviceControlError.clear();
+    m_deviceControlMessage.clear();
     m_jobState = JobIdle;
     m_transferState = TransferIdle;
     m_transferProgress = 0.0;
@@ -586,7 +650,112 @@ void PrinterQtFacade::logout() {
     m_agent->logout();
 }
 
+bool PrinterQtFacade::canDisconnect() const {
+    return !m_selectedDevice.deviceId.isEmpty() && (connected() || m_connectionState == Connecting)
+        && !transferBusy() && m_controlRequestId == 0;
+}
+
+bool PrinterQtFacade::canReconnect() const {
+    return !m_selectedDevice.deviceId.isEmpty() && m_selectedDevice.online && m_agentAvailable
+        && m_connectionState != Connecting && !transferBusy() && m_controlRequestId == 0;
+}
+
+bool PrinterQtFacade::disconnectDevice() {
+    if (!canDisconnect()) return false;
+    resetCameraSession(true);
+    ++m_sessionId; // Retire callbacks before release, including a late successful connection.
+    m_agent->releaseDevice();
+    m_connectionState = Disconnected;
+    m_connectionError.clear();
+    m_deviceAccessRequired = false;
+    m_hasStatus = false;
+    emit connectionChanged();
+    emit statusChanged();
+    emit jobChanged();
+    LOG_INFO("Printer session disconnected by user; physical job is unaffected");
+    return true;
+}
+
+bool PrinterQtFacade::reconnectDevice() {
+    if (!canReconnect()) return false;
+    resetCameraSession(true);
+    ++m_sessionId;
+    m_agent->releaseDevice();
+    m_hasStatus = false;
+    m_deviceControlError.clear();
+    m_deviceControlMessage.clear();
+    m_connectionError.clear();
+    m_deviceAccessRequired = false;
+    m_connectionState = Connecting;
+    emit connectionChanged();
+    emit statusChanged();
+    auto selected = toCore(m_selectedDevice);
+    selected.sessionId = m_sessionId;
+    m_agent->selectDevice(selected); // Query the current job. Never resubmit a file.
+    return true;
+}
+
+QVariantMap PrinterQtFacade::deviceCapabilities() const {
+    const auto& c = m_status.controls;
+    return {{"nozzleName", m_status.nozzleName}, {"nozzle", c.nozzle}, {"bed", c.bed}, {"motion", c.motion}, {"homing", c.homing},
+        {"extrusion", c.extrusion}, {"light", c.light}, {"fan", c.fan}, {"fanPercentage", c.fanPercentage},
+        {"maxNozzleTemperature", c.maxNozzleTemperature}, {"maxBedTemperature", c.maxBedTemperature},
+        {"minExtrudeTemperature", c.minExtrudeTemperature}};
+}
+
+QVariantMap PrinterQtFacade::deviceDetails() const {
+    return {{"firmware", m_status.firmware}, {"x", m_status.position[0]}, {"y", m_status.position[1]},
+        {"z", m_status.position[2]}, {"positionAvailable", m_status.positionAvailable},
+        {"lightOn", m_status.lightOn}, {"fanSpeed", m_status.fanSpeed}};
+}
+
+bool PrinterQtFacade::deviceControlsReady() const {
+    return statusFresh() && !transferBusy() && m_controlRequestId == 0;
+}
+
+bool PrinterQtFacade::movementReady() const {
+    const auto s = m_status.state.toLower();
+    return deviceControlsReady() && (s == "ready" || s == "completed" || s == "cancel");
+}
+
+void PrinterQtFacade::controlDevice(const QString& action, double value, const QString& axis) {
+    if (!deviceControlsReady()) return;
+    const auto& c = m_status.controls;
+    const bool valid = std::isfinite(value) && (
+        (action == "nozzle" && c.nozzle && value >= 0 && value <= c.maxNozzleTemperature)
+        || (action == "bed" && c.bed && value >= 0 && value <= c.maxBedTemperature)
+        || (action == "preheatPLA" && c.nozzle && c.bed && c.maxNozzleTemperature >= 210 && c.maxBedTemperature >= 60)
+        || (action == "preheatPETG" && c.nozzle && c.bed && c.maxNozzleTemperature >= 240 && c.maxBedTemperature >= 80)
+        || (action == "heatersOff" && (c.nozzle || c.bed))
+        || (action == "move" && c.motion && movementReady() && (axis == "x" || axis == "y" || axis == "z") && std::abs(value) <= 10 && value != 0)
+        || (action == "home" && c.homing && movementReady())
+        || (action == "extrude" && c.extrusion && movementReady() && m_status.nozzleTemperature >= c.minExtrudeTemperature && std::abs(value) <= 100 && value != 0)
+        || (action == "light" && c.light && (value == 0 || value == 1))
+        || (action == "fan" && c.fan && value >= 0 && value <= 100 && (c.fanPercentage || value == 0 || value == 100)));
+    if (!valid) {
+        m_deviceControlError = tr("This operation is unavailable or outside the device limits.");
+        emit deviceControlChanged();
+        return;
+    }
+    PrinterCore::DeviceCommand command;
+    command.requestId = ++m_nextRequestId;
+    command.action = action.toStdString();
+    command.axis = axis.toStdString();
+    command.heater = m_status.nozzleName.toStdString();
+    command.value = value;
+    m_deviceRequestId = command.requestId;
+    m_deviceAction = action;
+    m_deviceControlError.clear();
+    m_deviceControlMessage.clear();
+    m_deviceCommandTimer.start();
+    emit deviceControlChanged();
+    emit jobChanged();
+    LOG_INFO("Printer device command dispatched action={} value={} axis={} request={}", command.action, command.value, command.axis, command.requestId);
+    m_agent->controlDevice(command);
+}
+
 void PrinterQtFacade::selectDevice(const QString& deviceId) {
+    if (deviceControlBusy() || m_deviceOutcomeUnknown) return;
     if (transferBusy() && !(!connected() && (m_transferState == TransferUnknown || m_controlOutcomeUnknown))) return;
     const PrinterDevice* device = m_devices.findById(deviceId);
     if (!device) {
@@ -629,6 +798,9 @@ void PrinterQtFacade::selectDevice(const QString& deviceId) {
         m_jobState = JobIdle;
         m_transferProgress = 0.0;
     }
+    m_hasStatus = false;
+    m_deviceControlError.clear();
+    m_deviceControlMessage.clear();
     m_connectionError.clear();
     m_deviceAccessRequired = false;
     emit statusChanged();
@@ -797,6 +969,15 @@ void PrinterQtFacade::refreshPrinterStatus() {
     if (canRefreshStatus()) m_agent->refreshStatus();
 }
 
+void PrinterQtFacade::acknowledgeDeviceControlOutcome() {
+    if (!m_deviceOutcomeUnknown || deviceControlBusy()) return;
+    m_agent->acknowledgeDeviceControlOutcome();
+    m_deviceOutcomeUnknown = false;
+    m_deviceControlError.clear();
+    emit deviceControlChanged();
+    emit jobChanged();
+}
+
 void PrinterQtFacade::dismissJobStatus() {
     if (m_transferState == TransferUploading || m_transferState == TransferStarting || m_controlRequestId != 0) return;
     // This closes a presentation only. Fresh device status, not this button,
@@ -857,6 +1038,8 @@ void PrinterQtFacade::applyStatus(const PrinterStatus& status) {
     }
     m_status = status;
     m_status.state = state;
+    m_hasStatus = true;
+    if (!m_deviceControlMessage.isEmpty() && !deviceControlBusy()) m_deviceControlMessage.clear();
     if (m_cameraSessionState == CameraLoading
         && !status.cameraStreamUrl.isEmpty()) {
         m_cameraRetryTimer.stop();

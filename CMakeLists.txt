@@ -84,6 +84,8 @@ set(QML_FILES
     qml/dialogs/ZoomableImageViewer.qml
     qml/dialogs/ModelDetailPopup.qml
     qml/dialogs/PrinterControlPopup.qml
+    qml/dialogs/PrinterDeviceDetails.qml
+    qml/dialogs/PrinterDeviceControls.qml
     qml/dialogs/AccountCenterPopup.qml
     qml/components/DraggablePanel.qml
     qml/components/UserGuide.qml

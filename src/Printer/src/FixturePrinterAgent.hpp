@@ -29,6 +29,7 @@ public:
     void submitJob(const PrinterCore::PrintJob& job) override;
     void controlJob(const std::string& action, uint64_t requestId) override;
     void setCameraStreamEnabled(bool enabled) override;
+    void controlDevice(const PrinterCore::DeviceCommand& command) override;
 
 private:
     void publish(const PrinterCore::Event& event) const;

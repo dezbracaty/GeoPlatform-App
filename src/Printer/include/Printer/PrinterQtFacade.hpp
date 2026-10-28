@@ -22,6 +22,17 @@ namespace GPlatform::Printer {
 class PrinterQtFacade final : public QObject {
     Q_OBJECT
 
+    Q_PROPERTY(bool statusFresh READ statusFresh NOTIFY statusChanged)
+    Q_PROPERTY(bool canDisconnect READ canDisconnect NOTIFY connectionChanged)
+    Q_PROPERTY(bool canReconnect READ canReconnect NOTIFY connectionChanged)
+    Q_PROPERTY(QVariantMap deviceCapabilities READ deviceCapabilities NOTIFY statusChanged)
+    Q_PROPERTY(QVariantMap deviceDetails READ deviceDetails NOTIFY statusChanged)
+    Q_PROPERTY(bool deviceControlResultUnknown READ deviceControlResultUnknown NOTIFY deviceControlChanged)
+    Q_PROPERTY(bool deviceControlBusy READ deviceControlBusy NOTIFY deviceControlChanged)
+    Q_PROPERTY(QString deviceControlError READ deviceControlError NOTIFY deviceControlChanged)
+    Q_PROPERTY(QString deviceControlMessage READ deviceControlMessage NOTIFY deviceControlChanged)
+    Q_PROPERTY(bool deviceControlsReady READ deviceControlsReady NOTIFY deviceControlChanged)
+    Q_PROPERTY(bool movementReady READ movementReady NOTIFY deviceControlChanged)
     Q_PROPERTY(bool agentAvailable READ agentAvailable NOTIFY agentChanged)
     Q_PROPERTY(QString agentVersion READ agentVersion NOTIFY agentChanged)
     Q_PROPERTY(QString agentError READ agentError NOTIFY agentChanged)
@@ -119,6 +130,18 @@ public:
                              QObject* parent = nullptr);
     ~PrinterQtFacade() override;
 
+    bool statusFresh() const { return connected() && m_hasStatus; }
+    bool canDisconnect() const;
+    bool canReconnect() const;
+    QVariantMap deviceCapabilities() const;
+    QVariantMap deviceDetails() const;
+    bool deviceControlResultUnknown() const { return m_deviceOutcomeUnknown; }
+    bool deviceControlBusy() const { return m_deviceRequestId != 0; }
+    QString deviceControlError() const { return m_deviceControlError; }
+    QString deviceControlMessage() const { return m_deviceControlMessage; }
+    bool deviceControlsReady() const;
+    bool movementReady() const;
+
     QString backendName() const { return m_backendName; }
     bool canConfigureBackend() const;
     bool supportsDiscovery() const { return m_capabilities.discovery; }
@@ -157,7 +180,7 @@ public:
     TransferState transferState() const { return m_transferState; }
     bool transferBusy() const {
         return m_transferState == TransferUploading || m_transferState == TransferStarting
-            || m_transferState == TransferUnknown || m_controlOutcomeUnknown || m_controlRequestId != 0;
+            || m_transferState == TransferUnknown || commandOutcomeUnknown() || deviceControlBusy() || m_controlRequestId != 0;
     }
     bool jobNoticeIsSubmission() const { return m_submissionNotice; }
     bool jobNoticeDismissed() const { return m_jobNoticeDismissed; }
@@ -173,15 +196,15 @@ public:
                 || m_jobState == Resuming);
     }
     bool paused() const { return m_jobState == Paused; }
-    bool commandOutcomeUnknown() const { return m_controlOutcomeUnknown; }
+    bool commandOutcomeUnknown() const { return m_controlOutcomeUnknown || m_deviceOutcomeUnknown; }
     bool jobControllable() const {
-        return connected() && !m_controlOutcomeUnknown && m_controlRequestId == 0
+        return statusFresh() && !commandOutcomeUnknown() && !deviceControlBusy() && m_controlRequestId == 0
             && (!m_capabilities.requiresJobId || !m_status.jobId.isEmpty())
             && (m_capabilities.pauseResume || m_capabilities.cancel)
             && (m_jobState == Printing || m_jobState == Paused);
     }
     double transferProgress() const { return m_transferProgress; }
-    double printProgress() const { return m_status.progress; }
+    double printProgress() const { return statusFresh() ? m_status.progress : 0.0; }
     double nozzleTemperature() const { return m_status.nozzleTemperature; }
     double targetNozzleTemperature() const { return m_status.targetNozzleTemperature; }
     double bedTemperature() const { return m_status.bedTemperature; }
@@ -199,9 +222,13 @@ public:
     }
     QString jobError() const { return m_jobError; }
 
+    Q_INVOKABLE bool disconnectDevice();
+    Q_INVOKABLE bool reconnectDevice();
+    Q_INVOKABLE void controlDevice(const QString& action, double value = 0, const QString& axis = {});
     Q_INVOKABLE bool connectMoonraker(const QString& endpoint, const QString& apiKey);
     Q_INVOKABLE bool useFlashforge();
     Q_INVOKABLE void startDiscovery();
+    Q_INVOKABLE void refreshDevices();
     Q_INVOKABLE void login(const QString& username, const QString& password);
     Q_INVOKABLE void logout();
     Q_INVOKABLE void selectDevice(const QString& deviceId);
@@ -221,10 +248,12 @@ public:
     Q_INVOKABLE void cancelSubmission();
     Q_INVOKABLE void refreshPrinterStatus();
     Q_INVOKABLE void dismissJobStatus();
+    Q_INVOKABLE void acknowledgeDeviceControlOutcome();
     Q_INVOKABLE void startCameraStream();
     Q_INVOKABLE void stopCameraStream();
 
 signals:
+    void deviceControlChanged();
     void agentChanged();
     void capabilitiesChanged();
     void discoveryChanged();
@@ -250,6 +279,13 @@ private:
     void scheduleCameraRetry(const QString& error);
     void resetCameraSession(bool requestClose);
 
+    bool m_hasStatus{false};
+    uint64_t m_deviceRequestId{0};
+    QString m_deviceAction;
+    QString m_deviceControlError;
+    QString m_deviceControlMessage;
+    bool m_deviceOutcomeUnknown{false};
+    QTimer m_deviceCommandTimer;
     uint64_t m_adapterGeneration{0};
     QString m_backendName{QStringLiteral("Flashforge")};
     PrinterCore::Capabilities m_capabilities;

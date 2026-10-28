@@ -1,5 +1,7 @@
 #pragma once
 
+#include "PrinterCoreTypes.hpp"
+
 #include <QMetaType>
 #include <QString>
 #include <QVariantMap>
@@ -35,6 +37,13 @@ struct PrinterStatus {
     int currentLayer{0};
     int totalLayers{0};
     bool cameraAvailable{false};
+    PrinterCore::DeviceControls controls;
+    QString nozzleName;
+    QString firmware;
+    double position[3]{0, 0, 0};
+    bool positionAvailable{false};
+    bool lightOn{false};
+    double fanSpeed{0};
 };
 
 

@@ -70,12 +70,20 @@ public:
         ++submittedJobs;
     }
     bool cancelSubmission(uint64_t id) override { lastCancelledSubmission = id; ++submissionCancellations; return caps.cancelSubmission; }
+    int acknowledgements{0};
+    void acknowledgeDeviceControlOutcome() override { ++acknowledgements; }
     bool refreshStatus() override { ++statusRefreshes; return caps.automaticStatusRecovery; }
     void controlJob(const std::string& action, uint64_t requestId) override {
         lastControlRequestId = requestId;
         lastAction = action;
         ++controlCalls;
     }
+    void controlDevice(const GPlatform::PrinterCore::DeviceCommand& command) override {
+        lastDeviceCommand = command;
+        ++deviceCommandCalls;
+    }
+    GPlatform::PrinterCore::DeviceCommand lastDeviceCommand;
+    int deviceCommandCalls{0};
     void setCameraStreamEnabled(bool enabled) override {
         cameraEnabled = enabled;
         ++cameraControlCalls;
@@ -84,6 +92,7 @@ public:
     GPlatform::PrinterCore::Event contextual(GPlatform::PrinterCore::Event event) const {
         event.deviceId = lastDevice.deviceId;
         event.sessionId = lastDevice.sessionId;
+        if (event.type == GPlatform::PrinterCore::EventType::DeviceCommandFinished && event.requestId == 0) event.requestId = lastDeviceCommand.requestId;
         if (event.requestId == 0)
             event.requestId = event.command == "send" ? lastJob.requestId : lastControlRequestId;
         return event;
@@ -129,6 +138,109 @@ bool require(bool condition, const char* message) {
     return condition;
 }
 
+bool deviceControlAndConnectionChecks() {
+    using namespace GPlatform::PrinterCore;
+    using Facade = GPlatform::Printer::PrinterQtFacade;
+    auto lifetime = std::make_shared<AgentLifetime>();
+    auto agent = std::make_unique<FakePrinterAgent>(lifetime);
+    auto* fake = agent.get();
+    Facade facade(std::move(agent));
+    Event availability; availability.type = EventType::Availability; availability.available = true;
+    fake->publish(availability);
+    Event scan; scan.type = EventType::ScanFinished;
+    Device d; d.deviceId = "device-controls"; d.online = true; d.name = "Device controls";
+    scan.devices.push_back(d); fake->publish(scan);
+    facade.selectDevice("device-controls");
+    Event connection; connection.type = EventType::ConnectionChanged; connection.success = true;
+    fake->publish(connection);
+    facade.controlDevice("home");
+    if (!require(!facade.statusFresh() && fake->deviceCommandCalls == 0, "controls enabled before first device telemetry")) return false;
+    Event status; status.type = EventType::StatusChanged; status.status.state = "ready";
+    status.status.controls = {true, true, true, true, true, true, true, false};
+    status.status.nozzleTemperature = 25;
+    status.status.nozzleName = "extruder1";
+    fake->publish(status);
+    facade.controlDevice("extrude", 10);
+    facade.controlDevice("nozzle", 500);
+    facade.controlDevice("bed", std::numeric_limits<double>::quiet_NaN());
+    facade.controlDevice("move", 1, "x\nG28");
+    if (!require(fake->deviceCommandCalls == 0, "cold extrusion, invalid limits or axis injection reached the backend")) return false;
+    facade.controlDevice("nozzle", 210);
+    if (!require(fake->deviceCommandCalls == 1 && fake->lastDeviceCommand.heater == "extruder1" && facade.deviceCapabilities().value("nozzleName").toString() == "extruder1" && facade.deviceControlBusy() && !facade.disconnectDevice(), "pending controls did not block disconnect")) return false;
+    Event done; done.type = EventType::DeviceCommandFinished; done.command = "nozzle"; done.success = true;
+    auto wrong = fake->contextual(done); ++wrong.requestId; fake->publishRaw(wrong);
+    if (!require(facade.deviceControlBusy(), "unrelated control completion unlocked the request")) return false;
+    fake->publish(done);
+    if (!require(!facade.deviceControlBusy() && facade.targetNozzleTemperature() == 0, "command acknowledgement invented device feedback")) return false;
+    status.status.state = "printing"; status.status.jobId = "retained-job"; status.status.fileName = "running.gcode";
+    fake->publish(status);
+    facade.controlDevice("move", 1, "x");
+    facade.controlDevice("home");
+    facade.controlDevice("extrude", 10);
+    if (!require(fake->deviceCommandCalls == 1, "motion or extrusion was dispatched during printing")) return false;
+    const auto oldConnection = fake->contextual(connection);
+    if (!require(facade.disconnectDevice() && facade.selectedDeviceId() == "device-controls" && !facade.statusFresh()
+        && facade.jobFileName() == "running.gcode" && fake->controlCalls == 0 && fake->submittedJobs == 0,
+        "disconnect lost selection/job or sent a physical command")) return false;
+    fake->publishRaw(oldConnection);
+    if (!require(!facade.connected(), "late success revived a disconnected device")) return false;
+    if (!require(facade.reconnectDevice() && fake->selectCalls == 2, "reconnect did not query the retained device")) return false;
+    const auto cancelledConnection = fake->contextual(connection);
+    if (!require(facade.disconnectDevice(), "pending connection could not be cancelled")) return false;
+    fake->publishRaw(cancelledConnection);
+    if (!require(!facade.connected(), "cancelled connection was revived")) return false;
+    facade.reconnectDevice();fake->publish(connection);
+    status.status.state = "ready";fake->publish(status);
+    facade.controlDevice("light", 1);
+    done.command = "light";done.success = false;done.outcomeUnknown = true;fake->publish(done);
+    if (!require(facade.commandOutcomeUnknown() && !facade.canReconnect() && !facade.deviceControlsReady(), "unknown outcome did not lock device operations")) return false;
+    facade.dismissJobStatus();
+    if (!require(facade.commandOutcomeUnknown(), "dismissal cleared a physical device uncertainty lock")) return false;
+    facade.acknowledgeDeviceControlOutcome();
+    if (!require(!facade.commandOutcomeUnknown() && fake->acknowledgements == 1 && facade.deviceControlsReady(), "explicit acknowledgement did not clear the device lock")) return false;
+    facade.controlDevice("bed", 60);
+    Event lost;lost.type = EventType::ConnectionChanged;lost.error = "network lost";fake->publish(lost);
+    if (!require(!facade.statusFresh() && facade.commandOutcomeUnknown() && !facade.deviceControlBusy(), "connection loss did not retire pending device operations")) return false;
+    const auto staleDone = fake->contextual(done);fake->publishRaw(staleDone);
+    if (!require(facade.commandOutcomeUnknown(), "late completion cleared a connection-loss uncertainty lock")) return false;
+    std::cout << "PASS device control limits, interlocks, request identity, disconnect/reconnect/cancel and unknown outcomes\n";
+    return true;
+}
+bool manualRefreshConnectionNotificationChecks() {
+    using namespace GPlatform::PrinterCore;
+    using Facade = GPlatform::Printer::PrinterQtFacade;
+    auto lifetime = std::make_shared<AgentLifetime>();
+    auto agent = std::make_unique<FakePrinterAgent>(lifetime);
+    auto* fake = agent.get();
+    fake->caps.discovery = false;
+    Facade facade(std::move(agent));
+    Event available; available.type = EventType::Availability; available.available = true;
+    fake->publish(available);
+    Device device; device.deviceId = "manual-endpoint"; device.online = true;
+    Event list; list.type = EventType::ScanFinished; list.success = true; list.devices = {device};
+    fake->publish(list);
+    facade.selectDevice("manual-endpoint");
+    Event connected; connected.type = EventType::ConnectionChanged; connected.success = true;
+    fake->publish(connected);
+    bool observedCanReconnect = true;
+    int notifications = 0;
+    QObject::connect(&facade, &Facade::connectionChanged, &facade, [&] {
+        observedCanReconnect = facade.canReconnect(); ++notifications;
+    });
+    const int scans = fake->scanCalls;
+    const int selections = fake->selectCalls;
+    facade.refreshDevices();
+    if (!require(!facade.supportsDiscovery() && fake->scanCalls == scans + 1
+        && fake->selectCalls == selections && fake->controlCalls == 0 && fake->submittedJobs == 0,
+        "manual refresh required discovery, reselected the device or mutated a job")) return false;
+    list.devices.front().online = false; fake->publish(list);
+    if (!require(!facade.selectedDeviceOnline() && !observedCanReconnect && notifications == 1,
+        "offline refresh did not notify the reconnect button")) return false;
+    list.devices.front().online = true; fake->publish(list);
+    if (!require(facade.selectedDeviceOnline() && observedCanReconnect && notifications == 2,
+        "online refresh left the reconnect button disabled")) return false;
+    return true;
+}
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -769,5 +881,7 @@ int main(int argc, char* argv[]) {
                      "endpoint completion bypassed strict validation")) return EXIT_FAILURE;
     }
 
+    if (!deviceControlAndConnectionChecks()) return EXIT_FAILURE;
+    if (!manualRefreshConnectionNotificationChecks()) return EXIT_FAILURE;
     return EXIT_SUCCESS;
 }

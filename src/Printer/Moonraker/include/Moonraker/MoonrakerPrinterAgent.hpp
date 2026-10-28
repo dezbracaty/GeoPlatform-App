@@ -24,6 +24,7 @@ public:
     void initialize() override;
     void shutdown() override;
     void scan() override;
+    void refreshDevices() override;
     void login(const std::string&, const std::string&) override;
     void logout() override;
     void selectDevice(const PrinterCore::Device&) override;
@@ -33,9 +34,11 @@ public:
     PrinterCore::Capabilities capabilities() const override;
     void submitJob(const PrinterCore::PrintJob&) override;
     bool cancelSubmission(uint64_t requestId) override;
+    void acknowledgeDeviceControlOutcome() override;
     bool refreshStatus() override;
     void controlJob(const std::string&, uint64_t) override;
     void setCameraStreamEnabled(bool) override;
+    void controlDevice(const PrinterCore::DeviceCommand& command) override;
 private:
     class Impl;
     std::unique_ptr<Impl> m_impl;

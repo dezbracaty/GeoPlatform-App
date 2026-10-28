@@ -22,6 +22,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <cmath>
 #include <functional>
 #include <memory>
 #include <map>
@@ -712,6 +713,36 @@ struct FlashforgePrinterAgent::Impl : std::enable_shared_from_this<Impl> {
         });
     }
 
+    void controlDevice(const PrinterCore::DeviceCommand& command) {
+        if (!connected) {
+            publishError(EventType::DeviceCommandFinished, QStringLiteral("No printer is connected"), command.action, false, command.requestId);
+            return;
+        }
+        const auto generation = sessionGeneration.load();
+        const auto selected = device;
+        const auto code = checkCode;
+        enqueue([this, generation, selected, code, command] {
+            if (generation != sessionGeneration.load()) return;
+            const auto result = sdkControlDevice(selected, code, command, generation);
+            post([this, generation, selected, command, result] {
+                if (generation != sessionGeneration.load()) return;
+                Event event;
+                event.type = EventType::DeviceCommandFinished;
+                event.deviceId = selected.deviceId;
+                event.sessionId = selected.sessionId;
+                event.requestId = command.requestId;
+                event.command = command.action;
+                event.success = result.success;
+                event.outcomeUnknown = result.outcomeUnknown;
+                event.error = result.error.toStdString();
+                publish(event);
+                requestStatus();
+            });
+        });
+    }
+
+    FlashforgeVoidResult sdkControlDevice(const FlashforgeDevice&, const QString&,
+        const PrinterCore::DeviceCommand&, quint64 generation);
     struct SdkState;
 
     void sdkCreateState();
@@ -849,6 +880,20 @@ PrinterCore::Status statusFromDetail(const fnet_dev_detail_t& value,
     status.errorCode = stringValue(value.errorCode).toStdString();
     status.cameraStreamUrl = stringValue(value.cameraStreamUrl).toStdString();
     status.cameraAvailable = value.camera == 1;
+    status.firmware = stringValue(value.firmwareVersion).toStdString();
+    std::copy(std::begin(value.coordinate), std::end(value.coordinate), status.position);
+    status.positionAvailable = std::all_of(std::begin(value.coordinate), std::end(value.coordinate), [](double n) { return std::isfinite(n); });
+    status.controls.nozzle = value.nozzleCnt > 0 || value.rightTemp > 0;
+    status.controls.bed = value.platTemp > 0;
+    status.controls.motion = value.moveCtrl == 1;
+    status.controls.homing = value.moveCtrl == 1;
+    status.controls.extrusion = value.extrudeCtrl == 1;
+    const auto light = stringValue(value.lightStatus);
+    const auto fan = stringValue(value.clearFanStatus);
+    status.controls.light = light == "open" || light == "close";
+    status.controls.fan = fan == "open" || fan == "close";
+    status.lightOn = light == "open";
+    status.fanSpeed = fan == "open" ? 100 : 0;
     status.progress = std::clamp(value.printProgress * 100.0, 0.0, 100.0);
     status.nozzleTemperature = value.nozzleCnt > 0 && value.nozzleTemps
         ? value.nozzleTemps[0] : value.rightTemp;
@@ -923,6 +968,12 @@ struct FlashforgePrinterAgent::Impl::SdkState {
         decltype(&fnet_freeDevDetail) freeDeviceDetail{};
         decltype(&fnet_lanDevSendGcode) sendLanGcode{};
         decltype(&fnet_ctrlLanDevJob) controlLanJob{};
+        decltype(&fnet_ctrlLanDevTemp) controlLanTemp{};
+        decltype(&fnet_ctrlLanDevLight) controlLanLight{};
+        decltype(&fnet_ctrlLanDevClearFan) controlLanFan{};
+        decltype(&fnet_ctrlLanDevMove) controlLanMove{};
+        decltype(&fnet_ctrlLanDevHoming) controlLanHome{};
+        decltype(&fnet_ctrlLanDevExtrude) controlLanExtrude{};
         decltype(&fnet_notifyLanDevWanBind) notifyLanDeviceWanBind{};
         decltype(&fnet_getTokenByPassword) getTokenByPassword{};
         decltype(&fnet_freeToken) freeToken{};
@@ -969,7 +1020,24 @@ struct FlashforgePrinterAgent::Impl::SdkState {
         return true;
     }
 
+    void filterControls(Status& status, bool wan) const {
+        // Optional controls must not make discovery/printing fail with older SDKs.
+        auto& c = status.controls;
+        c.nozzle &= wan || api.controlLanTemp;
+        c.bed &= wan || api.controlLanTemp;
+        c.motion &= wan || api.controlLanMove;
+        c.homing &= wan || api.controlLanHome;
+        c.extrusion &= wan || api.controlLanExtrude;
+        c.light &= wan || api.controlLanLight;
+        c.fan &= wan || api.controlLanFan;
+    }
     bool resolveRequired(QString& error) {
+        api.controlLanTemp = reinterpret_cast<decltype(api.controlLanTemp)>(library->resolve("fnet_ctrlLanDevTemp"));
+        api.controlLanLight = reinterpret_cast<decltype(api.controlLanLight)>(library->resolve("fnet_ctrlLanDevLight"));
+        api.controlLanFan = reinterpret_cast<decltype(api.controlLanFan)>(library->resolve("fnet_ctrlLanDevClearFan"));
+        api.controlLanMove = reinterpret_cast<decltype(api.controlLanMove)>(library->resolve("fnet_ctrlLanDevMove"));
+        api.controlLanHome = reinterpret_cast<decltype(api.controlLanHome)>(library->resolve("fnet_ctrlLanDevHoming"));
+        api.controlLanExtrude = reinterpret_cast<decltype(api.controlLanExtrude)>(library->resolve("fnet_ctrlLanDevExtrude"));
         return resolve(api.initialize, "fnet_initlize", error)
             && resolve(api.uninitialize, "fnet_uninitlize", error)
             && resolve(api.getVersion, "fnet_getVersion", error)
@@ -1574,6 +1642,7 @@ FlashforgeStatusResult FlashforgePrinterAgent::Impl::sdkLanStatus(
         ip.constData(), device.port, serial.constData(), check.constData(), &detail, 5000);
     if (code == FNET_OK && detail) {
         output.value = statusFromDetail(*detail, device);
+        sdkState->filterControls(output.value, false);
         output.success = true;
     } else {
         output.accessRequired = code == FNET_VERIFY_LAN_DEV_FAILED;
@@ -1620,6 +1689,7 @@ FlashforgeWanStatusResult FlashforgePrinterAgent::Impl::sdkWanStatus(const Flash
         &product, &detail, 15000);
     if (code == FNET_OK && detail) {
         output.value.status = statusFromDetail(*detail, device);
+        sdkState->filterControls(output.value.status, true);
         output.value.wanDeviceId = QString::fromUtf8(wanId);
         output.success = true;
     } else {
@@ -1960,6 +2030,112 @@ FlashforgeVoidResult FlashforgePrinterAgent::Impl::sdkControlWanCameraStream(
 }
 
 
+FlashforgeVoidResult FlashforgePrinterAgent::Impl::sdkControlDevice(
+    const FlashforgeDevice& selected, const QString& credential,
+    const PrinterCore::DeviceCommand& command, quint64 generation) {
+    FlashforgeVoidResult out;
+    if (!sdkState->ready(out.error) || !command.requestId || !std::isfinite(command.value)) return out;
+    const auto action = command.action;
+    // Query fresh status immediately before a physical operation. Never queue a
+    // move behind a stale UI status from before another client started printing.
+    fnet_dev_product_t* product = nullptr;
+    fnet_dev_detail_t* detail = nullptr;
+    const auto ip = QByteArray::fromStdString(selected.ip);
+    const auto serial = QByteArray::fromStdString(selected.deviceId);
+    const auto check = credential.toUtf8();
+    int result;
+    if (selected.connectMode == 0) result = sdkState->api.getLanDeviceDetail(
+        ip.constData(), selected.port, serial.constData(), check.constData(), &detail, 5000);
+    else result = sdkState->api.getWanDeviceProductDetail(sdkState->clientId.constData(),
+        sdkState->accessToken.constData(), selected.wanDeviceId.c_str(), &product, &detail, 10000);
+    auto cleanup = [&] {
+        if (product) sdkState->api.freeDeviceProduct(product);
+        if (detail) sdkState->api.freeDeviceDetail(detail);
+    };
+    if (result != FNET_OK || !detail) {
+        out.error = resultError(result, QStringLiteral("Unable to verify current printer status"));
+        cleanup(); return out;
+    }
+    const auto status = statusFromDetail(*detail, selected);
+    const auto& c = status.controls;
+    const bool idle = status.state == "ready" || status.state == "completed" || status.state == "cancel";
+    const double value = command.value;
+    const bool valid = (action == "nozzle" && c.nozzle && value >= 0 && value <= c.maxNozzleTemperature)
+        || (action == "bed" && c.bed && value >= 0 && value <= c.maxBedTemperature)
+        || (action == "preheatPLA" && c.nozzle && c.bed && c.maxNozzleTemperature >= 210 && c.maxBedTemperature >= 60)
+        || (action == "preheatPETG" && c.nozzle && c.bed && c.maxNozzleTemperature >= 240 && c.maxBedTemperature >= 80)
+        || (action == "heatersOff" && (c.nozzle || c.bed))
+        || (action == "move" && c.motion && idle && (command.axis == "x" || command.axis == "y" || command.axis == "z") && value != 0 && std::abs(value) <= 10)
+        || (action == "home" && c.homing && idle)
+        || (action == "extrude" && c.extrusion && idle && status.nozzleTemperature >= c.minExtrudeTemperature && value != 0 && std::abs(value) <= 100)
+        || (action == "light" && c.light && (value == 0 || value == 1))
+        || (action == "fan" && c.fan && (value == 0 || value == 100));
+    if (!valid) { out.error = QStringLiteral("Operation is unavailable in the current device state"); cleanup(); return out; }
+    if (selected.connectMode != 0 && !sdkState->ensureWanConnection(out.error)) { cleanup(); return out; }
+    if (stopping || generation != sessionGeneration.load()) { cleanup(); return out; }
+    // Preserve every other heater target when the SDK requires a full target set.
+    std::vector<double> targets;
+    fnet_temp_ctrl_t temperature{detail->platTargetTemp, detail->rightTargetTemp,
+        detail->leftTargetTemp, detail->chamberTargetTemp, nullptr, 0};
+    if (detail->nozzleCnt > 0 && detail->nozzleTargetTemps) targets.assign(detail->nozzleTargetTemps, detail->nozzleTargetTemps + detail->nozzleCnt);
+    if (action == "nozzle") { temperature.rightTemp = value; if (!targets.empty()) targets[0] = value; }
+    if (action == "bed") temperature.platformTemp = value;
+    if (action == "preheatPLA" || action == "preheatPETG") {
+        temperature.rightTemp = action == "preheatPLA" ? 210 : 240;
+        temperature.platformTemp = action == "preheatPLA" ? 60 : 80;
+        if (!targets.empty()) targets[0] = temperature.rightTemp;
+    }
+    if (action == "heatersOff") { temperature.platformTemp = temperature.rightTemp = temperature.leftTemp = temperature.chamberTemp = 0; std::fill(targets.begin(), targets.end(), 0); }
+    temperature.nozzlesTemp = targets.empty() ? nullptr : targets.data();
+    temperature.nozzlesCnt = static_cast<int>(targets.size());
+    const auto axis = QByteArray::fromStdString(command.axis);
+    fnet_move_ctrl_t move{axis.constData(), value};
+    fnet_extrude_ctrl_t extrude{"e", value};
+    fnet_light_ctrl_t light{value ? "open" : "close"};
+    fnet_clear_fan_ctrl_t fan{value ? "open" : "close"};
+    result = FNET_OK;
+    if (selected.connectMode == 0) {
+        bool supported = true;
+        if (action == "nozzle" || action == "bed" || action == "heatersOff" || action == "preheatPLA" || action == "preheatPETG") {
+            supported = sdkState->api.controlLanTemp;
+            if (supported) result = sdkState->api.controlLanTemp(ip.constData(), selected.port, serial.constData(), check.constData(), &temperature, 10000);
+        } else if (action == "move") {
+            supported = sdkState->api.controlLanMove;
+            if (supported) result = sdkState->api.controlLanMove(ip.constData(), selected.port, serial.constData(), check.constData(), &move, 10000);
+        } else if (action == "home") {
+            supported = sdkState->api.controlLanHome;
+            if (supported) result = sdkState->api.controlLanHome(ip.constData(), selected.port, serial.constData(), check.constData(), 15000);
+        } else if (action == "extrude") {
+            supported = sdkState->api.controlLanExtrude;
+            if (supported) result = sdkState->api.controlLanExtrude(ip.constData(), selected.port, serial.constData(), check.constData(), &extrude, 15000);
+        } else if (action == "light") {
+            supported = sdkState->api.controlLanLight;
+            if (supported) result = sdkState->api.controlLanLight(ip.constData(), selected.port, serial.constData(), check.constData(), &light, 10000);
+        } else if (action == "fan") {
+            supported = sdkState->api.controlLanFan;
+            if (supported) result = sdkState->api.controlLanFan(ip.constData(), selected.port, serial.constData(), check.constData(), &fan, 10000);
+        }
+        if (!supported) { out.error = QStringLiteral("This SDK does not provide the requested operation"); cleanup(); return out; }
+    } else {
+        fnet_conn_write_data_type_t type = FNET_CONN_WRITE_TEMP_CTRL;
+        const void* data = &temperature;
+        if (action == "move") { type = FNET_CONN_WRITE_MOVE_CTRL; data = &move; }
+        else if (action == "home") { type = FNET_CONN_WRITE_HOMING_CTRL; data = nullptr; }
+        else if (action == "extrude") { type = FNET_CONN_WRITE_EXTRUDE_CTRL; data = &extrude; }
+        else if (action == "light") { type = FNET_CONN_WRITE_LIGHT_CTRL; data = &light; }
+        else if (action == "fan") { type = FNET_CONN_WRITE_CLEAR_FAN_CTRL; data = &fan; }
+        const auto topic = QByteArray::fromStdString(selected.wanTopic);
+        if (topic.isEmpty()) { out.error = QStringLiteral("WAN printer topic is missing"); cleanup(); return out; }
+        const fnet_conn_write_data_t write{type, data, topic.constData(), 1};
+        result = sdkState->api.sendConnection(sdkState->wanConnection, &write);
+    }
+    out.success = result == FNET_OK;
+    out.outcomeUnknown = !out.success && result != FNET_UNAUTHORIZED && result != FNET_VERIFY_LAN_DEV_FAILED;
+    out.error = resultError(result);
+    cleanup();
+    return out;
+}
+
 FlashforgePrinterAgent::FlashforgePrinterAgent()
     : m_impl(std::make_shared<Impl>()) {}
 
@@ -2033,6 +2209,8 @@ void FlashforgePrinterAgent::submitJob(const PrintJob& job) {
 void FlashforgePrinterAgent::controlJob(const std::string& action, std::uint64_t requestId) {
     m_impl->controlJob(action, requestId);
 }
+
+void FlashforgePrinterAgent::controlDevice(const PrinterCore::DeviceCommand& command) { m_impl->controlDevice(command); }
 
 void FlashforgePrinterAgent::setCameraStreamEnabled(bool enabled) {
     m_impl->setCameraStreamEnabled(enabled);

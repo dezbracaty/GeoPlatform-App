@@ -10,6 +10,7 @@ Item {
     id: root
     objectName: "printerVideoPlayer"
 
+    property bool compact: false
     property url playbackSource: ""
     property int playbackRetryAttempt: 0
 
@@ -67,14 +68,14 @@ Item {
     ColumnLayout {
         anchors.centerIn: parent
         width: Math.min(parent.width - 32, 320)
-        spacing: 8
+        spacing: root.compact ? 2 : 8
         visible: !root.showingVideo
 
         ProgressRing {
             id: loadingRing
             Layout.alignment: Qt.AlignHCenter
-            Layout.preferredWidth: 30
-            Layout.preferredHeight: 30
+            Layout.preferredWidth: root.compact ? 20 : 30
+            Layout.preferredHeight: root.compact ? 20 : 30
             indeterminate: true
             visible: PrinterService.connectionState === PrinterService.Connecting
                      || PrinterService.cameraSessionState === PrinterService.CameraOpening
@@ -83,8 +84,8 @@ Item {
         }
         Icon {
             Layout.alignment: Qt.AlignHCenter
-            Layout.preferredWidth: 30
-            Layout.preferredHeight: 30
+            Layout.preferredWidth: root.compact ? 20 : 30
+            Layout.preferredHeight: root.compact ? 20 : 30
             visible: !loadingRing.visible
             source: FluentIcons.graph_Camera
             color: "#FFD7DCE3"
@@ -119,7 +120,7 @@ Item {
                     return qsTr("Closing camera stream")
                 return qsTr("Live video is stopped")
             }
-            font: Typography.body
+            font: root.compact ? Typography.caption : Typography.body
             color: "#FFD7DCE3"
         }
         Button {
@@ -128,6 +129,8 @@ Item {
                      && (PrinterService.cameraSessionState === PrinterService.CameraIdle
                          || PrinterService.cameraSessionState === PrinterService.CameraError
                          || root.playerFailed)
+            implicitHeight: root.compact ? 26 : Theme.controlHeight
+            font: root.compact ? Typography.caption : Typography.body
             text: PrinterService.cameraSessionState === PrinterService.CameraIdle
                   ? qsTr("Play") : qsTr("Retry")
             icon.name: FluentIcons.graph_Play

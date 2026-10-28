@@ -1,6 +1,8 @@
 #include "FixturePrinterAgent.hpp"
 
 #include <stdexcept>
+#include <algorithm>
+#include <iterator>
 #include <utility>
 
 namespace GPlatform::Printer {
@@ -103,6 +105,9 @@ void FixturePrinterAgent::selectDevice(const PrinterCore::Device& device) {
     m_status.bedTemperature = m_profile == "printing" ? 58.0 : 23.0;
     m_status.targetBedTemperature = m_profile == "printing" ? 60.0 : 0.0;
     m_status.cameraAvailable = true;
+    m_status.controls = {true, true, true, true, true, true, true, true};
+    m_status.firmware = "Journal fixture";
+    m_status.positionAvailable = true;
     m_status.cameraStreamUrl = "fixture://camera";
     if (m_profile == "printing") {
         m_status.jobId = "fixture-popup-job";
@@ -167,6 +172,27 @@ void FixturePrinterAgent::controlJob(const std::string& action, uint64_t request
     } else if (action == "cancel") {
         m_status.state = "cancel";
     }
+    publishStatus();
+}
+
+void FixturePrinterAgent::controlDevice(const PrinterCore::DeviceCommand& command) {
+    PrinterCore::Event event;
+    event.type = PrinterCore::EventType::DeviceCommandFinished;
+    event.command = command.action;
+    event.requestId = command.requestId;
+    event.success = !m_selectedDevice.deviceId.empty();
+    if (event.success) {
+        if (command.action == "nozzle") m_status.targetNozzleTemperature = command.value;
+        else if (command.action == "bed") m_status.targetBedTemperature = command.value;
+        else if (command.action == "preheatPLA") { m_status.targetNozzleTemperature = 210; m_status.targetBedTemperature = 60; }
+        else if (command.action == "preheatPETG") { m_status.targetNozzleTemperature = 240; m_status.targetBedTemperature = 80; }
+        else if (command.action == "heatersOff") m_status.targetNozzleTemperature = m_status.targetBedTemperature = 0;
+        else if (command.action == "light") m_status.lightOn = command.value != 0;
+        else if (command.action == "fan") m_status.fanSpeed = command.value;
+        else if (command.action == "home") std::fill(std::begin(m_status.position), std::end(m_status.position), 0);
+        else if (command.action == "move") m_status.position[command.axis == "x" ? 0 : command.axis == "y" ? 1 : 2] += command.value;
+    }
+    publish(event);
     publishStatus();
 }
 

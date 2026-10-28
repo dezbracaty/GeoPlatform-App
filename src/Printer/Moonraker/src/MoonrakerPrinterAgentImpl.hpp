@@ -27,6 +27,7 @@ public:
     void initialize() override;
     void shutdown() override;
     void scan() override;
+    void refreshDevices() override;
     void login(const std::string&, const std::string&) override;
     void logout() override;
     void selectDevice(const PrinterCore::Device& device) override;
@@ -40,9 +41,11 @@ public:
     }
     void submitJob(const PrinterCore::PrintJob& job) override;
     bool cancelSubmission(uint64_t requestId) override;
+    void acknowledgeDeviceControlOutcome() override { if (!m_busy) m_uncertain = false; }
     bool refreshStatus() override;
     void controlJob(const std::string& action, uint64_t requestId) override;
     void setCameraStreamEnabled(bool enabled) override;
+    void controlDevice(const PrinterCore::DeviceCommand& command) override;
 private:
     struct Response {
         bool ok{false};
@@ -59,6 +62,7 @@ private:
     void publish(PrinterCore::Event event);
     void connectionFailed(const QString& error, bool access = false);
     void handshake();
+    void publishConfiguredDevice(bool online, const QString& error = {});
     void queryStatus(bool initial = false);
     void updateCapabilities();
     void rejectCommand(const std::string& command, uint64_t id, const QString& error);
@@ -81,6 +85,7 @@ private:
     bool m_connected{false};
     bool m_fileManager{false};
     bool m_queryPending{false};
+    bool m_refreshPending{false};
     bool m_busy{false};
     uint64_t m_activeRequestId{0};
     bool m_statusFresh{false};
@@ -92,6 +97,10 @@ private:
     std::string m_activeCommand;
     QString m_activeFileName;
     QString m_currentFileName;
+    bool m_uncertain{false};
+    PrinterCore::Status m_lastStatus;
+    QString m_homedAxes;
+    QString m_activeExtruder{QStringLiteral("extruder")};
     QString m_state;
     int m_timeoutMs;
     int m_uploadTimeoutMs;

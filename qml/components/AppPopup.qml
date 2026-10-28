@@ -22,6 +22,8 @@ Popup {
     property real preferredWidth: 0
     property real preferredHeight: 0
     property string title: ""
+    property bool expandable: false
+    property bool expanded: false
     property bool showBack: false
     property bool showHeader: true
     property int surfaceElevation: 4
@@ -143,6 +145,9 @@ Popup {
                                     ? PrintWorkspaceStyle.titleBarHeight : 0
             title: control.title
             showBack: control.showBack
+            showExpand: control.expandable
+            expanded: control.expanded
+            onExpandRequested: { control.expanded = !control.expanded; Qt.callLater(control.reposition) }
             cornerRadius: control.SmoothUI.radius
             onBackRequested: control.backRequested()
             onCloseRequested: control.close()

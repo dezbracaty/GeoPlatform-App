@@ -162,15 +162,22 @@ AppPopup {
                             spacing: 10
                             visible: !PrinterService.signedIn
 
-                            InfoBar {
+                            Rectangle {
                                 Layout.fillWidth: true
-                                visible: !PrinterService.agentAvailable
-                                         && PrinterService.agentError.length > 0
-                                severity: InfoBarType.Error
-                                title: qsTr("Printing device service unavailable")
-                                message: PrinterService.agentError
-                                closable: false
-                                messageMaximumWidth: Math.max(160, width - 190)
+                                Layout.minimumWidth: 0
+                                implicitWidth: 0
+                                implicitHeight: connectionNotice.implicitHeight + 20
+                                visible: !PrinterService.agentAvailable && PrinterService.agentError.length > 0
+                                radius: PrintWorkspaceStyle.controlRadius
+                                color: control.SmoothUI.theme.res.systemFillColorCautionBackground
+                                ColumnLayout {
+                                    id: connectionNotice
+                                    x: 10; y: 10
+                                    width: Math.max(0, parent.width - 20)
+                                    spacing: 5
+                                    Label { Layout.fillWidth: true; text: qsTr("Flashforge connection unavailable"); font: Typography.bodyStrong; wrapMode: Text.Wrap }
+                                    Label { Layout.fillWidth: true; text: qsTr("Install the connection component, or choose another connection type."); font: Typography.caption; wrapMode: Text.Wrap }
+                                }
                             }
 
                             ColumnLayout {

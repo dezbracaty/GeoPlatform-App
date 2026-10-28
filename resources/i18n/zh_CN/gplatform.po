@@ -3274,3 +3274,295 @@ msgstr "跳转到设置"
 
 msgid "These slicing results are no longer valid. Please slice again."
 msgstr "这次切片结果已失效，请重新切片。"
+
+msgid "%1 mm"
+msgstr "%1 mm"
+
+msgid "%1 · Disconnected"
+msgstr "%1 · 未连接"
+
+msgid "%1%"
+msgstr "%1%"
+
+msgid "%1% · %2"
+msgstr "%1% · %2"
+
+msgid "Address"
+msgstr "地址"
+
+msgid "Auxiliary"
+msgstr "辅助"
+
+msgid "Camera unavailable for this printer"
+msgstr "此设备不支持摄像头"
+
+msgid "Chamber light"
+msgstr "腔体照明"
+
+msgid "Check the printer before acknowledging an unknown operation outcome. Acknowledging will not resend the operation."
+msgstr "确认未知操作结果前，请先查看打印机的实际状态。确认不会重新发送操作。"
+
+msgid "Check the printer power and network, then refresh the device list."
+msgstr "请检查打印机电源和网络，然后刷新设备列表。"
+
+msgid "Command accepted. Waiting for device feedback."
+msgstr "指令已接收，等待设备反馈。"
+
+msgid "Command outcome is unknown. Check the printer before retrying."
+msgstr "指令执行结果未知，重试前请先查看打印机状态。"
+
+msgid "Connect to enable device controls."
+msgstr "连接设备后可使用控制功能。"
+
+msgid "Connect to read the current device status. Any print job on the printer continues while disconnected."
+msgstr "连接后可读取当前设备状态。断开连接后，打印机上的任务仍会继续。"
+
+msgid "Connection"
+msgstr "连接方式"
+
+msgid "Connection component available"
+msgstr "连接组件可用"
+
+msgid "Connection component unavailable"
+msgstr "连接组件不可用"
+
+msgid "Connection diagnostics"
+msgstr "连接诊断"
+
+msgid "Connection interrupted"
+msgstr "连接中断"
+
+msgid "Connection lost. Check the printer before retrying the operation."
+msgstr "连接已中断，重试操作前请先查看打印机状态。"
+
+msgid "Connection unavailable"
+msgstr "连接暂不可用"
+
+msgid "Controls are shown only when supported by the connected device."
+msgstr "仅显示已连接设备支持的控制项。"
+
+msgid "Cooling fan"
+msgstr "冷却风扇"
+
+msgid "Device access code"
+msgstr "设备访问码"
+
+msgid "Device controls"
+msgstr "设备控制"
+
+msgid "Device information"
+msgstr "设备信息"
+
+msgid "Device name"
+msgstr "设备名称"
+
+msgid "Disconnect from this device?"
+msgstr "断开与设备的连接？"
+
+msgid "Enter access code"
+msgstr "输入访问码"
+
+msgid "Enter the access code shown on your printer."
+msgstr "请输入打印机上显示的访问码。"
+
+msgid "Expand"
+msgstr "放大"
+
+msgid "Extrude"
+msgstr "挤出"
+
+msgid "Filament control is not supported by this device."
+msgstr "此设备不支持耗材控制。"
+
+msgid "Filament length (mm)"
+msgstr "进退料长度（mm）"
+
+msgid "Firmware"
+msgstr "固件版本"
+
+msgid "Flashforge connection unavailable"
+msgstr "Flashforge 连接暂不可用"
+
+msgid "Heat the nozzle to at least %1°C before extrusion. Use temperature control to set the target."
+msgstr "进退料前请先将喷嘴加热至至少 %1°C，可在温控中设置目标温度。"
+
+msgid "I checked the printer status"
+msgstr "我已查看打印机上的实际状态"
+
+msgid "Install the Flashforge connection component matching this application, then restart GPlatform. Other connection types remain available."
+msgstr "请安装与当前应用版本匹配的 Flashforge 连接组件，然后重启 GPlatform。其他连接方式仍可使用。"
+
+msgid "Install the connection component, or choose another connection type."
+msgstr "可安装连接组件，或选择其他连接方式。"
+
+msgid "Last known job · Status is stale"
+msgstr "上次任务 · 状态已过期"
+
+msgid "Live device status"
+msgstr "实时设备状态"
+
+msgid "Live video"
+msgstr "实时视频"
+
+msgid "Motion"
+msgstr "运动"
+
+msgid "Motion and extrusion are disabled while printing or when device status is uncertain."
+msgstr "打印中或设备状态不确定时，运动和进退料操作不可用。"
+
+msgid "Motion control is not supported by this device."
+msgstr "此设备不支持运动控制。"
+
+msgid "No active print job"
+msgstr "当前没有打印任务"
+
+msgid "No auxiliary controls are available for this device."
+msgstr "此设备没有可用的辅助控制项。"
+
+msgid "Nozzle %1°C"
+msgstr "喷嘴 %1°C"
+
+msgid "Only GPlatform will disconnect. Printing and heating on the printer will continue."
+msgstr "仅断开 GPlatform 的连接。打印机上的打印和加热会继续。"
+
+msgid "Open printing devices to configure a connection"
+msgstr "打开打印设备以配置连接"
+
+msgid "Overview"
+msgstr "概览"
+
+msgid "Position unavailable"
+msgstr "位置暂不可用"
+
+msgid "Print formats"
+msgstr "打印格式"
+
+msgid "Reconnect"
+msgstr "重新连接"
+
+msgid "Refresh could not retrieve all devices. Check connection diagnostics."
+msgstr "刷新未能获取全部设备，请查看连接诊断。"
+
+msgid "Remaining %1"
+msgstr "剩余 %1"
+
+msgid "Restore"
+msgstr "恢复大小"
+
+msgid "Result unknown"
+msgstr "结果待确认"
+
+msgid "Retract"
+msgstr "回抽"
+
+msgid "Select an online printer to connect, or an offline printer to view its information."
+msgstr "选择在线设备可建立连接，选择离线设备可查看设备信息。"
+
+msgid "Send a sliced file from the bottom command bar."
+msgstr "可从底部操作栏发送已切片文件。"
+
+msgid "Sending command…"
+msgstr "正在发送指令…"
+
+msgid "Set"
+msgstr "设置"
+
+msgid "Status"
+msgstr "状态"
+
+msgid "Status is stale"
+msgstr "状态已过期"
+
+msgid "Step"
+msgstr "步长"
+
+msgid "Stop printing"
+msgstr "停止打印"
+
+msgid "Stop this print job?"
+msgstr "停止当前打印任务？"
+
+msgid "Target temperature"
+msgstr "目标温度"
+
+msgid "Temperature control is not supported by this device."
+msgstr "此设备不支持温控操作。"
+
+msgid "Temperature limits: nozzle %1°C, bed %2°C. Values update from the device."
+msgstr "温度上限：喷嘴 %1°C，热床 %2°C。数值根据设备反馈更新。"
+
+msgid "The current job will end and cannot be resumed after stopping."
+msgstr "停止后当前任务将结束，无法继续打印。"
+
+msgid "The device operation failed. See connection diagnostics for details."
+msgstr "设备操作失败，请查看连接诊断。"
+
+msgid "This connection type is unavailable. See connection settings or choose another connection type."
+msgstr "此连接方式暂不可用，请查看连接设置或选择其他连接方式。"
+
+msgid "This operation is unavailable or outside the device limits."
+msgstr "当前操作不可用，或参数超出设备允许范围。"
+
+msgid "Turn off heating"
+msgstr "关闭加热"
+
+msgid "Verify printer status"
+msgstr "核对打印机状态"
+
+msgid "X %1 · Y %2 · Z %3 mm"
+msgstr "X %1 · Y %2 · Z %3 mm"
+
+msgid "Live video is unavailable with this connection."
+msgstr "当前连接暂未提供视频。"
+
+msgctxt "PrinterDeviceControls"
+msgid "Target"
+msgstr "目标"
+
+msgid "Temperature control"
+msgstr "温控"
+
+msgid "Filament controls"
+msgstr "耗材"
+
+msgid "Material preheat"
+msgstr "材料预热"
+
+msgid "Disconnect device"
+msgstr "断开连接"
+
+msgid "Heat to 210°C"
+msgstr "加热至 210°C"
+
+msgid "Available controls"
+msgstr "可用能力"
+
+msgid "Unavailable"
+msgstr "不可用"
+
+msgid "Heat the nozzle to at least %1°C before loading or unloading filament."
+msgstr "请先将喷嘴加热至至少 %1°C，再执行进退料。"
+
+msgid "Filament length"
+msgstr "进退料长度"
+
+msgid "IP address"
+msgstr "IP 地址"
+
+msgid "Camera"
+msgstr "摄像头"
+
+msgid "None"
+msgstr "无"
+
+msgid ", "
+msgstr "、"
+
+msgid "Retry status"
+msgstr "重新读取状态"
+
+msgid "Cancel upload"
+msgstr "取消上传"
+
+msgid "Cancelled"
+msgstr "已取消"

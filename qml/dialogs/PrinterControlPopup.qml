@@ -7,11 +7,11 @@ import GPlatform
 
 AppPopup {
     id: control
-    windowEscapeEnabled: true
+    windowEscapeEnabled: !diagnostics.opened && !moonrakerConnection.opened && !detailPane.dialogOpen
+    expandable: true
     SmoothUI.theme: Theme.of(control)
 
     property Item popupHost: null
-    property string accessCredential: ""
     property bool selectionEnabled: false
     signal flashforgeAccountRequested()
 
@@ -40,8 +40,8 @@ AppPopup {
     }
 
     parent: popupHost
-    preferredWidth: PrintWorkspaceStyle.printerDevicePopoverWidth
-    preferredHeight: PrintWorkspaceStyle.printerDevicePopoverHeight
+    preferredWidth: expanded ? 860 : PrintWorkspaceStyle.printerDevicePopoverWidth
+    preferredHeight: expanded ? 620 : PrintWorkspaceStyle.printerDevicePopoverHeight
     title: qsTr("Printing Devices")
 
     // This popup is parented to the workspace, so clamp in workspace coordinates.
@@ -92,7 +92,6 @@ AppPopup {
     }
 
     onOpened: {
-        accessCredential = ""
         selectionEnabled = false
         selectionGuard.restart()
         if (PrinterService.discoveryState === PrinterService.DiscoveryIdle)
@@ -198,12 +197,15 @@ AppPopup {
                 anchors.margins: 12
                 spacing: 10
 
-                RowLayout {
+                Item {
                     Layout.fillWidth: true
-                    spacing: 8
+                    implicitHeight: 37
 
                     ColumnLayout {
-                        Layout.fillWidth: true
+                        anchors.left: parent.left
+                        anchors.right: refreshButton.left
+                        anchors.rightMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
                         spacing: 1
                         Label {
                             text: qsTr("Devices")
@@ -218,14 +220,19 @@ AppPopup {
                     }
 
                     Button {
+                        id: refreshButton
+                        objectName: "printerRefreshButton"
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
                         text: control.scanning ? qsTr("Scanning") : qsTr("Refresh")
+                        implicitHeight: 27
+                        font.pixelSize: 12
                         icon.name: FluentIcons.graph_Refresh
                         icon.width: 16
                         icon.height: 16
-                        visible: PrinterService.supportsDiscovery
                         enabled: PrinterService.agentAvailable && !control.scanning
                                  && !control.preparing
-                        onClicked: PrinterService.startDiscovery()
+                        onClicked: PrinterService.refreshDevices()
                     }
                 }
 
@@ -234,15 +241,22 @@ AppPopup {
                     visible: !PrinterService.agentAvailable
                              || PrinterService.discoveryState === PrinterService.DiscoveryError
                              || PrinterService.discoveryState === PrinterService.DiscoveryWarning
-                    severity: PrinterService.discoveryState === PrinterService.DiscoveryWarning
-                              ? InfoBarType.Warning : InfoBarType.Error
+                    severity: InfoBarType.Warning
                     title: !PrinterService.agentAvailable
-                           ? qsTr("Device service unavailable")
+                           ? qsTr("Flashforge connection unavailable")
                            : PrinterService.discoveryState === PrinterService.DiscoveryWarning
                              ? qsTr("Refresh incomplete") : qsTr("Scan failed")
                     message: !PrinterService.agentAvailable
-                             ? PrinterService.agentError : PrinterService.discoveryError
+                             ? qsTr("Install the connection component, or choose another connection type.") : qsTr("Refresh could not retrieve all devices. Check connection diagnostics.")
                     closable: false
+                }
+
+                Button {
+                    objectName: "printerServiceDiagnosticsButton"
+                    text: qsTr("Connection diagnostics")
+                    flat: true
+                    visible: !PrinterService.agentAvailable || PrinterService.discoveryError.length > 0
+                    onClicked: diagnostics.open()
                 }
 
                 Item {
@@ -290,9 +304,8 @@ AppPopup {
                             highlighted: PrinterService.selectedDeviceId === deviceId
                             enabled: control.selectionEnabled && !control.preparing
                                      && (!PrinterService.transferBusy || (!PrinterService.connected && PrinterService.canConfigureBackend))
-                                     && !control.activeJob
+                                && !PrinterService.printing
                             onClicked: {
-                                control.accessCredential = ""
                                 PrinterService.selectDevice(deviceId)
                             }
 
@@ -311,7 +324,7 @@ AppPopup {
                                         anchors.centerIn: parent
                                         width: 18
                                         height: 18
-                                        source: FluentIcons.graph_Printer3D
+                                        source: FluentIcons.graph_Print
                                         color: deviceDelegate.online
                                                ? control.SmoothUI.theme.res.textFillColorPrimary
                                                : control.SmoothUI.theme.res.textFillColorDisabled
@@ -375,7 +388,7 @@ AppPopup {
                             Layout.preferredWidth: 28
                             Layout.preferredHeight: 28
                             visible: !control.scanning
-                            source: FluentIcons.graph_Printer3D
+                            source: FluentIcons.graph_Print
                             color: control.SmoothUI.theme.res.textFillColorSecondary
                         }
                         Label {
@@ -397,13 +410,28 @@ AppPopup {
                     }
                 }
 
-                Label {
+                Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: control.SmoothUI.theme.res.dividerStrokeColorDefault }
+                RowLayout {
                     Layout.fillWidth: true
-                    text: qsTr("Connection: %1").arg(PrinterService.backendName)
-                    font: Typography.caption
+                    spacing: 6
+                    Icon {
+                        Layout.preferredWidth: 16
+                        Layout.preferredHeight: 16
+                        source: FluentIcons.graph_Devices3
+                        color: control.SmoothUI.theme.res.textFillColorSecondary
+                    }
+                    Label {
+                        objectName: "printerConnectionAvailability"
+                        Layout.fillWidth: true
+                        text: qsTr("%1 · %2").arg(PrinterService.backendName).arg(PrinterService.agentAvailable ? qsTr("Available") : qsTr("Unavailable"))
+                        font.pixelSize: 11
+                        color: control.SmoothUI.theme.res.textFillColorSecondary
+                    }
                 }
                 Button {
                     objectName: "printerConfigureMoonrakerButton"
+                    implicitHeight: 27
+                    font.pixelSize: 12
                     text: qsTr("Connect to Moonraker")
                     enabled: PrinterService.canConfigureBackend
                     onClicked: {
@@ -413,6 +441,8 @@ AppPopup {
                 }
                 Button {
                     objectName: "printerUseFlashforgeButton"
+                    implicitHeight: 27
+                    font.pixelSize: 12
                     text: qsTr("Use Flashforge")
                     visible: PrinterService.backendName !== "Flashforge"
                     enabled: PrinterService.canConfigureBackend
@@ -420,6 +450,8 @@ AppPopup {
                 }
                 Button {
                     objectName: "printerControlFlashforgeAccountButton"
+                    implicitHeight: 27
+                    font.pixelSize: 12
                     visible: PrinterService.supportsAccount
                     text: PrinterService.signedIn
                           ? qsTr("Flashforge account") : qsTr("Sign in to Flashforge")
@@ -442,348 +474,41 @@ AppPopup {
             Layout.fillWidth: true
             Layout.minimumWidth: 0
             Layout.fillHeight: true
-
             ColumnLayout {
                 anchors.centerIn: parent
                 width: Math.min(parent.width - 48, 320)
-                spacing: 10
                 visible: !control.hasSelection
-
-                Icon {
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 42
-                    Layout.preferredHeight: 42
-                    source: FluentIcons.graph_Printer3D
-                    color: control.SmoothUI.theme.res.textFillColorSecondary
-                }
-                Label {
-                    Layout.fillWidth: true
-                    horizontalAlignment: Text.AlignHCenter
-                    text: qsTr("Select a printer")
-                    font: Typography.subtitle
-                    color: control.SmoothUI.theme.res.textFillColorPrimary
-                }
-                Label {
-                    Layout.fillWidth: true
-                    horizontalAlignment: Text.AlignHCenter
-                    wrapMode: Text.WordWrap
-                    text: qsTr("Online printers open directly. Offline printers show their last known information.")
-                    font: Typography.body
-                    color: control.SmoothUI.theme.res.textFillColorSecondary
-                }
+                spacing: 10
+                Label { Layout.fillWidth: true; text: qsTr("Select a printer"); font: Typography.subtitle; horizontalAlignment: Text.AlignHCenter }
+                Label { Layout.fillWidth: true; text: qsTr("Select an online printer to connect, or an offline printer to view its information."); wrapMode: Text.Wrap; horizontalAlignment: Text.AlignHCenter }
             }
-
-            ScrollView {
-                id: printerDetailScroll
-                objectName: "printerDetailScroll"
-                clip: true
-                rightPadding: 12
+            PrinterDeviceDetails {
+                id: detailPane
+                expanded: control.expanded
                 anchors.fill: parent
-                anchors.margins: 18
+                anchors.leftMargin: 16
+                anchors.rightMargin: 16
+                anchors.topMargin: 14
+                anchors.bottomMargin: 12
                 visible: control.hasSelection
-                contentWidth: availableWidth
-                contentHeight: Math.max(availableHeight, printerDetailContent.implicitHeight)
-                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-
-                ColumnLayout {
-                    id: printerDetailContent
-                    width: printerDetailScroll.availableWidth
-                    height: printerDetailScroll.contentHeight
-                    spacing: 12
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 10
-
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        spacing: 2
-                        Label {
-                            Layout.fillWidth: true
-                            text: PrinterService.selectedDeviceName
-                            elide: Text.ElideRight
-                            font: Typography.subtitle
-                            color: control.SmoothUI.theme.res.textFillColorPrimary
-                        }
-                        Label {
-                            Layout.fillWidth: true
-                            text: [PrinterService.selectedDeviceModel,
-                                   control.routeText(PrinterService.selectedDeviceRoute),
-                                   PrinterService.selectedDeviceIp].filter(function(value) {
-                                       return value.length > 0
-                                   }).join(" · ")
-                            elide: Text.ElideRight
-                            font: Typography.caption
-                            color: control.SmoothUI.theme.res.textFillColorSecondary
-                        }
-                    }
-
-                    Rectangle {
-                        Layout.preferredWidth: stateLabel.implicitWidth + 18
-                        Layout.preferredHeight: 26
-                        radius: 13
-                        color: PrinterService.connectionState === PrinterService.ConnectionError
-                               ? control.SmoothUI.theme.res.systemFillColorCautionBackground
-                               : (PrinterService.selectedDeviceOnline
-                                  ? control.SmoothUI.theme.res.systemFillColorSuccessBackground
-                                  : PrintWorkspaceStyle.secondarySurface(control.SmoothUI.dark))
-                        Label {
-                            id: stateLabel
-                            anchors.centerIn: parent
-                            text: control.deviceStateText()
-                            font: Typography.caption
-                            color: PrinterService.connectionState === PrinterService.ConnectionError
-                                   ? control.SmoothUI.theme.res.systemFillColorCaution
-                                   : (PrinterService.selectedDeviceOnline
-                                      ? control.SmoothUI.theme.res.systemFillColorSuccess
-                                      : control.SmoothUI.theme.res.textFillColorSecondary)
-                        }
-                    }
-                }
-
-                Rectangle {
-                    id: videoFrame
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: Math.round(width * 9 / 16)
-                    radius: PrintWorkspaceStyle.menuRadius
-                    color: control.SmoothUI.dark ? "#FF111214" : "#FF22262B"
-                    clip: true
-
-                    Loader {
-                        id: cameraPlayerLoader
-                        anchors.fill: parent
-                        source: "PrinterVideoPlayer.qml"
-                    }
-                }
-
-                ConstrainedInfoBar {
-                    Layout.fillWidth: true
-                    visible: PrinterService.connectionState === PrinterService.ConnectionError
-                    severity: InfoBarType.Warning
-                    title: PrinterService.deviceAccessRequired
-                           ? qsTr("Printer access required")
-                           : qsTr("Unable to load printer")
-                    message: PrinterService.connectionError
-                    closable: false
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-                    visible: PrinterService.deviceAccessRequired
-                             && PrinterService.selectedDeviceOnline
-
-                    TextField {
-                        Layout.fillWidth: true
-                        placeholderText: PrinterService.backendName === "Moonraker"
-                                         ? qsTr("Moonraker API key") : qsTr("Printer access code")
-                        echoMode: TextInput.Password
-                        text: control.accessCredential
-                        inputMethodHints: Qt.ImhSensitiveData | Qt.ImhNoPredictiveText
-                        onTextChanged: control.accessCredential = text
-                        onAccepted: accessButton.clicked()
-                    }
-                    Button {
-                        id: accessButton
-                        text: qsTr("Confirm")
-                        highlighted: true
-                        enabled: control.accessCredential.trim().length > 0
-                        onClicked: PrinterService.provideDeviceAccess(
-                                       control.accessCredential.trim())
-                    }
-                }
-
-                GridLayout {
-                    Layout.fillWidth: true
-                    columns: 2
-                    columnSpacing: 10
-                    rowSpacing: 10
-                    visible: PrinterService.connected
-
-                    StatusMetric {
-                        Layout.fillWidth: true
-                        title: qsTr("Nozzle")
-                        value: control.temperatureText(PrinterService.nozzleTemperature,
-                                                       PrinterService.targetNozzleTemperature)
-                        iconName: FluentIcons.graph_Processing
-                    }
-                    StatusMetric {
-                        Layout.fillWidth: true
-                        title: qsTr("Bed")
-                        value: control.temperatureText(PrinterService.bedTemperature,
-                                                       PrinterService.targetBedTemperature)
-                        iconName: FluentIcons.graph_Tiles
-                    }
-                }
-
-                Label {
-                    Layout.fillWidth: true
-                    visible: PrinterService.connected
-                             && PrinterService.jobState === PrinterService.JobIdle
-                             && PrinterService.transferState === PrinterService.TransferIdle
-                    text: qsTr("Printer is idle and ready to receive a print job")
-                    horizontalAlignment: Text.AlignHCenter
-                    font: Typography.body
-                    color: control.SmoothUI.theme.res.textFillColorSecondary
-                }
-
-                Label {
-                    Layout.fillWidth: true
-                    visible: PrinterService.connected && SlicingPreviewBridge.printOutputReady
-                             && !control.hasSendFormat
-                    text: qsTr("The selected printer does not support an available preview format.")
-                    wrapMode: Text.WordWrap
-                }
-
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 7
-                    visible: !PrinterService.jobNoticeDismissed
-                             && (PrinterService.transferState !== PrinterService.TransferIdle
-                                 || PrinterService.commandOutcomeUnknown)
-                    Label {
-                        Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
-                        text: PrinterService.commandOutcomeUnknown || PrinterService.transferState === PrinterService.TransferUnknown
-                              ? qsTr("Reading the current printer state. Commands are not retried automatically.")
-                              : PrinterService.transferState === PrinterService.TransferUploading
-                                ? qsTr("Uploading: %1%").arg(Math.round(PrinterService.transferProgress * 100))
-                              : PrinterService.transferState === PrinterService.TransferStarting
-                                ? qsTr("Waiting for the printer to begin")
-                              : PrinterService.transferState === PrinterService.TransferUploaded
-                                ? qsTr("Upload completed")
-                              : PrinterService.transferState === PrinterService.TransferCancelled
-                                ? qsTr("Upload cancelled") : qsTr("Transfer failed")
-                    }
-                    Label {
-                        Layout.fillWidth: true
-                        visible: PrinterService.jobError.length > 0
-                        text: PrinterService.jobError
-                        wrapMode: Text.Wrap
-                    }
-                    ProgressBar {
-                        Layout.fillWidth: true
-                        visible: PrinterService.transferState === PrinterService.TransferUploading
-                                 || PrinterService.transferState === PrinterService.TransferStarting
-                        from: 0
-                        to: 1
-                        value: Math.max(0, Math.min(1, PrinterService.transferProgress))
-                        indeterminate: PrinterService.transferState === PrinterService.TransferStarting
-                    }
-                    Button {
-                        objectName: "printerTransferCancelButton"
-                        visible: PrinterService.canCancelSubmission
-                        text: qsTr("Cancel upload")
-                        onClicked: PrinterService.cancelSubmission()
-                    }
-                    Button {
-                        objectName: "printerTransferStatusButton"
-                        visible: PrinterService.commandOutcomeUnknown || PrinterService.transferState === PrinterService.TransferUnknown
-                                 || PrinterService.transferState === PrinterService.TransferUploaded
-                                 || PrinterService.transferState === PrinterService.TransferFailed
-                                 || PrinterService.transferState === PrinterService.TransferCancelled
-                        text: PrinterService.commandOutcomeUnknown || PrinterService.transferState === PrinterService.TransferUnknown
-                              ? (PrinterService.canRefreshStatus ? qsTr("Retry status") : qsTr("Waiting for printer state")) : qsTr("Dismiss")
-                        enabled: !(PrinterService.commandOutcomeUnknown || PrinterService.transferState === PrinterService.TransferUnknown)
-                                 || PrinterService.canRefreshStatus
-                        onClicked: (PrinterService.commandOutcomeUnknown || PrinterService.transferState === PrinterService.TransferUnknown)
-                                   ? PrinterService.refreshPrinterStatus() : PrinterService.dismissJobStatus()
-                    }
-                }
-
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 7
-                    visible: control.activeJob
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Label {
-                            objectName: "printerControlJobFileName"
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            text: PrinterService.jobFileName
-                            elide: Text.ElideRight
-                            font: Typography.bodyStrong
-                        }
-                        Item { Layout.fillWidth: true }
-                        Label {
-                            text: "%1% · %2".arg(Math.round(PrinterService.printProgress))
-                                                  .arg(PrinterService.remainingTime)
-                            font: Typography.caption
-                            color: control.SmoothUI.theme.res.textFillColorSecondary
-                        }
-                    }
-                    ProgressBar {
-                        Layout.fillWidth: true
-                        from: 0
-                        to: 100
-                        value: PrinterService.printProgress
-                    }
-                }
-
-                Label {
-                    objectName: "printerControlJobNotice"
-                    Layout.fillWidth: true
-                    visible: !PrinterService.jobNoticeDismissed && PrinterService.jobError.length > 0
-                    text: PrinterService.jobError
-                    wrapMode: Text.Wrap
-                }
-
-                RowLayout {
-                    id: jobActions
-                    Layout.fillWidth: true
-                    readonly property real equalButtonWidth:
-                        Math.max(popupStopButton.implicitWidth,
-                                 popupPauseButton.implicitWidth)
-                    spacing: 4
-                    visible: control.activeJob
-
-                    Item { Layout.fillWidth: true }
-
-                    Button {
-                        id: popupStopButton
-                        objectName: "printerControlCancelButton"
-                        Layout.preferredWidth: jobActions.equalButtonWidth
-                        text: qsTr("Stop")
-                        icon.name: FluentIcons.graph_Stop
-                        icon.width: 16
-                        icon.height: 16
-                        enabled: PrinterService.supportsCancel && PrinterService.jobControllable
-                                 && PrinterService.jobState !== PrinterService.Stopping
-                        onClicked: PrinterService.cancelPrint()
-                    }
-                    Button {
-                        id: popupPauseButton
-                        objectName: "printerControlPauseResumeButton"
-                        Layout.preferredWidth: jobActions.equalButtonWidth
-                        text: PrinterService.jobState === PrinterService.Paused
-                              ? qsTr("Continue") : qsTr("Pause")
-                        icon.name: PrinterService.jobState === PrinterService.Paused
-                                   ? FluentIcons.graph_Play : FluentIcons.graph_Pause
-                        icon.width: 16
-                        icon.height: 16
-                        enabled: PrinterService.supportsPauseResume && PrinterService.jobControllable
-                        onClicked: {
-                            if (PrinterService.jobState === PrinterService.Paused)
-                                PrinterService.resumePrint()
-                            else
-                                PrinterService.pausePrint()
-                        }
-                    }
-                }
-
-                Item { Layout.fillHeight: true }
-                }
+                onDiagnosticsRequested: diagnostics.open()
             }
         }
     }
 
-    function temperatureText(current, target) {
-        if (target > 0)
-            return qsTr("%1°C / %2°C").arg(Math.round(current)).arg(Math.round(target))
-        return qsTr("%1°C").arg(Math.round(current))
+    ContentDialog {
+        id: diagnostics
+        objectName: "printerDiagnosticsDialog"
+        title: qsTr("Connection diagnostics")
+        ColumnLayout {
+            width: diagnostics.availableWidth
+            spacing: 10
+            Label { Layout.fillWidth: true; text: qsTr("Connection: %1").arg(PrinterService.backendName); wrapMode: Text.Wrap }
+            Label { Layout.fillWidth: true; text: PrinterService.agentAvailable ? qsTr("Connection component available") : qsTr("Connection component unavailable"); wrapMode: Text.Wrap }
+            Label { Layout.fillWidth: true; text: [PrinterService.agentError, PrinterService.discoveryError, PrinterService.connectionError, PrinterService.deviceControlError].filter(v => v.length > 0).join("\n"); wrapMode: Text.Wrap; font: Typography.caption }
+            Label { Layout.fillWidth: true; visible: !PrinterService.agentAvailable; text: qsTr("Install the Flashforge connection component matching this application, then restart GPlatform. Other connection types remain available."); wrapMode: Text.Wrap }
+        }
+        footer: DialogButtonBox { Button { objectName: "printerDiagnosticsCloseButton"; text: qsTr("Close"); onClicked: diagnostics.close() } }
     }
 
     function routeText(route) {
@@ -794,91 +519,26 @@ AppPopup {
         return ""
     }
 
-    function deviceStateText() {
-        if (!PrinterService.selectedDeviceOnline)
-            return qsTr("Offline")
-        if (PrinterService.connectionState === PrinterService.Connecting)
-            return qsTr("Loading")
-        if (PrinterService.connectionState === PrinterService.ConnectionError)
-            return qsTr("Attention")
-        const state = PrinterService.printerStateText.length > 0
-                    ? PrinterService.printerStateText
-                    : PrinterService.selectedDeviceState
-        switch (state.toLowerCase()) {
-        case "ready": return qsTr("Ready")
-        case "busy": return qsTr("Busy")
-        case "calibrate_doing": return qsTr("Calibrating")
-        case "error": return qsTr("Error")
-        case "heating": return qsTr("Heating")
-        case "printing": return qsTr("Printing")
-        case "pausing": return qsTr("Pausing")
-        case "pause": return qsTr("Paused")
-        case "cancel": return qsTr("Cancelled")
-        case "unavailable": return qsTr("State unavailable")
-        case "canceling": return qsTr("Canceling")
-        case "completed": return qsTr("Completed")
-        default: return qsTr("Online")
-        }
-    }
-
-    component ConstrainedInfoBar: InfoBar {
+    component ConstrainedInfoBar: Rectangle {
         id: banner
-        Layout.minimumWidth: 0
-        // Layout owns width. Do not feed the loaded labels' width back into it.
-        implicitWidth: 0
-        messageMaximumWidth: Math.max(1, Math.floor(width - leftPadding - rightPadding - 34))
-        titleItem: Label {
-            width: banner.messageMaximumWidth
-            text: banner.title
-            font: Typography.bodyStrong
-            color: banner.SmoothUI.theme.res.textFillColorPrimary
-            wrapMode: Text.Wrap
-        }
-        // Equal message width selects InfoBar's stacked layout, even for short text.
-        messageItem: Label {
-            width: banner.messageMaximumWidth
-            text: banner.message
-            font: Typography.body
-            color: banner.SmoothUI.theme.res.textFillColorPrimary
-            wrapMode: Text.Wrap
-        }
-    }
-
-    component StatusMetric: Rectangle {
         property string title: ""
-        property string value: ""
-        property var iconName: FluentIcons.graph_Info
-
-        implicitHeight: 64
+        property string message: ""
+        property int severity: InfoBarType.Warning
+        property bool closable: false
+        Layout.minimumWidth: 0
+        implicitWidth: 0
+        implicitHeight: notice.implicitHeight + 20
         radius: PrintWorkspaceStyle.controlRadius
-        color: control.SmoothUI.theme.res.cardBackgroundFillColorDefault
-        border.width: 1
-        border.color: control.SmoothUI.theme.res.cardStrokeColorDefault
-
-        RowLayout {
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.leftMargin: 12
-            spacing: 8
-            Icon {
-                Layout.preferredWidth: 18
-                Layout.preferredHeight: 18
-                source: parent.parent.iconName
-                color: control.SmoothUI.theme.res.textFillColorSecondary
-            }
-            ColumnLayout {
-                spacing: 1
-                Label {
-                    text: parent.parent.parent.title
-                    font: Typography.caption
-                    color: control.SmoothUI.theme.res.textFillColorSecondary
-                }
-                Label {
-                    text: parent.parent.parent.value
-                    font: Typography.bodyStrong
-                    color: control.SmoothUI.theme.res.textFillColorPrimary
-                }
-            }
+        color: control.SmoothUI.theme.res.systemFillColorCautionBackground
+        border.color: Colors.withOpacity(control.SmoothUI.theme.res.systemFillColorCaution, 0.25)
+        ColumnLayout {
+            id: notice
+            x: 10
+            y: 10
+            width: Math.max(0, banner.width - 20)
+            spacing: 5
+            Label { Layout.fillWidth: true; text: banner.title; font: Typography.caption; wrapMode: Text.Wrap }
+            Label { Layout.fillWidth: true; text: banner.message; font: Typography.caption; wrapMode: Text.Wrap; color: control.SmoothUI.theme.res.textFillColorSecondary }
         }
     }
 }
