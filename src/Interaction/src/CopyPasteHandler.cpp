@@ -12,11 +12,17 @@ REGISTER_INTERACTION_ACTION(CopyPasteHandler, "edit.copy", "edit.paste")
 #include "Foundation/Log.h"
 #include <ActorDB.hpp>
 #include <DBCopyService.hpp>
+#include <ModelInstanceDB.hpp>
+#include <ModelObjectDB.hpp>
+#include <ModelGraphUtil.hpp>
 #include <transdb.h>
 #include <QCursor>
 #include <QGuiApplication>
 #include <QWindow>
 #include <exception>
+#include <algorithm>
+#include <limits>
+#include <unordered_set>
 
 // 静态剪贴板定义
 std::vector<DBInstanceID> CopyPasteHandler::s_copiedObjectIds;
@@ -104,15 +110,44 @@ void CopyPasteHandler::pasteModels() {
     {
         TransactionGuard guard("粘贴对象");
         try {
+            // Instances reference their parts through the owning ModelObject.
+            // Copy that ownership subtree, then retain only selected instances.
+            std::vector<DBInstanceID> graphRoots;
+            std::unordered_set<DBInstanceID> selectedInstances;
+            for (const auto& sourceId : sourceRootIds) {
+                const auto model = docManager->getDB<ModelInstanceDB>(sourceId);
+                const auto object = model ? model->object() : nullptr;
+                if (model && !object) throw std::runtime_error("Model instance has no owning object");
+                const auto root = object ? object->getDBInstanceID() : sourceId;
+                if (std::find(graphRoots.begin(), graphRoots.end(), root) == graphRoots.end()) graphRoots.push_back(root);
+                if (model) selectedInstances.insert(sourceId);
+            }
             DBCopyService copyService(*docManager);
-            const DBCopyResult copyResult = copyService.copy(sourceRootIds);
+            const DBCopyResult copyResult = copyService.copy(graphRoots);
             if (!copyResult.success) {
                 LOG_ERROR("复制对象图失败: {}", copyResult.error);
                 guard.rollback();
                 return;
             }
 
-            for (const auto& newRootId : copyResult.rootIds) {
+            for (const auto& graphRoot : graphRoots) {
+                const auto object = docManager->getDB<ModelObjectDB>(graphRoot);
+                if (!object) continue;
+                for (const auto& instance : object->instances()) {
+                    const auto id = instance->getDBInstanceID();
+                    if (!selectedInstances.count(id)) {
+                        std::string error;
+                        if (!ModelGraphUtil::removeInstance(copyResult.idMap.at(id), &error))
+                            throw std::runtime_error("Cannot exclude an unselected copied instance: " + error);
+                    }
+                }
+            }
+
+            std::vector<std::shared_ptr<ActorDB>> pasted;
+            Vector3 minimum(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+            Vector3 maximum(-minimum.x, -minimum.y, -minimum.z);
+            for (const auto& sourceId : sourceRootIds) {
+                const auto newRootId = copyResult.idMap.at(sourceId);
                 auto cloned = std::dynamic_pointer_cast<ActorDB>(
                     docManager->getDBInstance(newRootId));
                 if (!cloned) {
@@ -121,16 +156,22 @@ void CopyPasteHandler::pasteModels() {
                     return;
                 }
 
-                cloned->resetRotation();
-                cloned->setScaleUniform(1.0f);
-                Vector3 adjustedPosition =
-                    ModelPositionUtil::adjustPositionToBed(targetPosition, cloned);
-                cloned->setPosition(adjustedPosition);
+                const auto bounds = cloned->worldBounds();
+                if (!bounds.valid) throw std::runtime_error("Copied actor has no valid world bounds");
+                minimum = {std::min(minimum.x,bounds.min.x), std::min(minimum.y,bounds.min.y), std::min(minimum.z,bounds.min.z)};
+                maximum = {std::max(maximum.x,bounds.max.x), std::max(maximum.y,bounds.max.y), std::max(maximum.z,bounds.max.z)};
+                pasted.push_back(std::move(cloned));
             }
+            // One group translation preserves all linear transforms and relative
+            // positions, including shared instances with different heights.
+            const Vector3 delta(targetPosition.x-(minimum.x+maximum.x)*0.5f,
+                                targetPosition.y-(minimum.y+maximum.y)*0.5f,
+                                -minimum.z);
+            for (const auto& cloned : pasted) cloned->setPosition(cloned->getPosition()+delta);
 
             guard.commit();
             LOG_INFO("粘贴完成，成功创建 {} 个根对象和 {} 个总 DB 节点",
-                     copyResult.rootIds.size(), copyResult.idMap.size());
+                     pasted.size(), copyResult.idMap.size());
         } catch (const std::exception& error) {
             LOG_ERROR("粘贴对象图时发生异常: {}", error.what());
             guard.rollback();

@@ -12,6 +12,7 @@ Item {
 
     property int exportFileRequestId: 0
     property string exportFormatId: ""
+    property string exportSourcePath: ""
 
     function toLocalFilePath(fileUrl) {
         var filePath = fileUrl.toString();
@@ -44,6 +45,7 @@ Item {
             return
         }
         exportFormatId = formatId
+        exportSourcePath = formatId === "gcode-3mf" ? SlicingPreviewBridge.printPackagePath : SlicingPreviewBridge.printOutputPath
         exportFileRequestId = FilePicker.saveFile({
             title: formatId === "gcode-3mf"
                    ? qsTr("Export Slicing Job")
@@ -287,17 +289,24 @@ Item {
             }
             centralFragment.exportFileRequestId = 0
             if (urls && urls.length > 0) {
-                SlicingPreviewBridge.exportCurrentPrintOutputAs(
-                            centralFragment.exportFormatId,
-                            centralFragment.toLocalFilePath(urls[0]))
+                const currentPath = centralFragment.exportFormatId === "gcode-3mf"
+                                  ? SlicingPreviewBridge.printPackagePath : SlicingPreviewBridge.printOutputPath
+                if (currentPath === centralFragment.exportSourcePath && !TaskStateNotifier.isBusy)
+                    SlicingPreviewBridge.exportCurrentPrintOutputAs(
+                                centralFragment.exportFormatId,
+                                centralFragment.toLocalFilePath(urls[0]))
+                else
+                    NotificationManager.showWarning("导出", "当前打印盘或切片结果已经改变，请重新导出。")
             }
             centralFragment.exportFormatId = ""
+            centralFragment.exportSourcePath = ""
         }
 
         function onRejected(requestId) {
             if (requestId === centralFragment.exportFileRequestId) {
                 centralFragment.exportFileRequestId = 0
                 centralFragment.exportFormatId = ""
+                centralFragment.exportSourcePath = ""
             }
         }
     }

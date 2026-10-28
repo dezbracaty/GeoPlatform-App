@@ -9,6 +9,11 @@ import Render 1.0
 FramelessWindow {
     id: window
     objectName: "gplatform.main"
+    property int notificationRestoreVisibility: Window.Windowed
+    onVisibilityChanged: {
+        if (visibility === Window.Windowed || visibility === Window.Maximized || visibility === Window.FullScreen)
+            notificationRestoreVisibility = visibility
+    }
     property alias infoBarManager: infobar_manager
     width: 1382
     // macOS adds a 60 px native title bar, so the complete initial window is 1382x954.
@@ -154,6 +159,19 @@ FramelessWindow {
     // Connect to NotificationManager signals
     Connections {
         target: NotificationManager
+
+        function onActivationRequested() {
+            if (window.visibility === Window.Minimized || window.visibility === Window.Hidden) {
+                if (window.notificationRestoreVisibility === Window.Maximized)
+                    window.showMaximized()
+                else if (window.notificationRestoreVisibility === Window.FullScreen)
+                    window.showFullScreen()
+                else
+                    window.showNormal()
+            }
+            window.raise()
+            window.requestActivate()
+        }
 
         function onFiberFillDebugAvailable(previewToken, rejectedCount) {
             notification_overlay.pushFiberFillDebug(previewToken, rejectedCount)

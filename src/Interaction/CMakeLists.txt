@@ -27,6 +27,7 @@ set(INTERACTION_SOURCES
     src/CopyPasteHandler.cpp
     src/CreateGeometryHandler.cpp
     src/SlicingHandler.cpp
+    src/CalibrationBridge.cpp
     src/SliceSessionBuilder.cpp
     src/SlicingPlaybackHandler.cpp
     src/DeleteHandler.cpp
@@ -83,6 +84,7 @@ set(INTERACTION_HEADERS
     include/CopyPasteHandler.hpp
     include/CreateGeometryHandler.hpp
     include/SlicingHandler.hpp
+    include/CalibrationBridge.hpp
     include/SliceSessionBuilder.hpp
     include/SlicingPlaybackHandler.hpp
     include/DeleteHandler.hpp

@@ -383,6 +383,68 @@ std::optional<SlicingProfileSnapshot> SlicingBackend::activeProfileSnapshot() co
     });
 }
 
+std::vector<libslicer::CalibMode> SlicingBackend::calibrationModes() const
+{
+    if (!m_available) return {};
+    return m_impl->invoke([this]() { return m_impl->library->calibration_modes(); });
+}
+
+libslicer::CalibrationPrepareResult SlicingBackend::prepareCalibration(
+    const libslicer::CalibrationRequest& request,
+    const libslicer::SliceCallbacks& callbacks) const
+{
+    if (!m_available) {
+        libslicer::CalibrationPrepareResult result;
+        result.diagnostics.push_back({"initialization", "libslicer is not initialized", false});
+        return result;
+    }
+    libslicer::SliceCallbacks serializedCallbacks = callbacks;
+    const auto callerCancelled = callbacks.is_cancelled;
+    serializedCallbacks.is_cancelled = [impl = m_impl.get(), callerCancelled]() {
+        return impl->shutdownRequested.load(std::memory_order_acquire) ||
+            (callerCancelled && callerCancelled());
+    };
+    {
+        std::lock_guard<std::mutex> admissionLock(m_impl->configurationAdmissionMutex);
+        m_impl->activeLongJobs.fetch_add(1, std::memory_order_release);
+    }
+    LongJobCompletionGuard completionGuard(m_impl->activeLongJobs);
+    auto requested = request;
+    return m_impl->invoke([this, requested, serializedCallbacks]() mutable {
+        if (!requested.config.valid()) {
+            const auto active = m_impl->library->active_config_snapshot();
+            if (active) requested.config = *active;
+        }
+        return m_impl->library->prepare_calibration(requested, serializedCallbacks);
+    });
+}
+
+libslicer::SliceResult SlicingBackend::sliceCalibration(
+    const libslicer::CalibrationTask& task, std::size_t plateIndex,
+    const libslicer::CalibrationOutputOptions& output,
+    const libslicer::SliceCallbacks& callbacks) const
+{
+    if (!m_available) {
+        libslicer::SliceResult result;
+        result.diagnostics.push_back({"initialization", "libslicer is not initialized", false});
+        return result;
+    }
+    libslicer::SliceCallbacks serializedCallbacks = callbacks;
+    const auto callerCancelled = callbacks.is_cancelled;
+    serializedCallbacks.is_cancelled = [impl = m_impl.get(), callerCancelled]() {
+        return impl->shutdownRequested.load(std::memory_order_acquire) ||
+            (callerCancelled && callerCancelled());
+    };
+    {
+        std::lock_guard<std::mutex> admissionLock(m_impl->configurationAdmissionMutex);
+        m_impl->activeLongJobs.fetch_add(1, std::memory_order_release);
+    }
+    LongJobCompletionGuard completionGuard(m_impl->activeLongJobs);
+    return m_impl->invoke([this, &task, plateIndex, output, serializedCallbacks]() {
+        return m_impl->library->slice_calibration(task, plateIndex, output, serializedCallbacks);
+    });
+}
+
 libslicer::SliceResult SlicingBackend::slice(
     const SliceSession& session,
     const libslicer::SliceCallbacks& callbacks) const

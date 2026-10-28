@@ -2,6 +2,7 @@
 
 #include "SliceSession.hpp"
 #include <libslicer/Library.hpp>
+#include <libslicer/Calibration.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -50,6 +51,14 @@ public:
         std::size_t slotIndex, libslicer::Rgba8 color);
     std::optional<libslicer::ConfigSnapshot> configSnapshot() const;
     std::optional<SlicingProfileSnapshot> activeProfileSnapshot() const;
+    std::vector<libslicer::CalibMode> calibrationModes() const;
+    libslicer::CalibrationPrepareResult prepareCalibration(
+        const libslicer::CalibrationRequest& request,
+        const libslicer::SliceCallbacks& callbacks = {}) const;
+    libslicer::SliceResult sliceCalibration(
+        const libslicer::CalibrationTask& task, std::size_t plateIndex,
+        const libslicer::CalibrationOutputOptions& output = {},
+        const libslicer::SliceCallbacks& callbacks = {}) const;
     libslicer::SliceResult slice(const SliceSession& session,
                                  const libslicer::SliceCallbacks& callbacks = {}) const;
     libslicer::SliceResult slice(const libslicer::SliceRequest& request,

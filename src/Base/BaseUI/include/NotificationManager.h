@@ -3,6 +3,11 @@
 #include <QObject>
 #include <QString>
 #include <QQmlEngine>
+#include <QCoreApplication>
+#include <atomic>
+#include <functional>
+#include <memory>
+#include "Notifications/IDesktopNotificationBackend.hpp"
 
 // Process-wide UI notification port exposed to C++ producers and QML.
 class NotificationManager : public QObject {
@@ -11,11 +16,31 @@ class NotificationManager : public QObject {
     Q_PROPERTY(QString lastErrorMessage READ lastErrorMessage NOTIFY errorOccurred)
 
 public:
+    static void initialize(QCoreApplication& app);
     static NotificationManager* instance();
+    enum SendResult { Queued, SubmittedToQt, Disabled, Foreground, Unavailable, Invalid, Closed };
+    Q_ENUM(SendResult)
+
+    // GUI-thread setup. The application supplies platform UI and foreground state.
+    void configureDesktopNotifications(
+        std::unique_ptr<GPlatform::Notifications::IDesktopNotificationBackend> backend,
+        std::function<bool()> isForeground);
+    // One-shot notification: existing in-app signals plus desktop delivery in the background.
+    // Worker calls return Queued; GUI calls return the desktop submission result.
+    Q_INVOKABLE SendResult notify(const QString& title, const QString& body,
+        GPlatform::Notifications::Severity severity = GPlatform::Notifications::Severity::Info);
+    void closeDesktopNotifications();
+    bool desktopNotificationsEnabled() const { return m_desktopEnabled; }
+    void setDesktopNotificationsEnabled(bool enabled);
+    bool desktopAvailable() const { return m_desktopAvailable; }
+    Q_INVOKABLE void refreshDesktopStatus();
+    Q_PROPERTY(bool desktopNotificationsEnabled READ desktopNotificationsEnabled
+               WRITE setDesktopNotificationsEnabled NOTIFY desktopNotificationsEnabledChanged)
+    Q_PROPERTY(bool desktopAvailable READ desktopAvailable NOTIFY desktopStatusChanged)
 
     // For QML registration
     static NotificationManager* create(QQmlEngine *qmlEngine, QJSEngine *jsEngine) {
-        Q_UNUSED(qmlEngine)
+        Q_ASSERT(qmlEngine && qmlEngine->thread() == instance()->thread());
         Q_UNUSED(jsEngine)
         return instance();
     }
@@ -46,6 +71,9 @@ public:
     void hideProgress();
 
 signals:
+    void desktopNotificationsEnabledChanged();
+    void desktopStatusChanged();
+    void activationRequested();
     void fiberFillDebugAvailable(const QString& previewToken, int rejectedCount);
     // Notification signals for QML
     void errorOccurred(const QString& title, const QString& message);
@@ -71,9 +99,16 @@ signals:
 
 private:
     NotificationManager(QObject* parent = nullptr);
-    ~NotificationManager() = default;
+    ~NotificationManager() override;
+    void dispatch(std::function<void()> operation);
+    SendResult deliverNotification(const GPlatform::Notifications::Notification& notification);
 
-    static NotificationManager* s_instance;
+    static std::atomic<NotificationManager*> s_instance;
+    std::unique_ptr<GPlatform::Notifications::IDesktopNotificationBackend> m_desktopBackend;
+    std::function<bool()> m_isForeground;
+    std::atomic_bool m_closed{false};
+    bool m_desktopEnabled = false;
+    bool m_desktopAvailable = false;
 
     QString m_lastErrorTitle;
     QString m_lastErrorMessage;

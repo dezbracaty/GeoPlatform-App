@@ -55,6 +55,10 @@ class PrinterQtFacade final : public QObject {
     Q_PROPERTY(bool supportsVendorOptions READ supportsVendorOptions NOTIFY capabilitiesChanged)
     Q_PROPERTY(TransferState transferState READ transferState NOTIFY jobChanged)
     Q_PROPERTY(bool transferBusy READ transferBusy NOTIFY jobChanged)
+    Q_PROPERTY(bool jobNoticeIsSubmission READ jobNoticeIsSubmission NOTIFY jobChanged)
+    Q_PROPERTY(bool jobNoticeDismissed READ jobNoticeDismissed NOTIFY jobChanged)
+    Q_PROPERTY(bool canCancelSubmission READ canCancelSubmission NOTIFY jobChanged)
+    Q_PROPERTY(bool canRefreshStatus READ canRefreshStatus NOTIFY connectionChanged)
     Q_PROPERTY(JobState jobState READ jobState NOTIFY jobChanged)
     Q_PROPERTY(bool printing READ printing NOTIFY jobChanged)
     Q_PROPERTY(bool paused READ paused NOTIFY jobChanged)
@@ -68,6 +72,7 @@ class PrinterQtFacade final : public QObject {
     Q_PROPERTY(double targetBedTemperature READ targetBedTemperature NOTIFY statusChanged)
     Q_PROPERTY(QString remainingTime READ remainingTime NOTIFY statusChanged)
     Q_PROPERTY(QString jobFileName READ jobFileName NOTIFY jobChanged)
+    Q_PROPERTY(QString submissionDisplayName READ submissionDisplayName NOTIFY jobChanged)
     Q_PROPERTY(QString printerStateText READ printerStateText NOTIFY statusChanged)
     Q_PROPERTY(bool cameraAvailable READ cameraAvailable NOTIFY statusChanged)
     Q_PROPERTY(QString cameraStreamUrl READ cameraStreamUrl NOTIFY statusChanged)
@@ -97,11 +102,11 @@ public:
     Q_ENUM(DeviceRoute)
     enum JobState {
         JobIdle, Printing, Paused, Stopping, Completed, JobError,
-        Pausing, Resuming
+        Pausing, Resuming, Cancelled
     };
     Q_ENUM(JobState)
     enum TransferState { TransferIdle, TransferUploading, TransferUploaded, TransferStarting,
-                         TransferUnknown, TransferFailed };
+                         TransferUnknown, TransferFailed, TransferCancelled };
     Q_ENUM(TransferState)
     enum CameraSessionState {
         CameraIdle, CameraOpening, CameraLoading, CameraReady, CameraClosing, CameraError
@@ -152,8 +157,14 @@ public:
     TransferState transferState() const { return m_transferState; }
     bool transferBusy() const {
         return m_transferState == TransferUploading || m_transferState == TransferStarting
-            || m_transferState == TransferUnknown || m_controlOutcomeUnknown;
+            || m_transferState == TransferUnknown || m_controlOutcomeUnknown || m_controlRequestId != 0;
     }
+    bool jobNoticeIsSubmission() const { return m_submissionNotice; }
+    bool jobNoticeDismissed() const { return m_jobNoticeDismissed; }
+    bool canCancelSubmission() const {
+        return m_capabilities.cancelSubmission && m_transferState == TransferUploading && m_transferRequestId != 0;
+    }
+    bool canRefreshStatus() const { return m_capabilities.automaticStatusRecovery && !m_selectedDevice.deviceId.isEmpty(); }
     JobState jobState() const { return m_jobState; }
     bool printing() const {
         return connected()
@@ -164,7 +175,7 @@ public:
     bool paused() const { return m_jobState == Paused; }
     bool commandOutcomeUnknown() const { return m_controlOutcomeUnknown; }
     bool jobControllable() const {
-        return connected() && !m_controlOutcomeUnknown
+        return connected() && !m_controlOutcomeUnknown && m_controlRequestId == 0
             && (!m_capabilities.requiresJobId || !m_status.jobId.isEmpty())
             && (m_capabilities.pauseResume || m_capabilities.cancel)
             && (m_jobState == Printing || m_jobState == Paused);
@@ -176,9 +187,9 @@ public:
     double bedTemperature() const { return m_status.bedTemperature; }
     double targetBedTemperature() const { return m_status.targetBedTemperature; }
     QString remainingTime() const;
-    QString jobFileName() const { return m_transferState != TransferIdle
-        ? m_submittedFileName : m_status.fileName; }
-    QString printerStateText() const { return m_status.state; }
+    QString jobFileName() const;
+    QString submissionDisplayName() const { return m_submissionDisplayName; }
+    QString printerStateText() const { return connected() ? m_status.state : QStringLiteral("unavailable"); }
     bool cameraAvailable() const { return m_capabilities.camera && m_status.cameraAvailable; }
     QString cameraStreamUrl() const { return m_status.cameraStreamUrl; }
     CameraSessionState cameraSessionState() const { return m_cameraSessionState; }
@@ -207,6 +218,8 @@ public:
     Q_INVOKABLE void pausePrint();
     Q_INVOKABLE void resumePrint();
     Q_INVOKABLE void cancelPrint();
+    Q_INVOKABLE void cancelSubmission();
+    Q_INVOKABLE void refreshPrinterStatus();
     Q_INVOKABLE void dismissJobStatus();
     Q_INVOKABLE void startCameraStream();
     Q_INVOKABLE void stopCameraStream();
@@ -241,6 +254,8 @@ private:
     QString m_backendName{QStringLiteral("Flashforge")};
     PrinterCore::Capabilities m_capabilities;
     bool m_controlOutcomeUnknown{false};
+    bool m_jobNoticeDismissed{false};
+    bool m_submissionNotice{false};
     bool m_selectConfiguredMoonraker{false};
     std::shared_ptr<QObject> m_eventContext;
     PrinterDeviceModel m_devices;
@@ -265,7 +280,13 @@ private:
     uint64_t m_transferRequestId{0};
     uint64_t m_controlRequestId{0};
     QString m_controlCommand;
+    QString m_controlTargetFile;
     QString m_submittedFileName;
+    QString m_submissionDisplayName;
+    QString m_requestedDisplayName;
+    QString m_displayRemotePath;
+    QString m_displayDeviceId;
+    uint64_t m_displaySessionId{0};
     bool m_printNow{false};
     QTimer m_startConfirmationTimer;
     double m_transferProgress{0.0};

@@ -78,7 +78,8 @@ enum class ToolpathArtifactOwnership : std::uint8_t {
 enum class ToolpathPreviewSourceScope : std::uint8_t {
     Plate = 0,
     SingleModel,
-    ImportedGCode
+    ImportedGCode,
+    Calibration
 };
 
 struct ToolpathPreviewTool {

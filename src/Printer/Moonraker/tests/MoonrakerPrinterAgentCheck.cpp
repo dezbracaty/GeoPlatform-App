@@ -65,6 +65,8 @@ public:
     QString state{"standby"};
     QString klippyState{"ready"};
     QString filename;
+    QString stateMessage;
+    QJsonArray printerObjects{"webhooks", "print_stats", "virtual_sdcard", "pause_resume", "extruder", "heater_bed"};
     QString protocolError;
     double progress{0.37};
 
@@ -158,12 +160,11 @@ public:
         } else if (is(index, "/printer/info")) {
             respond(index, QJsonObject{{"state", klippyState}});
         } else if (is(index, "/printer/objects/list")) {
-            respond(index, QJsonObject{{"objects", QJsonArray{"webhooks", "print_stats", "virtual_sdcard",
-                                                               "pause_resume", "extruder", "heater_bed"}}});
+            respond(index, QJsonObject{{"objects", printerObjects}});
         } else if (is(index, "/printer/objects/query")) {
             respond(index, QJsonObject{{"status", QJsonObject{
                 {"webhooks", QJsonObject{{"state", klippyState}}},
-                {"print_stats", QJsonObject{{"state", state}, {"filename", filename}, {"print_duration", 12.0}}},
+                {"print_stats", QJsonObject{{"state", state}, {"filename", filename}, {"print_duration", 12.0}, {"message", stateMessage}}},
                 {"virtual_sdcard", QJsonObject{{"progress", progress}}},
                 {"extruder", QJsonObject{{"temperature", 190.0}, {"target", 200.0}}},
                 {"heater_bed", QJsonObject{{"temperature", 55.0}, {"target", 60.0}}}}}});
@@ -240,16 +241,158 @@ struct Fixture {
               "completion identity was not retained");
         return result;
     }
-    void submit(uint64_t id, bool printNow = false) {
+    void submit(uint64_t id, bool printNow = false, const std::string& name = "friendly.gcode") {
         PrintJob job;
         job.requestId = id;
         job.formatId = "gcode";
         job.filePath = path.toStdString();
-        job.destinationName = "friendly.gcode";
+        job.destinationName = name;
         job.printNow = printNow;
         agent->submitJob(job);
     }
 };
+
+void cancellationStopsOnlyTheSubmission() {
+    for (const int phase : {0, 1, 2}) {
+        std::cout << "SCENARIO pre-start cancel " << phase << std::endl;
+        Fixture f(20);
+        f.ready();
+        int held = -1;
+        if (phase == 0) f.write("G90\n" + QByteArray(3 * 1024 * 1024, ';'));
+        f.http.intercept = [&](int i) {
+            if ((phase == 1 && f.http.is(i, "/server/files/upload"))
+                || (phase == 2 && f.http.is(i, "/printer/objects/query")
+                    && f.http.count("/server/files/upload") > 0)) { held = i; return true; }
+            return false;
+        };
+        f.submit(101, true);
+        if (phase != 0) until([&] { return held >= 0; }, "cancellation phase was never reached");
+        check(f.agent->cancelSubmission(101), "active pre-start submission cannot be cancelled");
+        const auto cancelled = f.awaitDone(101);
+        check(cancelled.cancelled && !cancelled.success && !cancelled.outcomeUnknown,
+              "local cancellation was not a known cancelled outcome");
+        check(!f.agent->cancelSubmission(101), "already finished submission was cancelled twice");
+        f.http.intercept = {};
+        if (held >= 0) f.http.respondDefault(held);
+        pump(50);
+        check(f.http.count("/printer/print/start") == 0, "cancelled continuation dispatched print/start");
+        f.write("G90\n; distinct-next-job\nG1 X2\n");
+        f.submit(102);
+        const auto next = f.awaitDone(102);
+        if (!next.success) std::cerr << "phase " << phase << " next error: " << next.error << " uploads=" << f.http.count("/server/files/upload") << std::endl;
+        check(next.success, "cancelled abort callback locked the following submission");
+    }
+}
+
+void deviceStateRecoversWithoutAcknowledgement() {
+    Fixture f(20, 100);
+    f.http.state = "printing"; f.http.filename = "active.gcode";
+    f.ready();
+    f.http.intercept = [&](int i) {
+        if (!f.http.is(i, "/printer/print/cancel")) return false;
+        f.http.state = "cancelled";
+        f.http.drop(i); // The real device stopped, but its HTTP acknowledgement was lost.
+        return true;
+    };
+    f.agent->controlJob("cancel", 111);
+    until([&] { return std::any_of(f.events.begin(), f.events.end(), [](const Event& e) {
+        return e.type == EventType::StatusChanged && e.status.state == "cancel";
+    }); }, "cancelled device state was not recovered after a lost acknowledgement");
+    f.http.intercept = {};
+    f.submit(112);
+    check(f.awaitDone(112).success, "fresh cancelled status still required a human acknowledgement");
+    check(f.http.count("/printer/print/cancel") == 1, "recovery replayed the cancel mutation");
+    bool failQuery = true;
+    f.http.intercept = [&](int i) {
+        if (!failQuery || !f.http.is(i, "/printer/objects/query")) return false;
+        f.http.drop(i); return true;
+    };
+    check(f.agent->refreshStatus(), "read-only status refresh was unavailable");
+    until([&] { return !f.agent->capabilities().upload; }, "failed query did not invalidate old readiness");
+    f.submit(113);
+    check(!f.awaitDone(113).success, "stale ready state allowed a mutation during disconnection");
+    failQuery = false;
+    until([&] { return f.agent->capabilities().upload; }, "read-only reconnection did not recover automatically");
+    f.submit(114);
+    check(f.awaitDone(114).success && f.http.count("/printer/print/cancel") == 1,
+          "reconnection replayed a mutation or left the device locked");
+}
+
+void startingAndOldPollBoundaries() {
+    for (const auto terminal : {"complete", "printing"}) {
+        Fixture f(20);
+        f.ready(); int start = -1;
+        f.http.intercept = [&](int i) {
+            if (!f.http.is(i, "/printer/print/start")) return false;
+            start = i; return true;
+        };
+        f.submit(121, true);
+        until([&] { return start >= 0; }, "start was not dispatched");
+        check(!f.agent->cancelSubmission(121) && !f.done(121), "dispatched start was falsely cancelled locally");
+        f.http.filename = QJsonDocument::fromJson(f.http.requests[start].body).object().value("filename").toString();
+        f.http.state = terminal;
+        f.agent->refreshStatus();
+        check(f.awaitDone(121).success && !f.done(121)->cancelled, "quick physical completion did not settle start");
+        check(f.http.count("/printer/print/cancel") == 0, "local cancellation silently sent a physical cancel");
+        if (f.http.state == "printing") {
+            f.agent->controlJob("cancel", 125);
+            check(f.awaitDone(125).success && f.http.count("/printer/print/cancel") == 1,
+                  "observed printing after a held start ACK did not permit physical Stop");
+        }
+    }
+    {
+        Fixture f;
+        f.http.state = "printing"; f.http.filename = "A.gcode"; f.ready();
+        std::vector<int> queries; int stop = -1;
+        f.http.intercept = [&](int i) {
+            if (f.http.is(i, "/printer/objects/query")) { queries.push_back(i); return true; }
+            if (f.http.is(i, "/printer/print/cancel")) { stop = i; return true; }
+            return false;
+        };
+        f.agent->refreshStatus(); until([&] { return queries.size() == 1; }, "old query not held");
+        f.agent->controlJob("cancel", 122); until([&] { return stop >= 0; }, "cancel not held");
+        f.http.state = "cancelled"; f.http.respondDefault(queries.front());
+        until([&] { return queries.size() == 2; }, "old query did not schedule fresh feedback");
+        check(!f.done(122), "query issued before cancel prematurely resolved the control request");
+        f.submit(123); check(!f.awaitDone(123).success, "old query released a pending mutation");
+        f.http.respondDefault(queries.back());
+        check(f.awaitDone(122).success, "fresh cancellation state did not resolve the request");
+        f.http.intercept = {}; f.submit(124); check(f.awaitDone(124).success, "late cancel reply locked next request");
+    }
+}
+
+void stateKindsAndChangedCapabilities() {
+    Fixture f(20, 100);
+    f.http.state = "printing"; f.http.filename = "A.gcode"; f.ready();
+    f.http.intercept = [&](int i) { if (f.http.is(i, "/printer/print/cancel")) { f.http.drop(i); return true; } return false; };
+    f.agent->controlJob("cancel", 131); f.awaitDone(131);
+    auto waitState = [&](const std::string& expected) {
+        f.events.clear(); f.agent->refreshStatus();
+        until([&] { return std::any_of(f.events.begin(), f.events.end(), [&](const Event& e) {
+            return e.type == EventType::StatusChanged && e.status.state == expected;
+        }); }, "physical state was not recovered");
+    };
+    f.http.state = "paused"; waitState("pause");
+    check(f.agent->capabilities().pauseResume, "fresh paused state retained an unknown control lock");
+    f.http.state = "complete"; waitState("completed");
+    f.http.state = "error"; f.http.stateMessage = "heater test error"; waitState("error");
+    check(std::any_of(f.events.begin(), f.events.end(), [](const Event& e) {
+        return e.type == EventType::StatusChanged && e.error == "heater test error";
+    }), "printer error message was lost");
+    f.http.intercept = {}; f.submit(133);
+    check(f.awaitDone(133).success, "a previous print error unexpectedly disabled upload-only");
+    f.submit(134, true);
+    check(!f.awaitDone(134).success && f.http.count("/printer/print/start") == 0,
+          "error state bypassed existing post-upload start readiness");
+    f.http.intercept = [&](int i) { if (f.http.is(i, "/printer/objects/query")) { f.http.drop(i); return true; } return false; };
+    f.agent->refreshStatus(); until([&] { return !f.agent->capabilities().upload; }, "readiness was not invalidated");
+    f.http.printerObjects.removeAt(3); f.http.intercept = {}; f.http.state = "standby";
+    until([&] { return f.agent->capabilities().upload; }, "automatic reconnection failed");
+    check(!f.agent->capabilities().pauseResume && !f.agent->capabilities().cancel,
+          "removed printer objects survived reconnection");
+    QFile::remove(f.path); f.submit(132);
+    check(!f.awaitDone(132).success, "unaccepted missing-source failure was swallowed by active-id guard");
+}
 
 void handshakeAndUpload() {
     Fixture f;
@@ -262,6 +405,8 @@ void handshakeAndUpload() {
     f.submit(1);
     const auto first = f.awaitDone(1);
     check(first.success && !first.status.fileName.empty(), "upload-only did not succeed with remote filename");
+    check(QString::fromStdString(first.status.fileName).startsWith("friendly-"),
+          "upload discarded the requested readable filename");
     check(f.http.count("/printer/print/start") == 0, "upload-only unexpectedly started printing");
     f.submit(2);
     const auto second = f.awaitDone(2);
@@ -287,6 +432,43 @@ void handshakeAndUpload() {
     }
     check(transferEvents > 0, "upload did not publish any transfer progress event");
     check(f.http.protocolError.isEmpty(), "HTTP fake observed an invalid protocol request");
+}
+
+void readableUploadNames() {
+    Fixture f;
+    f.ready();
+    const QRegularExpression uniqueSuffix("-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.gcode$");
+    uint64_t id = 100;
+    const auto boundary = QString::fromUtf8("中").repeated(69) + QString::fromUtf8("😀文");
+    for (const auto& stem : {QStringLiteral("part.v2 test"), QString::fromUtf8("中文 版本.v2"),
+                            QString::fromUtf8("emoji😀 v2"), boundary,
+                            QString::fromUtf8("中").repeated(80) + QString::fromUtf8("😀")}) {
+        const auto requested = stem + ".gcode";
+        f.submit(id, false, requested.toStdString());
+        const auto done = f.awaitDone(id++);
+        const auto remote = QString::fromStdString(done.status.fileName);
+        check(done.success && uniqueSuffix.match(remote).hasMatch(), "readable upload lost unique remote identity");
+        check(remote.toUtf8().size() <= 255 && !remote.contains(QChar::ReplacementCharacter),
+              "remote filename exceeded UTF-8 limit or split a code point");
+        const auto match = uniqueSuffix.match(remote);
+        check(!remote.left(match.capturedStart()).isEmpty() && stem.startsWith(remote.left(match.capturedStart())),
+              "remote stem did not preserve the requested Unicode prefix");
+        if (stem == boundary)
+            check(remote.left(match.capturedStart()) == QString::fromUtf8("中").repeated(69) + QString::fromUtf8("😀"),
+                  "UTF-8 truncation dropped or split the supplementary code point at the boundary");
+        check(remote.contains(' ') || stem.toUtf8().size() > 212, "filename lost internal spaces");
+    }
+    for (const auto& invalid : {"../bad.gcode", "bad\\name.gcode", "bad\"name.gcode", "bad\r\nname.gcode", ".hidden.gcode"}) {
+        const auto count = f.http.count("/server/files/upload");
+        f.submit(id, false, invalid);
+        const auto done = f.awaitDone(id++);
+        check(!done.success && f.http.count("/server/files/upload") == count,
+              "unsafe destination reached a multipart request");
+    }
+    const auto count = f.http.count("/server/files/upload");
+    f.submit(id, false, std::string("\xff.gcode", 7));
+    check(!f.awaitDone(id).success && f.http.count("/server/files/upload") == count,
+          "invalid UTF-8 destination reached the server");
 }
 
 void wrappedUploadCompatibility() {
@@ -364,22 +546,25 @@ void busyRejectDoesNotUnlock() {
     check(!f.awaitDone(11).success, "second upload was not rejected while busy");
     f.agent->controlJob("pause", 12);
     check(!f.awaitDone(12).success, "busy control was not rejected");
-    f.agent->acknowledgeUnknownOutcome(); // Must not clear an active operation.
+    check(!f.agent->cancelSubmission(9999), "foreign request cancelled the active operation");
     f.submit(13);
     check(!f.awaitDone(13).success && f.http.count("/server/files/upload") == 1,
-          "rejection or acknowledgement unlocked the active upload");
+          "rejection or foreign cancellation unlocked the active upload");
     f.http.uploadResponse(held);
     until([&] { return f.done(10) && f.done(10)->success; },
           "rejected duplicate corrupted the original completion");
 }
 
-void uncertainUploadAndAcknowledgement(int failure) {
+void uncertainUploadAndAutomaticStatus(int failure) {
     Fixture f;
     f.ready();
     int held = -1;
+    int query = -1;
+    bool holdStatus = false;
     f.http.intercept = [&](int i) {
+        if (holdStatus && f.http.is(i, "/printer/objects/query")) { query = i; return true; }
         if (!f.http.is(i, "/server/files/upload")) return false;
-        held = i;
+        held = i; holdStatus = true;
         if (failure == 0) f.http.drop(i);
         if (failure == 400) f.http.raw(i, "{\"error\":{\"message\":\"partial mutation\"}}", 400);
         return true; // failure==1 exercises absolute request deadline.
@@ -389,12 +574,14 @@ void uncertainUploadAndAcknowledgement(int failure) {
     check(!failed.success && failed.outcomeUnknown, "lost/400/timed-out upload was not unknown");
     f.submit(21);
     check(!f.awaitDone(21).success && f.http.count("/server/files/upload") == 1,
-          "uncertain mutation was automatically retried without acknowledgement");
+          "unavailable status allowed a mutation before fresh status");
     f.http.intercept = {};
-    f.agent->acknowledgeUnknownOutcome();
+    if (query >= 0) f.http.respondDefault(query);
+    f.agent->refreshStatus();
+    until([&] { return f.agent->capabilities().upload; }, "fresh status did not restore readiness");
     f.submit(22);
     check(f.awaitDone(22).success && f.http.count("/server/files/upload") == 2,
-          "explicit unknown acknowledgement did not permit a fresh submission");
+          "fresh status did not permit a new submission");
     check(held >= 0, "failure fixture never received the upload");
 }
 
@@ -482,7 +669,9 @@ void disconnectOrSwitchPreventsLateStart(bool switchSession) {
 }
 
 void snapshotAndShutdown() {
-    Fixture f;
+    // This checks immutable bytes, not loopback throughput under build load.
+    // Dedicated deadline cases above retain their short upload timeouts.
+    Fixture f(100000, 400, 2000);
     f.ready();
     QByteArray original("G90\n; immutable-original\n");
     original += QByteArray(2 * 1024 * 1024, ';');
@@ -492,7 +681,10 @@ void snapshotAndShutdown() {
         if (path.endsWith("/server/files/upload")) { f.write("G90\n; replaced-after-snapshot\n"); changed = true; }
     };
     f.submit(60);
-    check(f.awaitDone(60).success && changed, "snapshot upload failed");
+    const auto completion = f.awaitDone(60);
+    if (!completion.success)
+        std::cerr << "Snapshot upload error: " << completion.error << '\n';
+    check(completion.success && changed, "snapshot upload failed");
     for (int i = 0; i < static_cast<int>(f.http.requests.size()); ++i) if (f.http.is(i, "/server/files/upload")) {
         check(f.http.requests[i].body.contains(original) && !f.http.requests[i].body.contains("replaced-after-snapshot"),
               "upload read mutable source instead of completed immutable snapshot");
@@ -633,14 +825,19 @@ void reentrantSinkShutdown() {
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     const std::vector<std::pair<const char*, std::function<void()>>> tests{
+        {"cancel snapshot/upload/preflight and isolate late callbacks", cancellationStopsOnlyTheSubmission},
+        {"lost cancel ACK and read-only reconnect recover automatically", deviceStateRecoversWithoutAcknowledgement},
+        {"start dispatch and old-query identity fences", startingAndOldPollBoundaries},
+        {"paused/completed/error and changed object capabilities", stateKindsAndChangedCapabilities},
         {"handshake/key/path prefix/upload-only/unique name/progress", handshakeAndUpload},
+        {"readable Unicode names and direct-agent filename validation", readableUploadNames},
         {"wrapped upload response compatibility", wrappedUploadCompatibility},
         {"bare JSON rejected for query and control", bareJsonRejectedOutsideUpload},
         {"upload then fresh readiness then start", uploadThenStartAndRecheck},
         {"busy rejection preserves active transaction", busyRejectDoesNotUnlock},
-        {"lost upload and explicit acknowledgement", [] { uncertainUploadAndAcknowledgement(0); }},
-        {"HTTP400 upload and explicit acknowledgement", [] { uncertainUploadAndAcknowledgement(400); }},
-        {"deadline cancellation and explicit acknowledgement", [] { uncertainUploadAndAcknowledgement(1); }},
+        {"lost upload and automatic status recovery", [] { uncertainUploadAndAutomaticStatus(0); }},
+        {"HTTP400 upload and automatic status recovery", [] { uncertainUploadAndAutomaticStatus(400); }},
+        {"deadline cancellation and automatic status recovery", [] { uncertainUploadAndAutomaticStatus(1); }},
         {"independent long upload deadline", uploadUsesIndependentLongDeadline},
         {"HTTP400 start and control uncertainty", startAndControl400AreUnknown},
         {"post-upload idle revalidation", postUploadMustStillBeIdle},

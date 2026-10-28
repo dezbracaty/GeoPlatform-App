@@ -72,6 +72,14 @@ public:
         return get("useSystemAppBar", QVariant(false)).toBool();
     }
 
+    bool getDesktopNotificationsEnabled() {
+        return get("notifications/desktopEnabled", false).toBool();
+    }
+    void saveDesktopNotificationsEnabled(bool enabled) {
+        save("notifications/desktopEnabled", enabled);
+        m_settings->sync();
+    }
+
     // Remember last page settings
     Q_INVOKABLE void saveRememberLastPage(bool remember) {
         save("rememberLastPage", remember);

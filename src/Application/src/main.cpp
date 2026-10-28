@@ -16,6 +16,17 @@
 #include <SystemTypes.hpp>
 #include <TransDBSerialization.hpp>
 #include <QGuiApplication>
+#ifdef GPLATFORM_DESKTOP_USES_WIDGETS
+#include <QApplication>
+using Application = QApplication;
+#else
+using Application = QGuiApplication;
+#endif
+#include "NotificationManager.h"
+#ifdef GPLATFORM_DESKTOP_USES_WIDGETS
+#include "QtTrayNotificationBackend.hpp"
+#include <QPainter>
+#endif
 #include <chrono>
 #include <QCoreApplication>
 #include <QQmlApplicationEngine>
@@ -99,7 +110,7 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
     logElapsed("Log system initialized");
 
     // 2. Create Qt application
-    QGuiApplication app(argc, argv);
+    Application app(argc, argv);
     bool runtimeServicesReady = false;
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [&runtimeServicesReady] {
         if (runtimeServicesReady) ApplicationHelper::getInstance()->prepareForExit();
@@ -154,6 +165,54 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
 
     // Load the saved locale and gettext catalogs before the splash engine.
     SettingsHelper::getInstance()->init(argv);
+
+    NotificationManager::initialize(app);
+    auto* notificationManager = NotificationManager::instance();
+#ifdef GPLATFORM_DESKTOP_USES_WIDGETS
+    QIcon trayIcon;
+#ifdef Q_OS_MACOS
+    // The product supplies a template icon; the reusable backend owns no resources.
+    QPixmap pixmap(44, 44);
+    pixmap.fill(Qt::transparent);
+    {
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(QPen(Qt::black, 4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter.drawRoundedRect(QRectF(9, 6, 26, 29), 6, 6);
+        painter.drawLine(QPointF(17, 40), QPointF(27, 40));
+    }
+    trayIcon = QIcon(pixmap);
+    trayIcon.setIsMask(true);
+#elif defined(Q_OS_WIN)
+    trayIcon = QIcon(QStringLiteral(":/qt/qml/GPlatform/res/icons/favicon/favicon.ico"));
+#else
+    trayIcon = QIcon(QStringLiteral(":/qt/qml/GPlatform/res/icons/favicon/favicon.png"));
+#endif
+    notificationManager->configureDesktopNotifications(
+        std::make_unique<GPlatform::Notifications::QtTrayNotificationBackend>(trayIcon), [] {
+            if (QGuiApplication::applicationState() != Qt::ApplicationActive) return false;
+            // macOS can remain active with every window minimized.
+            for (auto* window : QGuiApplication::topLevelWindows()) {
+                if (window->isVisible() && window->windowState() != Qt::WindowMinimized && window->isActive())
+                    return true;
+            }
+            return false;
+        });
+#endif
+    notificationManager->setDesktopNotificationsEnabled(SettingsHelper::getInstance()->getDesktopNotificationsEnabled());
+    QObject::connect(notificationManager, &NotificationManager::desktopNotificationsEnabledChanged,
+        &app, [notificationManager] {
+            SettingsHelper::getInstance()->saveDesktopNotificationsEnabled(notificationManager->desktopNotificationsEnabled());
+        });
+    QObject::connect(&app, &QGuiApplication::applicationStateChanged,
+        notificationManager, &NotificationManager::refreshDesktopStatus);
+    const auto notificationCleanup = qScopeGuard([notificationManager] {
+        notificationManager->closeDesktopNotifications();
+    });
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, notificationManager, [notificationManager] {
+        notificationManager->closeDesktopNotifications();
+    }, Qt::DirectConnection);
+
     AppInfo::getInstance()->initializeTranslations();
 
     StartupCoordinator startup(!startupReplayId.isEmpty());

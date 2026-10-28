@@ -2,6 +2,11 @@
 #include "Foundation/Log.h"
 #include <algorithm>
 
+#if defined(__APPLE__) && defined(__clang__)
+// Screen rays must preserve the same rounding on both macOS architectures.
+#pragma clang fp contract(off)
+#endif
+
 std::vector<float> CoordinateTransform::inverseMatrix4x4(const std::vector<float>& m) {
     if (m.size() != 16) {
         LOG_ERROR("Invalid matrix size for inversion");

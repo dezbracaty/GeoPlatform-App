@@ -3,6 +3,11 @@
 #include <CameraDB.hpp>
 #include "Foundation/Log.h"
 
+#if defined(__APPLE__) && defined(__clang__)
+// Screen rays and projections are part of the persisted authoring result.
+#pragma clang fp contract(off)
+#endif
+
 namespace {
 
 float viewportAspectRatio(const Vector2& viewportSize, float fallback) {

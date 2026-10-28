@@ -17,8 +17,9 @@ KeyboardShortcutManager::KeyboardShortcutManager(QObject* parent)
 {
     LOG_INFO("KeyboardShortcutManager initialized");
 
-    // 初始化配置
-    loadConfiguration();
+    // Module registration can construct this singleton before all Action
+    // factories exist. The Interaction module loads and validates configuration
+    // after completing its registrations, rather than dropping late bindings.
 }
 
 KeyboardShortcutManager::~KeyboardShortcutManager() {

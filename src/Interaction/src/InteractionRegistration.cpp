@@ -1,4 +1,7 @@
 #include "InteractionRegistration.hpp"
+#include "KeyboardShortcutManager.hpp"
+
+#include <mutex>
 
 namespace GPlatform::Interaction {
 
@@ -8,7 +11,11 @@ ModuleRegistrationList& moduleRegistrations() {
 }
 
 void registerModule() {
-    moduleRegistrations().execute();
+    static std::once_flag once;
+    std::call_once(once, [] {
+        moduleRegistrations().execute();
+        KeyboardShortcutManager::getInstance()->loadConfiguration();
+    });
 }
 
 } // namespace GPlatform::Interaction

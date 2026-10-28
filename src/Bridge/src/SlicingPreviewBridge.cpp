@@ -75,6 +75,10 @@ void SlicingPreviewBridge::beginShutdown() {
     m_shuttingDown.store(true);
     ++m_publicationEpoch;
 }
+void SlicingPreviewBridge::notifyCalibrationOutputInvalidated() {
+    if (m_currentOutput && m_currentOutput->sourceScope == GPlatform::ToolpathPreviewSourceScope::Calibration)
+        emit printOutputPathChanged();
+}
 void SlicingPreviewBridge::notifyCurrentOutput() {
     emit currentModelChanged();
     emit currentToolpathPreviewChanged();
@@ -159,6 +163,8 @@ QString SlicingPreviewBridge::printPackagePath() const {
 }
 
 bool SlicingPreviewBridge::printOutputReady() const {
+    if (m_currentOutput && m_currentOutput->sourceScope == GPlatform::ToolpathPreviewSourceScope::Calibration &&
+        (!m_currentOutput->calibrationValidity || !m_currentOutput->calibrationValidity->load())) return false;
     return GPlatform::SliceOutputRecord::readable(printOutputPath()) || GPlatform::SliceOutputRecord::readable(printPackagePath());
 }
 
@@ -1351,8 +1357,15 @@ bool SlicingPreviewBridge::replaceLegacyToolpathPreview(int modelId, const QStri
     auto output = std::make_shared<GPlatform::SliceOutputRecord>();
     output->setArtifacts(printOutputPath, false,
         QString::fromStdString(preview->getPrintGCode3mfPath()), false, m_currentOutput);
-    output->name = modelName;
     output->sourceScope = preview->getSourceScope();
+    output->name = modelName.trimmed();
+    // This compatibility entry receives a raw model name, unlike published slice titles.
+    if (output->sourceScope != GPlatform::ToolpathPreviewSourceScope::ImportedGCode) {
+        for (const auto* suffix : {".stl", ".obj", ".3mf", ".amf", ".ply", ".off", ".step", ".stp", ".glb", ".gltf"}) {
+            const auto extension = QString::fromLatin1(suffix);
+            if (output->name.endsWith(extension, Qt::CaseInsensitive)) { output->name.chop(extension.size()); break; }
+        }
+    }
     output->sourceModelId = preview->getSourceModelDBId();
     output->printBedId = document->getOwner(preview->getDBInstanceID());
     output->displayModelId = modelId;
@@ -1551,11 +1564,17 @@ void SlicingPreviewBridge::clearPreviewPreservingModel(int modelId) {
 }
 
 bool SlicingPreviewBridge::canExportPrintOutput(const QString& formatId) const {
+    if (m_currentOutput && m_currentOutput->sourceScope == GPlatform::ToolpathPreviewSourceScope::Calibration &&
+        (!m_currentOutput->calibrationValidity || !m_currentOutput->calibrationValidity->load())) return false;
     const QString sourcePath = resolveCurrentPrintOutputPath(formatId);
     return !sourcePath.isEmpty() && QFileInfo::exists(sourcePath);
 }
 
 bool SlicingPreviewBridge::exportCurrentPrintOutputAs(const QString& formatId, const QString& savePath) {
+    if (m_currentOutput && m_currentOutput->sourceScope == GPlatform::ToolpathPreviewSourceScope::Calibration && !canExportPrintOutput(formatId)) {
+        emit previewLoadError(tr("Calibration settings changed. Prepare and slice the calibration again before exporting."));
+        return false;
+    }
     const QString sourcePath = resolveCurrentPrintOutputPath(formatId);
     if (sourcePath.isEmpty() || !QFileInfo::exists(sourcePath)) {
         emit previewLoadError(tr("The selected print output is unavailable: %1").arg(formatId));
@@ -1612,16 +1631,34 @@ bool SlicingPreviewBridge::exportCurrentPrintOutputAs(const QString& formatId, c
 QString SlicingPreviewBridge::defaultPrintOutputFileName(const QString& formatId) const {
     QString baseName = QStringLiteral("slicing_result");
     if (m_currentOutput && !m_currentOutput->name.isEmpty()) {
-        baseName = QFileInfo(m_currentOutput->name).completeBaseName();
-        baseName.replace(QRegularExpression(QStringLiteral(R"([\\/:*?"<>|])")),
-                         QStringLiteral("_"));
+        baseName = m_currentOutput->name.trimmed();
+        // Imported records retain their original filename. Slice records already
+        // contain the title captured at the model boundary: never strip it again.
+        if (m_currentOutput->sourceScope == GPlatform::ToolpathPreviewSourceScope::ImportedGCode) {
+            for (const auto* suffix : {".gcode.3mf", ".gcode", ".gco", ".g"}) {
+                const auto extension = QString::fromLatin1(suffix);
+                if (baseName.endsWith(extension, Qt::CaseInsensitive)) { baseName.chop(extension.size()); break; }
+            }
+        }
+        for (qsizetype i = 0; i < baseName.size(); ++i)
+            if (baseName[i].unicode() < 32 || baseName[i].unicode() == 127 || QStringLiteral("\\/:*?\"<>|").contains(baseName[i]))
+                baseName[i] = '_';
+        while (baseName.startsWith('.')) baseName.remove(0, 1);
+        while (baseName.endsWith('.') || baseName.endsWith(' ')) baseName.chop(1);
         if (baseName.trimmed().isEmpty()) {
             baseName = QStringLiteral("slicing_result");
         }
     }
-    return baseName + (formatId == QStringLiteral("gcode-3mf")
+    const QString suffix = formatId == QStringLiteral("gcode-3mf")
         ? QStringLiteral(".gcode.3mf")
-        : QStringLiteral(".gcode"));
+        : QStringLiteral(".gcode");
+    const auto bytes = baseName.toUtf8();
+    qsizetype keep = 255 - suffix.toUtf8().size();
+    if (bytes.size() > keep) {
+        while (keep > 0 && (static_cast<unsigned char>(bytes[keep]) & 0xc0) == 0x80) --keep;
+        baseName = QString::fromUtf8(bytes.constData(), keep);
+    }
+    return baseName + suffix;
 }
 
 QString SlicingPreviewBridge::defaultExportPrintOutputFileUrl(const QString& formatId) const {
@@ -1644,7 +1681,8 @@ QStringList SlicingPreviewBridge::printOutputNameFilters(const QString& formatId
 bool SlicingPreviewBridge::canResliceCurrentModel() const {
     const auto output = m_currentOutput;
     auto* document = DocumentManager::instance();
-    if (!output || !document || output->sourceScope == GPlatform::ToolpathPreviewSourceScope::ImportedGCode) return false;
+    if (!output || !document || output->sourceScope == GPlatform::ToolpathPreviewSourceScope::ImportedGCode ||
+        output->sourceScope == GPlatform::ToolpathPreviewSourceScope::Calibration) return false;
     if (output->sourceScope == GPlatform::ToolpathPreviewSourceScope::SingleModel) {
         const auto instance = document->getDB<ModelInstanceDB>(output->sourceModelId);
         return instance && instance->isValid() && instance->getPrintable();

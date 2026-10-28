@@ -65,11 +65,12 @@ public:
         return caps;
     }
     std::vector<std::string> supportedPrintFormats() const override { return formats; }
-    void acknowledgeUnknownOutcome() override { ++acknowledgements; }
     void submitJob(const GPlatform::PrinterCore::PrintJob& job) override {
         lastJob = job;
         ++submittedJobs;
     }
+    bool cancelSubmission(uint64_t id) override { lastCancelledSubmission = id; ++submissionCancellations; return caps.cancelSubmission; }
+    bool refreshStatus() override { ++statusRefreshes; return caps.automaticStatusRecovery; }
     void controlJob(const std::string& action, uint64_t requestId) override {
         lastControlRequestId = requestId;
         lastAction = action;
@@ -93,7 +94,6 @@ public:
 
     GPlatform::PrinterCore::Capabilities caps{true, true, true, true, true, true, true, true, true};
     std::vector<std::string> formats{"gcode-3mf", "gcode"};
-    int acknowledgements{0};
     uint64_t lastControlRequestId{0};
     std::string lastUsername;
     std::string lastPassword;
@@ -111,6 +111,9 @@ public:
     int releaseCalls{0};
     int submittedJobs{0};
     int controlCalls{0};
+    int submissionCancellations{0};
+    int statusRefreshes{0};
+    uint64_t lastCancelledSubmission{0};
     int cameraControlCalls{0};
     bool cameraEnabled{false};
 
@@ -412,7 +415,7 @@ int main(int argc, char* argv[]) {
     if (!require(facade->transferState() == Facade::TransferFailed && facade->jobState() == Facade::JobIdle,
                  "transfer failure polluted physical printer state")) return EXIT_FAILURE;
     facade->dismissJobStatus();
-    if (!require(facade->transferState() == Facade::TransferIdle && facade->jobError().isEmpty(), "dismiss failed")) return EXIT_FAILURE;
+    if (!require(facade->jobNoticeDismissed() && facade->transferState() == Facade::TransferFailed, "dismiss erased device/submission evidence")) return EXIT_FAILURE;
 
     // Uncertain SDK outcomes are explicit and never automatically retried.
     submit(true);
@@ -422,7 +425,8 @@ int main(int argc, char* argv[]) {
     submit(true);
     if (!require(facade->transferState() == Facade::TransferUnknown && fake->submittedJobs == submitted,
                  "uncertain outcome allowed an automatic/repeated submission")) return EXIT_FAILURE;
-    facade->dismissJobStatus(); // Represents explicit user acknowledgement, not a retry.
+    facade->dismissJobStatus();
+    fake->publish(readyDuringUpload); // Device feedback, not closing the notice, restores readiness.
     submit(true);
     fake->publish(sent);
     auto otherPrint = printing;
@@ -461,6 +465,7 @@ int main(int argc, char* argv[]) {
     submit(false, gcodePath, "bad", "unsupported");
     if (!require(fake->submittedJobs == submitted, "unsupported format was sent")) return EXIT_FAILURE;
     facade->dismissJobStatus();
+    fake->publish(readyDuringUpload);
 
     // Worker-thread agents cannot modify the UI model from their callback thread.
     bool deliveredOnOwnerThread = false;
@@ -550,6 +555,7 @@ int main(int argc, char* argv[]) {
         if (!require(!formatsProperty.isConstant() && formatsProperty.hasNotifySignal(),
                      "formats must notify when backend/capabilities change")) return EXIT_FAILURE;
         changing.submitJob(gcodePath, "user-name.gcode", "gcode", true, false, false, false, false, false);
+        if (!require(changing.submissionDisplayName() == "user-name.gcode", "pending send lost its readable name")) return EXIT_FAILURE;
         Event renamed = sent;
         renamed.status.fileName = "gplatform-unique.gcode";
         neutral->publish(renamed);
@@ -563,8 +569,20 @@ int main(int argc, char* argv[]) {
         neutral->publish(renamedStatus);
         if (!require(changing.remainingTime() == "Unknown", "missing time estimate was presented as zero remaining")) return EXIT_FAILURE;
         if (!require(changing.transferState() == Facade::TransferIdle
-                     && changing.jobFileName() == "gplatform-unique.gcode",
+                     && changing.jobFileName() == "user-name.gcode",
                      "upload-returned unique filename did not confirm physical printing")) return EXIT_FAILURE;
+        renamedStatus.status.fileName = "other-client.gcode";
+        neutral->publish(renamedStatus);
+        if (!require(changing.jobFileName() == "other-client.gcode", "local title hid another client's job")) return EXIT_FAILURE;
+        renamedStatus.status.fileName = renamed.status.fileName;
+        neutral->publish(renamedStatus);
+        changing.dismissJobStatus();
+        if (!require(changing.jobFileName() == "user-name.gcode", "dismissing transfer status lost physical-job title")) return EXIT_FAILURE;
+        changing.submitJob(gcodePath + ".missing", "failed.v3.gcode", "gcode", false, false, false, false, false, false);
+        if (!require(changing.transferState() == Facade::TransferFailed
+                     && changing.submissionDisplayName() == "failed.v3.gcode"
+                     && changing.jobFileName() == "user-name.gcode",
+                     "failed new attempt reused an old caption or erased the physical alias")) return EXIT_FAILURE;
         neutral->publish(readyDuringUpload);
         int capabilitiesChanged = 0;
         QObject::connect(&changing, &Facade::capabilitiesChanged, [&] { ++capabilitiesChanged; });
@@ -597,8 +615,9 @@ int main(int argc, char* argv[]) {
         changing.pausePrint();
         if (!require(neutral->controlCalls == 1, "unknown control was retried")) return EXIT_FAILURE;
         changing.dismissJobStatus();
-        if (!require(neutral->acknowledgements == 1 && !changing.commandOutcomeUnknown()
-                     && changing.jobControllable(), "explicit acknowledgement failed to restore backend controls")) return EXIT_FAILURE;
+        if (!require(changing.commandOutcomeUnknown() && !changing.jobControllable(), "closing a notice unlocked an unavailable command")) return EXIT_FAILURE;
+        neutral->publish(noVendorId);
+        if (!require(!changing.commandOutcomeUnknown() && changing.jobControllable(), "fresh device status did not restore controls")) return EXIT_FAILURE;
         neutral->publish(readyDuringUpload);
 
         // A copied old-agent callback cannot change even non-device global state.
@@ -622,6 +641,97 @@ int main(int argc, char* argv[]) {
                      && changing.devices()->rowCount() == 0,
                      "retired adapter changed global availability/discovery/auth")) return EXIT_FAILURE;
         // Destruction occurs before queued discovery can issue any HTTP request.
+    }
+
+    // A known remote identity survives a failed start and follows fresh physical status.
+    {
+        auto nameLifetime = std::make_shared<AgentLifetime>();
+        auto nameAgent = std::make_unique<FakePrinterAgent>(nameLifetime);
+        auto* namedAgent = nameAgent.get();
+        Facade named(std::move(nameAgent));
+        namedAgent->publish(discovered);
+        named.selectDevice("online-printer");
+        namedAgent->publish(connected);
+        named.submitJob(gcodePath, "readable.v2.gcode", "gcode", true, false, false, false, false, false);
+        Event failed; failed.type = EventType::JobCommandFinished; failed.command = "send";
+        failed.outcomeUnknown = true; failed.status.fileName = "readable.v2-unique.gcode";
+        namedAgent->publish(failed);
+        if (!require(named.transferState() == Facade::TransferUnknown && named.submissionDisplayName() == "readable.v2.gcode",
+                     "unknown submission lost its requested title")) return EXIT_FAILURE;
+        Event physical = printing; physical.status.fileName = "external-client.gcode";
+        namedAgent->publish(physical);
+        if (!require(named.jobFileName() == "external-client.gcode", "unknown submission hid an unrelated active task")) return EXIT_FAILURE;
+        physical.status.fileName.clear();
+        namedAgent->publish(physical);
+        if (!require(named.jobFileName() == "Print Job", "unnamed physical job acquired a local preview/submission title")) return EXIT_FAILURE;
+        physical.status.fileName = failed.status.fileName;
+        namedAgent->publish(physical);
+        if (!require(named.transferState() != Facade::TransferUnknown && named.jobFileName() == "readable.v2.gcode",
+                     "fresh matching status did not resolve the submission or lost the known title")) return EXIT_FAILURE;
+        named.dismissJobStatus();
+        if (!require(named.jobFileName() == "readable.v2.gcode", "explicit status dismissal discarded the matching task title")) return EXIT_FAILURE;
+    }
+
+    // Real facade notifications, physical-state recovery and read-only reconnect.
+    {
+        auto owner = std::make_shared<AgentLifetime>();
+        auto implementation = std::make_unique<FakePrinterAgent>(owner); auto* network = implementation.get();
+        network->caps.cancelSubmission = network->caps.automaticStatusRecovery = true;
+        Facade subject(std::move(implementation)); network->publish(discovered);
+        subject.selectDevice("online-printer"); network->publish(connected); network->publish(readyDuringUpload);
+        subject.submitJob(gcodePath, "A.gcode", "gcode", false, false, false, false, false, false);
+        const auto first = network->lastJob.requestId; int cancelledNotifications = 0;
+        QObject::connect(&subject, &Facade::jobChanged, [&] { if (subject.transferState() == Facade::TransferCancelled) ++cancelledNotifications; });
+        subject.cancelSubmission();
+        if (!require(network->lastCancelledSubmission == first && network->submissionCancellations == 1,
+                     "facade did not route the current submission cancellation")) return EXIT_FAILURE;
+        Event stopped; stopped.type = EventType::JobCommandFinished; stopped.command = "send"; stopped.cancelled = true;
+        network->publish(stopped);
+        if (!require(cancelledNotifications > 0 && subject.transferState() == Facade::TransferCancelled && !subject.transferBusy(),
+                     "local cancellation failed to notify QML or left the submission busy")) return EXIT_FAILURE;
+        subject.dismissJobStatus(); network->publish(readyDuringUpload);
+        if (!require(subject.jobNoticeDismissed(), "unchanged poll reopened a dismissed terminal notice")) return EXIT_FAILURE;
+        Event live = printing; live.status.fileName = "B.gcode"; network->publish(live);
+        const int priorJobs = network->submittedJobs;
+        QObject::connect(&subject, &Facade::jobChanged, [&] {
+            if (subject.jobState() == Facade::Stopping) subject.submitJob(gcodePath, "blocked.gcode", "gcode", false, false, false, false, false, false);
+        });
+        subject.cancelPrint(); network->publish(live);
+        if (!require(subject.jobState() == Facade::Stopping && subject.transferBusy() && network->submittedJobs == priorJobs,
+                     "pending ID was assigned after notification or an old active status rolled back Stop")) return EXIT_FAILURE;
+        Event lost; lost.type = EventType::JobCommandFinished; lost.command = "cancel"; lost.outcomeUnknown = true;
+        network->publish(lost);
+        Event invalid = live; invalid.status.state = "unknown-state"; network->publish(invalid);
+        subject.dismissJobStatus();
+        if (!require(subject.commandOutcomeUnknown() && !subject.jobControllable(), "invalid status or closing the notice unlocked the command")) return EXIT_FAILURE;
+        Event paused = live; paused.status.state = " PAUSE "; network->publish(paused);
+        if (!require(!subject.commandOutcomeUnknown() && subject.jobState() == Facade::Paused && subject.jobControllable()
+                     && !subject.jobError().isEmpty(), "fresh paused feedback did not restore controls with an unconfirmed-stop explanation")) return EXIT_FAILURE;
+        Event cancelled = live; cancelled.status.state = "cancel"; network->publish(cancelled);
+        if (!require(subject.jobState() == Facade::Cancelled && !subject.printing() && subject.jobFileName() == "B.gcode"
+                     && !subject.jobNoticeIsSubmission(), "physical cancellation acquired the previous upload caption")) return EXIT_FAILURE;
+        Event deviceError = live; deviceError.status.state = "error"; deviceError.error = "actual heater problem"; network->publish(deviceError);
+        if (!require(subject.jobState() == Facade::JobError && subject.jobError() == "actual heater problem", "printer message was replaced by an HTTP error")) return EXIT_FAILURE;
+    }
+    {
+        auto owner = std::make_shared<AgentLifetime>();
+        auto implementation = std::make_unique<FakePrinterAgent>(owner); auto* network = implementation.get();
+        Facade subject(std::move(implementation)); network->publish(discovered);
+        subject.selectDevice("online-printer"); network->publish(connected);
+        subject.submitJob(gcodePath, "keep.v2.gcode", "gcode", true, false, false, false, false, false);
+        Event progress; progress.type = EventType::TransferProgress; progress.command = "send"; progress.status.fileName = "keep-unique.gcode"; network->publish(progress);
+        const auto oldSession = network->lastDevice.sessionId; const int jobs = network->submittedJobs;
+        network->publish(connectionLost);
+        subject.provideDeviceAccess("test-key");
+        if (!require(network->lastDevice.sessionId != oldSession && network->selectCalls == 2 && network->accessCalls == 1,
+                     "legacy read-only reconnection did not refresh the vendor session")) return EXIT_FAILURE;
+        network->publish(connected);
+        subject.submitJob(gcodePath, "not-yet.gcode", "gcode", false, false, false, false, false, false);
+        if (!require(subject.transferBusy() && network->submittedJobs == jobs,
+                     "connection handshake without fresh status unlocked the previous unknown submission")) return EXIT_FAILURE;
+        Event current = printing; current.status.fileName = "keep-unique.gcode"; network->publish(current);
+        if (!require(subject.printing() && subject.jobFileName() == "keep.v2.gcode" && network->submittedJobs == jobs,
+                     "reconnection lost the remote display identity or replayed a job")) return EXIT_FAILURE;
     }
 
     // No event-loop processing here: each adapter is destroyed before its

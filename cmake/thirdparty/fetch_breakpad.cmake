@@ -51,7 +51,7 @@ if(ENABLE_BREAKPAD AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(HAS_ZIP FALSE)
 
     # 检查安装目录
-    if(EXISTS "${BREAKPAD_INSTALL_DIR}/include/breakpad")
+    if(EXISTS "${BREAKPAD_INSTALL_DIR}/include/google_breakpad/common/breakpad_types.h")
         set(HAS_INSTALL TRUE)
         message(STATUS "✅ 发现安装目录: ${BREAKPAD_INSTALL_DIR}")
     endif()
@@ -96,116 +96,68 @@ if(ENABLE_BREAKPAD AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
     message(STATUS "📊 状态汇总: Install=${HAS_INSTALL}, Source=${HAS_SOURCE}, Zip=${HAS_ZIP}")
     message(STATUS "🎯 执行策略: ${BREAKPAD_STATUS}")
 
-    # 根据状态执行相应操作
-    if(BREAKPAD_STATUS STREQUAL "INSTALLED")
-        # 直接使用已安装的 Breakpad
-        message(STATUS "🚀 使用缓存的 Breakpad 库，跳过下载")
-
-        # Breakpad source files include headers from the src root, e.g.
-        # "client/mac/handler/exception_handler.h".
-        set(BREAKPAD_INCLUDE_DIRS
-            ${BREAKPAD_SOURCE_DIR}/src
-            ${BREAKPAD_INSTALL_DIR}/include
-            CACHE INTERNAL "Breakpad include directories" FORCE
-        )
-
-    elseif(BREAKPAD_STATUS STREQUAL "SOURCE_ONLY")
-        # 安装源码
-        message(STATUS "📦 正在安装 Breakpad...")
-
-        # 创建安装目录
-        file(MAKE_DIRECTORY "${BREAKPAD_INSTALL_DIR}/include")
-
-        # 复制源码到安装目录（注意：src 目录下的内容，不是 src 本身）
-        file(COPY "${BREAKPAD_SOURCE_DIR}/src/" DESTINATION "${BREAKPAD_INSTALL_DIR}/include")
-
-        message(STATUS "✅ Breakpad 安装成功")
-
-        # Breakpad source files include headers from the src root, e.g.
-        # "client/mac/handler/exception_handler.h".
-        set(BREAKPAD_INCLUDE_DIRS
-            ${BREAKPAD_SOURCE_DIR}/src
-            ${BREAKPAD_INSTALL_DIR}/include
-            CACHE INTERNAL "Breakpad include directories" FORCE
-        )
-
-    elseif(BREAKPAD_STATUS STREQUAL "ZIP_ONLY")
-        # 解压并安装
-        message(STATUS "📦 解压 Breakpad 源码...")
-
-        # 确保源码目录不存在
-        if(EXISTS "${BREAKPAD_SOURCE_DIR}")
-            file(REMOVE_RECURSE "${BREAKPAD_SOURCE_DIR}")
+    # Advance through each stage in this invocation. include_guard(GLOBAL)
+    # intentionally prevents re-including this file, including recursive calls.
+    if(NOT HAS_SOURCE)
+        if(NOT HAS_ZIP)
+            set(BREAKPAD_DOWNLOAD_URL "https://github.com/google/breakpad/archive/refs/tags/${BREAKPAD_TAG}.tar.gz")
+            message(STATUS "Breakpad: downloading ${BREAKPAD_DOWNLOAD_URL}")
+            file(DOWNLOAD
+                "${BREAKPAD_DOWNLOAD_URL}"
+                "${BREAKPAD_ZIP_FILE}"
+                EXPECTED_HASH "SHA256=${BREAKPAD_EXPECTED_SHA256}"
+                STATUS download_status
+                LOG download_log
+                SHOW_PROGRESS
+            )
+            list(GET download_status 0 status_code)
+            list(GET download_status 1 status_msg)
+            if(NOT status_code EQUAL 0)
+                message(FATAL_ERROR "Breakpad download failed: ${status_msg}\n${download_log}")
+            endif()
         endif()
 
-        # 解压
+        message(STATUS "Breakpad: extracting verified source archive")
+        # Use an isolated directory so a previous partial extraction cannot be
+        # mistaken for the newly downloaded source tree.
+        set(_breakpad_extract_dir "${BREAKPAD_CACHE_DIR}/extract")
+        file(REMOVE_RECURSE "${_breakpad_extract_dir}")
+        file(MAKE_DIRECTORY "${_breakpad_extract_dir}")
         execute_process(
-            COMMAND ${CMAKE_COMMAND} -E tar xzf ${BREAKPAD_ZIP_FILE}
-            WORKING_DIRECTORY ${BREAKPAD_CACHE_DIR}
+            COMMAND "${CMAKE_COMMAND}" -E tar xzf "${BREAKPAD_ZIP_FILE}"
+            WORKING_DIRECTORY "${_breakpad_extract_dir}"
             RESULT_VARIABLE extract_result
             OUTPUT_QUIET
             ERROR_VARIABLE extract_error
         )
-
-        if(extract_result EQUAL 0)
-            # 检查解压后的目录名
-            file(GLOB BREAKPAD_EXTRACTED_DIRS "${BREAKPAD_CACHE_DIR}/breakpad-*")
-            list(GET BREAKPAD_EXTRACTED_DIRS 0 BREAKPAD_EXTRACTED_DIR)
-
-            if(EXISTS "${BREAKPAD_EXTRACTED_DIR}")
-                # 移动到标准源码目录
-                file(RENAME "${BREAKPAD_EXTRACTED_DIR}" "${BREAKPAD_SOURCE_DIR}")
-                message(STATUS "✅ Breakpad 解压成功")
-
-                # 切换到安装模式
-                set(HAS_SOURCE TRUE)
-                set(BREAKPAD_STATUS "SOURCE_ONLY")
-
-                # 递归调用处理安装
-                include(${CMAKE_CURRENT_LIST_FILE})
-            else()
-                message(FATAL_ERROR "❌ 解压后未找到 Breakpad 目录")
-            endif()
-        else()
-            message(WARNING "❌ Breakpad 解压失败: ${extract_error}")
-            message(STATUS "🔄 删除损坏的压缩包并重新下载...")
-            file(REMOVE "${BREAKPAD_ZIP_FILE}")
-            set(BREAKPAD_STATUS "NONE")
-            include(${CMAKE_CURRENT_LIST_FILE})
+        if(NOT extract_result EQUAL 0)
+            message(FATAL_ERROR "Breakpad extraction failed: ${extract_error}")
         endif()
-
-    else()
-        # 需要下载
-        message(STATUS "⬇️  开始下载 Breakpad ${BREAKPAD_VERSION}...")
-
-        # 使用 file(DOWNLOAD) 直接下载
-        set(BREAKPAD_DOWNLOAD_URL "https://github.com/google/breakpad/archive/refs/tags/${BREAKPAD_TAG}.tar.gz")
-
-        message(STATUS "📥 正在从 GitHub 下载 Breakpad...")
-        message(STATUS "   URL: ${BREAKPAD_DOWNLOAD_URL}")
-
-        file(DOWNLOAD
-            ${BREAKPAD_DOWNLOAD_URL}
-            ${BREAKPAD_ZIP_FILE}
-            EXPECTED_HASH SHA256=${BREAKPAD_EXPECTED_SHA256}
-            STATUS download_status
-            LOG download_log
-            SHOW_PROGRESS
-        )
-
-        list(GET download_status 0 status_code)
-        list(GET download_status 1 status_msg)
-
-        if(NOT status_code EQUAL 0)
-            message(FATAL_ERROR "❌ Breakpad 下载失败: ${status_msg}\n   ${download_log}")
+        file(GLOB _breakpad_extracted_dirs "${_breakpad_extract_dir}/breakpad-*")
+        list(LENGTH _breakpad_extracted_dirs _breakpad_extracted_count)
+        if(NOT _breakpad_extracted_count EQUAL 1)
+            message(FATAL_ERROR "Breakpad archive must contain exactly one source directory")
         endif()
-
-        message(STATUS "✅ Breakpad 下载成功 (SHA256 校验通过)")
-
-        # 递归调用自己来处理安装
-        set(BREAKPAD_STATUS "ZIP_ONLY")
-        include(${CMAKE_CURRENT_LIST_FILE})
+        list(GET _breakpad_extracted_dirs 0 _breakpad_extracted_source)
+        if(NOT EXISTS "${_breakpad_extracted_source}/src/google_breakpad/common/breakpad_types.h")
+            message(FATAL_ERROR "Breakpad archive does not contain the expected source tree")
+        endif()
+        file(REMOVE_RECURSE "${BREAKPAD_SOURCE_DIR}")
+        file(RENAME "${_breakpad_extracted_source}" "${BREAKPAD_SOURCE_DIR}")
+        file(REMOVE_RECURSE "${_breakpad_extract_dir}")
     endif()
+
+    if(NOT HAS_INSTALL)
+        message(STATUS "Breakpad: installing headers")
+        file(MAKE_DIRECTORY "${BREAKPAD_INSTALL_DIR}/include")
+        file(COPY "${BREAKPAD_SOURCE_DIR}/src/" DESTINATION "${BREAKPAD_INSTALL_DIR}/include")
+    endif()
+    # Sources include headers relative to the src root.
+    set(BREAKPAD_INCLUDE_DIRS
+        "${BREAKPAD_SOURCE_DIR}/src"
+        "${BREAKPAD_INSTALL_DIR}/include"
+        CACHE INTERNAL "Breakpad include directories" FORCE
+    )
 
     # Breakpad specific configuration
     set(CMAKE_CXX_STANDARD 20 CACHE STRING "" FORCE)
@@ -308,7 +260,6 @@ if(ENABLE_BREAKPAD AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
 
     # Export for parent project
     set(BREAKPAD_FOUND TRUE CACHE BOOL "Breakpad found" FORCE)
-    set(BREAKPAD_INCLUDE_DIRS ${BREAKPAD_INCLUDE_DIRS} PARENT_SCOPE)
 
     message(STATUS "✅ Breakpad 配置成功")
     message(STATUS "")

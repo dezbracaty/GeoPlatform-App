@@ -28,8 +28,10 @@ Popup {
     property real surfaceShadowOpacity: 0.22
     property bool windowEscapeEnabled: false
     property bool windowEscapeOnlyOutsideFocus: false
+    property bool closeOnEscape: true
 
     signal backRequested()
+    signal escapeRequested()
 
     function reposition() {
         ++positionRevision
@@ -127,7 +129,10 @@ Popup {
 
         Keys.priority: Keys.BeforeItem
         Keys.onEscapePressed: function(event) {
-            control.close()
+            if (control.closeOnEscape)
+                control.close()
+            else
+                control.escapeRequested()
             event.accepted = true
         }
 

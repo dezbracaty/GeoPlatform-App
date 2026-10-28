@@ -34,6 +34,7 @@ REGISTER_INTERACTION_ACTION(
 #include <CameraNavigationController.hpp>
 #include "Foundation/Log.h"
 #include "ModelSettingsBridge.hpp"
+#include "SelectionBridge.hpp"
 #include <ModelPositionUtil.hpp>
 #include <GeometryCommandBridge.hpp>
 #include <ParametricCommandNames.hpp>
@@ -496,6 +497,9 @@ void CreateGeometryHandler::clearAll() {
 
     // 清空所有几何体
     docManager->clearAllGeometry();
+    // The bridge observes only its primary selection; an unordered multi-object
+    // deletion can otherwise leave another deleted ID selected.
+    SelectionBridge::instance()->clearSelection();
 }
 
 Vector3 CreateGeometryHandler::extractPosition(const QVariantMap& params) {

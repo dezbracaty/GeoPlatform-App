@@ -142,15 +142,18 @@ void PrinterQtFacade::initializeAgent() {
     m_startConfirmationTimer.setInterval(30000);
     disconnect(&m_startConfirmationTimer, nullptr, this, nullptr);
     connect(&m_startConfirmationTimer, &QTimer::timeout, this, [this] {
-        if (m_transferState == TransferStarting)
-            markTransferUnknown(tr("The file was sent, but printing could not be confirmed. Check the printer before sending again."));
+        if (m_transferState == TransferStarting) {
+            markTransferUnknown(tr("Waiting for the printer to report its current state."));
+            m_agent->refreshStatus();
+        }
     });
     refreshCapabilities();
     m_agent->initialize();
 }
 
 bool PrinterQtFacade::canConfigureBackend() const {
-    return !transferBusy() && !printing() && m_controlRequestId == 0
+    return (!transferBusy() || (!connected() && (m_transferState == TransferUnknown || m_controlOutcomeUnknown)))
+        && !printing() && m_controlRequestId == 0
         && !(qEnvironmentVariableIntValue("GPLATFORM_JOURNAL_SESSION") == 1
              && !qEnvironmentVariable("GPLATFORM_JOURNAL_PRINTER_FIXTURE").trimmed().isEmpty());
 }
@@ -191,6 +194,11 @@ void PrinterQtFacade::replaceAgent(std::unique_ptr<PrinterCore::IPrinterAgent> a
     m_transferRequestId = m_controlRequestId = 0;
     m_controlOutcomeUnknown = false;
     m_submittedFileName.clear();
+    m_submissionDisplayName.clear();
+    m_requestedDisplayName.clear();
+    m_displayRemotePath.clear();
+    m_displayDeviceId.clear();
+    m_displaySessionId = 0;
     m_jobError.clear();
     m_startConfirmationTimer.stop();
     initializeAgent();
@@ -234,6 +242,8 @@ QStringList PrinterQtFacade::supportedPrintFormats() const {
 
 void PrinterQtFacade::failTransfer(const QString& error) {
     m_startConfirmationTimer.stop();
+    m_jobNoticeDismissed = false;
+    m_submissionNotice = true;
     m_transferState = TransferFailed;
     m_transferRequestId = 0;
     m_jobError = error;
@@ -242,8 +252,9 @@ void PrinterQtFacade::failTransfer(const QString& error) {
 
 void PrinterQtFacade::markTransferUnknown(const QString& error) {
     m_startConfirmationTimer.stop();
+    m_jobNoticeDismissed = false;
+    m_submissionNotice = true;
     m_transferState = TransferUnknown;
-    m_transferRequestId = 0;
     m_jobError = error;
     emit jobChanged();
 }
@@ -282,6 +293,7 @@ void PrinterQtFacade::handleAgentEvent(const PrinterCore::Event& event) {
         else if (event.error == "Moonraker submission is unavailable or unsupported") error = tr("Moonraker submission is unavailable or unsupported");
         else if (event.error == "Cannot snapshot the G-code file") error = tr("Cannot snapshot the G-code file");
         else if (event.error == "Cannot snapshot the G-code file, or the source changed") error = tr("Cannot snapshot the G-code file, or the source changed");
+        else if (event.error == "Invalid Moonraker destination filename") error = tr("Use a filename without directories, quotes, or control characters.");
         else if (event.error == "Upload outcome is unexpected. Check the printer before retrying.") error = tr("Upload outcome is unexpected. Check the printer before retrying.");
         else if (event.error == "File uploaded, but readiness could not be confirmed. Printing was not requested.") error = tr("File uploaded, but readiness could not be confirmed. Printing was not requested.");
         else if (event.error == "Print start could not be confirmed") error = tr("Print start could not be confirmed");
@@ -348,12 +360,11 @@ void PrinterQtFacade::handleAgentEvent(const PrinterCore::Event& event) {
             : (error.isEmpty() ? Disconnected : ConnectionError);
         if (!event.success) {
             resetCameraSession(false);
-            m_status = {};
-            m_jobState = JobIdle;
+            if (!m_capabilities.automaticStatusRecovery) { m_status = {}; m_jobState = JobIdle; }
             m_controlRequestId = 0;
             if (m_transferState == TransferUploading || m_transferState == TransferStarting)
-                markTransferUnknown(tr("The connection was lost during submission. Check the printer before sending again."));
-            if (wasConnected) ++m_sessionId; // Late events cannot revive a lost connection.
+                markTransferUnknown(tr("The connection was lost. Reconnecting to read the current printer state."));
+            if (wasConnected && !m_capabilities.automaticStatusRecovery) ++m_sessionId; // Late events cannot revive a lost connection.
             emit statusChanged();
             emit jobChanged();
         }
@@ -364,27 +375,43 @@ void PrinterQtFacade::handleAgentEvent(const PrinterCore::Event& event) {
     case EventType::StatusChanged:
         if (!connected()) break;
         applyStatus(fromCore(event.status));
+        if (event.status.state == "error" && !event.error.empty()) {
+            m_jobError = fromStd(event.error); emit jobChanged();
+        }
         break;
     case EventType::TransferProgress:
         if (!connected() || m_transferState != TransferUploading
             || event.requestId == 0 || event.requestId != m_transferRequestId
             || !std::isfinite(event.progress)) break;
+        if (!event.status.fileName.empty()) {
+            m_submittedFileName = m_displayRemotePath = fromStd(event.status.fileName);
+        }
+        if (event.command == "start") {
+            m_transferState = TransferStarting; m_startConfirmationTimer.start();
+        }
         m_transferProgress = std::max(m_transferProgress, std::clamp(event.progress, 0.0, 1.0));
         emit jobChanged();
         break;
     case EventType::JobCommandFinished:
         if (!connected()) break;
         if (event.command == "send") {
-            if (m_transferState != TransferUploading || event.requestId == 0
+            if ((m_transferState != TransferUploading && m_transferState != TransferStarting && m_transferState != TransferUnknown) || event.requestId == 0
                 || event.requestId != m_transferRequestId) break;
+            if (!event.status.fileName.empty()) {
+                m_submittedFileName = m_displayRemotePath = fromStd(event.status.fileName);
+            }
+            if (event.cancelled) {
+                m_startConfirmationTimer.stop(); m_transferState = TransferCancelled;
+                m_transferRequestId = 0; m_jobError.clear(); emit jobChanged(); break;
+            }
             if (!event.success) {
                 if (event.outcomeUnknown)
-                    markTransferUnknown(tr("Submission could not be confirmed. Check the printer before sending again.")
+                    markTransferUnknown(tr("Submission is not confirmed. Reading the current printer state.")
                                         + (error.isEmpty() ? QString() : QStringLiteral("\n") + error));
                 else failTransfer(error);
                 break;
             }
-            if (!event.status.fileName.empty()) m_submittedFileName = fromStd(event.status.fileName);
+            m_submissionNotice = true;
             m_transferProgress = 1.0;
             m_transferState = m_printNow ? TransferStarting : TransferUploaded;
             if (m_printNow) m_startConfirmationTimer.start();
@@ -395,7 +422,7 @@ void PrinterQtFacade::handleAgentEvent(const PrinterCore::Event& event) {
             m_controlRequestId = 0;
             m_controlOutcomeUnknown = event.outcomeUnknown;
             m_jobError = event.outcomeUnknown
-                ? tr("Command outcome is unknown. Check the printer before reconnecting.") : error;
+                ? tr("Command is not confirmed. Reading the current printer state.") : error;
             if (!event.success) setJobStateFromPrinter(m_status.state);
             // Commands were already marked pending when dispatched. A newer
             // device status is authoritative; late success must not regress it.
@@ -541,6 +568,11 @@ void PrinterQtFacade::logout() {
     m_transferState = TransferIdle;
     m_transferProgress = 0.0;
     m_submittedFileName.clear();
+    m_submissionDisplayName.clear();
+    m_requestedDisplayName.clear();
+    m_displayRemotePath.clear();
+    m_displayDeviceId.clear();
+    m_displaySessionId = 0;
     m_jobError.clear();
     m_authState = SignedOut;
     m_accountName.clear();
@@ -555,12 +587,14 @@ void PrinterQtFacade::logout() {
 }
 
 void PrinterQtFacade::selectDevice(const QString& deviceId) {
-    if (transferBusy()) return;
+    if (transferBusy() && !(!connected() && (m_transferState == TransferUnknown || m_controlOutcomeUnknown))) return;
     const PrinterDevice* device = m_devices.findById(deviceId);
     if (!device) {
         return;
     }
 
+    const bool recoveringSameDevice = !connected() && m_selectedDevice.deviceId == deviceId
+        && (m_transferState == TransferUnknown || m_controlOutcomeUnknown);
     const bool alreadyReady = connected() && m_selectedDevice.deviceId == deviceId;
     if (!alreadyReady) {
         resetCameraSession(true);
@@ -572,16 +606,29 @@ void PrinterQtFacade::selectDevice(const QString& deviceId) {
     }
 
     ++m_sessionId;
-    m_transferRequestId = 0;
-    m_controlRequestId = 0;
-    m_controlOutcomeUnknown = false;
-    m_startConfirmationTimer.stop();
-    m_transferState = TransferIdle;
-    m_submittedFileName.clear();
-    m_jobError.clear();
-    m_status = {};
-    m_jobState = JobIdle;
-    m_transferProgress = 0.0;
+    if (recoveringSameDevice) {
+        // A connection retry selects the same device with a new event session;
+        // it never replays a job or discards its known remote/display identity.
+        m_controlRequestId = 0;
+        m_displaySessionId = m_sessionId;
+        m_startConfirmationTimer.stop();
+    } else {
+        m_transferRequestId = 0;
+        m_controlRequestId = 0;
+        m_controlOutcomeUnknown = false;
+        m_startConfirmationTimer.stop();
+        m_transferState = TransferIdle;
+        m_submittedFileName.clear();
+        m_submissionDisplayName.clear();
+        m_requestedDisplayName.clear();
+        m_displayRemotePath.clear();
+        m_displayDeviceId.clear();
+        m_displaySessionId = 0;
+        m_jobError.clear();
+        m_status = {};
+        m_jobState = JobIdle;
+        m_transferProgress = 0.0;
+    }
     m_connectionError.clear();
     m_deviceAccessRequired = false;
     emit statusChanged();
@@ -601,10 +648,13 @@ void PrinterQtFacade::selectDevice(const QString& deviceId) {
 }
 
 void PrinterQtFacade::provideDeviceAccess(const QString& credential) {
-    if (transferBusy() || m_selectedDevice.deviceId.isEmpty() || !m_selectedDevice.online
+    if ((transferBusy() && !(!connected() && (m_transferState == TransferUnknown || m_controlOutcomeUnknown))) || m_selectedDevice.deviceId.isEmpty() || !m_selectedDevice.online
         || credential.trimmed().isEmpty()) {
         return;
     }
+    if (!connected() && !m_capabilities.automaticStatusRecovery
+        && (m_transferState == TransferUnknown || m_controlOutcomeUnknown))
+        selectDevice(m_selectedDevice.deviceId); // Refresh the vendor agent's session before credentials.
     m_connectionError.clear();
     m_deviceAccessRequired = false;
     m_connectionState = Connecting;
@@ -622,6 +672,9 @@ void PrinterQtFacade::submitJob(const QString& filePath,
                                 bool timeLapseVideo,
                                 bool useMaterialStation) {
     if (transferBusy()) return; // Never replace a pending or unresolved submission.
+    m_jobNoticeDismissed = false;
+    m_submissionNotice = true;
+    m_submissionDisplayName = destinationName.trimmed();
     m_transferProgress = 0.0;
     m_submittedFileName.clear();
     if (!connected() || printing() || !m_capabilities.upload || (printNow && !m_capabilities.start)) {
@@ -681,6 +734,11 @@ void PrinterQtFacade::submitJob(const QString& filePath,
     job.firstLayerInspection = firstLayerInspection;
     job.timeLapseVideo = timeLapseVideo;
     job.useMaterialStation = useMaterialStation;
+    m_requestedDisplayName = destination;
+    m_submissionDisplayName = destination;
+    m_displayRemotePath.clear();
+    m_displayDeviceId = m_selectedDevice.deviceId;
+    m_displaySessionId = m_sessionId;
     m_transferRequestId = job.requestId;
     m_submittedFileName = destination;
     m_printNow = printNow;
@@ -693,43 +751,57 @@ void PrinterQtFacade::submitJob(const QString& filePath,
 void PrinterQtFacade::pausePrint() {
     if (!m_capabilities.pauseResume || !jobControllable() || m_controlRequestId != 0 || m_jobState != Printing) return;
     m_jobError.clear();
-    m_jobState = Pausing;
-    emit jobChanged();
+    m_jobNoticeDismissed = false;
+    m_submissionNotice = false;
     m_controlRequestId = ++m_nextRequestId;
     m_controlCommand = QStringLiteral("pause");
+    m_controlTargetFile = m_status.fileName;
+    m_jobState = Pausing;
+    emit jobChanged();
     m_agent->controlJob("pause", m_controlRequestId);
 }
 void PrinterQtFacade::resumePrint() {
     if (!m_capabilities.pauseResume || !jobControllable() || m_controlRequestId != 0 || m_jobState != Paused) return;
     m_jobError.clear();
-    m_jobState = Resuming;
-    emit jobChanged();
+    m_jobNoticeDismissed = false;
+    m_submissionNotice = false;
     m_controlRequestId = ++m_nextRequestId;
     m_controlCommand = QStringLiteral("continue");
+    m_controlTargetFile = m_status.fileName;
+    m_jobState = Resuming;
+    emit jobChanged();
     m_agent->controlJob("continue", m_controlRequestId);
 }
 void PrinterQtFacade::cancelPrint() {
     if (!m_capabilities.cancel || !jobControllable() || m_controlRequestId != 0) return;
     m_jobError.clear();
-    m_jobState = Stopping;
-    emit jobChanged();
+    m_jobNoticeDismissed = false;
+    m_submissionNotice = false;
     m_controlRequestId = ++m_nextRequestId;
     m_controlCommand = QStringLiteral("cancel");
+    m_controlTargetFile = m_status.fileName;
+    m_jobState = Stopping;
+    emit jobChanged();
     m_agent->controlJob("cancel", m_controlRequestId);
+}
+
+void PrinterQtFacade::cancelSubmission() {
+    if (!canCancelSubmission()) return;
+    if (!m_agent->cancelSubmission(m_transferRequestId)) {
+        m_jobError = tr("The start request has already been sent. Wait for the printer state, then use Stop.");
+        emit jobChanged();
+    }
+}
+
+void PrinterQtFacade::refreshPrinterStatus() {
+    if (canRefreshStatus()) m_agent->refreshStatus();
 }
 
 void PrinterQtFacade::dismissJobStatus() {
     if (m_transferState == TransferUploading || m_transferState == TransferStarting || m_controlRequestId != 0) return;
-    if (m_transferState == TransferUnknown || m_controlOutcomeUnknown) m_agent->acknowledgeUnknownOutcome();
-    m_controlOutcomeUnknown = false;
-    if (m_transferState != TransferIdle) {
-        m_transferState = TransferIdle;
-        m_transferRequestId = 0;
-        m_submittedFileName.clear();
-        m_transferProgress = 0.0;
-    }
-    if (m_jobState == Completed || m_jobState == JobError) m_jobState = JobIdle;
-    m_jobError.clear();
+    // This closes a presentation only. Fresh device status, not this button,
+    // determines readiness and resolves unavailable command outcomes.
+    m_jobNoticeDismissed = true;
     emit jobChanged();
 }
 
@@ -763,8 +835,28 @@ void PrinterQtFacade::stopCameraStream() {
     m_agent->setCameraStreamEnabled(false);
 }
 
+QString PrinterQtFacade::jobFileName() const {
+    const bool ownRemote = !m_displayRemotePath.isEmpty()
+        && m_displayDeviceId == m_selectedDevice.deviceId && m_displaySessionId == m_sessionId
+        && m_status.fileName == m_displayRemotePath;
+    // An authoritative different physical task must never acquire this submission's title.
+    if (printing()) {
+        if (ownRemote) return m_requestedDisplayName;
+        return m_status.fileName.isEmpty() ? tr("Print Job") : m_status.fileName;
+    }
+    return ownRemote ? m_requestedDisplayName : m_status.fileName;
+}
+
 void PrinterQtFacade::applyStatus(const PrinterStatus& status) {
+    const QString state = status.state.trimmed().toLower();
+    const bool known = QStringList{"printing", "heating", "busy", "calibrate_doing", "pause", "pausing",
+                                  "completed", "canceling", "cancel", "ready", "error"}.contains(state);
+    if (known && (state != m_status.state || status.fileName != m_status.fileName)) {
+        m_jobNoticeDismissed = false;
+        m_submissionNotice = false;
+    }
     m_status = status;
+    m_status.state = state;
     if (m_cameraSessionState == CameraLoading
         && !status.cameraStreamUrl.isEmpty()) {
         m_cameraRetryTimer.stop();
@@ -783,8 +875,21 @@ void PrinterQtFacade::applyStatus(const PrinterStatus& status) {
         m_cameraSessionError = tr("The printer camera became unavailable");
         emit cameraChanged();
     }
-    setJobStateFromPrinter(status.state);
-    if (m_transferState == TransferStarting && printing()
+    const bool sameControlTarget = m_controlTargetFile.isEmpty() || status.fileName.isEmpty()
+        || status.fileName == m_controlTargetFile;
+    const bool active = state == "printing" || state == "heating" || state == "busy" || state == "calibrate_doing" || state == "pause";
+    if (known && !(m_controlRequestId != 0 && sameControlTarget && active))
+        setJobStateFromPrinter(state);
+    // An unavailable outcome is a request for fresh status, never a human lock.
+    if (known) m_controlOutcomeUnknown = false;
+    if (known && m_transferState == TransferUnknown) {
+        const bool own = !m_submittedFileName.isEmpty() && status.fileName == m_submittedFileName;
+        m_transferState = own ? TransferIdle : TransferFailed;
+        m_transferRequestId = 0; m_startConfirmationTimer.stop();
+        if (!own && m_jobError.isEmpty()) m_jobError = tr("Previous submission was not confirmed. The current printer state is shown.");
+    }
+    if (known && m_transferState == TransferStarting
+        && (printing() || state == "completed" || state == "cancel" || state == "error")
         && status.fileName == m_submittedFileName) {
         m_transferState = TransferIdle;
         m_transferRequestId = 0;
@@ -812,7 +917,9 @@ void PrinterQtFacade::setJobStateFromPrinter(const QString& state) {
         next = Completed;
     } else if (normalized == QStringLiteral("canceling")) {
         next = Stopping;
-    } else if (normalized == QStringLiteral("cancel") || normalized == QStringLiteral("ready")) {
+    } else if (normalized == QStringLiteral("cancel")) {
+        next = Cancelled;
+    } else if (normalized == QStringLiteral("ready")) {
         next = JobIdle;
     } else if (normalized == QStringLiteral("error")) {
         next = JobError;

@@ -18,7 +18,9 @@ MoonrakerPrinterAgentImpl::MoonrakerPrinterAgentImpl(QUrl endpoint, QByteArray a
     : m_endpoint(std::move(endpoint)), m_apiKey(std::move(apiKey)), m_timeoutMs(timeoutMs),
       m_uploadTimeoutMs(uploadTimeoutMs) {
     m_poll.setInterval(pollMs);
-    connect(&m_poll, &QTimer::timeout, this, [this] { queryStatus(); });
+    connect(&m_poll, &QTimer::timeout, this, [this] {
+        if (m_connected) queryStatus(); else handshake();
+    });
 }
 MoonrakerPrinterAgentImpl::~MoonrakerPrinterAgentImpl() { m_sink = {}; shutdown(); }
 
@@ -53,7 +55,12 @@ void MoonrakerPrinterAgentImpl::shutdown() {
 void MoonrakerPrinterAgentImpl::releaseDevice() {
     ++m_generation;
     m_poll.stop();
-    m_connected = m_queryPending = m_busy = m_uncertain = m_fileManager = false;
+    m_connected = m_queryPending = m_busy = m_fileManager = m_statusFresh = m_handshakePending = false;
+    m_startDispatched = false;
+    m_activeReply.clear();
+    m_activeCommand.clear();
+    m_activeFileName.clear();
+    m_currentFileName.clear();
     m_objects.clear();
     m_state.clear();
     const auto replies = m_replies;
@@ -110,16 +117,17 @@ QNetworkRequest MoonrakerPrinterAgentImpl::request(const QString& path) const {
     return req;
 }
 void MoonrakerPrinterAgentImpl::json(const QString& path, const QJsonObject& body,
-                                bool post, bool mutating, Completion done) {
+                                bool post, bool mutating, Completion done, uint64_t requestId) {
     auto req = request(path);
     req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     auto* reply = post ? m_network.post(req, QJsonDocument(body).toJson(QJsonDocument::Compact))
                        : m_network.get(req);
-    watch(reply, mutating, std::move(done));
+    watch(reply, mutating, std::move(done), 0, false, requestId);
 }
-void MoonrakerPrinterAgentImpl::watch(QNetworkReply* reply, bool mutating, Completion done, int timeoutMs, bool allowBareUpload) {
+void MoonrakerPrinterAgentImpl::watch(QNetworkReply* reply, bool mutating, Completion done, int timeoutMs, bool allowBareUpload, uint64_t requestId) {
     const auto generation = m_generation;
     m_replies.insert(reply);
+    if (requestId != 0) m_activeReply = reply;
     auto* deadline = new QTimer(reply);
     deadline->setSingleShot(true);
     deadline->start(timeoutMs > 0 ? timeoutMs : m_timeoutMs);
@@ -127,10 +135,11 @@ void MoonrakerPrinterAgentImpl::watch(QNetworkReply* reply, bool mutating, Compl
     connect(reply, &QIODevice::readyRead, reply, [reply] {
         if (reply->bytesAvailable() > 2 * 1024 * 1024) reply->abort();
     });
-    connect(reply, &QNetworkReply::finished, this, [this, reply, generation, mutating, allowBareUpload, done = std::move(done)] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, generation, mutating, allowBareUpload, requestId, done = std::move(done)] {
         m_replies.remove(reply);
         reply->deleteLater();
-        if (generation != m_generation) return;
+        if (m_activeReply == reply) m_activeReply.clear();
+        if (generation != m_generation || (requestId != 0 && requestId != m_activeRequestId)) return;
         Response response;
         response.code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         QJsonParseError parse;
@@ -159,19 +168,25 @@ void MoonrakerPrinterAgentImpl::watch(QNetworkReply* reply, bool mutating, Compl
 }
 void MoonrakerPrinterAgentImpl::connectionFailed(const QString& error, bool access) {
     ++m_generation;
-    m_connected = false;
-    m_uncertain |= m_busy;
-    m_busy = m_queryPending = false;
-    m_activeRequestId = 0;
-    m_poll.stop();
+    m_connected = m_statusFresh = m_queryPending = m_handshakePending = false;
+    m_state.clear();
+    // Retire the old request before aborting: its finished callback cannot lock a
+    // later submission. Recovery is read-only and keeps this selected session.
+    if (m_activeRequestId != 0) {
+        Response lost; lost.unknown = true; lost.error = error;
+        finishCommand(m_activeCommand, m_activeRequestId, lost, m_activeFileName);
+    }
     const auto replies = m_replies;
     for (auto* reply : replies) reply->abort();
     updateCapabilities();
     Event event; event.type = EventType::ConnectionChanged;
     event.error = error.toStdString(); event.accessRequired = access;
     publish(event);
+    if (!m_device.deviceId.empty()) m_poll.start();
 }
 void MoonrakerPrinterAgentImpl::handshake() {
+    if (m_handshakePending || m_device.deviceId.empty()) return;
+    m_handshakePending = true;
     json("/server/info", {}, false, false, [this](const Response& response) {
         const auto info = response.result.toObject();
         if (!response.ok || !info.value("klippy_connected").toBool()
@@ -191,6 +206,7 @@ void MoonrakerPrinterAgentImpl::handshake() {
                 if (!response.ok || !objects.isArray()) {
                     connectionFailed(response.ok ? "Invalid printer object list" : response.error); return;
                 }
+                m_objects.clear();
                 for (const auto& value : objects.toArray()) m_objects.insert(value.toString());
                 if (!m_objects.contains("webhooks")) {
                     connectionFailed("Klipper readiness status is unavailable"); return;
@@ -201,10 +217,10 @@ void MoonrakerPrinterAgentImpl::handshake() {
     });
 }
 void MoonrakerPrinterAgentImpl::updateCapabilities() {
-    m_caps = {false, false, m_connected && m_fileManager,
-        m_connected && m_fileManager && m_objects.contains("virtual_sdcard") && m_objects.contains("print_stats"),
-        m_connected && m_objects.contains("pause_resume") && m_objects.contains("print_stats"),
-        m_connected && m_objects.contains("pause_resume") && m_objects.contains("print_stats"),
+    m_caps = {false, false, m_connected && m_statusFresh && m_fileManager,
+        m_connected && m_statusFresh && m_fileManager && m_objects.contains("virtual_sdcard") && m_objects.contains("print_stats"),
+        m_connected && m_statusFresh && m_objects.contains("pause_resume") && m_objects.contains("print_stats"),
+        m_connected && m_statusFresh && m_objects.contains("pause_resume") && m_objects.contains("print_stats"),
         false, false, false};
     Event event; event.type = EventType::CapabilitiesChanged; publish(event);
 }
@@ -214,11 +230,13 @@ std::vector<std::string> MoonrakerPrinterAgentImpl::supportedPrintFormats() cons
 void MoonrakerPrinterAgentImpl::queryStatus(bool initial) {
     if (m_queryPending || (!initial && !m_connected)) return;
     m_queryPending = true;
+    const auto queryId = ++m_querySerial;
     QJsonObject objects;
     for (const auto* name : {"webhooks", "print_stats", "virtual_sdcard", "pause_resume", "extruder", "heater_bed"})
         if (m_objects.contains(QString::fromLatin1(name))) objects.insert(QString::fromLatin1(name), QJsonValue::Null);
-    json("/printer/objects/query", {{"objects", objects}}, true, false, [this, initial](const Response& response) {
+    json("/printer/objects/query", {{"objects", objects}}, true, false, [this, initial, queryId](const Response& response) {
         m_queryPending = false;
+        if (queryId <= m_statusFence) { queryStatus(initial); return; }
         const auto status = response.result.toObject().value("status").toObject();
         if (!response.ok || status.value("webhooks").toObject().value("state").toString() != "ready") {
             connectionFailed(response.ok ? "Klipper is not ready or returned invalid status" : response.error); return;
@@ -228,12 +246,18 @@ void MoonrakerPrinterAgentImpl::queryStatus(bool initial) {
         if (m_objects.contains("print_stats") && !QStringList{"standby", "printing", "paused", "complete", "cancelled", "error"}.contains(state)) {
             connectionFailed("Invalid print status"); return;
         }
+        const bool restoreReadiness = !m_statusFresh;
         m_state = state;
-        if (initial) {
+        m_statusFresh = true;
+        m_handshakePending = false;
+        m_currentFileName = stats.value("filename").toString();
+        if (initial || !m_connected) {
             m_connected = true;
             updateCapabilities();
             Event event; event.type = EventType::ConnectionChanged; event.success = true; publish(event);
             m_poll.start();
+        } else if (restoreReadiness) {
+            updateCapabilities();
         }
         Event event; event.type = EventType::StatusChanged;
         auto& out = event.status;
@@ -253,6 +277,27 @@ void MoonrakerPrinterAgentImpl::queryStatus(bool initial) {
         out.targetNozzleTemperature = extruder.value("target").toDouble();
         out.bedTemperature = bed.value("temperature").toDouble();
         out.targetBedTemperature = bed.value("target").toDouble();
+        if (state == "error") event.error = stats.value("message").toString().toStdString();
+        // Device state, not an HTTP acknowledgement, closes a stop. A different
+        // task is displayed as that task; it must never trigger another cancel.
+        if (m_activeCommand == "send" && m_startDispatched && m_activeRequestId != 0
+            && !m_activeFileName.isEmpty() && m_activeFileName == m_currentFileName
+            && state != "standby") {
+            const auto reply = m_activeReply;
+            Response observed; observed.ok = true;
+            finishCommand("send", m_activeRequestId, observed, m_activeFileName);
+            if (reply) reply->abort();
+        }
+        if (m_activeCommand == "cancel" && m_activeRequestId != 0
+            && (state == "cancelled" || state == "complete" || state == "error"
+                || (state == "standby" && status.value("virtual_sdcard").toObject().value("is_active").isBool()
+                    && !status.value("virtual_sdcard").toObject().value("is_active").toBool())
+                || (!m_activeFileName.isEmpty() && !m_currentFileName.isEmpty() && m_activeFileName != m_currentFileName))) {
+            const auto reply = m_activeReply;
+            Response observed; observed.ok = true;
+            finishCommand("cancel", m_activeRequestId, observed, m_activeFileName);
+            if (reply) reply->abort();
+        }
         publish(event);
     });
 }
@@ -263,17 +308,38 @@ void MoonrakerPrinterAgentImpl::rejectCommand(const std::string& command, uint64
 }
 void MoonrakerPrinterAgentImpl::finishCommand(const std::string& command, uint64_t id,
                                          const Response& response, const QString& fileName) {
-    if (id == m_activeRequestId) { m_busy = false; m_activeRequestId = 0; }
-    m_uncertain |= response.unknown;
+    if (id == 0 || id != m_activeRequestId) return;
+    const auto completedCommand = command; // May refer to m_activeCommand.
+    m_busy = false; m_activeRequestId = 0; m_activeReply.clear();
+    m_activeCommand.clear(); m_startDispatched = false;
+    if (response.unknown) {
+        m_statusFresh = false;
+        m_statusFence = m_querySerial;
+        updateCapabilities();
+    }
     Event event; event.type = EventType::JobCommandFinished;
-    event.requestId = id; event.command = command; event.success = response.ok;
+    event.requestId = id; event.command = completedCommand; event.success = response.ok;
+    event.cancelled = response.cancelled;
     event.outcomeUnknown = response.unknown; event.error = response.error.toStdString();
     event.status.fileName = fileName.toStdString();
     publish(event);
 }
+bool MoonrakerPrinterAgentImpl::cancelSubmission(uint64_t id) {
+    if (id == 0 || id != m_activeRequestId || m_activeCommand != "send" || m_startDispatched) return false;
+    const auto reply = m_activeReply;
+    Response stopped; stopped.cancelled = true;
+    finishCommand("send", id, stopped, m_activeFileName);
+    if (reply) reply->abort();
+    return true;
+}
+bool MoonrakerPrinterAgentImpl::refreshStatus() {
+    if (m_device.deviceId.empty()) return false;
+    if (m_connected) queryStatus(); else handshake();
+    return true;
+}
 void MoonrakerPrinterAgentImpl::submitJob(const PrintJob& job) {
     Response invalid; invalid.error = "Moonraker submission is unavailable or unsupported";
-    if (job.requestId == 0 || m_busy || m_uncertain || !m_caps.upload || (job.printNow && !m_caps.start)
+    if (job.requestId == 0 || m_busy || !m_statusFresh || !m_caps.upload || (job.printNow && !m_caps.start)
         || m_state == "printing" || m_state == "paused" || job.formatId != "gcode"
         || job.levelingBeforePrint || job.flowCalibration || job.firstLayerInspection
         || job.timeLapseVideo || job.useMaterialStation) {
@@ -283,15 +349,18 @@ void MoonrakerPrinterAgentImpl::submitJob(const PrintJob& job) {
     auto snapshot = std::make_shared<QTemporaryFile>();
     if (!input->open(QIODevice::ReadOnly) || !QFileInfo(*input).isFile() || input->size() <= 0
         || input->peek(4).startsWith("PK\x03\x04") || !snapshot->open()) {
-        invalid.error = "Cannot snapshot the G-code file"; finishCommand("send", job.requestId, invalid); return;
+        rejectCommand("send", job.requestId, "Cannot snapshot the G-code file"); return;
     }
     m_busy = true;
     m_activeRequestId = job.requestId;
+    m_activeCommand = "send";
+    m_activeFileName.clear();
+    m_startDispatched = false;
     snapshotChunk(job, input, snapshot, m_generation, input->size(), QFileInfo(*input).lastModified());
 }
 void MoonrakerPrinterAgentImpl::snapshotChunk(PrintJob job, std::shared_ptr<QFile> input,
         std::shared_ptr<QTemporaryFile> snapshot, uint64_t generation, qint64 size, QDateTime modified) {
-    if (generation != m_generation) return;
+    if (generation != m_generation || job.requestId != m_activeRequestId) return;
     Response failed; failed.error = "Cannot snapshot the G-code file, or the source changed";
     if (!input->atEnd()) {
         const auto chunk = input->read(1024 * 1024);
@@ -312,7 +381,30 @@ void MoonrakerPrinterAgentImpl::snapshotChunk(PrintJob job, std::shared_ptr<QFil
     upload(job, snapshot);
 }
 void MoonrakerPrinterAgentImpl::upload(PrintJob job, std::shared_ptr<QTemporaryFile> snapshot) {
-    const QString name = "gplatform-" + QUuid::createUuid().toString(QUuid::WithoutBraces) + ".gcode";
+    if (job.requestId != m_activeRequestId) return;
+    const QByteArray requestedBytes = QByteArray::fromStdString(job.destinationName);
+    QString stem = QString::fromUtf8(requestedBytes).trimmed();
+    bool invalid = stem.startsWith('.') || stem.toUtf8() != requestedBytes.trimmed();
+    for (const auto ch : stem)
+        invalid |= ch.unicode() < 32 || ch.unicode() == 127 || QStringLiteral("\\/:*?\"<>|").contains(ch);
+    if (invalid) {
+        Response failed; failed.error = "Invalid Moonraker destination filename";
+        finishCommand("send", job.requestId, failed); return;
+    }
+    if (stem.endsWith(".gcode", Qt::CaseInsensitive)) stem.chop(6);
+    if (stem.isEmpty()) stem = "print";
+    const QString suffix = "-" + QUuid::createUuid().toString(QUuid::WithoutBraces) + ".gcode";
+    const auto bytes = stem.toUtf8();
+    qsizetype keep = 255 - suffix.toUtf8().size();
+    if (bytes.size() > keep) {
+        while (keep > 0 && (static_cast<unsigned char>(bytes[keep]) & 0xc0) == 0x80) --keep;
+        stem = QString::fromUtf8(bytes.constData(), keep);
+    }
+    const QString name = stem + suffix;
+    m_activeFileName = name;
+    // Announce the immutable remote identity even if a later upload/start reply is lost.
+    Event prepared; prepared.type = EventType::TransferProgress; prepared.requestId = job.requestId;
+    prepared.status.fileName = name.toStdString(); prepared.progress = 0; publish(prepared);
     auto* multipart = new QHttpMultiPart(QHttpMultiPart::FormDataType);
     QHttpPart root;
     root.setHeader(QNetworkRequest::ContentDispositionHeader, "form-data; name=\"root\"");
@@ -321,7 +413,7 @@ void MoonrakerPrinterAgentImpl::upload(PrintJob job, std::shared_ptr<QTemporaryF
     // Omission also avoids treating a nonempty string (even "false") as truthy.
     QHttpPart file;
     file.setHeader(QNetworkRequest::ContentDispositionHeader,
-                   QStringLiteral("form-data; name=\"file\"; filename=\"%1\"").arg(name));
+                   QByteArray("form-data; name=\"file\"; filename=\"") + name.toUtf8() + '"');
     file.setHeader(QNetworkRequest::ContentTypeHeader, "application/octet-stream");
     file.setBodyDevice(snapshot.get());
     multipart->append(file);
@@ -331,7 +423,7 @@ void MoonrakerPrinterAgentImpl::upload(PrintJob job, std::shared_ptr<QTemporaryF
     multipart->setParent(reply); // Snapshot stays alive through completion, including aborts.
     const auto generation = m_generation;
     connect(reply, &QNetworkReply::uploadProgress, this, [this, generation, id = job.requestId](qint64 sent, qint64 total) {
-        if (generation != m_generation || total <= 0) return;
+        if (generation != m_generation || id != m_activeRequestId || total <= 0) return;
         Event event; event.type = EventType::TransferProgress; event.requestId = id;
         event.progress = double(sent) / double(total); publish(event);
     });
@@ -345,7 +437,9 @@ void MoonrakerPrinterAgentImpl::upload(PrintJob job, std::shared_ptr<QTemporaryF
             response.error = "Upload outcome is unexpected. Check the printer before retrying.";
         }
         if (!response.ok || !job.printNow) {
-            finishCommand("send", job.requestId, response, name); return;
+            finishCommand("send", job.requestId, response, name);
+            if (response.unknown) queryStatus();
+            return;
         }
         // Refresh authoritative readiness AFTER upload. A previous idle status is
         // not permission to start after another client starts a job or Klipper fails.
@@ -362,6 +456,12 @@ void MoonrakerPrinterAgentImpl::upload(PrintJob job, std::shared_ptr<QTemporaryF
                 finishCommand("send", id, stopped, name);
                 return;
             }
+            if (id != m_activeRequestId) return;
+            m_startDispatched = true;
+            m_statusFresh = false; m_statusFence = m_querySerial;
+            Event starting; starting.type = EventType::TransferProgress; starting.requestId = id;
+            starting.command = "start"; starting.status.fileName = name.toStdString(); starting.progress = 1;
+            publish(starting);
             // Never retry: a lost response may already have started physical motion.
             json("/printer/print/start", {{"filename", name}}, true, true,
                  [this, id, name](Response started) {
@@ -371,15 +471,15 @@ void MoonrakerPrinterAgentImpl::upload(PrintJob job, std::shared_ptr<QTemporaryF
                 }
                 finishCommand("send", id, started, name);
                 queryStatus();
-            });
-        });
-    }, m_uploadTimeoutMs, true);
+            }, id);
+        }, job.requestId);
+    }, m_uploadTimeoutMs, true, job.requestId);
 }
 void MoonrakerPrinterAgentImpl::controlJob(const std::string& action, uint64_t requestId) {
     const bool resume = action == "continue";
     const bool pause = action == "pause";
     const bool cancel = action == "cancel";
-    if (requestId == 0 || m_busy || m_uncertain || !m_connected || (!(resume || pause || cancel))
+    if (requestId == 0 || m_busy || !m_statusFresh || !m_connected || (!(resume || pause || cancel))
         || ((resume || pause) && !m_caps.pauseResume) || (cancel && !m_caps.cancel)
         || (pause && m_state != "printing") || (resume && m_state != "paused")
         || (cancel && m_state != "printing" && m_state != "paused")) {
@@ -388,6 +488,9 @@ void MoonrakerPrinterAgentImpl::controlJob(const std::string& action, uint64_t r
     }
     m_busy = true;
     m_activeRequestId = requestId;
+    m_activeCommand = action;
+    m_activeFileName = m_currentFileName;
+    m_statusFresh = false; m_statusFence = m_querySerial;
     const QString command = resume ? "resume" : QString::fromStdString(action);
     json("/printer/print/" + command, {}, true, true, [this, action, requestId](Response response) {
         if (response.ok && response.result.toString() != "ok") {
@@ -395,7 +498,7 @@ void MoonrakerPrinterAgentImpl::controlJob(const std::string& action, uint64_t r
         }
         finishCommand(action, requestId, response);
         queryStatus();
-    });
+    }, requestId);
 }
 void MoonrakerPrinterAgentImpl::setCameraStreamEnabled(bool enabled) {
     Event event; event.type = EventType::CameraStreamCommandFinished;
@@ -431,8 +534,9 @@ void MoonrakerPrinterAgent::provideDeviceAccess(const std::string& credential) {
 void MoonrakerPrinterAgent::releaseDevice() { m_impl->releaseDevice(); }
 std::vector<std::string> MoonrakerPrinterAgent::supportedPrintFormats() const { return m_impl->supportedPrintFormats(); }
 PrinterCore::Capabilities MoonrakerPrinterAgent::capabilities() const { return m_impl->capabilities(); }
-void MoonrakerPrinterAgent::acknowledgeUnknownOutcome() { m_impl->acknowledgeUnknownOutcome(); }
 void MoonrakerPrinterAgent::submitJob(const PrinterCore::PrintJob& job) { m_impl->submitJob(job); }
+bool MoonrakerPrinterAgent::cancelSubmission(uint64_t id) { return m_impl->cancelSubmission(id); }
+bool MoonrakerPrinterAgent::refreshStatus() { return m_impl->refreshStatus(); }
 void MoonrakerPrinterAgent::controlJob(const std::string& action, uint64_t id) { m_impl->controlJob(action, id); }
 void MoonrakerPrinterAgent::setCameraStreamEnabled(bool enabled) { m_impl->setCameraStreamEnabled(enabled); }
 } // namespace GPlatform::Printer

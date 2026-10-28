@@ -50,6 +50,15 @@ REGISTER_INTERACTION_ACTION(
 
 namespace {
 
+QString modelOutputTitle(QString name) {
+    name = name.trimmed();
+    for (const auto* suffix : {".stl", ".obj", ".3mf", ".amf", ".ply", ".off", ".step", ".stp", ".glb", ".gltf"}) {
+        const auto extension = QString::fromLatin1(suffix);
+        if (name.endsWith(extension, Qt::CaseInsensitive)) { name.chop(extension.size()); break; }
+    }
+    return name;
+}
+
 vtkSmartPointer<vtkPolyData> vtk_poly_data_from_indexed_mesh(
     const IndexedTriangleMesh& mesh) {
     if (!mesh.hasValidTopology()) return {};
@@ -381,6 +390,10 @@ bool SlicingHandler::resolveResliceTargets(
     }
 
     m_sliceSourceScope = output->sourceScope;
+    if (m_sliceSourceScope == GPlatform::ToolpathPreviewSourceScope::Calibration) {
+        if (errorMessage) *errorMessage = QStringLiteral("Calibration must be prepared and sliced through its native calibration task");
+        return false;
+    }
     if (m_sliceSourceScope ==
         GPlatform::ToolpathPreviewSourceScope::ImportedGCode) {
         if (errorMessage) {
@@ -469,7 +482,7 @@ bool SlicingHandler::prepareModelForSlice(const QString& modelId, QString* error
         return false;
     }
 
-    m_modelName = QString::fromStdString(dbObj->getDisplayName());
+    m_modelName = modelOutputTitle(QString::fromStdString(dbObj->getDisplayName()));
     if (m_modelName.isEmpty()) {
         m_modelName = QString("Model_%1").arg(m_modelId);
     }
@@ -639,14 +652,9 @@ bool SlicingHandler::startSliceTaskForPlate(const QStringList& modelIds, QString
     m_currentModelInstance =
         std::dynamic_pointer_cast<ModelInstanceDB>(firstModel);
     m_modelId = QString::fromStdString(validModelIds.front().toString());
-    QString firstModelName = QString::fromStdString(firstModel->getDisplayName()).trimmed();
+    QString firstModelName = modelOutputTitle(QString::fromStdString(firstModel->getDisplayName()));
     if (firstModelName.isEmpty()) {
         firstModelName = QStringLiteral("Model_%1").arg(m_modelId);
-    } else {
-        const QString baseName = QFileInfo(firstModelName).completeBaseName().trimmed();
-        if (!baseName.isEmpty()) {
-            firstModelName = baseName;
-        }
     }
     m_modelName = validModelIds.size() == 1
         ? firstModelName
@@ -922,6 +930,7 @@ void SlicingHandler::onTaskCompleted() {
     }
     m_state = State::Ready;
 
+    std::optional<GPlatform::Notifications::Notification> completionNotification;
     // 只处理切片模式（导入由 GCodeImportHandler 处理）
     if (m_mode == Mode::Slice) {
         if (m_success) {
@@ -930,6 +939,13 @@ void SlicingHandler::onTaskCompleted() {
             catch (const std::exception& error) { m_success = false; m_errorMessage = QString::fromUtf8(error.what()); }
             catch (...) { m_success = false; m_errorMessage = QStringLiteral("Unexpected toolpath publication failure"); }
         }
+
+        // Snapshot the result now; publish only after this invocation's cleanup.
+        completionNotification = GPlatform::Notifications::Notification{
+            m_success ? tr("切片完成") : tr("切片失败"),
+            m_success ? tr("切片结果已生成，可返回程序查看。") : m_errorMessage,
+            m_success ? GPlatform::Notifications::Severity::Success
+                      : GPlatform::Notifications::Severity::Error};
 
         // Successful output acceptance is independent from preview availability.
         if (m_success) {
@@ -977,10 +993,6 @@ void SlicingHandler::onTaskCompleted() {
             TaskStateNotifier::instance()->endTask(m_taskId);
             m_taskId.clear();
         }
-        if (!m_success) {
-            NotificationManager::instance()->showSliceConfigurationError(
-                QString(), m_errorMessage, QString());
-        }
 
         m_sliceAllMode = false;
         m_useManualSupportMeshForSlice = false;
@@ -991,6 +1003,10 @@ void SlicingHandler::onTaskCompleted() {
     // 不自动退出 - 保持 Handler 活跃
     LOG_INFO("SlicingHandler: Task completed in environment '{}'",
              m_success ? "preview" : "normal");
+    if (completionNotification) {
+        NotificationManager::instance()->notify(completionNotification->title,
+            completionNotification->body, completionNotification->severity);
+    }
 }
 
 void SlicingHandler::cleanupSlicingEnvironment() {

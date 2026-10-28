@@ -9,6 +9,34 @@ ScrollablePage {
 
     title: qsTr("Settings")
     columnSpacing: 24
+    Component.onCompleted: NotificationManager.refreshDesktopStatus()
+
+    GroupBox {
+        title: qsTr("桌面通知")
+        Layout.fillWidth: true
+        ColumnLayout {
+            anchors.fill: parent
+            Switch {
+                objectName: "settings.desktopNotifications"
+                text: qsTr("后台桌面通知")
+                checked: NotificationManager.desktopNotificationsEnabled
+                onClicked: NotificationManager.desktopNotificationsEnabled = checked
+            }
+            Label {
+                text: qsTr("在程序最小化或切到后台时，提醒切片完成或失败。是否显示由系统通知设置决定。")
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+            Label {
+                text: NotificationManager.desktopAvailable
+                      ? qsTr("系统托盘支持通知") : qsTr("当前桌面通知不可用")
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                opacity: 0.7
+            }
+        }
+    }
+
 
     Dialog {
         id: dialog_restart

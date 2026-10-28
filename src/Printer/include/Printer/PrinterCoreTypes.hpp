@@ -67,6 +67,8 @@ struct Capabilities {
     bool camera{false};
     bool vendorOptions{false};
     bool requiresJobId{false};
+    bool cancelSubmission{false};
+    bool automaticStatusRecovery{false};
 };
 
 enum class EventType {
@@ -99,6 +101,7 @@ struct Event {
     std::vector<Device> devices;
     Status status;
     double progress{0.0};
+    bool cancelled{false}; // The local submission was stopped before dispatching print/start.
 };
 
 } // namespace GPlatform::PrinterCore

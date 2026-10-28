@@ -8,6 +8,8 @@ add_library(BaseUI STATIC
     src/BaseUIRegistration.cpp
     src/NotificationManager.cpp
     src/TaskStateNotifier.cpp
+    include/Notifications/NotificationTypes.hpp
+    include/Notifications/IDesktopNotificationBackend.hpp
 )
 add_library(GPlatform::BaseUI ALIAS BaseUI)
 

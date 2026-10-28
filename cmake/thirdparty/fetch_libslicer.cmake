@@ -144,11 +144,15 @@ file(GLOB_RECURSE _gplatform_libslicer_inputs
     "${_gplatform_libslicer_source_dir}/include/*.h"
     "${_gplatform_libslicer_source_dir}/include/*.hpp"
     "${_gplatform_libslicer_source_dir}/resources/profiles/*.json"
+    "${_gplatform_libslicer_source_dir}/resources/calib/*"
+    "${_gplatform_libslicer_source_dir}/resources/handy_models/*.drc"
     "${_gplatform_libslicer_source_dir}/src/*.c"
     "${_gplatform_libslicer_source_dir}/src/*.cc"
     "${_gplatform_libslicer_source_dir}/src/*.cpp"
     "${_gplatform_libslicer_source_dir}/src/*.h"
     "${_gplatform_libslicer_source_dir}/src/*.hpp")
+list(APPEND _gplatform_libslicer_inputs
+    "${_gplatform_libslicer_source_dir}/src/libslicer_api/orca/PlaterCalibration.inc")
 set_property(DIRECTORY APPEND PROPERTY
     CMAKE_CONFIGURE_DEPENDS ${_gplatform_libslicer_inputs})
 
@@ -175,6 +179,13 @@ else()
     # Clear previous host-provided discovery results in the persistent child
     # cache. OpenSSL can discover Perl itself when a source build needs it.
     list(APPEND _gplatform_libslicer_configure_args "-DOPENSSL_PERL=" "-DPERL_EXECUTABLE=")
+endif()
+
+if(APPLE AND NOT CMAKE_OSX_ARCHITECTURES)
+    # Native macOS builds may leave this empty. OpenSSL's Configure target in
+    # the child project requires an explicit architecture.
+    list(APPEND _gplatform_libslicer_configure_args
+        "-DCMAKE_OSX_ARCHITECTURES=${_gplatform_libslicer_arch}")
 endif()
 
 foreach(_cache_name

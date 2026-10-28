@@ -33,6 +33,25 @@
               ]
             },
             {
+              "text": "Calibration", "isMenu": true,
+              "displayMode": "TextOnly",
+              "items": [
+                {"text": "温度…", "actionCode": "calibration.temperature", "enabled": true},
+                {"text": "最大体积流量…", "actionCode": "calibration.volumetric", "enabled": true},
+                {"text": "压力提前…", "actionCode": "calibration.pa", "enabled": true},
+                {"text": "流量比例…", "actionCode": "calibration.flow", "enabled": true},
+                {"text": "回抽…", "actionCode": "calibration.retraction", "enabled": true},
+                {"text": "转角…", "actionCode": "calibration.cornering", "enabled": true},
+                {"text": "输入整形", "isMenu": true, "items": [
+                  {"text": "频率…", "actionCode": "calibration.frequency", "enabled": true},
+                  {"text": "阻尼…", "actionCode": "calibration.damping", "enabled": true}
+                ]},
+                {"text": "VFA…", "actionCode": "calibration.vfa", "enabled": true},
+                {"separator": true},
+                {"text": "公差测试模型", "actionCode": "calibration.tolerance", "enabled": true}
+              ]
+            },
+            {
               "text": "Help", "isMenu": true,
               "iconSource": "graph_Help", "displayMode": "TextBesideIcon",
               "items": [

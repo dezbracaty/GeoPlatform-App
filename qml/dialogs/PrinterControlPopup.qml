@@ -289,7 +289,8 @@ AppPopup {
                             height: 58
                             highlighted: PrinterService.selectedDeviceId === deviceId
                             enabled: control.selectionEnabled && !control.preparing
-                                     && !PrinterService.transferBusy && !control.activeJob
+                                     && (!PrinterService.transferBusy || (!PrinterService.connected && PrinterService.canConfigureBackend))
+                                     && !control.activeJob
                             onClicked: {
                                 control.accessCredential = ""
                                 PrinterService.selectDevice(deviceId)
@@ -638,20 +639,22 @@ AppPopup {
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 7
-                    visible: PrinterService.transferState !== PrinterService.TransferIdle
-                             || PrinterService.commandOutcomeUnknown
+                    visible: !PrinterService.jobNoticeDismissed
+                             && (PrinterService.transferState !== PrinterService.TransferIdle
+                                 || PrinterService.commandOutcomeUnknown)
                     Label {
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                         text: PrinterService.commandOutcomeUnknown || PrinterService.transferState === PrinterService.TransferUnknown
-                              ? qsTr("The operation may already have executed. Check the printer before acknowledging. Do not retry automatically.")
+                              ? qsTr("Reading the current printer state. Commands are not retried automatically.")
                               : PrinterService.transferState === PrinterService.TransferUploading
                                 ? qsTr("Uploading: %1%").arg(Math.round(PrinterService.transferProgress * 100))
                               : PrinterService.transferState === PrinterService.TransferStarting
                                 ? qsTr("Waiting for the printer to begin")
                               : PrinterService.transferState === PrinterService.TransferUploaded
                                 ? qsTr("Upload completed")
-                                : qsTr("Transfer failed")
+                              : PrinterService.transferState === PrinterService.TransferCancelled
+                                ? qsTr("Upload cancelled") : qsTr("Transfer failed")
                     }
                     Label {
                         Layout.fillWidth: true
@@ -669,13 +672,23 @@ AppPopup {
                         indeterminate: PrinterService.transferState === PrinterService.TransferStarting
                     }
                     Button {
-                        objectName: "printerTransferAcknowledgeButton"
+                        objectName: "printerTransferCancelButton"
+                        visible: PrinterService.canCancelSubmission
+                        text: qsTr("Cancel upload")
+                        onClicked: PrinterService.cancelSubmission()
+                    }
+                    Button {
+                        objectName: "printerTransferStatusButton"
                         visible: PrinterService.commandOutcomeUnknown || PrinterService.transferState === PrinterService.TransferUnknown
                                  || PrinterService.transferState === PrinterService.TransferUploaded
                                  || PrinterService.transferState === PrinterService.TransferFailed
+                                 || PrinterService.transferState === PrinterService.TransferCancelled
                         text: PrinterService.commandOutcomeUnknown || PrinterService.transferState === PrinterService.TransferUnknown
-                              ? qsTr("I checked the printer. Acknowledge.") : qsTr("Dismiss")
-                        onClicked: PrinterService.dismissJobStatus()
+                              ? (PrinterService.canRefreshStatus ? qsTr("Retry status") : qsTr("Waiting for printer state")) : qsTr("Dismiss")
+                        enabled: !(PrinterService.commandOutcomeUnknown || PrinterService.transferState === PrinterService.TransferUnknown)
+                                 || PrinterService.canRefreshStatus
+                        onClicked: (PrinterService.commandOutcomeUnknown || PrinterService.transferState === PrinterService.TransferUnknown)
+                                   ? PrinterService.refreshPrinterStatus() : PrinterService.dismissJobStatus()
                     }
                 }
 
@@ -708,6 +721,14 @@ AppPopup {
                         to: 100
                         value: PrinterService.printProgress
                     }
+                }
+
+                Label {
+                    objectName: "printerControlJobNotice"
+                    Layout.fillWidth: true
+                    visible: !PrinterService.jobNoticeDismissed && PrinterService.jobError.length > 0
+                    text: PrinterService.jobError
+                    wrapMode: Text.Wrap
                 }
 
                 RowLayout {
@@ -792,6 +813,8 @@ AppPopup {
         case "printing": return qsTr("Printing")
         case "pausing": return qsTr("Pausing")
         case "pause": return qsTr("Paused")
+        case "cancel": return qsTr("Cancelled")
+        case "unavailable": return qsTr("State unavailable")
         case "canceling": return qsTr("Canceling")
         case "completed": return qsTr("Completed")
         default: return qsTr("Online")

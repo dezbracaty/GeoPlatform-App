@@ -1,4 +1,5 @@
 #include "BaseUIRegistration.hpp"
+#include "NotificationManager.h"
 
 namespace GPlatform::BaseUI {
 
@@ -8,6 +9,7 @@ ModuleRegistrationList& moduleRegistrations() {
 }
 
 void registerModule() {
+    NotificationManager::initialize(*QCoreApplication::instance());
     moduleRegistrations().execute();
 }
 

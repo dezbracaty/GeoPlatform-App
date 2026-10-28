@@ -113,6 +113,13 @@ function(_gplatform_find_filament_library_dir OUTPUT_VARIABLE)
         endif()
     endforeach()
 
+    # A desktop archive may contain only arm64. Never use that library when
+    # x86_64 was requested; the linker would silently discard it.
+    if(APPLE)
+        set(${OUTPUT_VARIABLE} "" PARENT_SCOPE)
+        return()
+    endif()
+
     file(GLOB _core_libraries
         "${FILAMENT_INSTALL_DIR}/lib/*/${CMAKE_STATIC_LIBRARY_PREFIX}filament${CMAKE_STATIC_LIBRARY_SUFFIX}"
         "${FILAMENT_INSTALL_DIR}/lib/${CMAKE_STATIC_LIBRARY_PREFIX}filament${CMAKE_STATIC_LIBRARY_SUFFIX}")
@@ -124,6 +131,60 @@ function(_gplatform_find_filament_library_dir OUTPUT_VARIABLE)
         set(${OUTPUT_VARIABLE} "" PARENT_SCOPE)
     endif()
 endfunction()
+
+# Filament 1.75's macOS binary distribution contains arm64 only. Build the
+# same release for Intel rather than changing versions or disabling a backend.
+function(_gplatform_build_filament_macos_intel)
+    if(NOT FILAMENT_VERSION STREQUAL "1.75.0")
+        message(FATAL_ERROR "Register a verified source archive for Filament ${FILAMENT_VERSION}/x86_64")
+    endif()
+    set(_source_archive "${FILAMENT_CACHE_DIR}/filament-v${FILAMENT_VERSION}-source.tar.gz")
+    set(_source_sha "f16dd10b061cc6dc69e228cf74fe6342d74a3055b992f0578c25aed4bc9b3b73")
+    if(NOT EXISTS "${_source_archive}")
+        file(DOWNLOAD
+            "https://codeload.github.com/google/filament/tar.gz/refs/tags/v${FILAMENT_VERSION}"
+            "${_source_archive}" EXPECTED_HASH "SHA256=${_source_sha}"
+            STATUS _download_status)
+        list(GET _download_status 0 _download_code)
+        if(NOT _download_code EQUAL 0)
+            message(FATAL_ERROR "Filament source download failed: ${_download_status}")
+        endif()
+    endif()
+    file(SHA256 "${_source_archive}" _actual_sha)
+    if(NOT _actual_sha STREQUAL _source_sha)
+        message(FATAL_ERROR "Filament source archive checksum mismatch: ${_source_archive}")
+    endif()
+    if(NOT EXISTS "${FILAMENT_SOURCE_DIR}/CMakeLists.txt")
+        file(ARCHIVE_EXTRACT INPUT "${_source_archive}" DESTINATION "${FILAMENT_CACHE_DIR}")
+        file(RENAME "${FILAMENT_CACHE_DIR}/filament-${FILAMENT_VERSION}" "${FILAMENT_SOURCE_DIR}")
+    endif()
+    if(COMMAND gplatform_check_cache_contract)
+        gplatform_check_cache_contract("${FILAMENT_BUILD_DIR}")
+    endif()
+    message(STATUS "Filament: building matching x86_64 libraries and tools from verified source")
+    string(TOUPPER "${FILAMENT_ACTUAL_BUILD_TYPE}" _objcxx_config)
+    # New SDKs deprecate PVRTC Metal enums used by this release. Preserve the
+    # diagnostics without promoting this one category to an upstream -Werror.
+    set(_objcxx_flags "${CMAKE_CXX_FLAGS_${_objcxx_config}} -Wno-error=deprecated-declarations")
+    execute_process(COMMAND "${CMAKE_COMMAND}"
+        -S "${FILAMENT_SOURCE_DIR}" -B "${FILAMENT_BUILD_DIR}"
+        -G "${CMAKE_GENERATOR}" ${FETCH_CACHE_FORWARD_ARGS}
+        "-DCMAKE_BUILD_TYPE=${FILAMENT_ACTUAL_BUILD_TYPE}"
+        "-DCMAKE_INSTALL_PREFIX=${FILAMENT_INSTALL_DIR}"
+        "-DCMAKE_OBJCXX_FLAGS_${_objcxx_config}=${_objcxx_flags}"
+        -DFILAMENT_SKIP_SAMPLES=ON -DFILAMENT_SKIP_SDL2=ON
+        -DFILAMENT_BUILD_TESTING=OFF
+        COMMAND_ERROR_IS_FATAL ANY)
+    execute_process(COMMAND "${CMAKE_COMMAND}" --build "${FILAMENT_BUILD_DIR}" --target install
+        COMMAND_ERROR_IS_FATAL ANY)
+endfunction()
+
+if(APPLE AND CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND FETCH_CACHE_ARCH STREQUAL "x86_64")
+    file(LOCK "${FILAMENT_ARCH_DIR}/build.lock" GUARD FILE TIMEOUT 3600)
+    if(EXISTS "${FILAMENT_BUILD_DIR}/CMakeCache.txt" AND COMMAND gplatform_check_cache_contract)
+        gplatform_check_cache_contract("${FILAMENT_BUILD_DIR}")
+    endif()
+endif()
 
 _gplatform_find_filament_library_dir(FILAMENT_LIBRARY_DIR)
 set(HAS_INSTALL FALSE)
@@ -218,10 +279,18 @@ if(FILAMENT_STATUS STREQUAL "ZIP_ONLY")
     file(REMOVE_RECURSE "${FILAMENT_STAGING_DIR}")
 
     _gplatform_find_filament_library_dir(FILAMENT_LIBRARY_DIR)
-    if(NOT EXISTS "${FILAMENT_INSTALL_DIR}/include/filament/Engine.h" OR
-       NOT FILAMENT_LIBRARY_DIR)
+    if(NOT EXISTS "${FILAMENT_INSTALL_DIR}/include/filament/Engine.h")
         message(FATAL_ERROR "Filament platform package installation is incomplete")
     endif()
+endif()
+
+if(NOT FILAMENT_LIBRARY_DIR AND APPLE AND CMAKE_SYSTEM_NAME STREQUAL "Darwin"
+   AND FETCH_CACHE_ARCH STREQUAL "x86_64")
+    _gplatform_build_filament_macos_intel()
+    _gplatform_find_filament_library_dir(FILAMENT_LIBRARY_DIR)
+endif()
+if(NOT FILAMENT_LIBRARY_DIR)
+    message(FATAL_ERROR "Filament ${FILAMENT_VERSION} has no library for ${FETCH_CACHE_ARCH}")
 endif()
 
 _gplatform_fetch_renderer_environment_asset(

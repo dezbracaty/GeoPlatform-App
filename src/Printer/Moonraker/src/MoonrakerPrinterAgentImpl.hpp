@@ -6,6 +6,7 @@
 #include <QNetworkReply>
 #include <QJsonObject>
 #include <QSet>
+#include <QPointer>
 #include <QTimer>
 #include <QUrl>
 #include <QFile>
@@ -32,23 +33,29 @@ public:
     void provideDeviceAccess(const std::string& credential) override;
     void releaseDevice() override;
     std::vector<std::string> supportedPrintFormats() const override;
-    PrinterCore::Capabilities capabilities() const override { return m_caps; }
-    void acknowledgeUnknownOutcome() override { if (!m_busy) m_uncertain = false; }
+    PrinterCore::Capabilities capabilities() const override {
+        auto caps = m_caps;
+        caps.cancelSubmission = caps.automaticStatusRecovery = true;
+        return caps;
+    }
     void submitJob(const PrinterCore::PrintJob& job) override;
+    bool cancelSubmission(uint64_t requestId) override;
+    bool refreshStatus() override;
     void controlJob(const std::string& action, uint64_t requestId) override;
     void setCameraStreamEnabled(bool enabled) override;
 private:
     struct Response {
         bool ok{false};
         bool unknown{false};
+        bool cancelled{false};
         int code{0};
         QJsonValue result;
         QString error;
     };
     using Completion = std::function<void(const Response&)>;
     QNetworkRequest request(const QString& path) const;
-    void json(const QString& path, const QJsonObject& body, bool post, bool mutating, Completion done);
-    void watch(QNetworkReply* reply, bool mutating, Completion done, int timeoutMs = 0, bool allowBareUpload = false);
+    void json(const QString& path, const QJsonObject& body, bool post, bool mutating, Completion done, uint64_t requestId = 0);
+    void watch(QNetworkReply* reply, bool mutating, Completion done, int timeoutMs = 0, bool allowBareUpload = false, uint64_t requestId = 0);
     void publish(PrinterCore::Event event);
     void connectionFailed(const QString& error, bool access = false);
     void handshake();
@@ -76,7 +83,15 @@ private:
     bool m_queryPending{false};
     bool m_busy{false};
     uint64_t m_activeRequestId{0};
-    bool m_uncertain{false};
+    bool m_statusFresh{false};
+    bool m_handshakePending{false};
+    bool m_startDispatched{false};
+    uint64_t m_querySerial{0};
+    uint64_t m_statusFence{0};
+    QPointer<QNetworkReply> m_activeReply;
+    std::string m_activeCommand;
+    QString m_activeFileName;
+    QString m_currentFileName;
     QString m_state;
     int m_timeoutMs;
     int m_uploadTimeoutMs;

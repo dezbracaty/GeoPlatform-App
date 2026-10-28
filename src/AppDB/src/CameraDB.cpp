@@ -8,6 +8,11 @@
 #include <chrono>
 #include <cmath>
 
+#if defined(__APPLE__) && defined(__clang__)
+// Keep camera authoring arithmetic identical on arm64 and x86_64.
+#pragma clang fp contract(off)
+#endif
+
 namespace {
 constexpr auto kInteractiveClippingUpdateInterval = std::chrono::milliseconds(120);
 const Vector3 kOrcaDefaultViewUpVector(-0.21850801f, 0.67249851f, 0.70710678f);

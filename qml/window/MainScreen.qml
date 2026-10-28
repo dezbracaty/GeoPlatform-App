@@ -13,6 +13,17 @@ Item {
     property bool debugWindowOpened: false
     property alias userGuide: workspaceGuide
     property bool automaticGuidePending: false
+    property string pendingStartupPage: ""
+    readonly property bool startupReady: StartupState.ready
+
+    function restoreStartupPage() {
+        if (!startupReady || pendingStartupPage.length === 0)
+            return
+        const page = pendingStartupPage
+        pendingStartupPage = ""
+        page_router.go(page)
+    }
+    onStartupReadyChanged: restoreStartupPage()
 
     function currentPrintHost() {
         const routed = navigation_view.routerView.currentItem
@@ -99,6 +110,20 @@ Item {
         if (!item || !item.actionCode)
             return
         var actionCode = String(item.actionCode)
+        if (actionCode.indexOf("calibration.") === 0) {
+            const host = currentPrintHost()
+            if (!host || host.activePageName !== "prepare" || TaskStateNotifier.isBusy)
+                return
+            const modes = {"calibration.pa":3,"calibration.flow":5,"calibration.temperature":6,
+                "calibration.volumetric":7,"calibration.vfa":8,"calibration.retraction":9,
+                "calibration.frequency":10,"calibration.damping":11,"calibration.cornering":12,"calibration.tolerance":13}
+            if (modes[actionCode] !== undefined) {
+                calibrationLoader.active = true
+                const mode = modes[actionCode]
+                Qt.callLater(function() { CalibrationBridge.openParameters(mode) })
+            }
+            return
+        }
         if (actionCode === "model.import.choose") {
             Global.starter.chooseModel({})
             return
@@ -158,7 +183,7 @@ Item {
 
         // Save current page when navigating
         onSendRouter: function(val) {
-            if (SettingsHelper.getRememberLastPage() && val) {
+            if (StartupState.ready && SettingsHelper.getRememberLastPage() && val) {
                 SettingsHelper.saveLastPage(val)
             }
         }
@@ -211,11 +236,16 @@ Item {
             height: 30
             groupName: "Menu"  // 使用 groupName 属性，菜单会自动从当前环境加载
             delegate: MenuBarItem {
+                objectName: "mainMenu_" + (menu ? menu.title : "")
+                enabled: !menu || menu.title !== "Calibration" || (CalibrationBridge.available
+                    && !TaskStateNotifier.isBusy && root.currentPrintHost()
+                    && root.currentPrintHost().activePageName === "prepare")
                 text: {
                     var title = menu ? menu.title : ""
                     if (title === "File") return qsTr("File")
                     if (title === "Edit") return qsTr("Edit")
                     if (title === "Help") return qsTr("Help")
+                    if (title === "Calibration") return qsTr("校准")
                     return title
                 }
             }
@@ -285,13 +315,39 @@ Item {
                 }
             }
 
-            // Always instantiate Prepare for the initial scene/frame barrier.
-            page_router.go("/dock")
+            // Prepare supplies the startup frame; restore the saved route only
+            // after that barrier, without overwriting it during initialization.
+            pendingStartupPage = !StartupState.replayMode && SettingsHelper.getRememberLastPage()
+                    ? (SettingsHelper.getLastPage() || "/dock") : "/dock"
+            if (startupReady)
+                restoreStartupPage()
+            else
+                page_router.go("/dock")
         }
     }
 
     AIAssistantPanel {
         id: aiAssistantPanel
+    }
+    Loader {
+        id: calibrationLoader
+        anchors.fill: parent
+        active: false
+        sourceComponent: Component {
+            CalibrationPanel { printHost: root.currentPrintHost() }
+        }
+        onLoaded: {
+            const host = root.currentPrintHost()
+            if (host) host.calibrationPanel = item
+        }
+    }
+    Connections {
+        target: CalibrationBridge
+        function onChanged() {
+            const host = root.currentPrintHost()
+            if (host && host.calibrationPanel !== calibrationLoader.item)
+                host.calibrationPanel = calibrationLoader.item
+        }
     }
 
     Shortcut {

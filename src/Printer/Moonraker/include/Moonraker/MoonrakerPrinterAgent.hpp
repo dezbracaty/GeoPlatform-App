@@ -13,7 +13,7 @@ struct MoonrakerConfig {
 
 // Construct, call, and destroy on one owner thread with a running Qt event loop.
 // Events are delivered on that thread. Configuration is memory-only. No discovery
-// broadcasts, automatic reconnects, mutation retries, or persistent credentials.
+// broadcasts, mutation retries, or persistent credentials. Status recovery reconnects read-only.
 // Qt remains a private implementation dependency, not part of this contract.
 class MoonrakerPrinterAgent final : public PrinterCore::IPrinterAgent {
 public:
@@ -31,8 +31,9 @@ public:
     void releaseDevice() override;
     std::vector<std::string> supportedPrintFormats() const override;
     PrinterCore::Capabilities capabilities() const override;
-    void acknowledgeUnknownOutcome() override;
     void submitJob(const PrinterCore::PrintJob&) override;
+    bool cancelSubmission(uint64_t requestId) override;
+    bool refreshStatus() override;
     void controlJob(const std::string&, uint64_t) override;
     void setCameraStreamEnabled(bool) override;
 private:

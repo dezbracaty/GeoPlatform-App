@@ -69,6 +69,7 @@ public:
     std::uint64_t beginOutputTask() { return m_shuttingDown.load() ? 0 : ++m_publicationEpoch; }
     bool acceptsPublication(std::uint64_t epoch) const { return !m_shuttingDown.load() && epoch == publicationEpoch(); }
     void beginShutdown();
+    void notifyCalibrationOutputInvalidated();
     struct PreparedOutputPublication {
         std::shared_ptr<GPlatform::SliceOutputRecord> output;
         std::shared_ptr<GPlatform::ToolpathPreviewDB> preview;

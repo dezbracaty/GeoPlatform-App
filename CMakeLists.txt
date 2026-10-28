@@ -41,10 +41,10 @@ set(VERSION_STR "${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VER
 set(QML_IMPORT_PATH ${CMAKE_BINARY_DIR}/qt/qml CACHE STRING "" FORCE)
 
 if(CMAKE_HOST_WIN32)
-    find_package(Qt6 CONFIG REQUIRED COMPONENTS Core Quick QuickControls2 Network Quick3D Concurrent Multimedia
+    find_package(Qt6 CONFIG REQUIRED COMPONENTS Core Quick QuickControls2 Network Quick3D Concurrent Multimedia Widgets
         PATHS "${Qt6_DIR}" NO_DEFAULT_PATH)
 else()
-    find_package(Qt6 COMPONENTS Core Quick QuickControls2 Network Quick3D Concurrent Multimedia REQUIRED)
+    find_package(Qt6 COMPONENTS Core Quick QuickControls2 Network Quick3D Concurrent Multimedia Widgets REQUIRED)
 endif()
 
 # Find spdlog package
@@ -91,6 +91,7 @@ set(QML_FILES
     qml/components/MachineSelectionBar.qml
     qml/components/PreviewInspectionHint.qml
     qml/components/GlobalPrintCommandBar.qml
+    qml/components/CalibrationPanel.qml
     qml/components/ControlMouseArea.qml
     qml/components/NotificationOverlay.qml
     qml/components/FPSDisplay.qml
@@ -194,7 +195,10 @@ if(GPLATFORM_PROTECT_QML_IN_RELEASE)
 endif()
 
 set(RESOURCES_FILES
+    qml/components/CalibrationLabels.js
     res/images/logo.png
+    res/icons/favicon/favicon.ico
+    res/icons/favicon/favicon.png
     qml/js/PrinterManager.js
     config/default_shortcuts.json
     config/app_menus.json
@@ -205,6 +209,10 @@ set(RESOURCES_FILES
 
 # 打印机模型文件 - 作为 Bundle Resources 分发
 set(PRINTER_MODEL_FILE "${CMAKE_CURRENT_SOURCE_DIR}/resources/models/blackbelt_platform.STL")
+
+if(WIN32 OR APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_subdirectory(src/Base/BaseUI/desktop)
+endif()
 
 # Upper-layer features, exported with the App subtree.
 add_subdirectory(src/AI)
@@ -268,6 +276,11 @@ elseif(UNIX)
     qt_add_executable(${PROJECT_NAME} ${SOURCE_FILES})
 else()
     qt_add_executable(${PROJECT_NAME} ${SOURCE_FILES})
+endif()
+
+if(WIN32 OR APPLE OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_libraries(${PROJECT_NAME} PRIVATE BaseUIDesktop Qt6::Widgets)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE GPLATFORM_DESKTOP_USES_WIDGETS=1)
 endif()
 
 gplatform_add_renderer_resources(${PROJECT_NAME})

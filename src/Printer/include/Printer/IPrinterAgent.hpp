@@ -30,9 +30,11 @@ public:
     virtual void releaseDevice() = 0;
     virtual std::vector<std::string> supportedPrintFormats() const = 0;
     virtual Capabilities capabilities() const { return {}; }
-    // Explicit user acknowledgement after physically checking an unknown outcome.
-    virtual void acknowledgeUnknownOutcome() {}
     virtual void submitJob(const PrintJob& job) = 0;
+    // Request ids are unique within a selected-device session. False means unsupported
+    // or already beyond the local upload cancellation boundary, never "print stopped".
+    virtual bool cancelSubmission(uint64_t requestId) { return false; }
+    virtual bool refreshStatus() { return false; }
     virtual void controlJob(const std::string& action, uint64_t requestId) = 0;
     virtual void setCameraStreamEnabled(bool enabled) = 0;
 };

@@ -20,6 +20,7 @@ ContentPage {
     property bool changingPage: false
     property bool pendingPrintAfterConnect: false
     property string activePageName: "prepare"
+    property var calibrationPanel: null
     readonly property var activeWorkspaceContent:
         activePageName === "preview" ? previewPage.workspaceContent
         : (activePageName === "realistic" ? realisticPage.workspaceContent
@@ -468,6 +469,55 @@ ContentPage {
         }
     }
 
+    PanelSurface {
+        objectName: "calibrationPlatePanel"
+        visible: root.dockReady && root.activePageName === "preview" && CalibrationBridge.previewActive
+        anchors.left: parent.left
+        anchors.top: parent.top
+        // Leave the existing preview toolbar clear, including failed or
+        // partially completed tasks whose panel contains extra actions.
+        anchors.leftMargin: 16 + PrintWorkspaceStyle.toolbarWidth + 12
+        anchors.topMargin: 122
+        width: 270
+        height: calibrationPlateContent.implicitHeight + 32
+        z: 1001
+        ColumnLayout {
+            id: calibrationPlateContent
+            anchors.fill: parent
+            anchors.margins: 16
+            spacing: 10
+            Label { text: CalibrationBridge.resultContext.title; font: Typography.bodyStrong; Layout.fillWidth: true; elide: Text.ElideRight }
+            RowLayout {
+                Layout.fillWidth: true
+                Label { text: "打印盘" }
+                ComboBox {
+                    objectName: "calibrationPlateSelector"
+                    Layout.fillWidth: true
+                    model: CalibrationBridge.plates
+                    textRole: "name"
+                    currentIndex: CalibrationBridge.selectedPlate
+                    enabled: !CalibrationBridge.busy && CalibrationBridge.configurationValid
+                    onActivated: {
+                        if (!CalibrationBridge.selectPlate(currentIndex))
+                            currentIndex = Qt.binding(function() { return CalibrationBridge.selectedPlate })
+                    }
+                }
+            }
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                font: Typography.caption
+                color: CalibrationBridge.configurationValid ? Theme.res.textFillColorSecondary : Theme.res.systemFillColorCaution
+                text: CalibrationBridge.busy ? CalibrationBridge.message : CalibrationBridge.configurationValid ? "当前盘已切片" : "配置已改变，请重新准备校准。"
+            }
+            Button { objectName: "calibrationEditParameters"; text: "修改参数…"; Layout.fillWidth: true; enabled: !TaskStateNotifier.isBusy; onClicked: { if(root.calibrationPanel)root.calibrationPanel.edit() } }
+            Button { visible: CalibrationBridge.busy; text: "取消任务"; Layout.fillWidth: true; enabled: CalibrationBridge.state !== "cancelling"; onClicked: CalibrationBridge.cancel() }
+            Button { objectName: "calibrationRecordResult"; text: "记录校准结果…"; Layout.fillWidth: true; enabled: !TaskStateNotifier.isBusy && CalibrationBridge.configurationValid; onClicked: { if(root.calibrationPanel)root.calibrationPanel.record() } }
+            Button { visible: CalibrationBridge.plates.some(function(p) { return !p.ready }); text: "继续未完成盘"; Layout.fillWidth: true; enabled: !TaskStateNotifier.isBusy && CalibrationBridge.configurationValid; onClicked: CalibrationBridge.retry() }
+            Button { visible: CalibrationBridge.details.length > 0; text: "查看准备提示"; flat: true; Layout.fillWidth: true; onClicked: { if(root.calibrationPanel)root.calibrationPanel.showDetails() } }
+        }
+    }
+
     Button {
         id: accountWorkspaceButton
         objectName: "accountWorkspaceButton"
@@ -579,6 +629,8 @@ ContentPage {
         }
         onPausePrintRequested: PrinterService.pausePrint()
         onResumePrintRequested: PrinterService.resumePrint()
+        onCancelSubmissionRequested: PrinterService.cancelSubmission()
+        onCheckStatusRequested: PrinterService.refreshPrinterStatus()
         onStopPrintRequested: PrinterService.cancelPrint()
         onDismissJobStatusRequested: PrinterService.dismissJobStatus()
     }

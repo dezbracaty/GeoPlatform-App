@@ -63,7 +63,8 @@ ToolpathPublicationResult publishToolpathResult(std::shared_ptr<SliceOutputRecor
                 if (!output->printBedId.isValid() || !document->attachOwnedChild(output->printBedId,
                         preview->getDBInstanceID(), ToolpathPreviewRelations::PrintBedPreviewsRelation))
                     throw std::runtime_error("Failed to attach toolpath preview to print bed");
-                if (output->sourceScope == ToolpathPreviewSourceScope::ImportedGCode)
+                if (output->sourceScope == ToolpathPreviewSourceScope::ImportedGCode ||
+                    output->sourceScope == ToolpathPreviewSourceScope::Calibration)
                     output->displayModelId = static_cast<int>(preview->getDBInstanceID().getValue());
             }
             mayDegrade = false;

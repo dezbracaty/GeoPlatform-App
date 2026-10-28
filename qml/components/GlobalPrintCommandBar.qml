@@ -29,14 +29,19 @@ PanelSurface {
     readonly property bool resumingMode: jobState === PrinterService.Resuming
     readonly property bool stoppingMode: jobState === PrinterService.Stopping
     readonly property bool jobCompleted: jobState === PrinterService.Completed
+    readonly property bool jobCancelled: jobState === PrinterService.Cancelled
+    readonly property bool transferCancelled: PrinterService.transferState === PrinterService.TransferCancelled
     readonly property bool jobFailed: jobState === PrinterService.JobError
     readonly property bool transferUnknown: PrinterService.commandOutcomeUnknown
         || PrinterService.transferState === PrinterService.TransferUnknown
     readonly property bool transferUploaded: PrinterService.transferState === PrinterService.TransferUploaded
     readonly property bool transferFailed: PrinterService.transferState === PrinterService.TransferFailed
+    readonly property bool submissionTerminal: PrinterService.jobNoticeIsSubmission
+        && (transferFailed || transferUploaded || transferCancelled)
+    readonly property bool terminalFailure: submissionTerminal ? transferFailed : jobFailed
     readonly property bool terminalJobVisible:
-        transferUnknown || (!printingMode && !transferringMode && !startingMode
-                            && (transferFailed || transferUploaded || jobCompleted || jobFailed))
+        !PrinterService.jobNoticeDismissed && (transferUnknown || (!printingMode && !transferringMode && !startingMode
+                            && (submissionTerminal || jobCompleted || jobCancelled || jobFailed)))
     readonly property bool printControlsVisible:
         jobState === PrinterService.Printing || jobState === PrinterService.Paused
     readonly property real workflowProgress: transferringMode
@@ -77,9 +82,10 @@ PanelSurface {
     readonly property int connectionState: PrinterService.connectionState
     readonly property bool deviceConnected: PrinterService.connected
     readonly property bool jobControllable: PrinterService.jobControllable
+    readonly property bool submissionNameMode: transferringMode || startingMode
+        || (terminalJobVisible && PrinterService.jobNoticeIsSubmission)
     readonly property string currentJobName:
-        PrinterService.jobFileName
-        || SlicingPreviewBridge.defaultPrintOutputFileName(supportedPreviewFormat || "gcode")
+        (submissionNameMode ? PrinterService.submissionDisplayName : PrinterService.jobFileName)
         || qsTr("Print Job")
     signal machinePopupOpening()
     signal printerControlRequested()
@@ -90,6 +96,8 @@ PanelSurface {
     signal printRequested()
     signal pausePrintRequested()
     signal resumePrintRequested()
+    signal cancelSubmissionRequested()
+    signal checkStatusRequested()
     signal stopPrintRequested()
     signal dismissJobStatusRequested()
 
@@ -667,6 +675,13 @@ PanelSurface {
                     }
                 }
 
+                Button {
+                    objectName: "printerCancelSubmissionButton"
+                    visible: root.transferringMode && PrinterService.canCancelSubmission
+                    text: qsTr("Cancel upload")
+                    onClicked: root.cancelSubmissionRequested()
+                }
+
                 RowLayout {
                     id: printingActions
                     visible: root.printControlsVisible
@@ -750,10 +765,10 @@ PanelSurface {
                 Icon {
                     Layout.preferredWidth: 18
                     Layout.preferredHeight: 18
-                    source: (root.jobFailed || root.transferFailed || root.transferUnknown)
+                    source: (root.terminalFailure || root.transferUnknown)
                             ? FluentIcons.graph_ErrorBadge
                             : FluentIcons.graph_CompletedSolid
-                    color: (root.jobFailed || root.transferFailed || root.transferUnknown)
+                    color: (root.terminalFailure || root.transferUnknown)
                            ? root.SmoothUI.theme.res.systemFillColorCritical
                            : root.SmoothUI.theme.res.systemFillColorSuccess
                 }
@@ -771,13 +786,15 @@ PanelSurface {
 
                     Label {
                         id: terminalTitle
+                        objectName: "printerJobTerminalTitle"
                         Layout.fillWidth: true
                         text: root.transferUnknown ? qsTr("Printer operation unconfirmed")
-                              : root.transferFailed ? qsTr("Transfer failed")
-                              : root.transferUploaded ? qsTr("Upload completed")
+                              : root.submissionTerminal ? (root.transferCancelled ? qsTr("Upload cancelled")
+                                  : root.transferFailed ? qsTr("Transfer failed") : qsTr("Upload completed"))
+                              : root.jobCancelled ? qsTr("Print cancelled")
                               : root.jobFailed ? qsTr("Print failed") : qsTr("Print completed")
                         elide: Text.ElideRight
-                        color: (root.jobFailed || root.transferFailed || root.transferUnknown)
+                        color: (root.terminalFailure || root.transferUnknown)
                                ? root.SmoothUI.theme.res.systemFillColorCritical
                                : root.SmoothUI.theme.res.textFillColorPrimary
                         font: Typography.bodyStrong
@@ -787,8 +804,8 @@ PanelSurface {
                         id: terminalDetail
                         Layout.fillWidth: true
                         text: root.transferUnknown
-                              ? qsTr("The operation may already have executed. Check the printer before acknowledging. Do not retry automatically.")
-                              : (root.jobFailed || root.transferFailed)
+                              ? qsTr("Reading the current printer state. Commands are not retried automatically.")
+                              : root.terminalFailure
                               ? (PrinterService.jobError
                                  || qsTr("Open printer details for more information"))
                               : root.currentJobName
@@ -807,7 +824,7 @@ PanelSurface {
 
                     Button {
                         id: viewPrinterDetailsButton
-                        visible: root.jobFailed || root.transferFailed || root.transferUnknown
+                        visible: root.terminalFailure || root.transferUnknown
                         Layout.fillWidth: false
                         Layout.minimumWidth: implicitWidth
                         Layout.preferredWidth: implicitWidth
@@ -829,7 +846,7 @@ PanelSurface {
 
                     Button {
                         id: retryPrintButton
-                        visible: (root.jobFailed || root.transferFailed) && !root.transferUnknown && root.previewSendReady
+                        visible: root.terminalFailure && !root.transferUnknown && root.previewSendReady
                         Layout.fillWidth: false
                         Layout.minimumWidth: implicitWidth
                         Layout.preferredWidth: implicitWidth
@@ -880,13 +897,14 @@ PanelSurface {
                         Layout.preferredWidth: implicitWidth
                         Layout.maximumWidth: implicitWidth
                         Layout.preferredHeight: PrintWorkspaceStyle.controlHeight
-                        text: root.transferUnknown ? qsTr("Acknowledge") : (root.narrow ? "" : qsTr("Dismiss"))
+                        text: root.transferUnknown ? (PrinterService.canRefreshStatus ? qsTr("Retry status") : qsTr("Waiting for printer state")) : (root.narrow ? "" : qsTr("Dismiss"))
                         icon.name: root.narrow ? FluentIcons.graph_Cancel : ""
                         icon.width: 14
                         icon.height: 14
                         font: Typography.caption
+                        enabled: !root.transferUnknown || PrinterService.canRefreshStatus
                         onClicked: root.transferUnknown
-                                   ? root.printerControlRequested()
+                                   ? root.checkStatusRequested()
                                    : root.dismissJobStatusRequested()
 
                         ToolTip {

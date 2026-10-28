@@ -1,4 +1,5 @@
 #include "AlignmentHandler.hpp"
+#include <QScopeGuard>
 #include "InteractionRegistration.hpp"
 
 REGISTER_PERSISTENT_INTERACTION_ACTION(
@@ -528,33 +529,50 @@ AlignmentHandler::AlignmentResult AlignmentHandler::smartPlace(
     }
 
     try {
+        const auto bounds = m_boundsCalculator->calculateCombinedBounds(modelIds);
+        if (!bounds.valid) {
+            result.errorMessage = "Failed to calculate combined bounds";
+            return result;
+        }
+        const auto center = bounds.getCenter();
+        const Vector3 delta(bed.centerX - center.x, bed.centerY - center.y,
+                            bed.baseZ - bounds.min.z);
+        std::vector<Transform> transforms;
+        transforms.reserve(modelIds.size());
+        for (const auto& id : modelIds) {
+            if (!isValidModelId(id)) {
+                result.errorMessage = QString("Invalid model ID: %1").arg(id.getValue());
+                return result;
+            }
+            auto transform = getModelTransform(id);
+            transform.translate(delta);
+            transforms.push_back(transform);
+        }
+        if (!canApplyTransforms(modelIds, transforms, result.errorMessage)) {
+            return result;
+        }
+
+        // Compute and validate the final placement before publishing anything.
+        // Calling alignToBed/centerToBed here would open nested transactions;
+        // TransDB commits the active transaction when a new one starts.
         TransactionGuard guard("Smart Place");
-
-        // 首先对齐到平台
-        auto alignResult = alignToBed(modelIds, true); // 保持相对位置
-        if (!alignResult.success) {
-            result.errorMessage = QString("Align to bed failed: %1").arg(alignResult.errorMessage);
-            return result;
+        const auto rollback = qScopeGuard([&] { guard.rollback(); });
+        for (std::size_t i = 0; i < modelIds.size(); ++i) {
+            if (!applyTransformToModel(modelIds[i], transforms[i])) {
+                result.errorMessage = "Failed to apply Smart Place transform";
+                return result;
+            }
         }
-
-        // 然后居中到打印床
-        auto centerResult = centerToBed(modelIds, bed, CenterMode::XY);
-        if (!centerResult.success) {
-            result.errorMessage = QString("Center to bed failed: %1").arg(centerResult.errorMessage);
-            return result;
-        }
-
-        // 最终验证
-        auto finalBounds = m_boundsCalculator->calculateCombinedBounds(modelIds);
 
         result.success = true;
         result.processedCount = modelIds.size();
-        result.combinedBounds = finalBounds;
-        result.newTransforms = centerResult.newTransforms;
-
+        result.combinedBounds = m_boundsCalculator->calculateCombinedBounds(modelIds);
+        result.newTransforms = std::move(transforms);
         guard.commit();
 
     } catch (const std::exception& e) {
+        result.success = false;
+        result.processedCount = 0;
         result.errorMessage = QString("Smart place failed: %1").arg(e.what());
         LOG_ERROR("SmartPlace failed: {}", e.what());
     }

@@ -3,6 +3,7 @@
 #include <QString>
 #include <QStringList>
 #include <memory>
+#include <atomic>
 
 namespace GPlatform {
 // Only this lease deletes an App-generated file. Records and in-flight imports
@@ -31,6 +32,11 @@ struct SliceOutputRecord {
     bool geometryAvailable = false;
     QString previewError;
     QStringList warnings;
+    // Calibration outputs retain their native task identity. A shared validity
+    // flag invalidates all cached plates without touching worker-owned vectors.
+    QString calibrationTaskId;
+    int calibrationPlateIndex = -1;
+    std::shared_ptr<const std::atomic_bool> calibrationValidity;
 
     std::shared_ptr<TemporaryPrintOutput> leaseFor(const QString& path) const;
     void setArtifacts(const QString& gcodePath, bool temporaryGcode,

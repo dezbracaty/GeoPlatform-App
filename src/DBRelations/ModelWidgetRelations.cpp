@@ -74,7 +74,9 @@ void detachSelectionBoxFromActor(DBRelationDetachContext& context) {
             if (!document || !document->getDBInstance(widgetId)) {
                 return;
             }
-            TransactionGuard guard("Delete SelectionBoxWidget");
+            // Selection bounds are derived UI state. Their deferred cleanup
+            // must not become another undo entry or erase a redo branch.
+            TransientUpdateGuard transient;
             document->unregisterDBInstance(widgetId);
         });
         return;
