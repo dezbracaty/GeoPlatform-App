@@ -12,6 +12,7 @@ on:
         default: "feature/gplatform-ui"
         options:
           # branches:source_ref:begin
+          - "ci/app-workflows"
           - "ci/delivery/40620850664-1"
           - "feature/gplatform-ui"
           - "main"
