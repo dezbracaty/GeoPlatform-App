@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import platform
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -165,7 +166,12 @@ def remove_under(path, parent):
     if path == parent or not path.is_relative_to(parent) or path.is_symlink():
         raise RuntimeError(f'Refusing to remove outside the CI child directory: {path}')
     if path.exists():
-        shutil.rmtree(path)
+        def remove_readonly(function, filename, error):
+            if not isinstance(error[1], PermissionError):
+                raise error[1]
+            os.chmod(filename, os.stat(filename).st_mode | stat.S_IWUSR)
+            function(filename)
+        shutil.rmtree(path, onerror=remove_readonly)
 
 
 def packager(source):
