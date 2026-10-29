@@ -33,6 +33,27 @@ jobs:
               Get-Content -LiteralPath $path -Tail 15 | ForEach-Object { $_ -replace 'https?://[^\s]+', '<url>' } | Write-Host
             }
           }
+          Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -like "*publish_delivery.py*$env:GP_SDK_RUN*" } | Select-Object ProcessId, CreationDate, ReadOperationCount, ReadTransferCount, WriteOperationCount, WriteTransferCount | ConvertTo-Json -Compress | Write-Host
+          $processes = @(Get-CimInstance Win32_Process)
+          $owned = @($processes | Where-Object { $_.Name -eq 'python.exe' -and $_.CommandLine -like "*publish_delivery.py*$env:GP_SDK_RUN*" } | ForEach-Object { $_.ProcessId })
+          for ($level = 0; $level -lt 8; $level++) {
+            $children = @($processes | Where-Object { $_.ParentProcessId -in $owned -and $_.ProcessId -notin $owned })
+            if (-not $children.Count) { break }
+            foreach ($child in $children) {
+              $safe = $child.CommandLine -replace 'https?://[^\s]+', '<url>' -replace '(?i)(authorization[:=]\s*(?:basic|bearer)\s+)\S+', '$1<masked>'
+              Write-Host "Producer child: $($child.ProcessId) $($child.Name) $safe"
+              $owned += $child.ProcessId
+            }
+          }
+          $verification = Join-Path $directory 'publish/remote-app'
+          if (Test-Path -LiteralPath $verification) {
+            Get-ChildItem -LiteralPath $verification -Force -ErrorAction SilentlyContinue | Select-Object Name, LastWriteTime | ConvertTo-Json -Compress | Write-Host
+            $objects = Join-Path $verification '.git/objects'
+            if (Test-Path -LiteralPath $objects) {
+              $remaining = @(Get-ChildItem -LiteralPath $objects -File -Recurse -ErrorAction SilentlyContinue).Count
+              Write-Host "Verification Git object files remaining: $remaining"
+            }
+          }
           $publication = Join-Path $directory 'publication.json'
           if (Test-Path -LiteralPath $publication) {
             Get-Content -LiteralPath $publication -Raw | ConvertFrom-Json | Select-Object phase, last_error, failed_at, source_commit, sdk_base, app_base, sdk_commit, app_commit, verified, sdk_published, app_published | ConvertTo-Json -Compress | Write-Host

@@ -205,7 +205,8 @@ try:
     if 'normal' in selected:
         run('normal',['--ghost-port',port()])
     if 'minimize' in selected:
-        settings.write_text('[General]\nrememberLastPage=true\nlastPage=/settings\n\n[printGuide]\nhandled=true\n',encoding='utf-8')
+        locale_setting = 'locale='+args.locale+'\n' if args.locale else ''
+        settings.write_text('[General]\n'+locale_setting+'rememberLastPage=true\nlastPage=/settings\n\n[printGuide]\nhandled=true\n',encoding='utf-8')
         run('remember-settings-minimize',['--ghost-port',port()],minimize=True)
     if 'failure' in selected:
         run('invalid-port',['--ghost-port','0'],failure=True)

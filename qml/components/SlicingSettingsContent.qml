@@ -20,6 +20,12 @@ Item {
     // still renders its own title bar by default.
     property bool embedded: false
     property bool compactPanel: false
+    // Reusing this component must not give retained/hidden editors the same
+    // automation identity. An empty namespace preserves existing recordings.
+    property string automationNamespace: ""
+    function automationName(name) {
+        return automationNamespace.length > 0 ? automationNamespace + "." + name : name
+    }
     readonly property font compactCaptionFont: Qt.font({family: Typography.caption.family, pixelSize: 11})
     property bool fiberAvailable: false
     property string compactCategory: "quality"
@@ -518,9 +524,9 @@ Item {
                     }
                     ComboBox {
                         id: printerPresetCombo
-                        objectName: root.embedded
+                        objectName: root.automationName(root.embedded
                                     ? "machineSelectorPrinterPresetCombo"
-                                    : "sliceSettingsPrinterPresetCombo"
+                                    : "sliceSettingsPrinterPresetCombo")
                         Layout.fillWidth: true
                         Layout.preferredHeight: 32
                         enabled: root.settingsEditingEnabled && root.machineVariantOptions.length > 0
@@ -686,9 +692,9 @@ Item {
                 }
 
                 TextField {
-                    objectName: root.embedded
+                    objectName: root.automationName(root.embedded
                                 ? "machineSelectorSettingsSearchField"
-                                : "sliceSettingsSearchField"
+                                : "sliceSettingsSearchField")
                     Layout.fillWidth: true
                     Layout.preferredHeight: PrintWorkspaceStyle.controlHeight
                     placeholderText: qsTr("Search Parameters")
@@ -828,7 +834,7 @@ Item {
                             spacing: 8
 
                             ComboBox {
-                                objectName: "fiberToolMappingCombo"
+                                objectName: root.automationName("fiberToolMappingCombo")
                                 visible: root.editableToolMapping
                                 enabled: root.settingsEditingEnabled
                                 model: [qsTr("Automatic"), qsTr("Manual")]
@@ -843,7 +849,7 @@ Item {
                             }
 
                             Button {
-                                objectName: "fiberSwapPhysicalToolsButton"
+                                objectName: root.automationName("fiberSwapPhysicalToolsButton")
                                 visible: root.editableToolMapping
                                 enabled: root.settingsEditingEnabled && root.filamentSlots.length === 2
                                 text: qsTr("Swap left and right")
@@ -873,9 +879,9 @@ Item {
                             }
 
                             Button {
-                                objectName: root.embedded
+                                objectName: root.automationName(root.embedded
                                             ? "machineSelectorFilamentAddSlotButton"
-                                            : "filamentAddSlotButton"
+                                            : "filamentAddSlotButton")
                                 visible: SliceSettingsBridge.selectedMachine.variableFilamentSlots
                                          && !root.perToolMaterials
                                          && root.filamentSlots.length
@@ -920,7 +926,7 @@ Item {
                                             font: Typography.bodyStrong
                                         }
                                         Button {
-                                            objectName: (root.embedded ? "machineSelectorFilamentAddToToolButton_" : "filamentAddToToolButton_") + physicalToolGroup.modelData.physical
+                                            objectName: root.automationName((root.embedded ? "machineSelectorFilamentAddToToolButton_" : "filamentAddToToolButton_") + physicalToolGroup.modelData.physical)
                                             text: qsTr("Add Slot")
                                             enabled: root.settingsEditingEnabled && physicalToolGroup.modelData.slots.length < physicalToolGroup.modelData.capacity
                                             onClicked: SliceSettingsBridge.addFilamentToTool(physicalToolGroup.modelData.physical)
@@ -994,7 +1000,7 @@ Item {
                                                     }
 
                                                     ComboBox {
-                                                        objectName: (root.embedded ? "machineSelectorFilamentSlotPresetCombo_" : "filamentSlotPresetCombo_") + String(filamentSlotCard.modelData.number)
+                                                        objectName: root.automationName((root.embedded ? "machineSelectorFilamentSlotPresetCombo_" : "filamentSlotPresetCombo_") + String(filamentSlotCard.modelData.number))
                                                         Layout.fillWidth: true
                                                         Layout.preferredHeight: 32
                                                         enabled: root.settingsEditingEnabled && filamentSlotCard.compatiblePresets.length > 0
@@ -1354,7 +1360,7 @@ Item {
             SettingRow {
                 id: searchSettingRow
                 Layout.fillWidth: true
-                editorObjectNamePrefix: "sliceSettingSearchEditor_"
+                editorObjectNamePrefix: root.automationName("sliceSettingSearchEditor_")
                 title: root.localizedSchemaText(modelData.label, modelData.key || "")
                 paramKey: modelData.key || ""
                 autoInit: modelData.autoInit === undefined ? true : !!modelData.autoInit
@@ -1426,7 +1432,7 @@ Item {
         property bool syncingBridge: false
         property var providedControl: null
         property string providedControlKind: ""
-        property string editorObjectNamePrefix: "sliceSettingEditor_"
+        property string editorObjectNamePrefix: root.automationName("sliceSettingEditor_")
         property var primaryControl: null
         property string primaryControlKind: ""
         property bool controlConnected: false
@@ -1840,7 +1846,7 @@ Item {
             Switch {
                 id: schemaSwitchControl
                 readonly property var editorControl: schemaSwitchControl
-                objectName: "sliceSettingEditor_" + String(definition.key || "")
+                objectName: root.automationName("sliceSettingEditor_" + String(definition.key || ""))
                 implicitHeight: root.compactPanel ? 28 : 36
                 checked: !!resolveInitialValue(false)
             }
@@ -1852,7 +1858,7 @@ Item {
             ComboBox {
                 id: schemaComboControl
                 readonly property var editorControl: schemaComboControl
-                objectName: "sliceSettingEditor_" + String(definition.key || "")
+                objectName: root.automationName("sliceSettingEditor_" + String(definition.key || ""))
                 property var optionModel: root.localizedEnumOptions(definition.options || [])
                 width: root.compactPanel ? 117 : 170
                 implicitHeight: root.compactPanel ? 28 : 36
@@ -1875,7 +1881,7 @@ Item {
 
                 Slider {
                     id: sliderInput
-                    objectName: "sliceSettingEditor_" + String(definition.key || "")
+                    objectName: root.automationName("sliceSettingEditor_" + String(definition.key || ""))
                     from: definition.min !== undefined ? Number(definition.min) : 0
                     to: definition.max !== undefined ? Number(definition.max) : 100
                     value: Number(resolveInitialValue(from))
@@ -1917,7 +1923,7 @@ Item {
                     spacing: root.compactPanel ? 0 : 5
                     NumberInput {
                         id: numberEditorInput
-                        objectName: "sliceSettingEditor_" + String(definition.key || "")
+                        objectName: root.automationName("sliceSettingEditor_" + String(definition.key || ""))
                         Layout.fillWidth: root.compactPanel
                         background.opacity: root.compactPanel ? 0 : 1
                         value: Number(resolveInitialValue(0))
@@ -1941,7 +1947,7 @@ Item {
             TextField {
                 id: schemaTextControl
                 readonly property var editorControl: schemaTextControl
-                objectName: "sliceSettingEditor_" + String(definition.key || "")
+                objectName: root.automationName("sliceSettingEditor_" + String(definition.key || ""))
                 width: root.compactPanel ? 117 : 190
                 implicitHeight: root.compactPanel ? 28 : 36
                 font.pixelSize: root.compactPanel ? 11 : Theme.bodyFontSize
@@ -1956,7 +1962,7 @@ Item {
             MultilineInput {
                 id: schemaMultilineControl
                 readonly property var editorControl: schemaMultilineControl
-                objectName: "sliceSettingEditor_" + String(definition.key || "")
+                objectName: root.automationName("sliceSettingEditor_" + String(definition.key || ""))
                 implicitWidth: root.compactPanel ? Math.max(100, root.width - 32) : 280
                 implicitHeight: 96
                 text: String(resolveInitialValue(""))

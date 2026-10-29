@@ -1,6 +1,6 @@
 {
   "OrcaSlicer": {
-    "content_sha256": "1a04bcb0d8949c2a6fd2b2b1369cde4da2fbe3818338ea6b6ff271c7d7c0ccbb",
+    "content_sha256": "9be9dc18ee2632ddb605a1093e3ce9c5df01f10627d268959a001e14403a0e3c",
     "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "dirty": false,
     "files": {
@@ -15001,7 +15001,7 @@
       "src/libslic3r/Fill/FillBase.hpp": "2e023ff17dc6c8d781766a4624a8a37f03709fcd358d93508c82d723596ab881",
       "src/libslic3r/Fill/FillConcentric.cpp": "34717c8112a4c06718a5b26628adb90afec91193d7b35bdfc20c69ffceb3f856",
       "src/libslic3r/Fill/FillConcentric.hpp": "24683027fa8bc20d9ff13fc37105a5a4691ee5ab6b38441eb5988c3c8612e8bc",
-      "src/libslic3r/Fill/FillConcentricInternal.cpp": "e6445be121331e3e485820bf56b5c99d363783beb5d6b1e9bde7e84ed93efb22",
+      "src/libslic3r/Fill/FillConcentricInternal.cpp": "e8b1fcc2da865d1c390cded1baa447e6f34afcf1965e0397b50f4fe5132a5655",
       "src/libslic3r/Fill/FillConcentricInternal.hpp": "d68011389ec9bdf41b183fed01013785e4c9d05668163ae79497b9045a3c6724",
       "src/libslic3r/Fill/FillCrossHatch.cpp": "80b1553c8d98b945b70648e44f7ed497779aed0580b1b26a9bee1bff3ddbe2f1",
       "src/libslic3r/Fill/FillCrossHatch.hpp": "0d5fe3f80e751c6f36f2da3a8ae3e43ef6ee73b4123f95420c0a511c2ffb1373",
@@ -15360,7 +15360,7 @@
       "src/libslic3r/utils.cpp": "d2cbf39dcc6a8800993ed9e1284c1b6b5afa36912d642d4ffc2eb822438c672d",
       "src/libslicer_api/CMakeLists.txt": "13ea03eee1bb15bab9bfd7f138496a5a165f19b64b844671c7d6c88d0f077fb0",
       "src/libslicer_api/Config.cpp": "7a9dbee11dbf6745231c009f8de5ee678ac3de9b56e15e4cd58845592537ce28",
-      "src/libslicer_api/Library.cpp": "cf3b3645e8154870f5b9f54473ef53c2694b181a92b8cce16bdf2c23b65f86d0",
+      "src/libslicer_api/Library.cpp": "8e22013ac2b012c7f4fa0447f13cf586fa881968abfdd1a0c78a520e3bbf355b",
       "src/libslicer_api/OrcaCalibrationApi.cpp": "a50050a17a2f623ad7b86da941c1ffc69b8fc01bbf5e2da713ccace69b493c6f",
       "src/libslicer_api/OrcaCalibrationInternal.hpp": "55376ac98a4c2a105c3c6efb509b4951437856f1103dd48076875987d1fa92dc",
       "src/libslicer_api/Plater.cpp": "787e97a2b36f7069aa9a459451b6522f2726b7074db7ae9c7ca13abb16fdf26a",
@@ -15792,7 +15792,7 @@
       "tests/update_catch2.sh": "30f9cbe13b38def7c080e92354851309f7ba2c7218aa612ebbfba8b7d0c3876b",
       "version.inc": "1f46ff7f55bbee3ae74b970ee072177a7f1b21fd0963c97c7689957842fe2142"
     },
-    "revision": "54a752828d610887039bd6e98253a6449380cfa4"
+    "revision": "af9015d8ebfb51ca025a56dae638f378e6d8b9f8"
   },
   "SmoothUI": {
     "content_sha256": "77bc11814d2f9afe0ca52f5f7badfd742774fd475ea2a0e80867bfdae37c0882",

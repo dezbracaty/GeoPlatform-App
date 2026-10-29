@@ -1,7 +1,6 @@
 """Build the standalone App against its recorded binary SDK; never produce an SDK."""
 import argparse
 import hashlib
-import importlib.util
 import os
 from pathlib import Path
 import re
@@ -12,9 +11,8 @@ import traceback
 from common import (build_entry, build_environment, git, git_env, lock, machine_config,
                     merge_universal, now, read_json, remove_under, run, verify_files, write_json)
 
-AUTOMATION = Path(__file__).resolve().parents[2]
 PIN = 'Use repository pin'
-from source_cache import seed_submodules
+from source_cache import seed_submodules, verify_source_inputs
 
 SDK = 'ThirdParty/libs/GPlatformSDK'
 FORKS = {'orca_ref': 'ThirdParty/OrcaSlicer', 'smoothui_ref': 'ThirdParty/SmoothUI',
@@ -48,28 +46,8 @@ def verify_sdk(source, platform):
     return metadata
 
 
-def record_selected_inputs(source, metadata):
-    """Validate actual fork contents before recording selected dependencies."""
-    spec = importlib.util.spec_from_file_location('app_source_inputs', source / 'cmake/source_inputs.py')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    expected = next(iter(metadata.values()))['SOURCE_INPUTS']
-    third_party = source / 'ThirdParty'
-    # Validate hashes AND exact revisions against the selected binary SDK,
-    # independently of an exported App's possibly older provenance files.
-    module.verify(third_party, None, expected)
-    inventory = {name: module.managed_files(third_party / name) for name in expected}
-    manifest = module.record(third_party, inventory)
-    if module.summary(manifest) != expected:
-        raise RuntimeError('Selected source dependencies do not match the SDK provenance')
-    write_json(third_party / 'source-inputs.json', manifest)
-    write_json(third_party / 'source-revisions.json',
-               {name: value['revision'] for name, value in manifest.items()})
-    git(source, 'add', '--', 'ThirdParty/source-inputs.json', 'ThirdParty/source-revisions.json')
-    if git(source, 'diff', '--cached', '--name-only'):
-        git(source, '-c', 'user.name=GPlatform CI', '-c', 'user.email=ci@gplatform.invalid',
-            'commit', '-m', 'ci: record verified App source provenance')
-    return git(source, 'rev-parse', 'HEAD')
+def verify_selected_inputs(source, metadata):
+    return verify_source_inputs(source, metadata)
 
 
 def prepare_source(source, config):
@@ -197,7 +175,7 @@ def build(config_path, source, directory):
             raise RuntimeError('Requested version differs from the existing App project version')
         manifest['source'] = prepare_source(source, config)
         metadata = verify_sdk(source, config['platform'])
-        manifest['source']['commit'] = record_selected_inputs(source, metadata)
+        verify_selected_inputs(source, metadata)
         manifest['sdk_commit'] = manifest['source']['submodules'][SDK]
         manifest['sdk_metadata'] = metadata
         git(source, 'bundle', 'create', str(directory / 'source.bundle'), 'HEAD')
@@ -213,10 +191,10 @@ def build(config_path, source, directory):
         env['PATH'] = str(qt_bin) + os.pathsep + env.get('PATH', '')
         for arch in architectures(config['platform']):
             thin = binary / arch
-            build_entry(AUTOMATION, source, thin, config,
+            build_entry(source, thin, config,
                         arch=arch if config['platform'] == 'macos' else None,
                         cmake_arg='-DGPLATFORM_BUILD_SDK_CHECKS=ON', log=logs / f'{arch}-build.log')
-            build_entry(AUTOMATION, source, thin, config, target='SDKConsumerExtensionCheck',
+            build_entry(source, thin, config, target='SDKConsumerExtensionCheck',
                         arch=arch if config['platform'] == 'macos' else None,
                         cmake_arg='-DGPLATFORM_BUILD_SDK_CHECKS=ON', log=logs / f'{arch}-checks-build.log')
             run([Path(config['cmake']).with_name('ctest' + ('.exe' if os.name == 'nt' else '')),
@@ -234,7 +212,7 @@ def build(config_path, source, directory):
         elif task == 'installer':
             for old in (source / 'package').glob('*.exe'):
                 old.unlink()
-            build_entry(AUTOMATION, source, binary / 'AMD64', config, target='GPlatform_installer',
+            build_entry(source, binary / 'AMD64', config, target='GPlatform_installer',
                         cmake_arg=f"-DISCC_EXECUTABLE={config['iscc']}" if config.get('iscc') else None,
                         log=logs / 'installer.log')
             installers = list((source / 'package').glob('*.exe'))

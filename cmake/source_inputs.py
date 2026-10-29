@@ -65,19 +65,31 @@ def record(third_party, inventory):
 
 
 def verify(third_party, manifest, expected, *, check_revisions=True):
-    if manifest is None:
-        if not expected or not check_revisions or not all(
-                (third_party / fork / '.git').exists() for fork in expected):
-            raise RuntimeError('Fork source manifest is missing; initialize all Git forks or use a complete exported App package')
+    if manifest is not None:
+        for fork, declared in sorted(manifest.items()):
+            if content_digest(declared['files']) != declared['content_sha256']:
+                raise RuntimeError(f'{fork} managed manifest does not match its declared content digest')
+    # Git checkouts are shared across platforms; the exported manifest can
+    # describe another platform's checkout bytes. Verify actual inputs against
+    # the selected SDK without rewriting tracked files or creating CI commits.
+    if expected and check_revisions and all((third_party / fork / '.git').exists() for fork in expected):
+        inventory = {fork: managed_files(third_party / fork) for fork in expected}
+        if manifest is not None and summary(manifest) == expected:
+            for fork, names in inventory.items():
+                if set(names) != set(manifest[fork]['files']):
+                    raise RuntimeError(f'{fork} managed file inventory differs from the SDK input')
+        actual = record(third_party, inventory)
         for fork, declared in sorted(expected.items()):
-            directory = third_party / fork
-            actual = file_hashes(directory, managed_files(directory))
-            if content_digest(actual) != declared['content_sha256']:
+            observed = actual[fork]
+            if observed['content_sha256'] != declared['content_sha256']:
                 raise RuntimeError(f'{fork} managed content differs from the SDK input')
-            revision = git(directory, 'rev-parse', 'HEAD').strip()
-            if revision != declared['revision']:
-                raise RuntimeError(f'{fork} revision {revision} does not match the SDK input')
+            if observed['revision'] != declared['revision']:
+                raise RuntimeError(f'{fork} revision {observed["revision"]} does not match the SDK input')
+            if summary({fork: observed})[fork] != declared:
+                raise RuntimeError(f'{fork} working tree provenance does not match the SDK input')
         return
+    if manifest is None:
+        raise RuntimeError('Fork source manifest is missing; initialize all Git forks or use a complete exported App package')
     if not expected or summary(manifest) != expected:
         raise RuntimeError('Fork provenance does not match the SDK input manifest')
     revisions_file = third_party / 'source-revisions.json'

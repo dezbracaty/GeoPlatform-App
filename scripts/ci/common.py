@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import platform
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -165,7 +166,12 @@ def remove_under(path, parent):
     if path == parent or not path.is_relative_to(parent) or path.is_symlink():
         raise RuntimeError(f'Refusing to remove outside the CI child directory: {path}')
     if path.exists():
-        shutil.rmtree(path)
+        def remove_readonly(function, filename, error):
+            if not isinstance(error[1], PermissionError):
+                raise error[1]
+            os.chmod(filename, os.stat(filename).st_mode | stat.S_IWUSR)
+            function(filename)
+        shutil.rmtree(path, onerror=remove_readonly)
 
 
 def packager(source):
@@ -193,14 +199,17 @@ def build_environment(config):
     return env
 
 
-def build_entry(automation, source, build, config, *, target=None, cmake_arg=None, log=None, arch=None):
+def build_entry(source, build, config, *, target=None, cmake_arg=None, log=None, arch=None):
     """Invoke the existing project build entry for the configured platform."""
+    entry = Path(source) / 'scripts' / ('build.sh' if config.get('platform') == 'macos' else 'build.ps1')
+    if not entry.is_file():
+        raise RuntimeError(f'Selected project build entry is missing: {entry}')
     if config.get('platform') == 'macos':
         if arch not in ('arm64', 'x86_64'):
             raise RuntimeError('macOS builds require one explicit SDK architecture')
         preset = ('arm' if arch == 'arm64' else 'x86') + '_release'
         env = build_environment(config)
-        args = ['bash', Path(automation) / 'scripts/build.sh', '--source-dir', source,
+        args = ['bash', entry, '--source-dir', source,
                 '--preset', preset, '--cmake', config['cmake'], '--configure-only', '--',
                 '-B', build, f"-DQt6_DIR={config['qt6_dir']}", f"-DCMAKE_FETCH_CACHE={env['CMAKE_FETCH_CACHE']}",
                 f'-DPython3_EXECUTABLE={sys.executable}']
@@ -212,7 +221,7 @@ def build_entry(automation, source, build, config, *, target=None, cmake_arg=Non
              '--parallel', config.get('jobs', 4)], env=env, log=log)
         return
     args = ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'RemoteSigned', '-File',
-            Path(automation) / 'scripts/build.ps1', '-Preset', 'release', '-SourceDir', source,
+            entry, '-Preset', 'release', '-SourceDir', source,
             '-BuildDirectory', build, '-CMake', config['cmake']]
     if config.get('vs_root'):
         args += ['-VsRoot', config['vs_root']]

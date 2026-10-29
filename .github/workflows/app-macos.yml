@@ -14,7 +14,6 @@ on:
           # branches:source_ref:begin
           - "ci/app-workflows"
           - "ci/delivery/40620850664-1"
-          - "ci/windows-source-cache"
           - "feature/gplatform-ui"
           - "main"
           # branches:source_ref:end

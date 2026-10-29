@@ -1,5 +1,6 @@
 """Git-content build gating, atomic menus and SDK/download integrity contracts."""
 import contextlib
+import copy
 import hashlib
 import importlib.util
 import io
@@ -104,7 +105,7 @@ class AppCITests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'changed'):
             app_build.verify_sdk(self.root, 'windows')
 
-    def test_selected_forks_are_verified_before_regenerating_provenance(self):
+    def test_selected_forks_are_verified_without_rewriting_source_provenance(self):
         helper = self.root / 'cmake/source_inputs.py'
         helper.parent.mkdir()
         shutil.copyfile(APP / 'cmake/source_inputs.py', helper)
@@ -124,12 +125,21 @@ class AppCITests(unittest.TestCase):
         metadata = {'AMD64': {'SOURCE_INPUTS': expected}}
         provenance = fork.parent / 'source-inputs.json'
         provenance.write_text('{}')
-        app_build.record_selected_inputs(self.root, metadata)
-        self.assertEqual(module.summary(common.read_json(provenance)), expected)
+        head = common.git(self.root, 'rev-parse', 'HEAD')
+        app_build.verify_selected_inputs(self.root, metadata)
+        self.assertEqual(provenance.read_text(), '{}')
+        self.assertEqual(common.git(self.root, 'rev-parse', 'HEAD'), head)
+        stale = copy.deepcopy(module.record(fork.parent, {'Fork': ['library.cpp']}))
+        stale['Fork']['files']['library.cpp'] = hashlib.sha256(b'another platform checkout').hexdigest()
+        stale['Fork']['content_sha256'] = module.content_digest(stale['Fork']['files'])
+        common.write_json(provenance, stale)
         saved = provenance.read_bytes()
+        # The standard CMake entry reads this tracked file, unlike the CI helper.
+        module.verify(fork.parent, common.read_json(provenance), expected)
+        self.assertEqual(provenance.read_bytes(), saved)
         source.write_text('incompatible dependency')
         with self.assertRaisesRegex(RuntimeError, 'differs from the SDK'):
-            app_build.record_selected_inputs(self.root, metadata)
+            app_build.verify_selected_inputs(self.root, metadata)
         self.assertEqual(provenance.read_bytes(), saved)
 
     def test_download_contains_only_installer_and_its_checksum_and_resume_checks_platform(self):

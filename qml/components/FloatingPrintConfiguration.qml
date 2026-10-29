@@ -492,6 +492,7 @@ PanelSurface {
         SlicingSettingsContent {
             id: parameterEditor
             objectName: "print.configuration.editor"
+            automationNamespace: "print.configuration"
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.minimumHeight: 0

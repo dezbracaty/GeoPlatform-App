@@ -1,6 +1,7 @@
 """Seed isolated checkouts from local CI repositories; remote gitlinks remain authoritative."""
 import argparse
 import hashlib
+import importlib.util
 import os
 from pathlib import Path
 
@@ -8,7 +9,8 @@ from common import git, git_env, read_json, run
 
 
 def roots(config):
-    values = [Path(config['root'])]
+    values = [Path(os.environ['GP_APP_CI_ROOT'])] if os.environ.get('GP_APP_CI_ROOT') else []
+    values.append(Path(config['root']))
     if config.get('machine_lock'):
         values.append(Path(config['machine_lock']).parent)
     return list(dict.fromkeys(p.resolve() for p in values))
@@ -32,6 +34,52 @@ def identity(url):
     return url.rstrip('/').removesuffix('.git').casefold()
 
 
+def local_repository(url, config, env):
+    for candidate in sources(config):
+        if not (candidate / '.git').exists():
+            continue
+        try:
+            remote = git(candidate, 'remote', 'get-url', 'origin', env=env)
+            git(candidate, 'rev-parse', '--verify', 'HEAD', env=env)
+        except RuntimeError:
+            continue
+        if identity(remote) == identity(url):
+            return candidate
+    return None
+
+
+def windows_line_endings(repo, env):
+    try:
+        configured = git(repo, 'config', '--local', '--get', 'core.autocrlf', env=env)
+    except RuntimeError:
+        configured = ''
+    if configured == 'true':
+        return
+    if not configured:
+        try:
+            inherited = git(repo, 'config', '--global', '--get', 'core.autocrlf', env=env)
+        except RuntimeError:
+            inherited = ''
+        if inherited == 'true':
+            git(repo, 'config', 'core.autocrlf', 'true', env=env)
+            return
+    if git(repo, 'status', '--porcelain', '--ignore-submodules=all', env=env):
+        raise RuntimeError(f'Modified source dependency before Windows checkout normalization: {repo}')
+    git(repo, 'config', 'core.autocrlf', 'true', env=env)
+    git(repo, 'read-tree', '--empty', env=env)
+    git(repo, 'reset', '--hard', 'HEAD', env=env)
+
+
+def verify_source_inputs(source, metadata, env=None):
+    spec = importlib.util.spec_from_file_location('selected_source_inputs', source / 'cmake/source_inputs.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    expected = next(iter(metadata.values()))['SOURCE_INPUTS']
+    third_party = source / 'ThirdParty'
+    module.verify(third_party, None, expected)
+    return git(source, 'rev-parse', 'HEAD', env=env)
+
+
 def seed_submodules(source, paths, config, env):
     # macOS already has warm checkouts; keep its established build path intact.
     if config.get('platform', 'windows') != 'windows' or not config.get('root'):
@@ -43,8 +91,10 @@ def seed_submodules(source, paths, config, env):
             if (target / '.git').exists() and not any(p.name != '.git' for p in target.iterdir()):
                 # Recover an interrupted local --no-checkout clone. Submodule
                 # update skips checkout when HEAD already equals its gitlink.
-                git(target, 'config', 'core.autocrlf', 'false', env=env)
+                git(target, 'config', 'core.autocrlf', 'true', env=env)
                 git(target, 'checkout', '--force', '--detach', 'HEAD', env=env)
+            elif (target / '.git').exists():
+                windows_line_endings(target, env)
             continue
         entries = git(source, 'config', '-f', '.gitmodules', '--get-regexp',
                       r'^submodule\..*\.path$', env=env).splitlines()
@@ -69,7 +119,7 @@ def seed_submodules(source, paths, config, env):
                 # no alternates that depend on retention of a previous run.
                 run(['git', 'clone', '--no-checkout', cached, target], env=env)
                 git(target, 'remote', 'set-url', 'origin', url, env=env)
-                git(target, 'config', 'core.autocrlf', 'false', env=env)
+                git(target, 'config', 'core.autocrlf', 'true', env=env)
                 git(target, 'checkout', '--force', '--detach', 'HEAD', env=env)
                 seeded = True
                 break

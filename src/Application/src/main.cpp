@@ -318,9 +318,13 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
                                     error = QStringLiteral("ActionManager is unavailable");
                                     return false;
                                 }
-                                if (!manager->triggerAction(actionCode, params)) {
-                                    error = QStringLiteral("Action was not accepted: %1")
-                                                .arg(actionCode);
+                                const auto receipt = manager->invokeActionWithReceipt(actionCode, params, {});
+                                if (!receipt.value("accepted").toBool()
+                                    || !receipt.value("success").toBool()) {
+                                    error = QStringLiteral("Action failed: %1 [%2]: %3")
+                                                .arg(actionCode,
+                                                     receipt.value("error_code").toString(),
+                                                     receipt.value("error").toString());
                                     return false;
                                 }
                                 return true;
