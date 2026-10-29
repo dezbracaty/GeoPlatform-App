@@ -149,6 +149,8 @@ jobs:
       GIT_TERMINAL_PROMPT: '0'
       GIT_LFS_SKIP_SMUDGE: '1'
       GCM_INTERACTIVE: never
+      GIT_HTTP_LOW_SPEED_LIMIT: '16384'
+      GIT_HTTP_LOW_SPEED_TIME: '60'
       GIT_CONFIG_COUNT: '2'
       GIT_CONFIG_KEY_0: http.sslBackend
       GIT_CONFIG_VALUE_0: openssl
@@ -172,6 +174,7 @@ jobs:
         shell: powershell
     steps:
       - name: Check out App orchestration
+        timeout-minutes: 10
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: automation
@@ -181,6 +184,7 @@ jobs:
           python "$env:GITHUB_WORKSPACE/automation/scripts/ci/app_build.py" prepare --platform windows
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Check out selected App sources
+        timeout-minutes: 15
         if: inputs.resume_run == ''
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

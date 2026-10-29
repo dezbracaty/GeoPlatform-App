@@ -166,7 +166,10 @@ jobs:
       run:
         shell: bash
     steps:
+      - name: Keep the Mac awake while this job runs
+        run: /usr/bin/caffeinate -i -w "$PPID" > /dev/null 2>&1 &
       - name: Check out App orchestration
+        timeout-minutes: 10
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: automation
@@ -176,6 +179,7 @@ jobs:
           python3 "$GITHUB_WORKSPACE/automation/scripts/ci/app_build.py" prepare --platform macos
 
       - name: Check out selected App sources
+        timeout-minutes: 15
         if: inputs.resume_run == ''
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
