@@ -71,4 +71,6 @@ Windows 初始化依赖时优先复用同一台机器上已有、远端地址一
 
 Windows CI status 是手动只读入口：输入主仓库 SDK 构建的 run-id-attempt，可用同机 App runner 查看 producer 的日志尾部和编译进程，不获取构建锁、不修改源码或发布指针。自定义 producer 目录时设置 App 仓库变量 `GPLATFORM_WINDOWS_PRODUCER_ROOT`（默认 `C:/gp-ci`）。
 
+macOS CI status 使用同机 App runner 只读查看 producer 日志和进程资源占用；可输入 run-id-attempt，留空选择最近运行。它不获取构建锁，不输出进程命令参数；自定义目录使用 `GPLATFORM_MACOS_PRODUCER_ROOT`，默认 `~/gp-ci`。`ci/macos-status` 分支 push 也可执行该检查。
+
 Windows 与 SDK producer 统一使用 `core.autocrlf=true` 的 Git 检出规则，仓库 `.gitattributes` 优先。标准 CMake 和 CI 共用来源校验：Git 检出直接核对实际 fork 内容、提交及工作区状态与所选平台 SDK 一致，不改写源码目录中的来源清单；纯文件分发包仍严格验证随包清单。

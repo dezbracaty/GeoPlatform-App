@@ -1,0 +1,57 @@
+name: macOS CI status
+on:
+  push:
+    branches: [ci/macos-status]
+  workflow_dispatch:
+    inputs:
+      producer_run:
+        description: Producer run-id-attempt; blank selects the latest active producer
+        type: string
+        default: ''
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: [self-hosted, macOS, ARM64, gplatform-macos-build]
+    timeout-minutes: 5
+    env:
+      PRODUCER_ROOT: ${{ vars.GPLATFORM_MACOS_PRODUCER_ROOT }}
+      INPUT_RUN: ${{ inputs.producer_run }}
+    steps:
+      - name: Inspect the producer without acquiring its build lock
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, re, subprocess
+          root = pathlib.Path(os.environ.get('PRODUCER_ROOT') or pathlib.Path.home() / 'gp-ci').resolve()
+          selected = os.environ.get('INPUT_RUN', '')
+          if selected:
+              if not re.fullmatch(r'\d+-\d+', selected): raise RuntimeError('Invalid producer run')
+              directory = root / 'runs' / selected
+          else:
+              records = []
+              for path in sorted((root / 'runs').glob('*/build-manifest.json'), key=lambda p: p.stat().st_mtime, reverse=True)[:30]:
+                  records.append((path, json.loads(path.read_text())))
+              if not records: raise RuntimeError('No producer run manifests found')
+              directory = records[0][0].parent
+          print('Producer run:', directory.name)
+          def safe(text):
+              return re.sub(r'https?://\S+', '<url>', text) if not re.search(r'(?i)authorization|password|bearer|token=', text) else '<redacted>'
+          for filename in ('build-manifest.json', 'publication.json'):
+              path = directory / filename
+              if path.is_file():
+                  data = json.loads(path.read_text())
+                  summary = {k: data.get(k) for k in ('status', 'phase', 'task', 'started_at', 'finished_at', 'verified', 'last_error')}
+                  summary['source_commit'] = data.get('source', {}).get('commit', data.get('source_commit'))
+                  print(filename, safe(json.dumps(summary)))
+          for path in sorted((directory / 'logs').glob('*.log')):
+              with path.open('rb') as stream:
+                  stream.seek(max(0, path.stat().st_size - 32768))
+                  lines = stream.read().decode('utf-8', errors='replace').splitlines()[-12:]
+              print('Log:', path.name, 'bytes:', path.stat().st_size)
+              for line in lines: print(safe(line))
+          print('Process names and resource usage (no command arguments):')
+          output = subprocess.check_output(['ps', '-axo', 'pid=,ppid=,etime=,%cpu=,%mem=,comm='], text=True)
+          for line in output.splitlines():
+              if re.search(r'/(clang\+\+|clang|ninja|cmake|python[^/]*|git[^/]*|ld|lipo|macdeployqt|qmlimportscanner|codesign|ditto|otool|install_name_tool)$', line, re.I): print(safe(line))
+          PY

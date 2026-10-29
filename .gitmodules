@@ -1,7 +1,7 @@
 [submodule "GPlatformSDK"]
 	path = ThirdParty/libs/GPlatformSDK
 	url = https://github.com/dezbracaty/GeoPlatform-SDK.git
-	branch = ci/validation-20261030
+	branch = feature/gplatform-ui
 
 [submodule "ThirdParty/SmoothUI"]
 	path = ThirdParty/SmoothUI
