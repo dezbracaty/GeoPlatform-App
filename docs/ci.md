@@ -66,3 +66,5 @@ python3 -m unittest discover -s tests/ci -p 'test_*.py' -v
 npm ci --prefix scripts/ci/artifact-upload --ignore-scripts --no-audit --no-fund
 node --test scripts/ci/artifact-upload/test-retry.cjs
 ```
+
+Windows 初始化依赖时优先复用同一台机器上已有、远端地址一致的 Git 仓库；仍按本次 gitlink 获取缺少的提交，并执行 SDK 版本和内容校验。复用仅包含 Git 对象，不包含旧工作区未提交内容，不依赖旧运行目录的保留。
