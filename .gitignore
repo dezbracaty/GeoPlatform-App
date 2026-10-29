@@ -2,7 +2,8 @@ build*/
 .cache/
 .DS_Store
 CMakeUserPresets.json
-/.vscode/settings.json
+/.vscode/
+/.zed/
 compile_commands.json
 /imports/
 dist/

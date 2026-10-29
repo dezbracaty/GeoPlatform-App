@@ -65,8 +65,8 @@ Item {
     // Selected model for properties display
     property var selectedModel: SelectionBridge.selectedModel
     property bool hasSelection: SelectionBridge.hasSelection
-    property bool propertiesExpanded: false
-    property bool inspectorAutoExpandSuppressed: false
+    readonly property var configurationPanel: Global.mainScreen && Global.mainScreen.currentPrintHost() ? Global.mainScreen.currentPrintHost().configurationPanel : null
+    readonly property bool propertiesExpanded: configurationPanel && configurationPanel.shown && configurationPanel.page === 1
     property bool rotationWidgetActive: false  // 跟踪旋转widget是否真正激活
     property bool cellHighlightActive: false  // 跟踪面片高亮功能是否激活
 
@@ -74,7 +74,8 @@ Item {
     readonly property Item guideOverlay: Overlay.overlay
     readonly property var guideGroups: leftPrintToolbar.guideGroups
     readonly property Item guideLeftToolbar: leftPrintToolbar
-    readonly property Item guideRightToolbar: rightPrintToolbar
+    readonly property Item guideRightToolbar: Global.mainScreen ? Global.mainScreen.viewMenuAnchor : null
+    readonly property var sceneSettingsPopup: Global.mainScreen && Global.mainScreen.currentPrintHost() ? Global.mainScreen.currentPrintHost().sceneSettingsPopup : null
 
     function startGuide() {
         if (renderActive && Global.mainScreen)
@@ -85,11 +86,13 @@ Item {
             Global.mainScreen.userGuide.close("interrupted")
     }
     function guideState() {
-        return { inspector: propertiesExpanded, scene: sceneSettingsPopup.visible,
+        return { inspector: propertiesExpanded, scene: sceneSettingsPopup ? sceneSettingsPopup.visible : false,
+                 configuration: configurationPanel ? {shown: configurationPanel.shown,
+                     collapsed: configurationPanel.collapsed, page: configurationPanel.page} : null,
                  selection: SelectionBridge.selectedId }
     }
     function guideSummary() {
-        return { inspector: propertiesExpanded, scene: sceneSettingsPopup.visible,
+        return { inspector: propertiesExpanded, scene: sceneSettingsPopup ? sceneSettingsPopup.visible : false,
                  selection: SelectionBridge.selectedId, selectionCount: SelectionBridge.selectionCount,
                  modelCount: objectCount, rendererRole: threadRenderer ? threadRenderer.rendererRole : -1,
                  camera: [CameraBridge.cameraX, CameraBridge.cameraY, CameraBridge.cameraZ,
@@ -97,11 +100,14 @@ Item {
                  fiberEditing: FiberMaskBridge.active, cutEditing: CutToolBridge.active }
     }
     function restoreGuideState(state) {
-        if (SelectionBridge.selectedId === state.selection)
-            propertiesExpanded = state.inspector
-        if (!state.scene && sceneSettingsPopup.visible)
+        if (SelectionBridge.selectedId === state.selection && configurationPanel && state.configuration) {
+            configurationPanel.page = state.configuration.page
+            configurationPanel.collapsed = state.configuration.collapsed
+            configurationPanel.shown = state.configuration.shown
+        }
+        if (sceneSettingsPopup && !state.scene && sceneSettingsPopup.visible)
             sceneSettingsPopup.close()
-        else if (state.scene && !sceneSettingsPopup.visible)
+        else if (sceneSettingsPopup && state.scene && !sceneSettingsPopup.visible)
             sceneSettingsPopup.open()
     }
     Component.onDestruction: closeGuide()
@@ -111,8 +117,8 @@ Item {
     }
 
     function openSceneSettingsPanel() {
-        sceneSettingsPopup.triggerButton = rightPrintToolbar
-        sceneSettingsPopup.open()
+        if (Global.mainScreen && Global.mainScreen.currentPrintHost())
+            Global.mainScreen.currentPrintHost().openSceneSettings()
     }
 
     CameraViewAnimation {
@@ -160,31 +166,11 @@ Item {
 
     }
 
-    // Right Print Toolbar
-    RightPrintToolbar {
-        id: rightPrintToolbar
-        objectName: "print.toolbar.right"
-        x: parent.width - width - 16
-        y: Math.max(70, (parent.height - height) / 2)
-        z: 10
-        onGuideRequested: centralFragment.startGuide()
-
-        // 连接打开设置面板信号
-        onOpenSettingsPanel: function(panelType, triggerButton) {
-            if (panelType !== "scene") {
-                console.warn("[SettingsPanel] 未知面板类型:", panelType)
-                return
-            }
-            sceneSettingsPopup.triggerButton = triggerButton
-            sceneSettingsPopup.open()
-        }
-    }
-
     RowLayout {
         anchors.top: parent.top
         anchors.topMargin: 64
-        anchors.right: rightPrintToolbar.left
-        anchors.rightMargin: PrintWorkspaceStyle.space12
+        anchors.right: parent.right
+        anchors.rightMargin: PrintWorkspaceStyle.toolbarWidth + 28
         spacing: PrintWorkspaceStyle.space8
         visible: centralFragment.width >= 760
                  && x >= leftPrintToolbar.x + leftPrintToolbar.width + PrintWorkspaceStyle.space12
@@ -202,50 +188,6 @@ Item {
             text: qsTr("View Platform")
             icon.name: FluentIcons.graph_GridView
             onClicked: ActionManager.triggerAction("camera.resetDefault", {})
-        }
-    }
-
-    ModelInspectorPanel {
-        id: modelInspector
-        objectName: "modelInspectorPanel"
-        anchors.top: parent.top
-        anchors.topMargin: 132
-        visible: !FiberMaskBridge.active && maximumHeight >= 42
-                 && x >= leftPrintToolbar.x + leftPrintToolbar.width + PrintWorkspaceStyle.space12
-        anchors.right: rightPrintToolbar.left
-        anchors.rightMargin: 12
-        z: 50
-        expanded: centralFragment.propertiesExpanded
-        maximumHeight: Math.max(0, centralFragment.height - anchors.topMargin
-                                - PrintWorkspaceStyle.globalCommandBarHeight
-                                - PrintWorkspaceStyle.space16 * 2)
-
-        onExpandRequested: {
-            if (!ModelPropertyBridge.hasSelectedModel)
-                return
-            centralFragment.inspectorAutoExpandSuppressed = false
-            centralFragment.propertiesExpanded = true
-        }
-
-        onCollapseRequested: {
-            centralFragment.propertiesExpanded = false
-            centralFragment.inspectorAutoExpandSuppressed = true
-        }
-    }
-
-    FloatingSettingsPanel {
-        id: sceneSettingsPopup
-        objectName: "sceneSettingsPopup"
-        guideMode: Global.mainScreen && Global.mainScreen.userGuide.running
-                   && Global.mainScreen.userGuide.sourceWorkspace === centralFragment
-        viewportItem: centralFragment
-        title: qsTr("Scene Settings")
-        panelWidth: 400
-        panelHeight: 560
-        integratedTitleBar: false
-
-        panelContent: Component {
-            SceneSettingsPanel {}
         }
     }
 
@@ -296,8 +238,8 @@ Item {
         objectName: "fiberMaskSidebar"
         anchors.top: parent.top
         anchors.topMargin: 132
-        anchors.right: rightPrintToolbar.left
-        anchors.rightMargin: 12
+        anchors.right: parent.right
+        anchors.rightMargin: 16
         width: Math.max(0, Math.min(430, centralFragment.width - 100))
         // The global command bar belongs to the Dock host and sits above this
         // entire viewport. Reserve its footprint instead of extending beneath it.
@@ -312,17 +254,6 @@ Item {
             anchors.fill: parent
             active: FiberMaskBridge.active
             sourceComponent: Component { FiberMaskPanel {} }
-        }
-    }
-
-    Connections {
-        target: ModelPropertyBridge
-        function onHasSelectedModelChanged() {
-            if (!ModelPropertyBridge.hasSelectedModel) {
-                centralFragment.propertiesExpanded = false
-            } else if (!centralFragment.inspectorAutoExpandSuppressed) {
-                centralFragment.propertiesExpanded = true
-            }
         }
     }
 
@@ -347,9 +278,6 @@ Item {
     }
 
     Component.onCompleted: {
-        if (ModelPropertyBridge.hasSelectedModel
-                && !centralFragment.inspectorAutoExpandSuppressed)
-            centralFragment.propertiesExpanded = true
         if (ModelColorPaintBridge.active)
             modelColorPaintPopup.open()
         if (CutToolBridge.active)

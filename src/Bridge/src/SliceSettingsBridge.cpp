@@ -388,6 +388,17 @@ QVariantMap SliceSettingsBridge::settings() const {
     return result;
 }
 
+QStringList SliceSettingsBridge::modifiedSettingKeys() const {
+    QReadLocker locker(&m_lock);
+    QStringList keys;
+    for (const auto& item : m_items) {
+        const auto base = m_processBaseline.find(item.key);
+        if (item.visible && base != m_processBaseline.end() && item.value != base->second)
+            keys.append(QString::fromStdString(item.key));
+    }
+    return keys;
+}
+
 void SliceSettingsBridge::setSettings(const QVariantMap& settings) {
     if (configurationMutationBlocked("settings patch"))
         return;
@@ -529,6 +540,22 @@ void SliceSettingsBridge::resetToDefaults() {
         selection.filament_preset_ids = m_selection.filament_preset_ids;
     }
     replaceConfig(backend.activateConfig(selection), true);
+}
+
+void SliceSettingsBridge::restoreProcessSettings() {
+    // Reactivating the same SDK selection intentionally preserves edits.
+    // Restore only process values through its atomic, validated patch API;
+    // printer and material configuration must remain untouched.
+    QVariantMap baseline;
+    {
+        QReadLocker locker(&m_lock);
+        for (const auto& item : m_items) {
+            const auto original = m_processBaseline.find(item.key);
+            if (original != m_processBaseline.end() && item.value != original->second)
+                baseline.insert(QString::fromStdString(item.key), displayValueLocked(item, original->second));
+        }
+    }
+    if (!baseline.isEmpty()) setSettings(baseline);
 }
 
 QVariantList SliceSettingsBridge::machineModels() const {
@@ -1068,11 +1095,19 @@ bool SliceSettingsBridge::replaceConfig(GPlatform::SlicingConfigActivationResult
         QWriteLocker locker(&m_lock);
         machineChanged = m_selection.machine_model_id != result.selection.machine_model_id ||
                          m_selection.machine_variant_id != result.selection.machine_variant_id;
+        const bool newProcess = machineChanged || m_processBaseline.empty() ||
+                                m_selection.process_preset_id != result.selection.process_preset_id;
         m_selection = std::move(result.selection);
         appliedSelection = m_selection;
         m_compatibleProcesses = std::move(result.compatibleProcesses);
         m_compatibleFilaments = std::move(result.compatibleFilaments);
         m_items = std::move(result.settings);
+        if (newProcess) {
+            m_processBaseline.clear();
+            for (const auto& item : m_items)
+                if (item.group == libslicer::SettingGroup::Process)
+                    m_processBaseline.emplace(item.key, item.value);
+        }
         m_filamentSlots = filamentSlotItems(result.filamentSlots);
         m_itemIndex.clear();
         for (std::size_t index = 0; index < m_items.size(); ++index) {

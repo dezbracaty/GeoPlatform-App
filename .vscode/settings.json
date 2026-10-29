@@ -1,5 +1,0 @@
-{
-    "cmake.useCMakePresets": "always",
-    "cmake.useVsDeveloperEnvironment": "always",
-    "cmake.configureOnOpen": false
-}

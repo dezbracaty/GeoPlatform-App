@@ -1,0 +1,16 @@
+[
+    {
+        "label": "Configure",
+        "command": "bash",
+        "args": ["scripts/build.sh", "--configure-only"],
+        "cwd": "${ZED_WORKTREE_ROOT}",
+        "allow_concurrent_runs": false
+    },
+    {
+        "label": "Build",
+        "command": "bash",
+        "args": ["scripts/build.sh"],
+        "cwd": "${ZED_WORKTREE_ROOT}",
+        "allow_concurrent_runs": false
+    }
+]

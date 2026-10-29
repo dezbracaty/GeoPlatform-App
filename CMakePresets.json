@@ -15,19 +15,123 @@
       }
     },
     {
-      "name": "release",
+      "name": "release-config",
+      "hidden": true,
       "inherits": "base",
-      "binaryDir": "${sourceDir}/build-Release",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       }
     },
     {
-      "name": "debug",
+      "name": "release",
+      "inherits": "release-config",
+      "condition": {
+        "type": "notEquals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "binaryDir": "${sourceDir}/build-Release"
+    },
+    {
+      "name": "debug-config",
+      "hidden": true,
       "inherits": "base",
-      "binaryDir": "${sourceDir}/build-Debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "debug",
+      "inherits": "debug-config",
+      "condition": {
+        "type": "notEquals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "binaryDir": "${sourceDir}/build-Debug"
+    },
+    {
+      "name": "arm_release",
+      "displayName": "macOS arm64 Release",
+      "inherits": "release-config",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "binaryDir": "${sourceDir}/build-arm64-Release",
+      "cacheVariables": {
+        "GPLATFORM_TARGET_ARCH": "arm64"
+      }
+    },
+    {
+      "name": "arm_debug",
+      "displayName": "macOS arm64 Debug",
+      "inherits": "debug-config",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "binaryDir": "${sourceDir}/build-arm64-Debug",
+      "cacheVariables": {
+        "GPLATFORM_TARGET_ARCH": "arm64"
+      }
+    },
+    {
+      "name": "x86_release",
+      "displayName": "macOS x86_64 Release",
+      "inherits": "release-config",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "binaryDir": "${sourceDir}/build-x86_64-Release",
+      "cacheVariables": {
+        "GPLATFORM_TARGET_ARCH": "x86_64"
+      }
+    },
+    {
+      "name": "x86_debug",
+      "displayName": "macOS x86_64 Debug",
+      "inherits": "debug-config",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "binaryDir": "${sourceDir}/build-x86_64-Debug",
+      "cacheVariables": {
+        "GPLATFORM_TARGET_ARCH": "x86_64"
+      }
+    },
+    {
+      "name": "universal_release",
+      "displayName": "macOS universal Release",
+      "inherits": "release-config",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "binaryDir": "${sourceDir}/build-universal-Release",
+      "cacheVariables": {
+        "GPLATFORM_UNIVERSAL_BUILD": true
+      }
+    },
+    {
+      "name": "universal_debug",
+      "displayName": "macOS universal Debug",
+      "inherits": "debug-config",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "binaryDir": "${sourceDir}/build-universal-Debug",
+      "cacheVariables": {
+        "GPLATFORM_UNIVERSAL_BUILD": true
       }
     }
   ],
@@ -35,6 +139,11 @@
     {
       "name": "release",
       "configurePreset": "release",
+      "condition": {
+        "type": "notEquals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
       "targets": [
         "GPlatform"
       ]
@@ -42,6 +151,89 @@
     {
       "name": "debug",
       "configurePreset": "debug",
+      "condition": {
+        "type": "notEquals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "targets": [
+        "GPlatform"
+      ]
+    },
+    {
+      "name": "arm_release",
+      "displayName": "macOS arm64 Release",
+      "configurePreset": "arm_release",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "targets": [
+        "GPlatform"
+      ]
+    },
+    {
+      "name": "arm_debug",
+      "displayName": "macOS arm64 Debug",
+      "configurePreset": "arm_debug",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "targets": [
+        "GPlatform"
+      ]
+    },
+    {
+      "name": "x86_release",
+      "displayName": "macOS x86_64 Release",
+      "configurePreset": "x86_release",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "targets": [
+        "GPlatform"
+      ]
+    },
+    {
+      "name": "x86_debug",
+      "displayName": "macOS x86_64 Debug",
+      "configurePreset": "x86_debug",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "targets": [
+        "GPlatform"
+      ]
+    },
+    {
+      "name": "universal_release",
+      "displayName": "macOS universal Release",
+      "configurePreset": "universal_release",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "targets": [
+        "GPlatform"
+      ]
+    },
+    {
+      "name": "universal_debug",
+      "displayName": "macOS universal Debug",
+      "configurePreset": "universal_debug",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
       "targets": [
         "GPlatform"
       ]

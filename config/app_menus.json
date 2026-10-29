@@ -55,7 +55,15 @@
               "text": "Help", "isMenu": true,
               "iconSource": "graph_Help", "displayMode": "TextBesideIcon",
               "items": [
+                {"text": "操作引导", "iconSource": "graph_ReadingMode", "actionCode": "ui.guide.start", "enabled": true},
                 {"text": "About", "iconSource": "graph_Info", "actionCode": "help.about", "enabled": true}
+              ]
+            },
+            {
+              "text": "View", "isMenu": true,
+              "iconSource": "graph_View", "displayMode": "TextBesideIcon",
+              "items": [
+                {"text": "Scene Settings", "iconSource": "graph_Settings", "actionCode": "view.sceneSettings", "enabled": true}
               ]
             }
           ]
@@ -280,6 +288,34 @@
                   "text": "Exit Slicing",
                   "iconSource": "graph_ChromeClose",
                   "actionCode": "slicing.exit",
+                  "enabled": true
+                }
+              ]
+            },
+            {
+              "text": "Help",
+              "isMenu": true,
+              "iconSource": "graph_Help",
+              "displayMode": "TextBesideIcon",
+              "items": [
+                {
+                  "text": "About",
+                  "iconSource": "graph_Info",
+                  "actionCode": "help.about",
+                  "enabled": true
+                }
+              ]
+            },
+            {
+              "text": "View",
+              "isMenu": true,
+              "iconSource": "graph_View",
+              "displayMode": "TextBesideIcon",
+              "items": [
+                {
+                  "text": "Scene Settings",
+                  "iconSource": "graph_Settings",
+                  "actionCode": "view.sceneSettings",
                   "enabled": true
                 }
               ]

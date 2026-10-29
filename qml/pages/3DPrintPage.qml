@@ -48,8 +48,27 @@ ContentPage {
         openPrinterControl()
     }
 
+    readonly property alias configurationPanel: printConfiguration
+    readonly property alias sceneSettingsPopup: workspaceSceneSettings
+
     function openSliceSettings(params) {
-        return globalPrintBar.openMachineSettings(params || {})
+        params = params || {}
+        if (params.workspaceIndex !== undefined)
+            return globalPrintBar.openMachineSettings(params)
+        const key = params.settingKey || params.paramKey || params.key
+        if (key) {
+            const tab = SliceSettingsBridge.getSettingSchema(key).tab
+            if (tab === "printer" || tab === "filament")
+                return globalPrintBar.openMachineSettings({workspaceIndex: tab === "printer" ? 2 : 1, settingKey: key})
+            printConfiguration.focusSetting(key)
+        } else
+            printConfiguration.open()
+        return true
+    }
+
+    function openSceneSettings() {
+        workspaceSceneSettings.triggerButton = Global.mainScreen ? Global.mainScreen.viewMenuAnchor : null
+        workspaceSceneSettings.open()
     }
 
     // Capture an immutable send intent. Never submit from a connection callback.
@@ -588,6 +607,28 @@ ContentPage {
         }
     }
 
+    FloatingPrintConfiguration {
+        id: printConfiguration
+        boundsItem: root
+        workspaceReady: root.dockReady && StartupState.ready
+        onAddModelRequested: Global.starter.chooseModel({})
+        onDetailedSettingsRequested: function(workspaceIndex) {
+            globalPrintBar.openMachineSettings({workspaceIndex: workspaceIndex})
+        }
+    }
+
+    FloatingSettingsPanel {
+        id: workspaceSceneSettings
+        objectName: "sceneSettingsPopup"
+        viewportItem: root
+        title: qsTr("Scene Settings")
+        panelWidth: 400
+        panelHeight: 560
+        integratedTitleBar: false
+        guideMode: Global.mainScreen && Global.mainScreen.userGuide.running
+        panelContent: Component { SceneSettingsPanel {} }
+    }
+
     GlobalPrintCommandBar {
         id: globalPrintBar
         objectName: "globalPrintCommandBar"
@@ -607,6 +648,7 @@ ContentPage {
                           ? SelectionBridge.selectedModel.name : ""
         printerControlOpen: printerControlPopup.opened
 
+        onParametersRequested: { printerControlPopup.close(); globalPrintBar.closeMachinePopup(); printConfiguration.open() }
         onMachinePopupOpening: printerControlPopup.close()
         onPrinterControlRequested: root.togglePrinterControl()
         onAddModelRequested: Global.starter.chooseModel({})

@@ -1,0 +1,15 @@
+{
+    "cmake.cmakePath": "cmake",
+    "cmake.sourceDirectory": "${workspaceFolder}",
+    "cmake.autoDetectSourceDirectory": false,
+    "cmake.useCMakePresets": "always",
+    "cmake.options.statusBarVisibility": "visible",
+    "cmake.useVsDeveloperEnvironment": "always",
+    "cmake.configureOnOpen": false,
+    "cmake.configureEnvironment": {
+        "Qt6_DIR": "/REPLACE_WITH_QT_INSTALLATION/lib/cmake/Qt6"
+    },
+    "cmake.environment": {
+        "CMAKE_BUILD_PARALLEL_LEVEL": "4"
+    }
+}

@@ -12,13 +12,103 @@ Item {
     clip: true
     implicitWidth: preferredWidth
     implicitHeight: preferredHeight
-    Layout.minimumWidth: embedded ? 0 : 700
-    Layout.minimumHeight: embedded ? 0 : 480
+    Layout.minimumWidth: embedded || compactPanel ? 0 : 700
+    Layout.minimumHeight: embedded || compactPanel ? 0 : 480
 
     // Embedded mode delegates the window chrome to the owning popup. The
     // settings component remains reusable in the slicing workspace, where it
     // still renders its own title bar by default.
     property bool embedded: false
+    property bool compactPanel: false
+    readonly property font compactCaptionFont: Qt.font({family: Typography.caption.family, pixelSize: 11})
+    property bool fiberAvailable: false
+    property string compactCategory: "quality"
+    readonly property var compactCatalog: [
+        {id:"quality", title:qsTr("质量"), sections:[
+            {title:qsTr("层高"), keys:["layer_height","initial_layer_print_height"]},
+            {title:qsTr("线宽"), keys:["line_width","initial_layer_line_width"]},
+            {title:qsTr("接缝"), keys:["seam_position"]},
+            {title:qsTr("精度"), keys:["resolution"]}]},
+        {id:"strength", title:qsTr("强度"), sections:[
+            {title:qsTr("墙层"), keys:["wall_loops"]},
+            {title:qsTr("顶面与底面"), keys:["top_shell_layers","bottom_shell_layers"]},
+            {title:qsTr("稀疏填充"), keys:["sparse_infill_density","sparse_infill_pattern"]}]},
+        {id:"speed", title:qsTr("速度"), sections:[
+            {title:qsTr("打印速度"), keys:["outer_wall_speed","inner_wall_speed","sparse_infill_speed","top_surface_speed"]},
+            {title:qsTr("首层"), keys:["initial_layer_speed"]},
+            {title:qsTr("空驶"), keys:["travel_speed"]},
+            {title:qsTr("加速度"), keys:["default_acceleration"]}]},
+        {id:"support", title:qsTr("支撑"), sections:[
+            {title:qsTr("支撑"), keys:["enable_support","support_type","support_on_build_plate_only"]},
+            {title:qsTr("接触面"), keys:["support_top_z_distance"]}]},
+        {id:"others", title:qsTr("其他"), sections:[
+            {title:qsTr("附着"), keys:["brim_type","brim_width"]},
+            {title:qsTr("特殊模式"), keys:["spiral_mode"]}]},
+        {id:"fiber", title:qsTr("连续纤维"), sections:[
+            {title:qsTr("增强轮廓"), keys:["generate_reinforced_perimeters","outer_reinforced_perimeters_counts","fiber_width"]},
+            {title:qsTr("增强填充"), keys:["generate_reinforced_infills","reinforced_infill_pattern","reinforced_infill_density","fiber_infill_angle_sequence"]},
+            {title:qsTr("弯曲与间隔"), keys:["fiber_infill_bend_radius","fiber_layer_height_ratio"]}]}
+    ]
+    readonly property var compactPages: compactCatalog.filter(function(page) { return page.id !== "fiber" || fiberAvailable })
+    readonly property var compactDefinitions: {
+        if (!compactPanel) return []
+        const revision = schemaRevisionToken
+        const rows = []
+        for (const page of SliceSettingsBridge.getTabPages("process", showAdvancedMode)) {
+            for (const section of SliceSettingsBridge.getPageSchema("process", page.id, showAdvancedMode)) {
+                for (const row of section.rows || []) {
+                    if (fiberAvailable || compactSchemaCategory(row.page) !== "fiber")
+                        rows.push(row)
+                }
+            }
+        }
+        return rows
+    }
+    function compactSchemaCategory(page) {
+        const id = String(page || "").toLowerCase()
+        if (id.indexOf("continuous-fiber") >= 0) return "fiber"
+        for (const category of ["quality", "strength", "speed", "support"])
+            if (id.indexOf(category) >= 0) return category
+        return "others"
+    }
+    readonly property var compactSections: {
+        const category = compactCatalog.find(function(page) { return page.id === compactCategory })
+        if (!category) return []
+        const definitions = {}
+        const placements = {}
+        for (const row of compactDefinitions) definitions[row.key] = row
+        for (const page of compactCatalog)
+            for (const section of page.sections)
+                for (const key of section.keys) placements[key] = page.id
+        const sections = []
+        const included = {}
+        for (const section of category.sections) {
+            const rows = []
+            for (const key of section.keys) {
+                const definition = definitions[key]
+                if (!definition) continue
+                included[key] = true
+                // Common fields keep the reviewed ordering. Visibility and
+                // access level always come from the full live schema.
+                rows.push(Object.assign({}, definition, {autoInit:false,
+                    label:key === "line_width" ? qsTr("默认线宽") : definition.label}))
+            }
+            if (rows.length) sections.push({id:section.keys[0], title:section.title, rows:rows})
+        }
+        const remaining = {}
+        for (const definition of compactDefinitions) {
+            const placement = placements[definition.key] || compactSchemaCategory(definition.page)
+            if (placement !== compactCategory || included[definition.key]) continue
+            const id = definition.page || "other"
+            if (!remaining[id]) {
+                remaining[id] = {id:id, title:localizedSchemaText(definition.pageTitle, category.title), rows:[]}
+                sections.push(remaining[id])
+            }
+            remaining[id].rows.push(Object.assign({}, definition, {autoInit:false}))
+        }
+        return sections
+    }
+
     property bool showParamKeys: true
     property int workspaceIndex: 0
     property bool showAdvancedMode: false
@@ -107,7 +197,7 @@ Item {
                                                  && currentSidebarModel.length <= 1)
     readonly property var globalSearchResults: (schemaRevisionToken >= 0 && localeTranslationToken.length >= 0
                                                  && useSchemaDriven && globalSearchMode)
-                                              ? SliceSettingsBridge.getGlobalSearchResults(searchText, showAdvancedMode)
+                                              ? SliceSettingsBridge.getGlobalSearchResults(searchText, compactPanel || showAdvancedMode)
                                               : []
     readonly property int globalSearchResultCount: globalSearchResults.length
     readonly property string currentSchemaTab: workspaceIndex === 0 ? "process" : (workspaceIndex === 1 ? "filament" : "printer")
@@ -347,6 +437,8 @@ Item {
     }
 
     ColumnLayout {
+        visible: !root.compactPanel
+        enabled: !root.compactPanel
         anchors.fill: parent
         spacing: 0
 
@@ -944,7 +1036,7 @@ Item {
                         spacing: 10
 
                         Repeater {
-                            model: root.globalSearchMode ? [] : root.currentSchemaSections
+                            model: root.compactPanel || root.globalSearchMode ? [] : root.currentSchemaSections
 
                             delegate: SectionCard {
                                 required property var modelData
@@ -977,7 +1069,7 @@ Item {
                         }
 
                         Repeater {
-                            model: root.globalSearchMode ? root.globalSearchResults : []
+                            model: !root.compactPanel && root.globalSearchMode ? root.globalSearchResults : []
 
                             delegate: SearchResultCard {}
                         }
@@ -1079,6 +1171,145 @@ Item {
         function onSettingChanged(key, value) {
             if (key === "curr_bed_type")
                 root.currentBedType = String(value)
+        }
+    }
+
+
+    ColumnLayout {
+        anchors.fill: parent
+        visible: root.compactPanel
+        enabled: root.compactPanel
+        spacing: 0
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.leftMargin: 16
+            Layout.rightMargin: 16
+            Layout.bottomMargin: 8
+            spacing: 10
+            TextField {
+                objectName: root.compactPanel ? "print.configuration.search" : ""
+                Layout.fillWidth: true
+                implicitHeight: 31
+                font.pixelSize: 11
+                placeholderText: qsTr("Search Parameters")
+                leading: Icon { width: 12; height: 12; source: FluentIcons.graph_Search; color: root.SmoothUI.theme.res.textFillColorTertiary }
+                text: root.searchText
+                selectByMouse: true
+                onTextEdited: root.searchText = text
+            }
+            CheckBox {
+                objectName: root.compactPanel ? "print.configuration.advanced" : ""
+                text: qsTr("Advanced")
+                font.pixelSize: 10
+                indicator.width: 12; indicator.height: 12
+                spacing: 5; leftPadding: 0; rightPadding: 0
+                checked: root.showAdvancedMode
+                onToggled: root.showAdvancedMode = checked
+            }
+        }
+        Flow {
+            Layout.fillWidth: true
+            Layout.leftMargin: 16
+            Layout.rightMargin: 16
+            Layout.bottomMargin: 8
+            spacing: 2
+            Repeater {
+                model: root.compactPanel ? root.compactPages : []
+                delegate: Button {
+                    required property int index
+                    required property var modelData
+                    objectName: "print.configuration.category." + modelData.id
+                    height: 27
+                    implicitWidth: implicitContentWidth + 16
+                    horizontalPadding: 8
+                    flat: true
+                    font.pixelSize: 11
+                    text: modelData.title
+                    highlighted: false
+                    background: Rectangle {
+                        radius: 4
+                        color: modelData.id === root.compactCategory
+                               ? Qt.alpha(root.SmoothUI.theme.accentColor.defaultBrushFor(root.SmoothUI.dark), 0.09) : "transparent"
+                    }
+                    contentItem: Label {
+                        text: modelData.title
+                        font.pixelSize: 11
+                        color: modelData.id === root.compactCategory
+                               ? root.SmoothUI.theme.accentColor.defaultBrushFor(root.SmoothUI.dark)
+                               : root.SmoothUI.theme.res.textFillColorSecondary
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: root.compactCategory = modelData.id
+                }
+            }
+        }
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.leftMargin: 16
+            Layout.rightMargin: 16
+            height: 1
+            color: root.SmoothUI.theme.res.dividerStrokeColorDefault
+        }
+        ScrollView {
+            id: compactScroll
+            objectName: root.compactPanel ? "print.configuration.parameters" : ""
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            clip: true
+            leftPadding: 16
+            rightPadding: 16
+            contentWidth: availableWidth
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+            ColumnLayout {
+                width: compactScroll.availableWidth
+                spacing: 0
+                Repeater {
+                    model: root.compactPanel && !root.globalSearchMode ? root.compactSections : []
+                    delegate: ColumnLayout {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        Layout.topMargin: 12
+                        spacing: 0
+                        Label {
+                            Layout.fillWidth: true
+                            Layout.bottomMargin: 6
+                            text: modelData.title
+                            font.pixelSize: 11
+                            font.weight: Font.DemiBold
+                            color: root.SmoothUI.theme.res.textFillColorSecondary
+                        }
+                        Repeater {
+                            model: modelData.rows || []
+                            delegate: SettingRow {
+                                required property var modelData
+                                title: root.localizedSchemaText(modelData.label, modelData.key)
+                                paramKey: modelData.key
+                                schemaEnabled: modelData.enabled === undefined || !!modelData.enabled
+                                autoInit: false
+                                configRevision: root.schemaRevisionToken
+                                editorObjectNamePrefix: "print.configuration.editor."
+                                providedControl: compactInput.editorControl
+                                providedControlKind: compactInput.editorKind
+                                SchemaSettingInput { id: compactInput; definition: modelData }
+                            }
+                        }
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.topMargin: 10
+                            height: 1
+                            color: root.SmoothUI.theme.res.dividerStrokeColorDefault
+                        }
+                    }
+                }
+                Repeater {
+                    model: root.compactPanel && root.globalSearchMode
+                           ? root.globalSearchResults.filter(function(row) {
+                               return row.tab === "process" && (root.fiberAvailable || root.compactSchemaCategory(row.page) !== "fiber")
+                           }) : []
+                    delegate: SearchResultCard {}
+                }
+            }
         }
     }
 
@@ -1187,6 +1418,7 @@ Item {
         id: settingRow
 
         property string title: ""
+        readonly property bool modified: SliceSettingsBridge.modifiedSettingKeys.indexOf(paramKey) >= 0
         property string paramKey: ""
         property bool autoInit: true
         property bool schemaEnabled: true
@@ -1206,7 +1438,7 @@ Item {
         Layout.fillWidth: true
         Layout.preferredHeight: visible ? implicitHeight : 0
         Layout.maximumHeight: visible ? 16777215 : 0
-        implicitHeight: visible ? Math.max(44, settingLayout.implicitHeight) : 0
+        implicitHeight: visible ? Math.max(root.compactPanel ? 35 : 44, settingLayout.implicitHeight) : 0
         opacity: schemaEnabled ? 1.0 : 0.55
 
         function comboModelValue(combo, index) {
@@ -1457,17 +1689,20 @@ Item {
             rowSpacing: settingRow.multilineControl ? 6 : 0
 
             ColumnLayout {
-                Layout.fillWidth: settingRow.multilineControl
-                Layout.preferredWidth: settingRow.multilineControl
+                Layout.minimumWidth: 0
+                Layout.fillWidth: root.compactPanel || settingRow.multilineControl
+                Layout.preferredWidth: root.compactPanel || settingRow.multilineControl
                                        ? -1
                                        : Math.max(140, Math.min(180, root.width * 0.24))
-                Layout.alignment: Qt.AlignTop
+                Layout.alignment: root.compactPanel && !settingRow.multilineControl ? Qt.AlignVCenter : Qt.AlignTop
                 spacing: 1
 
                 Label {
-                    text: title
-                    color: root.SmoothUI.theme.res.textFillColorPrimary
-                    font: Typography.caption
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    text: root.compactPanel && settingRow.modified ? "• " + title : title
+                    color: root.compactPanel ? root.SmoothUI.theme.res.textFillColorSecondary : root.SmoothUI.theme.res.textFillColorPrimary
+                    font: root.compactPanel ? root.compactCaptionFont : Typography.caption
                     elide: Text.ElideRight
                 }
 
@@ -1483,13 +1718,13 @@ Item {
             Item {
                 id: controlHost
                 Layout.fillWidth: settingRow.multilineControl
-                Layout.preferredWidth: settingRow.multilineControl ? -1 : 280
+                Layout.preferredWidth: settingRow.multilineControl ? -1 : (root.compactPanel ? 117 : 280)
                 Layout.preferredHeight: implicitHeight
                 Layout.alignment: settingRow.multilineControl
                                   ? Qt.AlignLeft | Qt.AlignTop
                                   : Qt.AlignRight | Qt.AlignVCenter
                 enabled: root.settingsEditingEnabled && settingRow.schemaEnabled
-                implicitWidth: 280
+                implicitWidth: root.compactPanel ? 117 : 280
                 implicitHeight: controlRow.implicitHeight
 
                 RowLayout {
@@ -1529,7 +1764,7 @@ Item {
                                              : null
 
         Layout.fillWidth: editorKind === "multiline"
-        implicitWidth: editorKind === "multiline" ? 280 : fieldLoader.implicitWidth
+        implicitWidth: root.compactPanel ? (editorKind === "multiline" ? root.width - 32 : 117) : (editorKind === "multiline" ? 280 : fieldLoader.implicitWidth)
         implicitHeight: fieldLoader.implicitHeight
 
         function resolveInitialValue(fallbackValue) {
@@ -1564,14 +1799,14 @@ Item {
             id: fieldLoader
             width: schemaSettingInput.editorKind === "multiline"
                    ? schemaSettingInput.width
-                   : implicitWidth
+                   : (root.compactPanel ? 117 : implicitWidth)
 
             sourceComponent: {
                 var control = String(definition.control || "").toLowerCase()
                 var type = String(definition.type || "").toLowerCase()
 
                 if (control === "switch" || type === "bool") {
-                    return schemaSwitchEditor
+                    return root.compactPanel ? schemaCompactBoolEditor : schemaSwitchEditor
                 }
                 if (control === "combo" || type === "enum") {
                     return schemaComboEditor
@@ -1590,12 +1825,23 @@ Item {
         }
 
         Component {
+            id: schemaCompactBoolEditor
+            CheckBox {
+                id: compactCheck
+                readonly property var editorControl: compactCheck
+                implicitHeight: 28
+                checked: !!resolveInitialValue(false)
+            }
+        }
+
+        Component {
             id: schemaSwitchEditor
 
             Switch {
                 id: schemaSwitchControl
                 readonly property var editorControl: schemaSwitchControl
                 objectName: "sliceSettingEditor_" + String(definition.key || "")
+                implicitHeight: root.compactPanel ? 28 : 36
                 checked: !!resolveInitialValue(false)
             }
         }
@@ -1608,7 +1854,9 @@ Item {
                 readonly property var editorControl: schemaComboControl
                 objectName: "sliceSettingEditor_" + String(definition.key || "")
                 property var optionModel: root.localizedEnumOptions(definition.options || [])
-                width: 170
+                width: root.compactPanel ? 117 : 170
+                implicitHeight: root.compactPanel ? 28 : 36
+                font.pixelSize: root.compactPanel ? 11 : Theme.bodyFontSize
                 model: optionModel
                 textRole: "label"
                 valueRole: "value"
@@ -1632,7 +1880,7 @@ Item {
                     to: definition.max !== undefined ? Number(definition.max) : 100
                     value: Number(resolveInitialValue(from))
                     stepSize: definition.step !== undefined ? Number(definition.step) : 1
-                    Layout.preferredWidth: 170
+                    Layout.preferredWidth: root.compactPanel ? 60 : 170
                 }
 
                 ValueTag {
@@ -1649,24 +1897,40 @@ Item {
 
         Component {
             id: schemaNumberEditor
-
-            RowLayout {
+            Item {
                 readonly property var editorControl: numberEditorInput
-
-                NumberInput {
-                    id: numberEditorInput
-                    objectName: "sliceSettingEditor_" + String(definition.key || "")
-                    value: Number(resolveInitialValue(0))
-                    minValue: definition.min !== undefined ? Number(definition.min) : -99999
-                    maxValue: definition.max !== undefined ? Number(definition.max) : 99999
-                    decimals: definition.decimals !== undefined
-                              ? Number(definition.decimals)
-                              : (String(definition.type || "").toLowerCase() === "int" ? 0 : 2)
+                implicitWidth: root.compactPanel ? 117 : numberRow.implicitWidth
+                implicitHeight: root.compactPanel ? 28 : numberRow.implicitHeight
+                Rectangle {
+                    anchors.fill: parent
+                    visible: root.compactPanel
+                    radius: 4
+                    color: root.SmoothUI.dark ? root.SmoothUI.theme.res.controlFillColorDefault : "#ffffff"
+                    border.width: 1
+                    border.color: numberEditorInput.activeFocus
+                        ? root.SmoothUI.theme.accentColor.defaultBrushFor(root.SmoothUI.dark)
+                        : (root.SmoothUI.dark ? root.SmoothUI.theme.res.controlStrokeColorDefault : "#e0e5ec")
                 }
-
-                UnitLabel {
-                    visible: !!definition.unit
-                    text: root.translateSchemaBaseText(definition.unit || "")
+                RowLayout {
+                    id: numberRow
+                    anchors.fill: parent
+                    spacing: root.compactPanel ? 0 : 5
+                    NumberInput {
+                        id: numberEditorInput
+                        objectName: "sliceSettingEditor_" + String(definition.key || "")
+                        Layout.fillWidth: root.compactPanel
+                        background.opacity: root.compactPanel ? 0 : 1
+                        value: Number(resolveInitialValue(0))
+                        minValue: definition.min !== undefined ? Number(definition.min) : -99999
+                        maxValue: definition.max !== undefined ? Number(definition.max) : 99999
+                        decimals: definition.decimals !== undefined ? Number(definition.decimals)
+                            : (String(definition.type || "").toLowerCase() === "int" ? 0 : 2)
+                    }
+                    UnitLabel {
+                        visible: !!definition.unit
+                        Layout.rightMargin: root.compactPanel ? 7 : 0
+                        text: root.translateSchemaBaseText(definition.unit || "")
+                    }
                 }
             }
         }
@@ -1678,7 +1942,9 @@ Item {
                 id: schemaTextControl
                 readonly property var editorControl: schemaTextControl
                 objectName: "sliceSettingEditor_" + String(definition.key || "")
-                width: 190
+                width: root.compactPanel ? 117 : 190
+                implicitHeight: root.compactPanel ? 28 : 36
+                font.pixelSize: root.compactPanel ? 11 : Theme.bodyFontSize
                 text: String(resolveInitialValue(""))
                 selectByMouse: true
             }
@@ -1691,7 +1957,7 @@ Item {
                 id: schemaMultilineControl
                 readonly property var editorControl: schemaMultilineControl
                 objectName: "sliceSettingEditor_" + String(definition.key || "")
-                implicitWidth: 280
+                implicitWidth: root.compactPanel ? Math.max(100, root.width - 32) : 280
                 implicitHeight: 96
                 text: String(resolveInitialValue(""))
             }
@@ -1706,10 +1972,18 @@ Item {
         property int decimals: 2
 
         implicitWidth: 84
-        implicitHeight: 30
+        implicitHeight: root.compactPanel ? 28 : 30
+        font.pixelSize: root.compactPanel ? 11 : Theme.bodyFontSize
         horizontalAlignment: Text.AlignRight
         selectByMouse: true
-        text: Number(value).toFixed(decimals)
+        text: formattedValue()
+        function formattedValue() {
+            const full = Number(value).toFixed(decimals)
+            if (!root.compactPanel || decimals <= 2) return full
+            let end = full.length
+            while (end > full.indexOf(".") + 3 && full[end - 1] === "0") --end
+            return full.slice(0, end)
+        }
 
         validator: DoubleValidator {
             bottom: numberInput.minValue
@@ -1722,16 +1996,14 @@ Item {
             if (!isNaN(parsed)) {
                 parsed = Math.max(minValue, Math.min(maxValue, parsed))
                 value = parsed
-                text = Number(value).toFixed(decimals)
-            } else {
-                text = Number(value).toFixed(decimals)
             }
+            text = Qt.binding(function() { return numberInput.formattedValue() })
         }
     }
 
     component UnitLabel: Label {
         color: root.SmoothUI.theme.res.textFillColorSecondary
-        font: Typography.caption
+        font: root.compactPanel ? Qt.font({family: Typography.caption.family, pixelSize: 9}) : Typography.caption
     }
 
     component ValueTag: Rectangle {

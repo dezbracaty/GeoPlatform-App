@@ -15,12 +15,19 @@ import zlib
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--application', type=Path, required=True)
-parser.add_argument('--journal-tools',type=Path,default=Path(__file__).resolve().parents[3] / 'GPlatform-ui-sdk-build/ThirdParty/JournalSystem/tools')
+parser.add_argument('--journal-tools', type=Path, required=True,
+                    help='Directory containing the separately provided journalsystem Python client')
 parser.add_argument('--locale',choices=['en_US','zh_CN'])
 parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--cases',default='normal,minimize,failure,replay')
 parser.add_argument('--scale',type=float,default=1.)
 args = parser.parse_args()
+if os.name != 'nt':
+    parser.error('Window checks require Windows')
+if not (args.journal_tools / 'journalsystem/__init__.py').is_file():
+    parser.error('--journal-tools must contain journalsystem/__init__.py')
+if not args.application.is_file():
+    parser.error('--application must point to an existing executable')
 args.output.mkdir(parents=True,exist_ok=False)
 sys.path.insert(0,str(args.journal_tools.resolve()))
 from journalsystem import JournalSystem

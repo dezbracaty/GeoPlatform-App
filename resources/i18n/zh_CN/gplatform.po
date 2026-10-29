@@ -3275,6 +3275,33 @@ msgstr "跳转到设置"
 msgid "These slicing results are no longer valid. Please slice again."
 msgstr "这次切片结果已失效，请重新切片。"
 
+msgid "Dimensions"
+msgstr "模型尺寸"
+
+msgid "Position"
+msgstr "位置"
+
+msgid "Rotation"
+msgstr "旋转"
+
+msgid "Geometry"
+msgstr "几何统计"
+
+msgid "Parts"
+msgstr "部件"
+
+msgid "Vertices"
+msgstr "顶点"
+
+msgid "Triangles"
+msgstr "三角形"
+
+msgid "Change model appearance color"
+msgstr "修改模型外观颜色"
+
+msgid "Model Appearance Color"
+msgstr "模型外观颜色"
+
 msgid "%1 mm"
 msgstr "%1 mm"
 

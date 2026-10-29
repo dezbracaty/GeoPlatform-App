@@ -1,6 +1,6 @@
 {
   "OrcaSlicer": {
-    "content_sha256": "3611a563b7500aa9dda91bd6509a51ef8b162bae3b461186664b7ba2e5de21f8",
+    "content_sha256": "1a04bcb0d8949c2a6fd2b2b1369cde4da2fbe3818338ea6b6ff271c7d7c0ccbb",
     "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "dirty": false,
     "files": {
@@ -67,7 +67,7 @@
       "deps/Eigen/Eigen.cmake": "44908e1f8d11fe00c9d06a2d16167e20108109df1492d2a044056efd3116d4ad",
       "deps/FREETYPE/FREETYPE.cmake": "96e486f00e1404eff9cd796be076b69e4152728fc5b0d7afd6552239ace6b14e",
       "deps/GMP/0001-GMP_GCC15.patch": "ace8e93b71a92b0d2e76d64aff6d73f35ba512d2b14610d926467ae6b9181379",
-      "deps/GMP/GMP.cmake": "075c16600aa1d82a9408a1895d6ec705e6dba6efa4498696c6e1eba5ab238f17",
+      "deps/GMP/GMP.cmake": "e76d836ccf8e3e9cecfd8c46b565edb0f95bae6cfb6cf212b988a8ac7ed5bb15",
       "deps/GMP/gmp/gmp.COPYING": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
       "deps/GMP/gmp/gmp.README": "92903b0c50dab829a85c606ca1617984410f565a76ab160b7a1262fe218f13cc",
       "deps/GMP/gmp/include/gmp.h": "6b7a4c57b819b6c5af8f8255c6e8800694c1b53b8f8e09c167e7d3779e6d6505",
@@ -78,7 +78,7 @@
       "deps/GMP/gmp/lib/win-x86/libgmp-10.dll": "9be85bd8468363703304d0bbd059c9709dba270d0ff5a1a94823cb5dbbfa5f20",
       "deps/GMP/gmp/lib/win-x86/libgmp-10.lib": "9674fa6d52911540f62f332a9791413a6bbbb178769e9138e0013a3bc38fc533",
       "deps/JPEG/JPEG.cmake": "f8af8c1f53c2cde89c244c62bbeb9c132da8063ea972caacd68a66987be5e84d",
-      "deps/MPFR/MPFR.cmake": "4bfdc1493784622edc4821a10470b45a65c3e3b6ed9cc029046dbfe0b6174ecb",
+      "deps/MPFR/MPFR.cmake": "1abf56e3b9ce5caf28752982af734c7e3dd8cd0f90714274a545402bf7f5a93f",
       "deps/MPFR/mpfr/include/mpf2mpfr.h": "656ee5c68af6e0b76ed08c5c919ab0f51b8670207f4499c30a55fcf04266dacf",
       "deps/MPFR/mpfr/include/mpfr.h": "05d2d1c356fe541c67ba8660efc0384fe56714149cff2bd896c387e931e7fd95",
       "deps/MPFR/mpfr/lib/win-arm64/libmpfr-4.dll": "1d40ba1c45f7d50db814dc6a1ddb8bb3d4d50ade6905b77d39bc764f0fe09f12",
@@ -15792,7 +15792,7 @@
       "tests/update_catch2.sh": "30f9cbe13b38def7c080e92354851309f7ba2c7218aa612ebbfba8b7d0c3876b",
       "version.inc": "1f46ff7f55bbee3ae74b970ee072177a7f1b21fd0963c97c7689957842fe2142"
     },
-    "revision": "a755f344b6be40c69f6d8d8424a1b1d6ded3d217"
+    "revision": "54a752828d610887039bd6e98253a6449380cfa4"
   },
   "SmoothUI": {
     "content_sha256": "77bc11814d2f9afe0ca52f5f7badfd742774fd475ea2a0e80867bfdae37c0882",

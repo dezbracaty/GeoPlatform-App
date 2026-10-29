@@ -6,6 +6,23 @@
 #include "ChangeTypes.hpp"
 #include "Foundation/Log.h"
 #include <QPropertyBindingSourceLocation>
+#include <ModelInstanceDB.hpp>
+#include <algorithm>
+
+QVariantList DBPropertyBridge::models() const {
+    auto instances = DocumentManager::instance()->getDBInstancesByType(TypeID::MODEL_INSTANCE_DB);
+    std::sort(instances.begin(), instances.end(), [](const auto& a, const auto& b) {
+        return a->getDBInstanceID().getValue() < b->getDBInstanceID().getValue();
+    });
+    QVariantList result;
+    for (const auto& instance : instances) {
+        const auto model = std::dynamic_pointer_cast<ModelInstanceDB>(instance);
+        if (model)
+            result.append(QVariantMap{{"id", QString::number(model->getDBInstanceID().getValue())},
+                                      {"name", QString::fromStdString(model->getDisplayName())}});
+    }
+    return result;
+}
 
 DBPropertyBridge::DBPropertyBridge(QObject* parent) : ObservableBridgeBase(parent) {
     // LOG_INFO("DBPropertyBridge created");
@@ -70,6 +87,7 @@ void DBPropertyBridge::handleDatabaseChange(const DocumentManager::ChangeNotific
         // 当底层数据发生变化时，绑定会自动重新求值
         // 手动触发绑定重新评估
         markBindingsDirty();
+        emit modelsChanged();
 
         LOG_DEBUG("Widget type changed: {}, bindings marked dirty for re-evaluation", typeName.toStdString());
     }

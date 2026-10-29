@@ -23,6 +23,7 @@ class SliceSettingsBridge final : public bridge::BridgeBase {
     Q_OBJECT
     Q_PROPERTY(bool hasPendingReslice READ hasPendingReslice NOTIFY hasPendingResliceChanged)
     Q_PROPERTY(QVariantMap settings READ settings WRITE setSettings NOTIFY settingsChanged)
+    Q_PROPERTY(QStringList modifiedSettingKeys READ modifiedSettingKeys NOTIFY settingsChanged)
     Q_PROPERTY(bool schemaLoaded READ schemaLoaded NOTIFY schemaChanged)
     Q_PROPERTY(int schemaRevision READ schemaRevision NOTIFY schemaChanged)
     Q_PROPERTY(QString selectedMachineModelId READ selectedMachineModelId NOTIFY machineSelectionChanged)
@@ -48,6 +49,7 @@ public:
     static SliceSettingsBridge* create(QQmlEngine* qmlEngine, QJSEngine* jsEngine);
 
     QVariantMap settings() const;
+    QStringList modifiedSettingKeys() const;
     void setSettings(const QVariantMap& settings);
 
     Q_INVOKABLE QVariant getSetting(const QString& key,
@@ -57,6 +59,7 @@ public:
     Q_INVOKABLE bool hasSetting(const QString& key) const;
     Q_INVOKABLE void removeSetting(const QString& key);
     Q_INVOKABLE void resetToDefaults();
+    Q_INVOKABLE void restoreProcessSettings();
     Q_INVOKABLE void markCurrentAsSliced();
     void markAsSlicedForRevision(std::uint64_t sliced, std::optional<std::uint64_t> active);
     Q_INVOKABLE void markNeedsReslice();
@@ -133,6 +136,7 @@ private:
     std::vector<libslicer::PresetOption> m_compatibleProcesses;
     std::vector<libslicer::PresetOption> m_compatibleFilaments;
     std::vector<libslicer::SettingItem> m_items;
+    std::unordered_map<std::string, std::string> m_processBaseline;
     std::unordered_map<std::string, std::size_t> m_itemIndex;
     QVariantList m_schemaSettings;
     QVariantList m_schemaPages;

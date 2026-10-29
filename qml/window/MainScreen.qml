@@ -10,6 +10,7 @@ import "../dialogs"
 Item {
     id: root
     property alias pageRouter: page_router
+    property Item viewMenuAnchor: null
     property bool debugWindowOpened: false
     property alias userGuide: workspaceGuide
     property bool automaticGuidePending: false
@@ -122,6 +123,21 @@ Item {
                 const mode = modes[actionCode]
                 Qt.callLater(function() { CalibrationBridge.openParameters(mode) })
             }
+            return
+        }
+        if (actionCode === "view.sceneSettings") {
+            const host = currentPrintHost()
+            if (host) host.openSceneSettings()
+            return
+        }
+        if (actionCode === "ui.guide.start") {
+            const host = currentPrintHost()
+            if (host && host.activePageName === "prepare" && host.activeWorkspaceContent)
+                root.startUserGuide(host.activeWorkspaceContent)
+            return
+        }
+        if (actionCode === "help.about") {
+            page_router.go("/about")
             return
         }
         if (actionCode === "model.import.choose") {
@@ -237,6 +253,14 @@ Item {
             groupName: "Menu"  // 使用 groupName 属性，菜单会自动从当前环境加载
             delegate: MenuBarItem {
                 objectName: "mainMenu_" + (menu ? menu.title : "")
+                function syncMenu() {
+                    if (root.viewMenuAnchor === this) root.viewMenuAnchor = null
+                    if (menu) menu.focus = true
+                    if (menu && menu.title === "View") root.viewMenuAnchor = this
+                }
+                onMenuChanged: syncMenu()
+                Component.onCompleted: syncMenu()
+                Component.onDestruction: { if (root.viewMenuAnchor === this) root.viewMenuAnchor = null }
                 enabled: !menu || menu.title !== "Calibration" || (CalibrationBridge.available
                     && !TaskStateNotifier.isBusy && root.currentPrintHost()
                     && root.currentPrintHost().activePageName === "prepare")
@@ -245,6 +269,7 @@ Item {
                     if (title === "File") return qsTr("File")
                     if (title === "Edit") return qsTr("Edit")
                     if (title === "Help") return qsTr("Help")
+                    if (title === "View") return qsTr("视图")
                     if (title === "Calibration") return qsTr("校准")
                     return title
                 }

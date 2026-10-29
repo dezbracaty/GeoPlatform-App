@@ -3,6 +3,7 @@
 #include <ObservableBridgeBase.hpp>
 #include <QProperty>
 #include <QBindable>
+#include <QVariantList>
 #include <QtQml/qqml.h>
 #include <memory>
 
@@ -14,12 +15,14 @@ class DBPropertyBridge : public bridge::ObservableBridgeBase {
                BINDABLE bindableGridDisplayExists NOTIFY gridDisplayExistsChanged)
     Q_PROPERTY(int meshCount READ meshCount
                BINDABLE bindableMeshCount NOTIFY meshCountChanged)
+    Q_PROPERTY(QVariantList models READ models NOTIFY modelsChanged)
 
     QML_ELEMENT
 
 signals:
     void gridDisplayExistsChanged();
     void meshCountChanged();
+    void modelsChanged();
 
 public:
     explicit DBPropertyBridge(QObject* parent = nullptr);
@@ -28,6 +31,7 @@ public:
     // Getters
     bool gridDisplayExists() const { return m_gridDisplayExists; }
     int meshCount() const { return m_meshCount; }
+    QVariantList models() const;
 
     // Bindables
     QBindable<bool> bindableGridDisplayExists() { return &m_gridDisplayExists; }

@@ -1,4 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
+if(GPLATFORM_UNIVERSAL_BUILD)
+    include(cmake/GPlatformUniversal.cmake)
+    return()
+endif()
 include(cmake/GPlatformBuildInputs.cmake)
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
@@ -103,6 +107,7 @@ set(QML_FILES
     qml/components/InspectorSection.qml
     qml/components/InspectorRow.qml
     qml/components/InspectorNumberField.qml
+    qml/components/FloatingPrintConfiguration.qml
     qml/components/SlicingSettingsContent.qml
     qml/components/ToolpathGCodePanel.qml
     qml/components/ToolpathPreviewLegendPanel.qml
@@ -125,12 +130,10 @@ set(QML_FILES
     qml/components/AIAssistantToggleButton.qml
     qml/components/FeatureHeaderLogo.qml
     qml/workspaces/normal/components/LeftPrintToolbar.qml
-    qml/workspaces/normal/components/ModelInspectorPanel.qml
     qml/workspaces/normal/components/ModelColorPaintPanel.qml
     qml/workspaces/normal/components/FiberMaskPanel.qml
     qml/workspaces/normal/components/FiberMaskListPanel.qml
     qml/workspaces/normal/components/CutToolPanel.qml
-    qml/workspaces/normal/components/RightPrintToolbar.qml
     qml/workspaces/normal/centralPart.qml
     qml/workspaces/slicing/centralPart.qml
     qml/workspaces/realistic/centralPart.qml
@@ -675,19 +678,19 @@ if (CMAKE_BUILD_TYPE MATCHES "Release")
         endif()
 endif()
 if (APPLE)
-    unset(QT_DEPLOY CACHE)
-    unset(QT_DEPLOY)
-    find_program(QT_DEPLOY NAMES macdeployqt PATHS "${QT_SDK_DIR}/bin" NO_DEFAULT_PATH)
+    set(_gplatform_deploy_architectures ${CMAKE_OSX_ARCHITECTURES})
+    if(NOT _gplatform_deploy_architectures)
+        set(_gplatform_deploy_architectures "${CMAKE_SYSTEM_PROCESSOR}")
+    endif()
     add_custom_target(${PROJECT_NAME}_dist
-        COMMAND ${CMAKE_COMMAND} -E remove_directory ${DIST_PATH}
-        COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_APP_NAME}.app ${DIST_PATH}/${PROJECT_APP_NAME}.app
-        COMMAND ${QT_DEPLOY} ${DIST_PATH}/${PROJECT_APP_NAME}.app -qmldir=${CMAKE_SOURCE_DIR}
-        COMMAND find ${DIST_PATH}/${PROJECT_APP_NAME}.app -name "*.dSYM" | xargs rm -r
-        COMMAND ${CMAKE_COMMAND} -P ${CMAKE_BINARY_DIR}/remove_build_files.cmake
-        COMMAND ${QT_DEPLOY} ${DIST_PATH}/${PROJECT_APP_NAME}.app -dmg
-        COMMENT "MacOs Deploying Qt Dependencies After Build........."
-        SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/deploy_macos.py"
+            --source-bundle "$<TARGET_BUNDLE_DIR:${PROJECT_NAME}>"
+            --build-dir "${CMAKE_BINARY_DIR}" --qt-dir "${Qt6_DIR}"
+            --qml-dir "${CMAKE_CURRENT_SOURCE_DIR}/qml"
+            --output-dir "${DIST_PATH}" --architectures ${_gplatform_deploy_architectures} --dmg
+        DEPENDS ${PROJECT_NAME}
+        COMMENT "Deploy, sign, audit and package the macOS application"
+        USES_TERMINAL VERBATIM
     )
 endif()
 if (LINUX)
