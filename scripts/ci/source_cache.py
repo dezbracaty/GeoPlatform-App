@@ -40,6 +40,11 @@ def seed_submodules(source, paths, config, env):
     for relative in paths:
         target = source / relative
         if target.exists() and any(target.iterdir()):
+            if (target / '.git').exists() and not any(p.name != '.git' for p in target.iterdir()):
+                # Recover an interrupted local --no-checkout clone. Submodule
+                # update skips checkout when HEAD already equals its gitlink.
+                git(target, 'config', 'core.autocrlf', 'false', env=env)
+                git(target, 'checkout', '--force', '--detach', 'HEAD', env=env)
             continue
         entries = git(source, 'config', '-f', '.gitmodules', '--get-regexp',
                       r'^submodule\..*\.path$', env=env).splitlines()
@@ -64,6 +69,8 @@ def seed_submodules(source, paths, config, env):
                 # no alternates that depend on retention of a previous run.
                 run(['git', 'clone', '--no-checkout', cached, target], env=env)
                 git(target, 'remote', 'set-url', 'origin', url, env=env)
+                git(target, 'config', 'core.autocrlf', 'false', env=env)
+                git(target, 'checkout', '--force', '--detach', 'HEAD', env=env)
                 seeded = True
                 break
             if seeded:
