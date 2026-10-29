@@ -14,6 +14,11 @@ on:
           # branches:source_ref:begin
           - "ci/app-workflows"
           - "ci/delivery/40620850664-1"
+          - "ci/delivery/40919516847-1"
+          - "ci/installers-20261030"
+          - "ci/macos-status"
+          - "ci/validation-20261030"
+          - "ci/windows-source-cache"
           - "feature/gplatform-ui"
           - "main"
           # branches:source_ref:end
@@ -25,6 +30,11 @@ on:
           # branches:sdk_ref:begin
           - "Use repository pin"
           - "ci/delivery/40620850664-1"
+          - "ci/delivery/40868656517-1"
+          - "ci/delivery/40890497656-1"
+          - "ci/delivery/40916633054-1"
+          - "ci/delivery/40919516847-1"
+          - "ci/validation-20261030"
           - "feature/gplatform-ui"
           - "main"
           # branches:sdk_ref:end
@@ -50,6 +60,7 @@ on:
           - "fix/linux-webview-amd-perf"
           - "fix/optimize_window_event_handler_for_mouse_events"
           - "fix/type-rename-in-presetbundledialog"
+          - "fix/windows-import-and-solid-infill"
           - "libslicer"
           - "main"
           - "release/signpath-test"
