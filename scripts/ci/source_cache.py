@@ -55,6 +55,14 @@ def windows_line_endings(repo, env):
         configured = ''
     if configured == 'true':
         return
+    if not configured:
+        try:
+            inherited = git(repo, 'config', '--global', '--get', 'core.autocrlf', env=env)
+        except RuntimeError:
+            inherited = ''
+        if inherited == 'true':
+            git(repo, 'config', 'core.autocrlf', 'true', env=env)
+            return
     if git(repo, 'status', '--porcelain', '--ignore-submodules=all', env=env):
         raise RuntimeError(f'Modified source dependency before Windows checkout normalization: {repo}')
     git(repo, 'config', 'core.autocrlf', 'true', env=env)
