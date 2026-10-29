@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 
 from macos_bundle import (ARCHITECTURES, BuildError, audit_bundle,
-                          clean_bundle_rpaths, deploy_bundle, run)
+                          clean_bundle_rpaths, create_disk_image, deploy_bundle, run)
 
 
 def main():
@@ -44,12 +44,7 @@ def main():
         binaries = audit_bundle(bundle, args.architectures)
         if args.dmg:
             # Package the already audited bundle without running Qt deployment again.
-            image_source = Path(temporary) / 'image'
-            image_source.mkdir()
-            shutil.copytree(bundle, image_source / bundle.name, symlinks=True)
-            (image_source / 'Applications').symlink_to('/Applications')
-            run(['hdiutil', 'create', '-volname', source.stem, '-srcfolder', image_source,
-                 '-format', 'UDZO', '-ov', stage / (source.stem + '.dmg')], build / 'dist-dmg.log')
+            create_disk_image(bundle, stage / (source.stem + '.dmg'), build / 'dist-dmg.log')
         (stage / 'report.json').write_text(json.dumps({
             'status': 'passed', 'architectures': args.architectures, 'binaries': binaries,
             'app': str(output / source.name), 'excludedUnusedSqlDrivers': excluded,

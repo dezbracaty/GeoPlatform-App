@@ -34,6 +34,17 @@ def run(command, log, environment=None):
         raise BuildError(f"Command failed ({result.returncode}); see {log}")
 
 
+def create_disk_image(bundle, destination, log):
+    """Package an already deployed and audited bundle; preserve framework symlinks."""
+    with tempfile.TemporaryDirectory(prefix='dmg-', dir=destination.parent) as temporary:
+        image = Path(temporary) / 'image'
+        image.mkdir()
+        shutil.copytree(bundle, image / bundle.name, symlinks=True)
+        (image / 'Applications').symlink_to('/Applications')
+        run(['hdiutil', 'create', '-volname', bundle.stem, '-srcfolder', image,
+             '-format', 'UDZO', '-ov', destination], log)
+
+
 def is_macho(path):
     with path.open("rb") as source:
         return source.read(4) in MACHO_MAGIC

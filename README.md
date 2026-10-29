@@ -178,3 +178,7 @@ Release 薄架构配置完成后，可在所选构建目录构建 `GPlatform_dis
 Zed 用户可将 `zed-template/` 复制为本地 `.zed/`。当前模板提供 macOS/Linux Configure、Build，
 共用 `scripts/build.sh`；从编辑器环境设置 `Qt6_DIR`，可用 `GPLATFORM_PRESET` 选择预设，默认本机架构 Release。
 `.zed/` 与 `.vscode/` 一样默认忽略；复制模板前保留原有个人设置。
+
+## GitHub Actions
+
+App 仓库的 Windows / macOS 自动构建、手动选项与分支菜单规则见 [CI 使用说明](docs/ci.md)。
