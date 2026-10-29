@@ -34,6 +34,17 @@ jobs:
             }
           }
           Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -like "*publish_delivery.py*$env:GP_SDK_RUN*" } | Select-Object ProcessId, CreationDate, ReadOperationCount, ReadTransferCount, WriteOperationCount, WriteTransferCount | ConvertTo-Json -Compress | Write-Host
+          $processes = @(Get-CimInstance Win32_Process)
+          $owned = @($processes | Where-Object { $_.Name -eq 'python.exe' -and $_.CommandLine -like "*publish_delivery.py*$env:GP_SDK_RUN*" } | ForEach-Object { $_.ProcessId })
+          for ($level = 0; $level -lt 8; $level++) {
+            $children = @($processes | Where-Object { $_.ParentProcessId -in $owned -and $_.ProcessId -notin $owned })
+            if (-not $children.Count) { break }
+            foreach ($child in $children) {
+              $safe = $child.CommandLine -replace 'https?://[^\s]+', '<url>' -replace '(?i)(authorization[:=]\s*(?:basic|bearer)\s+)\S+', '$1<masked>'
+              Write-Host "Producer child: $($child.ProcessId) $($child.Name) $safe"
+              $owned += $child.ProcessId
+            }
+          }
           $verification = Join-Path $directory 'publish/remote-app'
           if (Test-Path -LiteralPath $verification) {
             Get-ChildItem -LiteralPath $verification -Force -ErrorAction SilentlyContinue | Select-Object Name, LastWriteTime | ConvertTo-Json -Compress | Write-Host
