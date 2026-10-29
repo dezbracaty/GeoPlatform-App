@@ -149,6 +149,11 @@ jobs:
       GIT_TERMINAL_PROMPT: '0'
       GIT_LFS_SKIP_SMUDGE: '1'
       GCM_INTERACTIVE: never
+      GIT_CONFIG_COUNT: '2'
+      GIT_CONFIG_KEY_0: http.sslBackend
+      GIT_CONFIG_VALUE_0: openssl
+      GIT_CONFIG_KEY_1: http.version
+      GIT_CONFIG_VALUE_1: HTTP/1.1
       SOURCE_TOKEN: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
       GITHUB_TOKEN: ${{ github.token }}
       INPUT_REF: ${{ github.event_name == 'push' && github.ref_name || inputs.source_ref }}
