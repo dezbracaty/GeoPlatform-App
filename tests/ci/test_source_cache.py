@@ -66,6 +66,19 @@ class SourceCacheTests(unittest.TestCase):
         seed_submodules(source, [module], self.config, self.env)
         self.assertFalse((source / module / '.git').exists())
 
+    def test_already_pinned_cache_and_interrupted_clone_materialize_files(self):
+        source, module, cache, origin, pin = self.fixture()
+        old = git(cache, 'rev-parse', 'HEAD', env=self.env)
+        git(source, 'update-index', '--cacheinfo', f'160000,{old},{module}', env=self.env)
+        git(source, 'commit', '-m', 'pin already in cache', env=self.env)
+        seed_submodules(source, [module], self.config, self.env)
+        git(source, 'submodule', 'update', '--init', '--', module, env=self.env)
+        self.assertEqual((source / module / 'input.txt').read_text(), 'old')
+        self.assertEqual(git(source / module, 'status', '--porcelain', env=self.env), '')
+        (source / module / 'input.txt').unlink()
+        seed_submodules(source, [module], self.config, self.env)
+        self.assertEqual((source / module / 'input.txt').read_text(), 'old')
+
     def test_source_snapshot_is_bound_to_its_saved_digest(self):
         origin = self.repository(self.root / 'original')
         head = self.commit(origin, 'snapshot')
