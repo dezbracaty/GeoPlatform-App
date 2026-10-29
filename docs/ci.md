@@ -68,3 +68,5 @@ node --test scripts/ci/artifact-upload/test-retry.cjs
 ```
 
 Windows 初始化依赖时优先复用同一台机器上已有、远端地址一致的 Git 仓库；仍按本次 gitlink 获取缺少的提交，并执行 SDK 版本和内容校验。复用仅包含 Git 对象，不包含旧工作区未提交内容，不依赖旧运行目录的保留。
+
+Windows CI status 是手动只读入口：输入主仓库 SDK 构建的 run-id-attempt，可用同机 App runner 查看 producer 的日志尾部和编译进程，不获取构建锁、不修改源码或发布指针。自定义 producer 目录时设置 App 仓库变量 `GPLATFORM_WINDOWS_PRODUCER_ROOT`（默认 `C:/gp-ci`）。
