@@ -185,7 +185,7 @@ PanelSurface {
                     root.collapsed = !root.collapsed;
                 }
                 ToolTip.visible: hovered
-                ToolTip.text: root.collapsed ? qsTr("展开面板") : qsTr("收起面板")
+                ToolTip.text: root.collapsed ? qsTr("Expand panel") : qsTr("Collapse panel")
             }
             IconButton {
                 objectName: "print.configuration.hide"
@@ -200,7 +200,7 @@ PanelSurface {
                     root.hide();
                 }
                 ToolTip.visible: hovered
-                ToolTip.text: qsTr("隐藏面板")
+                ToolTip.text: qsTr("Hide panel")
             }
         }
         Rectangle {
@@ -228,9 +228,9 @@ PanelSurface {
             Layout.bottomMargin: 9
             spacing: 7
             SectionLabel {
-                label: qsTr("切片机型")
+                label: qsTr("Slicing printer")
                 iconSource: FluentIcons.graph_Print
-                actionText: qsTr("编辑预设")
+                actionText: qsTr("Edit preset")
                 onTriggered: root.detailedSettingsRequested(2)
             }
             ComboBox {
@@ -269,7 +269,7 @@ PanelSurface {
             }
             Label {
                 Layout.fillWidth: true
-                text: qsTr("打印空间 %1 × %2 × %3 mm").arg(Math.round(root.machine.width || 0)).arg(Math.round(root.machine.height || 0)).arg(Math.round(root.machine.printHeight || 0))
+                text: qsTr("Build volume %1 × %2 × %3 mm").arg(Math.round(root.machine.width || 0)).arg(Math.round(root.machine.height || 0)).arg(Math.round(root.machine.printHeight || 0))
                 font.pixelSize: 10
                 color: root.secondaryText
                 elide: Text.ElideRight
@@ -383,12 +383,12 @@ PanelSurface {
             Layout.bottomMargin: 9
             spacing: 7
             SectionLabel {
-                label: qsTr("工艺预设")
+                label: qsTr("Process preset")
                 iconSource: FluentIcons.graph_Equalizer
                 actionText: ""
                 actionIcon: FluentIcons.graph_Save
                 actionEnabled: false
-                actionHint: qsTr("当前预设库尚不支持另存工艺预设")
+                actionHint: qsTr("The preset library does not support saving process presets yet")
             }
             ComboBox {
                 id: processCombo
@@ -433,7 +433,7 @@ PanelSurface {
                 anchors.margins: 3
                 spacing: 3
                 Repeater {
-                    model: [qsTr("工艺参数"), qsTr("模型对象")]
+                    model: [qsTr("Process parameters"), qsTr("Model objects")]
                     Button {
                         id: contentTab
                         required property int index
@@ -519,7 +519,7 @@ PanelSurface {
                 RowLayout {
                     Layout.fillWidth: true
                     Label {
-                        text: qsTr("当前平台")
+                        text: qsTr("Current plate")
                         font.pixelSize: 10
                         color: root.secondaryText
                         Layout.fillWidth: true
@@ -579,7 +579,7 @@ PanelSurface {
                 Label {
                     Layout.fillWidth: true
                     visible: SelectionBridge.selectionCount !== 1
-                    text: SelectionBridge.hasSelection ? qsTr("请选择一个模型以编辑属性") : qsTr("选择模型以查看属性")
+                    text: SelectionBridge.hasSelection ? qsTr("Select one model to edit its properties") : qsTr("Select a model to view its properties")
                     font.pixelSize: 11
                     color: root.secondaryText
                     wrapMode: Text.Wrap
@@ -656,7 +656,7 @@ PanelSurface {
                         }
                     }
                     Label {
-                        text: qsTr("模型材料")
+                        text: qsTr("Model material")
                         font.pixelSize: 11
                         color: root.secondaryText
                     }
@@ -668,7 +668,7 @@ PanelSurface {
                         model: [
                             {
                                 id: 0,
-                                name: qsTr("使用项目默认材料")
+                                name: qsTr("Use project default material")
                             }
                         ].concat(root.slots.map(function (slot) {
                             return {
@@ -693,7 +693,7 @@ PanelSurface {
                             Layout.fillWidth: true
                             implicitHeight: 30
                             font.pixelSize: 11
-                            text: qsTr("贴合平台")
+                            text: qsTr("Place on build plate")
                             onClicked: ActionManager.triggerAction("align.to_bed", {
                                 preserveRelative: true
                             })
@@ -703,7 +703,7 @@ PanelSurface {
                             Layout.fillWidth: true
                             implicitHeight: 30
                             font.pixelSize: 11
-                            text: qsTr("缩放模型")
+                            text: qsTr("Scale model")
                             onClicked: ActionManager.triggerAction("model.scale", {
                                 modelId: SelectionBridge.selectedId
                             })
@@ -736,7 +736,7 @@ PanelSurface {
                         visible: root.fiberCapable
                         Layout.fillWidth: true
                         implicitHeight: 32
-                        text: qsTr("编辑纤维屏蔽区")
+                        text: qsTr("Edit fiber mask")
                         onClicked: {
                             root.hide();
                             ActionManager.triggerAction("model.fiberMask", {});
@@ -773,7 +773,7 @@ PanelSurface {
                 }
                 Label {
                     Layout.fillWidth: true
-                    text: SliceSettingsBridge.modifiedSettingKeys.length > 0 ? qsTr("已修改 %1 项").arg(SliceSettingsBridge.modifiedSettingKeys.length) + (SliceSettingsBridge.hasPendingReslice ? qsTr(" · 需要重新切片") : "") : qsTr("工艺预设未修改")
+                    text: SliceSettingsBridge.modifiedSettingKeys.length > 0 ? qsTr("%1 settings modified").arg(SliceSettingsBridge.modifiedSettingKeys.length) + (SliceSettingsBridge.hasPendingReslice ? qsTr(" · Reslicing required") : "") : qsTr("Process preset unchanged")
                     font.pixelSize: 10
                     color: root.secondaryText
                     elide: Text.ElideRight
@@ -781,7 +781,7 @@ PanelSurface {
                 Button {
                     objectName: "print.configuration.reset"
                     visible: SliceSettingsBridge.modifiedSettingKeys.length > 0
-                    text: qsTr("还原修改")
+                    text: qsTr("Restore changes")
                     flat: true
                     font.pixelSize: 10
                     implicitHeight: 28

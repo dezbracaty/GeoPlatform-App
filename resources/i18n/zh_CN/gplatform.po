@@ -3593,3 +3593,144 @@ msgstr "取消上传"
 
 msgid "Cancelled"
 msgstr "已取消"
+
+msgid "Desktop notifications"
+msgstr "桌面通知"
+
+msgid "Background desktop notifications"
+msgstr "后台桌面通知"
+
+msgid "Notify when slicing finishes or fails while the app is minimized or in the background. Visibility depends on system notification settings."
+msgstr "在程序最小化或切到后台时，提醒切片完成或失败。是否显示由系统通知设置决定。"
+
+msgid "System tray notifications are supported"
+msgstr "系统托盘支持通知"
+
+msgid "Desktop notifications are currently unavailable"
+msgstr "当前桌面通知不可用"
+
+msgid "Calibration"
+msgstr "校准"
+
+msgid "Expand panel"
+msgstr "展开面板"
+
+msgid "Collapse panel"
+msgstr "收起面板"
+
+msgid "Hide panel"
+msgstr "隐藏面板"
+
+msgid "Slicing printer"
+msgstr "切片机型"
+
+msgid "Edit preset"
+msgstr "编辑预设"
+
+msgid "Process preset"
+msgstr "工艺预设"
+
+msgid "The preset library does not support saving process presets yet"
+msgstr "当前预设库尚不支持另存工艺预设"
+
+msgid "Process parameters"
+msgstr "工艺参数"
+
+msgid "Model objects"
+msgstr "模型对象"
+
+msgid "Current plate"
+msgstr "当前平台"
+
+msgid "Select one model to edit its properties"
+msgstr "请选择一个模型以编辑属性"
+
+msgid "Select a model to view its properties"
+msgstr "选择模型以查看属性"
+
+msgid "Model material"
+msgstr "模型材料"
+
+msgid "Use project default material"
+msgstr "使用项目默认材料"
+
+msgid "Place on build plate"
+msgstr "贴合平台"
+
+msgid "Scale model"
+msgstr "缩放模型"
+
+msgid "Edit fiber mask"
+msgstr "编辑纤维屏蔽区"
+
+msgid "%1 settings modified"
+msgstr "已修改 %1 项"
+
+msgid " · Reslicing required"
+msgstr " · 需要重新切片"
+
+msgid "Process preset unchanged"
+msgstr "工艺预设未修改"
+
+msgid "Restore changes"
+msgstr "还原修改"
+
+msgid "Scene and help"
+msgstr "场景与帮助"
+
+msgid "Use the View menu to adjust scene, background, and build plate appearance. Find the guide and About in the Help menu. The print configuration panel can be expanded, collapsed, or hidden."
+msgstr "通过顶部视图菜单调整场景、背景和打印平台外观。操作引导与关于信息位于帮助菜单。打印配置浮窗可以展开、收起或隐藏。"
+
+msgid "Quality"
+msgstr "质量"
+
+msgid "Layer height"
+msgstr "层高"
+
+msgid "Line width"
+msgstr "线宽"
+
+msgid "Precision"
+msgstr "精度"
+
+msgid "Strength"
+msgstr "强度"
+
+msgid "Wall layers"
+msgstr "墙层"
+
+msgid "Top and bottom surfaces"
+msgstr "顶面与底面"
+
+msgid "Sparse infill"
+msgstr "稀疏填充"
+
+msgid "Printing speed"
+msgstr "打印速度"
+
+msgid "First layer"
+msgstr "首层"
+
+msgid "Contact interface"
+msgstr "接触面"
+
+msgid "Others"
+msgstr "其他"
+
+msgid "Build plate adhesion"
+msgstr "附着"
+
+msgid "Special modes"
+msgstr "特殊模式"
+
+msgid "Reinforced contours"
+msgstr "增强轮廓"
+
+msgid "Reinforced infill"
+msgstr "增强填充"
+
+msgid "Turns and spacing"
+msgstr "弯曲与间隔"
+
+msgid "Default line width"
+msgstr "默认线宽"

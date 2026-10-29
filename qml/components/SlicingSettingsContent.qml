@@ -24,30 +24,30 @@ Item {
     property bool fiberAvailable: false
     property string compactCategory: "quality"
     readonly property var compactCatalog: [
-        {id:"quality", title:qsTr("质量"), sections:[
-            {title:qsTr("层高"), keys:["layer_height","initial_layer_print_height"]},
-            {title:qsTr("线宽"), keys:["line_width","initial_layer_line_width"]},
-            {title:qsTr("接缝"), keys:["seam_position"]},
-            {title:qsTr("精度"), keys:["resolution"]}]},
-        {id:"strength", title:qsTr("强度"), sections:[
-            {title:qsTr("墙层"), keys:["wall_loops"]},
-            {title:qsTr("顶面与底面"), keys:["top_shell_layers","bottom_shell_layers"]},
-            {title:qsTr("稀疏填充"), keys:["sparse_infill_density","sparse_infill_pattern"]}]},
-        {id:"speed", title:qsTr("速度"), sections:[
-            {title:qsTr("打印速度"), keys:["outer_wall_speed","inner_wall_speed","sparse_infill_speed","top_surface_speed"]},
-            {title:qsTr("首层"), keys:["initial_layer_speed"]},
-            {title:qsTr("空驶"), keys:["travel_speed"]},
-            {title:qsTr("加速度"), keys:["default_acceleration"]}]},
-        {id:"support", title:qsTr("支撑"), sections:[
-            {title:qsTr("支撑"), keys:["enable_support","support_type","support_on_build_plate_only"]},
-            {title:qsTr("接触面"), keys:["support_top_z_distance"]}]},
-        {id:"others", title:qsTr("其他"), sections:[
-            {title:qsTr("附着"), keys:["brim_type","brim_width"]},
-            {title:qsTr("特殊模式"), keys:["spiral_mode"]}]},
-        {id:"fiber", title:qsTr("连续纤维"), sections:[
-            {title:qsTr("增强轮廓"), keys:["generate_reinforced_perimeters","outer_reinforced_perimeters_counts","fiber_width"]},
-            {title:qsTr("增强填充"), keys:["generate_reinforced_infills","reinforced_infill_pattern","reinforced_infill_density","fiber_infill_angle_sequence"]},
-            {title:qsTr("弯曲与间隔"), keys:["fiber_infill_bend_radius","fiber_layer_height_ratio"]}]}
+        {id:"quality", title:qsTr("Quality"), sections:[
+            {title:qsTr("Layer height"), keys:["layer_height","initial_layer_print_height"]},
+            {title:qsTr("Line width"), keys:["line_width","initial_layer_line_width"]},
+            {title:qsTr("Seam"), keys:["seam_position"]},
+            {title:qsTr("Precision"), keys:["resolution"]}]},
+        {id:"strength", title:qsTr("Strength"), sections:[
+            {title:qsTr("Wall layers"), keys:["wall_loops"]},
+            {title:qsTr("Top and bottom surfaces"), keys:["top_shell_layers","bottom_shell_layers"]},
+            {title:qsTr("Sparse infill"), keys:["sparse_infill_density","sparse_infill_pattern"]}]},
+        {id:"speed", title:qsTr("Speed"), sections:[
+            {title:qsTr("Printing speed"), keys:["outer_wall_speed","inner_wall_speed","sparse_infill_speed","top_surface_speed"]},
+            {title:qsTr("First layer"), keys:["initial_layer_speed"]},
+            {title:qsTr("Travel"), keys:["travel_speed"]},
+            {title:qsTr("Acceleration"), keys:["default_acceleration"]}]},
+        {id:"support", title:qsTr("Support"), sections:[
+            {title:qsTr("Support"), keys:["enable_support","support_type","support_on_build_plate_only"]},
+            {title:qsTr("Contact interface"), keys:["support_top_z_distance"]}]},
+        {id:"others", title:qsTr("Others"), sections:[
+            {title:qsTr("Build plate adhesion"), keys:["brim_type","brim_width"]},
+            {title:qsTr("Special modes"), keys:["spiral_mode"]}]},
+        {id:"fiber", title:qsTr("Continuous fiber"), sections:[
+            {title:qsTr("Reinforced contours"), keys:["generate_reinforced_perimeters","outer_reinforced_perimeters_counts","fiber_width"]},
+            {title:qsTr("Reinforced infill"), keys:["generate_reinforced_infills","reinforced_infill_pattern","reinforced_infill_density","fiber_infill_angle_sequence"]},
+            {title:qsTr("Turns and spacing"), keys:["fiber_infill_bend_radius","fiber_layer_height_ratio"]}]}
     ]
     readonly property var compactPages: compactCatalog.filter(function(page) { return page.id !== "fiber" || fiberAvailable })
     readonly property var compactDefinitions: {
@@ -91,7 +91,7 @@ Item {
                 // Common fields keep the reviewed ordering. Visibility and
                 // access level always come from the full live schema.
                 rows.push(Object.assign({}, definition, {autoInit:false,
-                    label:key === "line_width" ? qsTr("默认线宽") : definition.label}))
+                    label:key === "line_width" ? qsTr("Default line width") : definition.label}))
             }
             if (rows.length) sections.push({id:section.keys[0], title:section.title, rows:rows})
         }

@@ -269,8 +269,8 @@ Item {
                     if (title === "File") return qsTr("File")
                     if (title === "Edit") return qsTr("Edit")
                     if (title === "Help") return qsTr("Help")
-                    if (title === "View") return qsTr("视图")
-                    if (title === "Calibration") return qsTr("校准")
+                    if (title === "View") return qsTr("View")
+                    if (title === "Calibration") return qsTr("Calibration")
                     return title
                 }
             }

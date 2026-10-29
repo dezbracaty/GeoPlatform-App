@@ -73,8 +73,8 @@ Item {
             qsTr("The five groups organize model preparation: File imports and manages files; View controls the camera and viewport; Transform adjusts placement and size; Edit contains model editing tools; Slice prepares slicing operations. Select a model when a tool requires one. Some entries are unavailable or not yet implemented; their actual enabled state applies."),
             function() { return control.sourceWorkspace.guideLeftToolbar }))
         if (mainWindowSession) {
-            steps.push(addStep("toolbar.right", qsTr("场景与帮助"),
-                qsTr("通过顶部视图菜单调整场景、背景和打印平台外观。操作引导与关于信息位于帮助菜单。打印配置浮窗可以展开、收起或隐藏。"),
+            steps.push(addStep("toolbar.right", qsTr("Scene and help"),
+                qsTr("Use the View menu to adjust scene, background, and build plate appearance. Find the guide and About in the Help menu. The print configuration panel can be expanded, collapsed, or hidden."),
                 function() { return control.sourceWorkspace.guideRightToolbar }))
             steps.push(addStep("print.controls", qsTr("Print Configuration and Status"),
                 qsTr("This whole area connects the printing workflow: choose printer, material and process settings, check model readiness and slicing results, and see device, transfer and print-job status. The available controls follow the current state. Export or print requires a valid result and the appropriate printer connection; the guide sends no job."),

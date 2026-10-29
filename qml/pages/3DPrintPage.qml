@@ -505,7 +505,7 @@ ContentPage {
             anchors.fill: parent
             anchors.margins: 16
             spacing: 10
-            Label { text: CalibrationBridge.resultContext.title; font: Typography.bodyStrong; Layout.fillWidth: true; elide: Text.ElideRight }
+            Label { text: CalibrationBridge.resultContext.title || ""; font: Typography.bodyStrong; Layout.fillWidth: true; elide: Text.ElideRight }
             RowLayout {
                 Layout.fillWidth: true
                 Label { text: "打印盘" }
