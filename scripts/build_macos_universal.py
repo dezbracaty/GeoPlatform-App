@@ -17,7 +17,7 @@ import subprocess
 import tempfile
 
 from macos_bundle import (ARCHITECTURES, BuildError, audit_bundle, capture,
-                          deploy_bundle, merge_bundles, run)
+                          create_disk_image, deploy_bundle, merge_bundles, run)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -45,6 +45,7 @@ def main(argv=None, default_source=None):
     parser.add_argument("--jobs", type=int, default=os.environ.get("CMAKE_BUILD_PARALLEL_LEVEL", "4"))
     parser.add_argument("--target", action="append", dest="targets", help="Override thin build targets; defaults to the selected project build target")
     parser.add_argument("--merge-only", action="store_true", help="Deploy and merge already built thin apps")
+    parser.add_argument("--dmg", action="store_true", help="Package the audited Universal App as GPlatform.dmg")
     args = parser.parse_args(argv)
     if platform.system() != "Darwin" or args.jobs < 1:
         parser.error("Run on macOS with a positive job count")
@@ -118,10 +119,14 @@ def main(argv=None, default_source=None):
             run(["codesign", "--force", "--deep", "--sign", "-", merged], work / "codesign.log")
             run(["codesign", "--verify", "--deep", "--strict", merged], work / "codesign-verify.log")
             binaries = audit_bundle(merged)
+            if args.dmg:
+                create_disk_image(merged, stage / 'GPlatform.dmg', work / 'dmg.log')
             output = work / "GPlatform.app"
             if output.exists():
                 shutil.rmtree(output)
             merged.rename(output)
+            if args.dmg:
+                (stage / 'GPlatform.dmg').replace(work / 'GPlatform.dmg')
             git_head = subprocess.run(["git", "-C", str(source_root), "rev-parse", "HEAD"],
                                       capture_output=True, text=True)
             report = {"formatVersion": 1, "status": "passed", "architectures": list(ARCHITECTURES),
