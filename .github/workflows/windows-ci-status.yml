@@ -35,5 +35,5 @@ jobs:
           }
           $publication = Join-Path $directory 'publication.json'
           if (Test-Path -LiteralPath $publication) {
-            Get-Content -LiteralPath $publication -Raw | ConvertFrom-Json | Select-Object phase, sdk_commit, app_commit, verified, sdk_published, app_published | ConvertTo-Json -Compress | Write-Host
+            Get-Content -LiteralPath $publication -Raw | ConvertFrom-Json | Select-Object phase, last_error, failed_at, source_commit, sdk_base, app_base, sdk_commit, app_commit, verified, sdk_published, app_published | ConvertTo-Json -Compress | Write-Host
           }
