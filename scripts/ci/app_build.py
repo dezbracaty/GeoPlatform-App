@@ -14,6 +14,8 @@ from common import (build_entry, build_environment, git, git_env, lock, machine_
 
 AUTOMATION = Path(__file__).resolve().parents[2]
 PIN = 'Use repository pin'
+from source_cache import seed_submodules
+
 SDK = 'ThirdParty/libs/GPlatformSDK'
 FORKS = {'orca_ref': 'ThirdParty/OrcaSlicer', 'smoothui_ref': 'ThirdParty/SmoothUI',
          'dock_ref': 'ThirdParty/SmoothUIDock', 'sdk_ref': SDK}
@@ -82,6 +84,7 @@ def prepare_source(source, config):
     if not set(FORKS.values()).issubset(modules):
         raise RuntimeError('App must declare its SDK and three source submodules')
     git(source, 'submodule', 'sync', '--recursive', env=env)
+    seed_submodules(source, modules, config, env)
     git(source, 'submodule', 'update', '--init', '--recursive', '--depth', '1', '--', *modules, env=env)
     refs = {}
     for field, path in FORKS.items():
