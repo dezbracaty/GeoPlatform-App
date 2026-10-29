@@ -79,6 +79,23 @@ class SourceCacheTests(unittest.TestCase):
         seed_submodules(source, [module], self.config, self.env)
         self.assertEqual((source / module / 'input.txt').read_text(), 'old')
 
+    def test_windows_checkout_policy_matches_producer_bytes_and_normalizes_clean_old_cache(self):
+        source, module, cache, origin, pin = self.fixture()
+        pin = self.commit(origin, 'line one\nline two\n')
+        git(source, 'update-index', '--cacheinfo', f'160000,{pin},{module}', env=self.env)
+        git(source, 'commit', '-m', 'text input', env=self.env)
+        seed_submodules(source, [module], self.config, self.env)
+        git(source, 'submodule', 'update', '--init', '--', module, env=self.env)
+        text = source / module / 'input.txt'
+        self.assertEqual(text.read_bytes(), b'line one\r\nline two\r\n')
+        git(source / module, 'config', 'core.autocrlf', 'false', env=self.env)
+        git(source / module, 'read-tree', '--empty', env=self.env)
+        git(source / module, 'reset', '--hard', 'HEAD', env=self.env)
+        self.assertEqual(text.read_bytes(), b'line one\nline two\n')
+        seed_submodules(source, [module], self.config, self.env)
+        self.assertEqual(text.read_bytes(), b'line one\r\nline two\r\n')
+        self.assertEqual(git(source / module, 'status', '--porcelain', env=self.env), '')
+
     def test_source_snapshot_is_bound_to_its_saved_digest(self):
         origin = self.repository(self.root / 'original')
         head = self.commit(origin, 'snapshot')

@@ -1,7 +1,6 @@
 """Build the standalone App against its recorded binary SDK; never produce an SDK."""
 import argparse
 import hashlib
-import importlib.util
 import os
 from pathlib import Path
 import re
@@ -14,7 +13,7 @@ from common import (build_entry, build_environment, git, git_env, lock, machine_
 
 AUTOMATION = Path(__file__).resolve().parents[2]
 PIN = 'Use repository pin'
-from source_cache import seed_submodules
+from source_cache import seed_submodules, record_verified_inputs
 
 SDK = 'ThirdParty/libs/GPlatformSDK'
 FORKS = {'orca_ref': 'ThirdParty/OrcaSlicer', 'smoothui_ref': 'ThirdParty/SmoothUI',
@@ -49,27 +48,7 @@ def verify_sdk(source, platform):
 
 
 def record_selected_inputs(source, metadata):
-    """Validate actual fork contents before recording selected dependencies."""
-    spec = importlib.util.spec_from_file_location('app_source_inputs', source / 'cmake/source_inputs.py')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    expected = next(iter(metadata.values()))['SOURCE_INPUTS']
-    third_party = source / 'ThirdParty'
-    # Validate hashes AND exact revisions against the selected binary SDK,
-    # independently of an exported App's possibly older provenance files.
-    module.verify(third_party, None, expected)
-    inventory = {name: module.managed_files(third_party / name) for name in expected}
-    manifest = module.record(third_party, inventory)
-    if module.summary(manifest) != expected:
-        raise RuntimeError('Selected source dependencies do not match the SDK provenance')
-    write_json(third_party / 'source-inputs.json', manifest)
-    write_json(third_party / 'source-revisions.json',
-               {name: value['revision'] for name, value in manifest.items()})
-    git(source, 'add', '--', 'ThirdParty/source-inputs.json', 'ThirdParty/source-revisions.json')
-    if git(source, 'diff', '--cached', '--name-only'):
-        git(source, '-c', 'user.name=GPlatform CI', '-c', 'user.email=ci@gplatform.invalid',
-            'commit', '-m', 'ci: record verified App source provenance')
-    return git(source, 'rev-parse', 'HEAD')
+    return record_verified_inputs(source, metadata)
 
 
 def prepare_source(source, config):

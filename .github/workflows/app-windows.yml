@@ -151,11 +151,13 @@ jobs:
       GCM_INTERACTIVE: never
       GIT_HTTP_LOW_SPEED_LIMIT: '16384'
       GIT_HTTP_LOW_SPEED_TIME: '60'
-      GIT_CONFIG_COUNT: '2'
+      GIT_CONFIG_COUNT: '3'
       GIT_CONFIG_KEY_0: http.sslBackend
       GIT_CONFIG_VALUE_0: openssl
       GIT_CONFIG_KEY_1: http.version
       GIT_CONFIG_VALUE_1: HTTP/1.1
+      GIT_CONFIG_KEY_2: core.autocrlf
+      GIT_CONFIG_VALUE_2: 'true'
       SOURCE_TOKEN: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
       GITHUB_TOKEN: ${{ github.token }}
       INPUT_REF: ${{ github.event_name == 'push' && github.ref_name || inputs.source_ref }}
