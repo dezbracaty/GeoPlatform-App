@@ -3566,3 +3566,21 @@ msgstr "取消上传"
 
 msgid "Cancelled"
 msgstr "已取消"
+
+msgid "Desktop notifications"
+msgstr "桌面通知"
+
+msgid "Background desktop notifications"
+msgstr "后台桌面通知"
+
+msgid "Notify when slicing finishes or fails while the app is minimized or in the background. Visibility depends on system notification settings."
+msgstr "在程序最小化或切到后台时，提醒切片完成或失败。是否显示由系统通知设置决定。"
+
+msgid "System tray notifications are supported"
+msgstr "系统托盘支持通知"
+
+msgid "Desktop notifications are currently unavailable"
+msgstr "当前桌面通知不可用"
+
+msgid "Calibration"
+msgstr "校准"

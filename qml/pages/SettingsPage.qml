@@ -12,24 +12,24 @@ ScrollablePage {
     Component.onCompleted: NotificationManager.refreshDesktopStatus()
 
     GroupBox {
-        title: qsTr("桌面通知")
+        title: qsTr("Desktop notifications")
         Layout.fillWidth: true
         ColumnLayout {
             anchors.fill: parent
             Switch {
                 objectName: "settings.desktopNotifications"
-                text: qsTr("后台桌面通知")
+                text: qsTr("Background desktop notifications")
                 checked: NotificationManager.desktopNotificationsEnabled
                 onClicked: NotificationManager.desktopNotificationsEnabled = checked
             }
             Label {
-                text: qsTr("在程序最小化或切到后台时，提醒切片完成或失败。是否显示由系统通知设置决定。")
+                text: qsTr("Notify when slicing finishes or fails while the app is minimized or in the background. Visibility depends on system notification settings.")
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
             }
             Label {
                 text: NotificationManager.desktopAvailable
-                      ? qsTr("系统托盘支持通知") : qsTr("当前桌面通知不可用")
+                      ? qsTr("System tray notifications are supported") : qsTr("Desktop notifications are currently unavailable")
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 opacity: 0.7
