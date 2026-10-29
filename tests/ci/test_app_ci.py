@@ -1,6 +1,7 @@
 """Git-content build gating, atomic menus and SDK/download integrity contracts."""
 import contextlib
 import hashlib
+import importlib.util
 import io
 import json
 from pathlib import Path
@@ -102,6 +103,34 @@ class AppCITests(unittest.TestCase):
         library.write_bytes(b'corrupted SDK')
         with self.assertRaisesRegex(RuntimeError, 'changed'):
             app_build.verify_sdk(self.root, 'windows')
+
+    def test_selected_forks_are_verified_before_regenerating_provenance(self):
+        helper = self.root / 'cmake/source_inputs.py'
+        helper.parent.mkdir()
+        shutil.copyfile(APP / 'cmake/source_inputs.py', helper)
+        fork = self.root / 'ThirdParty/Fork'
+        fork.mkdir(parents=True)
+        common.run(['git', 'init', '-b', 'main', fork], capture=True)
+        common.git(fork, 'config', 'user.name', 'Test')
+        common.git(fork, 'config', 'user.email', 'test@example.invalid')
+        source = fork / 'library.cpp'
+        source.write_text('verified library')
+        common.git(fork, 'add', '.')
+        common.git(fork, 'commit', '-m', 'library input')
+        spec = importlib.util.spec_from_file_location('test_source_inputs', helper)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        expected = module.summary(module.record(fork.parent, {'Fork': ['library.cpp']}))
+        metadata = {'AMD64': {'SOURCE_INPUTS': expected}}
+        provenance = fork.parent / 'source-inputs.json'
+        provenance.write_text('{}')
+        app_build.record_selected_inputs(self.root, metadata)
+        self.assertEqual(module.summary(common.read_json(provenance)), expected)
+        saved = provenance.read_bytes()
+        source.write_text('incompatible dependency')
+        with self.assertRaisesRegex(RuntimeError, 'differs from the SDK'):
+            app_build.record_selected_inputs(self.root, metadata)
+        self.assertEqual(provenance.read_bytes(), saved)
 
     def test_download_contains_only_installer_and_its_checksum_and_resume_checks_platform(self):
         directory = self.root / 'runs/123-1'

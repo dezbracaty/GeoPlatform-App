@@ -48,7 +48,8 @@ Mac 标签 self-hosted/macOS/ARM64/gplatform-macos-build，Windows 标签 self-h
 默认目录分别为 ~/gp-app-ci 和 C:/gp-app-ci，均有独立的 runner、source、build、runs 和 config/machine.json。
 仓库变量 GPLATFORM_APP_MACOS_CI_ROOT / GPLATFORM_APP_WINDOWS_CI_ROOT 可指定绝对根目录。
 机器配置参考生产端配置，修改 root；fetch_cache 复用同机兼容依赖缓存，machine_lock 必须指向生产端 gp-ci/pipeline.lock，以串行化同一机器上的两仓库构建。
-Mac launchd 服务需要对应账号登录；Windows 服务需要读取 VS、Qt、Inno Setup 和缓存的权限。
+Mac launchd 服务需要对应账号登录；Windows 在有管理员权限时安装服务，否则使用当前账号的有限权限登录计划任务，并要求该账号保持登录。
+Windows runner 需要读取 VS、Qt、Inno Setup 和缓存的权限。
 
 | Secret | 用途 |
 | --- | --- |

@@ -1,6 +1,7 @@
 """Build the standalone App against its recorded binary SDK; never produce an SDK."""
 import argparse
 import hashlib
+import importlib.util
 import os
 from pathlib import Path
 import re
@@ -43,6 +44,30 @@ def verify_sdk(source, platform):
             if metadata['arm64'].get(key) != metadata['x86_64'].get(key):
                 raise RuntimeError(f'The two macOS SDK slots have different {key}')
     return metadata
+
+
+def record_selected_inputs(source, metadata):
+    """Validate actual fork contents before recording selected dependencies."""
+    spec = importlib.util.spec_from_file_location('app_source_inputs', source / 'cmake/source_inputs.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    expected = next(iter(metadata.values()))['SOURCE_INPUTS']
+    third_party = source / 'ThirdParty'
+    # Validate hashes AND exact revisions against the selected binary SDK,
+    # independently of an exported App's possibly older provenance files.
+    module.verify(third_party, None, expected)
+    inventory = {name: module.managed_files(third_party / name) for name in expected}
+    manifest = module.record(third_party, inventory)
+    if module.summary(manifest) != expected:
+        raise RuntimeError('Selected source dependencies do not match the SDK provenance')
+    write_json(third_party / 'source-inputs.json', manifest)
+    write_json(third_party / 'source-revisions.json',
+               {name: value['revision'] for name, value in manifest.items()})
+    git(source, 'add', '--', 'ThirdParty/source-inputs.json', 'ThirdParty/source-revisions.json')
+    if git(source, 'diff', '--cached', '--name-only'):
+        git(source, '-c', 'user.name=GPlatform CI', '-c', 'user.email=ci@gplatform.invalid',
+            'commit', '-m', 'ci: record verified App source provenance')
+    return git(source, 'rev-parse', 'HEAD')
 
 
 def prepare_source(source, config):
@@ -169,6 +194,7 @@ def build(config_path, source, directory):
             raise RuntimeError('Requested version differs from the existing App project version')
         manifest['source'] = prepare_source(source, config)
         metadata = verify_sdk(source, config['platform'])
+        manifest['source']['commit'] = record_selected_inputs(source, metadata)
         manifest['sdk_commit'] = manifest['source']['submodules'][SDK]
         manifest['sdk_metadata'] = metadata
         git(source, 'bundle', 'create', str(directory / 'source.bundle'), 'HEAD')
