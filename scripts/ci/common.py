@@ -13,17 +13,28 @@ import time
 
 SDK_PATH = "ThirdParty/libs/GPlatformSDK"
 
-def run(args, *, cwd=None, env=None, data=None, capture=False):
-    result = subprocess.run([str(a) for a in args], cwd=cwd, env=env, input=data,
-                            stdout=subprocess.PIPE if capture else None,
-                            stderr=subprocess.PIPE if capture else None)
-    if result.returncode:
-        # Do not expose credential headers or arbitrary subprocess stderr.
-        raise RuntimeError(f"{Path(str(args[0])).name} failed (exit {result.returncode})")
-    return result.stdout if capture else None
+def run(args, *, cwd=None, env=None, data=None, capture=False, attempts=1):
+    if attempts < 1:
+        raise ValueError("Attempt count must be positive")
+    for attempt in range(attempts):
+        if attempts > 1:
+            print(f"Transfer attempt {attempt + 1}/{attempts}", flush=True)
+        result = subprocess.run([str(a) for a in args], cwd=cwd, env=env, input=data,
+                                stdout=subprocess.PIPE if capture else None,
+                                stderr=subprocess.PIPE if capture and attempts == 1 else None)
+        if not result.returncode:
+            return result.stdout if capture else None
+        if attempt + 1 == attempts:
+            # Transfer stderr streams directly; Actions masks credentials before
+            # the child starts. Local commands retain the original capture policy.
+            raise RuntimeError(f"{Path(str(args[0])).name} failed (exit {result.returncode})"
+                               f" after {attempts} attempt(s)")
+        delay = 2 ** attempt
+        print(f"Transfer failed (exit {result.returncode}); retrying in {delay}s", flush=True)
+        time.sleep(delay)
 
-def git(repo, *args, env=None, data=None):
-    return run(["git", "-C", repo, *args], env=env, data=data, capture=True)
+def git(repo, *args, env=None, data=None, attempts=1):
+    return run(["git", "-C", repo, *args], env=env, data=data, capture=True, attempts=attempts)
 
 def text_git(repo, *args, **kwargs):
     return git(repo, *args, **kwargs).decode().strip()
@@ -33,7 +44,7 @@ def git_env(secret="GPLATFORM_SOURCE_TOKEN"):
                GIT_LFS_SKIP_SMUDGE="1")
     # Never fall back to the developer's persistent credential store.
     settings = [("credential.helper", ""), ("core.autocrlf", "false"),
-                ("core.eol", "lf")]
+                ("core.eol", "lf"), ("lfs.transfer.maxretries", "3")]
     token = os.environ.get(secret)
     if token:
         header = base64.b64encode(f"x-access-token:{token}".encode()).decode()
@@ -80,13 +91,14 @@ def init_source_submodules(source, *, consumer=False):
             continue
         print(f"Initializing pinned submodule {path!r} at {links[path]}", flush=True)
         run(["git", "-C", source, "submodule", "update", "--init", "--recursive",
-             "--checkout", "--depth=1", "--", path], env=env)
+             "--checkout", "--depth=1", "--", path], env=env, attempts=3)
         if text_git(Path(source) / path, "rev-parse", "HEAD") != links[path]:
             raise RuntimeError("Initialized submodule differs from its fixed gitlink")
     if consumer:
         slot = "AMD64/Release" if os.name == "nt" else None
         include = f"{slot}/**" if slot else "arm64/Release/**,x86_64/Release/**"
-        git(Path(source) / sdk, "lfs", "pull", "--include", include, "--exclude", "", env=env)
+        run(["git", "-C", Path(source) / sdk, "lfs", "pull", "--include", include,
+             "--exclude", ""], env=env)
 
 
 def digest(path):

@@ -74,6 +74,24 @@ class SubmoduleTests(unittest.TestCase):
             self.assertEqual(self.git(self.source / path, "rev-parse", "--is-shallow-repository"), "true")
             self.assertEqual(self.git(self.source / path, "rev-list", "--count", "HEAD"), "1")
 
+    def test_submodule_recovers_after_two_transport_failures(self):
+        original = subprocess.run
+        failures = []
+
+        def interrupted(args, **kwargs):
+            if "submodule" in args and len(failures) < 2:
+                failures.append(args)
+                return subprocess.CompletedProcess(args, 128)
+            return original(args, **kwargs)
+
+        with patch.object(common.subprocess, "run", side_effect=interrupted):
+            with patch.object(common.time, "sleep") as sleep:
+                common.init_source_submodules(self.source, consumer=CONSUMER)
+        self.assertEqual(len(failures), 2)
+        self.assertEqual(sleep.call_count, 2)
+        self.assertEqual(self.git(self.source / self.library, "rev-parse", "HEAD"), self.pinned)
+        self.assertEqual((self.source / self.library / "payload").read_text(), "original")
+
     def test_failed_submodule_update_keeps_git_error_visible(self):
         self.declare("library", self.library, (self.remote.parent / "missing.git").as_uri())
         self.commit()
