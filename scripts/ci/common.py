@@ -47,19 +47,42 @@ def git_env(secret="GPLATFORM_SOURCE_TOKEN"):
 
 def init_source_submodules(source, *, consumer=False):
     env = git_env()
-    output = text_git(source, "config", "--file", ".gitmodules", "--get-regexp", r"^submodule\..*\.path$")
-    paths = [line.split(" ", 1)[1] for line in output.splitlines()]
+    # The fixed commit's gitlinks are authoritative. .gitmodules may still
+    # contain declarations for dependencies removed from the product tree.
+    links = {}
+    for entry in git(source, "ls-tree", "-rz", "HEAD").split(b"\0"):
+        metadata, _, path = entry.partition(b"\t")
+        if metadata.startswith(b"160000 commit "):
+            links[path.decode()] = metadata.split()[2].decode()
     sdk = SDK_PATH if consumer else f"App/{SDK_PATH}"
+    if consumer and sdk not in links:
+        raise RuntimeError("App SDK gitlink is missing from the fixed source commit")
+    if not links:
+        return
+    if not (Path(source) / ".gitmodules").is_file():
+        raise RuntimeError("Fixed source gitlinks have no .gitmodules declarations")
+    output = git(source, "config", "-z", "--file", ".gitmodules", "--get-regexp", r"^submodule\..*\.path$")
+    paths = [entry.split(b"\n", 1)[1].decode() for entry in output.split(b"\0") if entry]
+    if len(paths) != len(set(paths)):
+        raise RuntimeError("Duplicate submodule path declarations")
+    if set(links) - set(paths):
+        raise RuntimeError("Fixed source gitlink is missing its .gitmodules declaration")
     for path in paths:
-        if path == sdk and not consumer:
-            continue
         if path.startswith("-") or Path(path).is_absolute() or ".." in Path(path).parts:
             raise ValueError("Invalid submodule path")
-        git(source, "submodule", "update", "--init", "--recursive", "--", path, env=env)
+        if path not in links:
+            print(f"Skipping stale submodule declaration: {path!r}")
+            continue
+        if path == sdk and not consumer:
+            continue
+        git(source, "submodule", "update", "--init", "--recursive", "--checkout", "--", path, env=env)
+        if text_git(Path(source) / path, "rev-parse", "HEAD") != links[path]:
+            raise RuntimeError("Initialized submodule differs from its fixed gitlink")
     if consumer:
         slot = "AMD64/Release" if os.name == "nt" else None
         include = f"{slot}/**" if slot else "arm64/Release/**,x86_64/Release/**"
         git(Path(source) / sdk, "lfs", "pull", "--include", include, "--exclude", "", env=env)
+
 
 def digest(path):
     h = hashlib.sha256()
