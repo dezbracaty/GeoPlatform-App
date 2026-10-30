@@ -5,6 +5,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import stat
@@ -59,8 +60,65 @@ def git_env(secret="GPLATFORM_SOURCE_TOKEN"):
     env["GIT_CONFIG_COUNT"] = str(offset + len(settings))
     return env
 
-def init_source_submodules(source, *, consumer=False):
+def prepare_cached_source(source, sha, platform, *, consumer=False):
+    """Reset the runner's fixed checkout, retaining only preset build caches."""
+    source = Path(source).absolute()
+    workspace = Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+    marker = source / ".git"
+    if (marker.is_symlink() or marker.is_junction() or source.is_symlink() or source.is_junction() or source.resolve() != workspace / "source"
+            or not marker.is_dir()):
+        raise RuntimeError("Refusing to reset a source outside the runner checkout")
+    source = source.resolve()
+    if (Path(text_git(source, "rev-parse", "--absolute-git-dir")).resolve() != source / ".git"
+            or Path(text_git(source, "rev-parse", "--show-toplevel")).resolve() != source
+            or text_git(source, "rev-parse", "HEAD") != sha or not re.fullmatch(r"[0-9a-f]{40}", sha)):
+        raise RuntimeError("Cached source differs from the fixed source SHA")
+    if platform == "windows":
+        builds = ["build-Release"]
+    elif platform == "macos":
+        builds = ["build-arm64-Release", "build-x86_64-Release"]
+        if consumer:
+            builds.append("build-universal-Release")
+    else:
+        raise ValueError("Unknown build platform")
+    for name in builds:
+        path = source / name
+        if (path.is_symlink() or path.is_junction() or (path.exists() and not path.is_dir())
+                or git(source, "ls-tree", "HEAD", "--", name)):
+            raise RuntimeError("Preset cache must be an untracked directory inside source")
+    for name in builds:
+        cache = source / name / "CMakeCache.txt"
+        if not cache.exists():
+            continue
+        values = {}
+        for line in cache.read_text(encoding="utf-8").splitlines():
+            if not line.startswith(("//", "#")) and ":" in line and "=" in line:
+                key, value = line.split("=", 1)
+                values[key.split(":", 1)[0]] = value
+        expected = {"CMAKE_HOME_DIRECTORY": str(source), "CMAKE_GENERATOR": "Ninja",
+                    "CMAKE_BUILD_TYPE": "Release"}
+        if name in ("build-arm64-Release", "build-x86_64-Release"):
+            arch = "arm64" if name == "build-arm64-Release" else "x86_64"
+            expected.update(GPLATFORM_TARGET_ARCH=arch, CMAKE_OSX_ARCHITECTURES=arch)
+        for key in ("Qt6_DIR", "CMAKE_FETCH_CACHE", "CMAKE_TOOLCHAIN_FILE",
+                    "CMAKE_C_COMPILER", "CMAKE_CXX_COMPILER", "CMAKE_MAKE_PROGRAM",
+                    "CMAKE_OSX_SYSROOT", "CMAKE_OSX_DEPLOYMENT_TARGET"):
+            if os.environ.get(key):
+                expected[key] = os.environ[key]
+        for key, value in expected.items():
+            normalize = lambda item: os.path.normcase(os.path.normpath(item))
+            if key not in values or normalize(values[key]) != normalize(value):
+                raise RuntimeError(f"Preset cache mismatch for {key}: {cache}; clean this owned build cache before changing build inputs")
     env = git_env()
+    git(source, "reset", "--hard", "HEAD", env=env)
+    git(source, "submodule", "foreach", "--recursive", "git reset --hard HEAD", env=env)
+    git(source, "submodule", "foreach", "--recursive", "git clean -ffdx", env=env)
+    excludes = [argument for name in builds for argument in ("-e", f"/{name}/")]
+    git(source, "clean", "-ffdx", *excludes, env=env)
+    print("Retained source Git objects and preset build caches: " + ", ".join(builds), flush=True)
+
+
+def _init_pinned_submodules(source, env, *, skip=None, require_sdk=False):
     # The fixed commit's gitlinks are authoritative. .gitmodules may still
     # contain declarations for dependencies removed from the product tree.
     links = {}
@@ -68,8 +126,7 @@ def init_source_submodules(source, *, consumer=False):
         metadata, _, path = entry.partition(b"\t")
         if metadata.startswith(b"160000 commit "):
             links[path.decode()] = metadata.split()[2].decode()
-    sdk = SDK_PATH if consumer else f"App/{SDK_PATH}"
-    if consumer and sdk not in links:
+    if require_sdk and SDK_PATH not in links:
         raise RuntimeError("App SDK gitlink is missing from the fixed source commit")
     if not links:
         return
@@ -87,14 +144,29 @@ def init_source_submodules(source, *, consumer=False):
         if path not in links:
             print(f"Skipping stale submodule declaration: {path!r}")
             continue
-        if path == sdk and not consumer:
+        if path == skip:
+            # Producer never downloads SDK inputs; drop an old initialized worktree
+            # while preserving its Git/LFS object store for later consumers.
+            git(source, "submodule", "deinit", "--force", "--", path, env=env)
             continue
+        git(source, "submodule", "sync", "--", path, env=env)
         print(f"Initializing pinned submodule {path!r} at {links[path]}", flush=True)
-        run(["git", "-C", source, "submodule", "update", "--init", "--recursive",
-             "--checkout", "--depth=1", "--", path], env=env, attempts=3)
+        run(["git", "-C", source, "submodule", "update", "--init",
+             "--checkout", "--force", "--depth=1", "--", path], env=env, attempts=3)
         if text_git(Path(source) / path, "rev-parse", "HEAD") != links[path]:
             raise RuntimeError("Initialized submodule differs from its fixed gitlink")
+        # A new parent pin may remove a previously initialized child.
+        git(Path(source) / path, "clean", "-ffdx", env=env)
+        # Each new parent pin supplies its own .gitmodules before children sync.
+        _init_pinned_submodules(Path(source) / path, env)
+
+
+def init_source_submodules(source, *, consumer=False):
+    env = git_env()
+    _init_pinned_submodules(source, env, skip=None if consumer else f"App/{SDK_PATH}",
+                           require_sdk=consumer)
     if consumer:
+        sdk = SDK_PATH
         slot = "AMD64/Release" if os.name == "nt" else None
         include = f"{slot}/**" if slot else "arm64/Release/**,x86_64/Release/**"
         run(["git", "-C", Path(source) / sdk, "lfs", "pull", "--include", include,

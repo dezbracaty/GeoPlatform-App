@@ -74,12 +74,104 @@ class SubmoduleTests(unittest.TestCase):
             self.assertEqual(self.git(self.source / path, "rev-parse", "--is-shallow-repository"), "true")
             self.assertEqual(self.git(self.source / path, "rev-list", "--count", "HEAD"), "1")
 
+    def test_cached_dirty_dependency_is_reset_without_losing_git_objects(self):
+        common.init_source_submodules(self.source, consumer=CONSUMER)
+        library = self.source / self.library
+        (library / "payload").write_text("dirty dependency")
+        (library / "untracked.h").write_text("must not enter build")
+        sha = self.git(self.source, "rev-parse", "HEAD")
+        with patch.dict(os.environ, GITHUB_WORKSPACE=str(self.source.parent)):
+            common.prepare_cached_source(self.source, sha, "windows", consumer=CONSUMER)
+        common.init_source_submodules(self.source, consumer=CONSUMER)
+        self.assertEqual((library / "payload").read_text(), "original")
+        self.assertFalse((library / "untracked.h").exists())
+        self.assertTrue((library / ".git").is_file())
+
+    def test_new_parent_pin_syncs_nested_url_and_removes_retired_child(self):
+        old_child = self.source.parent / "old child remote"
+        new_child = self.source.parent / "new child remote"
+        for repo, payload in ((old_child, "old nested payload"), (new_child, "new nested payload")):
+            self.repository(repo)
+            (repo / "payload").write_text(payload)
+            self.git(repo, "add", "payload")
+            self.git(repo, "commit", "-qm", payload)
+        old_sha = self.git(old_child, "rev-parse", "HEAD")
+        new_sha = self.git(new_child, "rev-parse", "HEAD")
+        child_path = "nested/child with space"
+        retired_path = "retired/old child"
+        for name, path in (("nested", child_path), ("retired", retired_path)):
+            self.git(self.remote, "config", "--file", ".gitmodules", f"submodule.{name}.path", path)
+            self.git(self.remote, "config", "--file", ".gitmodules", f"submodule.{name}.url", old_child.as_uri())
+            self.git(self.remote, "update-index", "--add", "--cacheinfo", "160000", old_sha, path)
+        self.git(self.remote, "add", ".gitmodules")
+        self.git(self.remote, "commit", "-qm", "Old nested dependencies")
+        parent_a = self.git(self.remote, "rev-parse", "HEAD")
+        self.git(self.source, "update-index", "--cacheinfo", "160000", parent_a, self.library)
+        self.commit()
+        common.init_source_submodules(self.source, consumer=CONSUMER)
+        library = self.source / self.library
+        self.assertEqual(self.git(library / child_path, "rev-parse", "HEAD"), old_sha)
+        self.assertTrue((library / retired_path / ".git").is_file())
+
+        self.git(self.remote, "config", "--file", ".gitmodules", "submodule.nested.url", new_child.as_uri())
+        self.git(self.remote, "config", "--file", ".gitmodules", "--remove-section", "submodule.retired")
+        self.git(self.remote, "update-index", "--cacheinfo", "160000", new_sha, child_path)
+        self.git(self.remote, "update-index", "--force-remove", "--", retired_path)
+        self.git(self.remote, "add", ".gitmodules")
+        self.git(self.remote, "commit", "-qm", "Move nested URL and retire old dependency")
+        parent_b = self.git(self.remote, "rev-parse", "HEAD")
+        self.git(self.source, "update-index", "--cacheinfo", "160000", parent_b, self.library)
+        self.commit()
+        old_child.rename(old_child.with_name("old child unavailable"))
+        sha = self.git(self.source, "rev-parse", "HEAD")
+        with patch.dict(os.environ, GITHUB_WORKSPACE=str(self.source.parent)):
+            common.prepare_cached_source(self.source, sha, "windows", consumer=CONSUMER)
+        common.init_source_submodules(self.source, consumer=CONSUMER)
+        self.assertEqual(self.git(library, "rev-parse", "HEAD"), parent_b)
+        self.assertEqual(self.git(library / child_path, "rev-parse", "HEAD"), new_sha)
+        self.assertEqual(self.git(library / child_path, "config", "--get", "remote.origin.url"), new_child.as_uri())
+        self.assertEqual((library / child_path / "payload").read_text(), "new nested payload")
+        self.assertFalse((library / retired_path).exists(), "Removed nested source must not survive as untracked build input")
+        self.assertEqual(self.git(self.source, "status", "--porcelain", "--untracked-files=all"), "")
+
+    def test_producer_deinitializes_cached_sdk_after_pin_change_without_fetch(self):
+        producer_sdk = "App/" + common.SDK_PATH
+        if self.sdk != producer_sdk:
+            self.git(self.source, "update-index", "--force-remove", "--", self.sdk)
+            self.sdk = producer_sdk
+        self.declare("sdk", self.sdk, self.remote.as_uri())
+        self.git(self.source, "update-index", "--add", "--cacheinfo", "160000", self.pinned, self.sdk)
+        self.commit()
+        common.init_source_submodules(self.source, consumer=False)
+        self.git(self.source, "submodule", "update", "--init", "--checkout", "--depth=1", "--", self.sdk)
+        sdk_worktree = self.source / self.sdk
+        sdk_gitdir = Path(self.git(sdk_worktree, "rev-parse", "--absolute-git-dir"))
+        self.assertEqual(self.git(sdk_worktree, "rev-parse", "HEAD"), self.pinned)
+
+        (self.remote / "payload").write_text("new SDK pin not available in cached SDK")
+        self.git(self.remote, "commit", "-qam", "Advance SDK after old checkout")
+        new_sdk = self.git(self.remote, "rev-parse", "HEAD")
+        self.git(self.source, "update-index", "--cacheinfo", "160000", new_sdk, self.sdk)
+        self.commit()
+        self.remote.rename(self.remote.with_name("remote unavailable"))
+        sha = self.git(self.source, "rev-parse", "HEAD")
+        with patch.dict(os.environ, GITHUB_WORKSPACE=str(self.source.parent)):
+            common.prepare_cached_source(self.source, sha, "windows", consumer=False)
+        common.init_source_submodules(self.source, consumer=False)
+        self.assertFalse((sdk_worktree / ".git").exists())
+        self.assertTrue(sdk_gitdir.is_dir(), "Deinit must preserve the SDK Git/LFS object store")
+        self.git(sdk_gitdir, "cat-file", "-e", self.pinned + "^{commit}")
+        missing = subprocess.run(["git", "-C", str(sdk_gitdir), "cat-file", "-e", new_sdk + "^{commit}"],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertNotEqual(missing.returncode, 0, "Producer must not fetch the new SDK pin")
+        self.assertEqual(self.git(self.source, "status", "--porcelain", "--untracked-files=no"), "")
+
     def test_submodule_recovers_after_two_transport_failures(self):
         original = subprocess.run
         failures = []
 
         def interrupted(args, **kwargs):
-            if "submodule" in args and len(failures) < 2:
+            if "submodule" in args and "update" in args and len(failures) < 2:
                 failures.append(args)
                 return subprocess.CompletedProcess(args, 128)
             return original(args, **kwargs)

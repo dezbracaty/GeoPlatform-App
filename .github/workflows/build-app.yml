@@ -129,6 +129,8 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.app_sha }}
           path: source
+          # Keep Git objects and preset builds; reset source explicitly before building.
+          clean: false
           token: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
           persist-credentials: false
           submodules: false
@@ -167,7 +169,7 @@ jobs:
               if path.parent != parent or not path.name.startswith('app-package-'):
                   raise RuntimeError('Refusing to clean an unowned directory')
               remove_owned_tree(path, parent)
-      - name: Clean task checkouts
+      - name: Clean temporary control checkout
         if: always() && steps.environment.outcome == 'success'
         shell: python
         run: |
@@ -182,7 +184,7 @@ jobs:
               os.chmod(filename, mode | stat.S_IWRITE)
               function(filename)
           workspace = pathlib.Path(os.environ['GITHUB_WORKSPACE']).resolve()
-          for name in ('source', 'control'):
+          for name in ('control',):
               path = workspace / name
               if path.is_symlink() or path.resolve().parent != workspace:
                   raise RuntimeError('Refusing to clean a checkout outside this workspace')

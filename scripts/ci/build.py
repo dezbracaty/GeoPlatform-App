@@ -8,7 +8,7 @@ import shutil
 import sys
 import tempfile
 
-from common import digest, git_env, init_source_submodules, machine_lock, run, text_git, write_json
+from common import digest, git_env, init_source_submodules, machine_lock, prepare_cached_source, run, text_git, write_json
 
 
 def cache_value(build, key):
@@ -59,6 +59,7 @@ def build(source, platform, app_sha, sdk_sha):
         f.write(f"APP_PACKAGE_ROOT={output}\n")
     env = git_env()
     with machine_lock():
+        prepare_cached_source(source, app_sha, platform, consumer=True)
         init_source_submodules(source, consumer=True)
         validate_sdk(source, slots)
         cmake_args = ["-DGPLATFORM_BUILD_SDK_CHECKS=ON"]

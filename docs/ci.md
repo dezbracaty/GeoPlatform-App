@@ -53,7 +53,7 @@ Windows 复用 `scripts/build.ps1`，Mac 复用薄 preset 和 `scripts/build_mac
 
 选择 **Re-run all jobs** 或重新发起 workflow。**Re-run failed jobs / 单个 job 重跑不受支持**：prepare 的 attempt 与本轮不一致时，平台任务和 guard 在调度前跳过，汇总明确失败并提示全量重跑，避免沿用旧时限或遗漏 guard。
 
-普通失败和取消执行独立收尾，删除本任务的安装包暂存、source/control checkout 及其中的本次构建树，保留外部兼容依赖缓存。清理校验工作区边界与 Git 标记，仅针对 Windows 只读权限错误解除写保护重试，不忽略其他删除错误。不删除无关工作区，也不清全机缓存。硬终止或 runner 故障不能保证收尾执行，需如实记录剩余状态。
+普通失败和取消执行独立收尾，删除本任务的安装包暂存和临时 control checkout。固定 source 工作缓存保留 Git 对象与当前平台 Release preset 构建目录；构建前验证固定 SHA、目录边界与已有 CMake 缓存，再清除源码和子模块的改动及其余未跟踪文件。子模块按每层固定父提交同步 URL；每次仍执行原有 CMake 配置、构建、检查和打包。源码目录、配置、架构或显式 Qt/工具链输入与缓存冲突时明确失败，不能绕过缓存检查。外部兼容依赖缓存继续保留。清理校验工作区边界与 Git 标记，仅针对 Windows 只读权限错误解除写保护重试，不忽略其他删除错误。不删除无关工作区，也不清全机缓存。硬终止或 runner 故障不能保证收尾执行，需如实记录剩余状态。
 
 ## 本地验证
 
