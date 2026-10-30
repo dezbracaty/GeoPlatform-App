@@ -35,7 +35,7 @@
 
 runner 需要 Git/LFS、Python 3.12、CMake/Ninja 和相容 Qt。Windows 需要 PowerShell 7、MSVC C++/Windows SDK、Inno Setup 7；Mac 需要激活的 Xcode 和可运行 x86_64 检查的 Rosetta。固定的 Node 24 Actions 要求 runner 至少 2.327.1。
 
-Windows 由标准 setup-python 准备 3.12，任务进程使用 RemoteSigned 执行策略；同机 runner 可通过机器环境 AGENT_TOOLSDIRECTORY 共用对服务账户可写的工具缓存。Mac 校验已安装的 python3.12，再于任务临时目录生成 python/python3 别名并加入本任务 PATH；可用机器环境 GPLATFORM_PYTHON_EXECUTABLE 指定解释器，不需要创建系统级 Python 缓存目录。
+环境部署在 workflow 之外完成：安装 Python >= 3.12，并使 runner 服务的 PATH 能直接执行 python；Windows 的 PowerShell 脚本执行策略也由部署阶段配置。Mac 可将已安装 Homebrew Python 的 libexec/bin 加入 runner PATH。修改 runner 环境后，在空闲时重启对应服务并检查工具。workflow 不下载或安装工具，不改 PATH、不创建解释器别名、不设置执行策略；只读检查 Python，环境缺失直接失败。
 
 工具路径沿用普通项目入口支持的 `Qt6_DIR` / `GPLATFORM_VS_ROOT` 等环境配置，不提交机器绝对路径。`GPLATFORM_MACHINE_BUILD_LOCK` 可指定跨仓库共享锁路径；默认用户缓存目录 `.cache/gplatform/build.lock`。`CMAKE_BUILD_PARALLEL_LEVEL` 控制编译并行度。
 
