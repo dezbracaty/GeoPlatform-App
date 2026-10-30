@@ -97,22 +97,34 @@ jobs:
         platform: [windows, macos]
     runs-on: ${{ fromJSON(matrix.platform == 'windows' && needs.prepare.outputs.windows_labels || needs.prepare.outputs.macos_labels) }}
     timeout-minutes: 220
+    env:
+      # Apply before checkout, including on Windows with system autocrlf=true.
+      GIT_CONFIG_COUNT: '2'
+      GIT_CONFIG_KEY_0: core.autocrlf
+      GIT_CONFIG_VALUE_0: 'false'
+      GIT_CONFIG_KEY_1: core.eol
+      GIT_CONFIG_VALUE_1: lf
+      GIT_HTTP_LOW_SPEED_LIMIT: '1024'
+      GIT_HTTP_LOW_SPEED_TIME: '60'
     steps:
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        timeout-minutes: 10
+        with:
+          python-version: '3.12'
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        timeout-minutes: 5
         with:
           ref: ${{ github.workflow_sha }}
           path: control
           persist-credentials: false
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        timeout-minutes: 10
         with:
           ref: ${{ needs.prepare.outputs.app_sha }}
           path: source
           token: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
           persist-credentials: false
           submodules: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
-        with:
-          python-version: '3.12'
       - name: Build, check and package App
         id: package
         shell: python
@@ -139,10 +151,10 @@ jobs:
         shell: python
         run: |
           import os, pathlib, sys
-          sys.path.insert(0, 'control/scripts/ci')
-          from common import remove_owned_tree
           value = os.environ.get('APP_PACKAGE_ROOT')
           if value:
+              sys.path.insert(0, 'control/scripts/ci')
+              from common import remove_owned_tree
               path = pathlib.Path(value).resolve()
               parent = pathlib.Path(os.environ['RUNNER_TEMP']).resolve()
               if path.parent != parent or not path.name.startswith('app-package-'):
@@ -152,9 +164,16 @@ jobs:
         if: always()
         shell: python
         run: |
-          import os, pathlib, sys
-          sys.path.insert(0, 'control/scripts/ci')
-          from common import remove_owned_tree
+          import os, pathlib, shutil, stat
+          # Cleanup must work even when the control checkout never completed.
+          def retry_readonly(function, filename, error):
+              if os.name != 'nt' or not isinstance(error, PermissionError):
+                  raise error
+              mode = os.lstat(filename).st_mode
+              if stat.S_ISLNK(mode) or mode & stat.S_IWRITE:
+                  raise error
+              os.chmod(filename, mode | stat.S_IWRITE)
+              function(filename)
           workspace = pathlib.Path(os.environ['GITHUB_WORKSPACE']).resolve()
           for name in ('source', 'control'):
               path = workspace / name
@@ -163,7 +182,7 @@ jobs:
               if path.exists():
                   if not (path / '.git').exists():
                       raise RuntimeError('Refusing to clean a directory without its task checkout marker')
-                  remove_owned_tree(path, workspace, require_git=True)
+                  shutil.rmtree(path, onexc=retry_readonly)
   queue_guard:
     needs: prepare
     if: needs.prepare.outputs.attempt == github.run_attempt
