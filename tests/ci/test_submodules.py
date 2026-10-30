@@ -74,6 +74,32 @@ class SubmoduleTests(unittest.TestCase):
             self.assertEqual(self.git(self.source / path, "rev-parse", "--is-shallow-repository"), "true")
             self.assertEqual(self.git(self.source / path, "rev-list", "--count", "HEAD"), "1")
 
+    def test_failed_submodule_update_keeps_git_error_visible(self):
+        self.declare("library", self.library, (self.remote.parent / "missing.git").as_uri())
+        self.commit()
+        code = ("import sys; from pathlib import Path; "
+                "sys.path.insert(0, sys.argv[1]); import common; "
+                "common.init_source_submodules(Path(sys.argv[2]), consumer=sys.argv[3] == 'true')")
+        env = {key:value for key,value in os.environ.items()
+               if key not in ("GPLATFORM_SOURCE_TOKEN", "GITHUB_ACTIONS")}
+        result = subprocess.run([sys.executable, "-c", code, str(Path(common.__file__).parent),
+                                 str(self.source), str(CONSUMER).lower()],
+                                env=env, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"Initializing pinned submodule {self.library!r} at {self.pinned}", result.stdout)
+        self.assertIn("does not appear to be a git repository", result.stderr)
+
+    def test_derived_git_authentication_is_masked_only_in_actions(self):
+        fixture_token = "ci-fixture-not-a-real-token"
+        for actions in ("true", "false"):
+            output = io.StringIO()
+            with patch.dict(os.environ, GITHUB_ACTIONS=actions, GPLATFORM_SOURCE_TOKEN=fixture_token):
+                with contextlib.redirect_stdout(output):
+                    env = common.git_env()
+            header = env["GIT_CONFIG_VALUE_" + str(int(env["GIT_CONFIG_COUNT"]) - 1)].split()[-1]
+            expected = [f"::add-mask::{fixture_token}", f"::add-mask::{header}"] if actions == "true" else []
+            self.assertEqual(output.getvalue().splitlines(), expected)
+
     def test_missing_declaration_fails_before_any_dependency_checkout(self):
         self.git(self.source, "config", "--file", ".gitmodules", "--remove-section", "submodule.library")
         self.commit()

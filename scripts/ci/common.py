@@ -37,6 +37,9 @@ def git_env(secret="GPLATFORM_SOURCE_TOKEN"):
     token = os.environ.get(secret)
     if token:
         header = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            for value in (token, header):
+                print(f"::add-mask::{value}", flush=True)
         settings.append(("http.https://github.com/.extraheader", f"AUTHORIZATION: basic {header}"))
     offset = int(env.get("GIT_CONFIG_COUNT", "0"))
     for n, (key, value) in enumerate(settings, offset):
@@ -75,7 +78,9 @@ def init_source_submodules(source, *, consumer=False):
             continue
         if path == sdk and not consumer:
             continue
-        git(source, "submodule", "update", "--init", "--recursive", "--checkout", "--depth=1", "--", path, env=env)
+        print(f"Initializing pinned submodule {path!r} at {links[path]}", flush=True)
+        run(["git", "-C", source, "submodule", "update", "--init", "--recursive",
+             "--checkout", "--depth=1", "--", path], env=env)
         if text_git(Path(source) / path, "rev-parse", "HEAD") != links[path]:
             raise RuntimeError("Initialized submodule differs from its fixed gitlink")
     if consumer:
