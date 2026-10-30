@@ -147,7 +147,7 @@ set(EIGEN3_DOWNLOAD_URL "https://gitlab.com/libeigen/eigen/-/archive/${EIGEN3_VE
 message(STATUS "📥 正在从 GitLab 下载 Eigen3 (约2MB)...")
 message(STATUS "   URL: ${EIGEN3_DOWNLOAD_URL}")
 
-file(DOWNLOAD
+gplatform_download(
     ${EIGEN3_DOWNLOAD_URL}
     ${EIGEN3_ZIP_FILE}
     EXPECTED_HASH SHA256=${EIGEN3_EXPECTED_SHA256}

@@ -26,8 +26,23 @@ elseif(EXISTS "${CEREAL_SOURCE_DIR}/CMakeLists.txt")
         "${CMAKE_BINARY_DIR}/_deps/cereal-build"
         EXCLUDE_FROM_ALL)
 else()
+    set(_cereal_content_url
+        "https://github.com/USCiLab/cereal/archive/refs/tags/v${CEREAL_VERSION}.zip")
+    FetchContent_GetProperties(cereal)
+    if(NOT cereal_POPULATED AND NOT FETCHCONTENT_SOURCE_DIR_CEREAL AND
+       NOT FETCHCONTENT_FULLY_DISCONNECTED)
+        set(_cereal_archive "${CEREAL_CACHE_DIR}/cereal-${CEREAL_VERSION}.zip")
+        gplatform_download("${_cereal_content_url}" "${_cereal_archive}"
+            EXPECTED_HASH "SHA256=${CEREAL_SHA256}"
+            STATUS _cereal_download_status LOG _cereal_download_log SHOW_PROGRESS)
+        list(GET _cereal_download_status 0 _cereal_download_code)
+        if(NOT _cereal_download_code EQUAL 0)
+            message(FATAL_ERROR "cereal download failed: ${_cereal_download_log}")
+        endif()
+        set(_cereal_content_url "${_cereal_archive}")
+    endif()
     FetchContent_Declare(cereal
-        URL "https://github.com/USCiLab/cereal/archive/refs/tags/v${CEREAL_VERSION}.zip"
+        URL "${_cereal_content_url}"
         URL_HASH "SHA256=${CEREAL_SHA256}"
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
     set(JUST_INSTALL_CEREAL ON CACHE BOOL "" FORCE)

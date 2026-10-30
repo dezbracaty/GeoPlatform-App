@@ -308,7 +308,7 @@ else()
     message(STATUS "OCCT: downloading source archive...")
 
     set(OCCT_DOWNLOAD_URL "https://github.com/Open-Cascade-SAS/OCCT/archive/refs/tags/V${OCCT_TAG_VERSION}.tar.gz")
-    file(DOWNLOAD
+    gplatform_download(
         ${OCCT_DOWNLOAD_URL}
         ${OCCT_ZIP_FILE}
         EXPECTED_HASH SHA256=${OCCT_EXPECTED_SHA256}

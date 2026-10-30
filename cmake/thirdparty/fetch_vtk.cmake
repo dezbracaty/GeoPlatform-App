@@ -499,7 +499,7 @@ else()
     message(STATUS "📥 正在下载 VTK (约200MB)...")
     message(STATUS "   URL: ${VTK_DOWNLOAD_URL}")
 
-    file(DOWNLOAD
+    gplatform_download(
         ${VTK_DOWNLOAD_URL}
         ${VTK_ZIP_FILE}
         EXPECTED_HASH SHA256=${VTK_EXPECTED_SHA256}

@@ -141,7 +141,7 @@ function(_gplatform_build_filament_macos_intel)
     set(_source_archive "${FILAMENT_CACHE_DIR}/filament-v${FILAMENT_VERSION}-source.tar.gz")
     set(_source_sha "f16dd10b061cc6dc69e228cf74fe6342d74a3055b992f0578c25aed4bc9b3b73")
     if(NOT EXISTS "${_source_archive}")
-        file(DOWNLOAD
+        gplatform_download(
             "https://codeload.github.com/google/filament/tar.gz/refs/tags/v${FILAMENT_VERSION}"
             "${_source_archive}" EXPECTED_HASH "SHA256=${_source_sha}"
             STATUS _download_status)
@@ -224,7 +224,7 @@ message(STATUS "Filament strategy: ${FILAMENT_STATUS}")
 if(FILAMENT_STATUS STREQUAL "NONE")
     message(STATUS "Filament: downloading official ${FILAMENT_ASSET_PLATFORM} package")
     message(STATUS "  URL: ${FILAMENT_DOWNLOAD_URL}")
-    file(DOWNLOAD
+    gplatform_download(
         "${FILAMENT_DOWNLOAD_URL}"
         "${FILAMENT_ARCHIVE_FILE}"
         EXPECTED_HASH "SHA256=${FILAMENT_EXPECTED_SHA256}"

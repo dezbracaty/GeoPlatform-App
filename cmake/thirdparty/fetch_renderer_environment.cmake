@@ -29,19 +29,19 @@ function(_gplatform_fetch_renderer_environment_asset
         set(_url
             "https://api.github.com/repos/google/filament/contents/${REPOSITORY_PATH}?ref=v${GPLATFORM_RENDERER_ENVIRONMENT_VERSION}")
         message(STATUS "Renderer environment: downloading ${FILE_NAME}")
-        file(DOWNLOAD
+        gplatform_download(
             "${_url}"
             "${_destination}"
             EXPECTED_HASH "SHA256=${EXPECTED_SHA256}"
             HTTPHEADER "Accept: application/vnd.github.raw+json"
-            HTTPHEADER "User-Agent: GPlatform-CMake"
+                       "User-Agent: GPlatform-CMake"
             STATUS _download_status
             LOG _download_log
             SHOW_PROGRESS)
         list(GET _download_status 0 _status_code)
         list(GET _download_status 1 _status_message)
         if(NOT _status_code EQUAL 0)
-            file(REMOVE "${_destination}")
+
             message(FATAL_ERROR
                 "Renderer environment download failed: ${_status_message}\n"
                 "${_download_log}")

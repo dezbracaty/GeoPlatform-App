@@ -367,7 +367,7 @@ else()
     message(STATUS "📥 正在从 GitHub 下载 spdlog (约3MB)...")
     message(STATUS "   URL: ${SPDLOG_DOWNLOAD_URL}")
 
-    file(DOWNLOAD
+    gplatform_download(
         ${SPDLOG_DOWNLOAD_URL}
         ${SPDLOG_ZIP_FILE}
         EXPECTED_HASH SHA256=${SPDLOG_EXPECTED_SHA256}

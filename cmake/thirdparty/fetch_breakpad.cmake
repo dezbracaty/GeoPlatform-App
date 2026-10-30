@@ -102,7 +102,7 @@ if(ENABLE_BREAKPAD AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
         if(NOT HAS_ZIP)
             set(BREAKPAD_DOWNLOAD_URL "https://github.com/google/breakpad/archive/refs/tags/${BREAKPAD_TAG}.tar.gz")
             message(STATUS "Breakpad: downloading ${BREAKPAD_DOWNLOAD_URL}")
-            file(DOWNLOAD
+            gplatform_download(
                 "${BREAKPAD_DOWNLOAD_URL}"
                 "${BREAKPAD_ZIP_FILE}"
                 EXPECTED_HASH "SHA256=${BREAKPAD_EXPECTED_SHA256}"

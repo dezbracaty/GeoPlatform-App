@@ -439,7 +439,7 @@ else()
     message(STATUS "📥 正在下载 Embree ...")
     message(STATUS "   URL: ${EMBREE_DOWNLOAD_URL}")
 
-    file(DOWNLOAD
+    gplatform_download(
         ${EMBREE_DOWNLOAD_URL}
         ${EMBREE_ZIP_FILE}
         EXPECTED_HASH SHA256=${EMBREE_EXPECTED_SHA256}

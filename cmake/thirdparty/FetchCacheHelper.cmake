@@ -2,6 +2,7 @@
 
 cmake_minimum_required(VERSION 3.16)
 include_guard(GLOBAL)
+include("${CMAKE_CURRENT_LIST_DIR}/DependencyDownload.cmake")
 
 # Resolve one architecture tag for binary build/install artifacts. Source trees
 # and archives remain architecture-neutral at the package root.

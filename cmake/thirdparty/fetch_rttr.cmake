@@ -249,7 +249,7 @@ if(RTTR_STATUS STREQUAL "DOWNLOAD")
     message(STATUS "📥 正在从 GitHub 下载 RTTR (约3MB)...")
     message(STATUS "   URL: ${RTTR_DOWNLOAD_URL}")
 
-    file(DOWNLOAD
+    gplatform_download(
         ${RTTR_DOWNLOAD_URL}
         ${RTTR_ZIP_FILE}
         EXPECTED_HASH SHA256=${RTTR_EXPECTED_SHA256}
