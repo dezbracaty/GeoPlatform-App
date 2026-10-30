@@ -31,9 +31,11 @@
 | `GPLATFORM_SOURCE_TOKEN` | App、SDK、私有源码子模块的 Contents 读 |
 | `GPLATFORM_WORKFLOW_TOKEN` | 供 hosted prepare 查询本仓库 runner 的 Administration 读 |
 
-平台编译 job 只取得读源码 token，不取得 SDK/App 分支写权限。queue_guard 用本仓库 `GITHUB_TOKEN` 的 Actions 写权限，只取消本次运行。不能依赖开发者登录钥匙串。
+平台编译 job 仅注入 SOURCE，不注入独立发布 Secret；SOURCE 应配置为只读。实际权限由配置的 Token 决定，Secret 命名不会降低权限；经明确授权采用更广权限时，验收记录必须注明，不能宣称仍满足只读隔离。queue_guard 用本仓库 `GITHUB_TOKEN` 的 Actions 写权限，只取消本次运行。凭据配置由获授权的管理身份完成。
 
 runner 需要 Git/LFS、Python 3.12、CMake/Ninja 和相容 Qt。Windows 需要 PowerShell 7、MSVC C++/Windows SDK、Inno Setup 7；Mac 需要激活的 Xcode 和可运行 x86_64 检查的 Rosetta。固定的 Node 24 Actions 要求 runner 至少 2.327.1。
+
+Windows 由标准 setup-python 准备 3.12，任务进程使用 RemoteSigned 执行策略；同机 runner 可通过机器环境 AGENT_TOOLSDIRECTORY 共用对服务账户可写的工具缓存。Mac 校验已安装的 python3.12，再于任务临时目录生成 python/python3 别名并加入本任务 PATH；可用机器环境 GPLATFORM_PYTHON_EXECUTABLE 指定解释器，不需要创建系统级 Python 缓存目录。
 
 工具路径沿用普通项目入口支持的 `Qt6_DIR` / `GPLATFORM_VS_ROOT` 等环境配置，不提交机器绝对路径。`GPLATFORM_MACHINE_BUILD_LOCK` 可指定跨仓库共享锁路径；默认用户缓存目录 `.cache/gplatform/build.lock`。`CMAKE_BUILD_PARALLEL_LEVEL` 控制编译并行度。
 

@@ -109,11 +109,27 @@ jobs:
       GIT_CONFIG_VALUE_2: openssl
       GIT_HTTP_LOW_SPEED_LIMIT: '1024'
       GIT_HTTP_LOW_SPEED_TIME: '60'
+      PSExecutionPolicyPreference: RemoteSigned
     steps:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        id: runtime_windows
+        if: matrix.platform == 'windows'
         timeout-minutes: 10
         with:
           python-version: '3.12'
+      - name: Use installed macOS Python 3.12
+        id: runtime_macos
+        if: matrix.platform == 'macos'
+        shell: bash
+        timeout-minutes: 2
+        run: |
+          ci_python_executable=$(command -v "${GPLATFORM_PYTHON_EXECUTABLE:-python3.12}")
+          ci_python_executable=$("$ci_python_executable" -c 'import os, sys; assert sys.version_info[:2] == (3, 12), "Python 3.12 is required"; print(os.path.abspath(sys.executable))')
+          "$ci_python_executable" --version
+          ci_python_directory=$(mktemp -d "$RUNNER_TEMP/gplatform-python.XXXXXX")
+          ln -s "$ci_python_executable" "$ci_python_directory/python"
+          ln -s "$ci_python_executable" "$ci_python_directory/python3"
+          echo "$ci_python_directory" >> "$GITHUB_PATH"
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         timeout-minutes: 5
         with:
@@ -150,7 +166,7 @@ jobs:
           retention-days: 7
           compression-level: 0
       - name: Clean owned package staging
-        if: always()
+        if: always() && (steps.runtime_windows.outcome == 'success' || steps.runtime_macos.outcome == 'success')
         shell: python
         run: |
           import os, pathlib, sys
@@ -164,7 +180,7 @@ jobs:
                   raise RuntimeError('Refusing to clean an unowned directory')
               remove_owned_tree(path, parent)
       - name: Clean task checkouts
-        if: always()
+        if: always() && (steps.runtime_windows.outcome == 'success' || steps.runtime_macos.outcome == 'success')
         shell: python
         run: |
           import os, pathlib, shutil, stat
