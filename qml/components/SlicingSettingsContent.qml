@@ -149,16 +149,17 @@ Item {
 
     function physicalToolLabel(slot) {
         var nozzle = qsTr("Nozzle %1").arg(slot.physicalToolIndex)
+        var process = slot.processType || slot.physicalToolRole
         if (root.perToolMaterials)
-            return nozzle + " · " + (slot.physicalToolRole === "continuous_fiber"
+            return nozzle + " · " + (process === "continuous_fiber"
                 ? qsTr("Continuous fiber") : qsTr("Base material"))
         if (slot.physicalToolSide === "left")
             nozzle = qsTr("Left nozzle")
         else if (slot.physicalToolSide === "right")
             nozzle = qsTr("Right nozzle")
-        if (slot.physicalToolRole === "continuous_fiber")
+        if (process === "continuous_fiber")
             return nozzle + " · " + qsTr("Continuous fiber")
-        if (slot.physicalToolRole === "substrate" || slot.physicalToolRole === "thermoplastic")
+        if (process === "substrate" || process === "thermoplastic")
             return nozzle + " · " + qsTr("Base material")
         return nozzle
     }

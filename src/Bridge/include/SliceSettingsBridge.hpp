@@ -123,7 +123,8 @@ private:
     QVariantMap rowForDefinitionLocked(const QVariantMap& definition) const;
     static QVariantList presetOptions(const std::vector<libslicer::PresetOption>& options);
     static QVariantList filamentSlotItems(
-        const std::vector<libslicer::FilamentSlotInfo>& filamentSlots);
+        const std::vector<libslicer::FilamentSlotInfo>& filamentSlots,
+        const std::vector<libslicer::SettingItem>& settings);
     static QString presetName(const std::vector<libslicer::PresetOption>& options,
                               const std::string& selectedId);
     bool isVisibleInMode(const QVariantMap& definition, bool showAdvancedMode) const;

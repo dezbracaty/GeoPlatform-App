@@ -763,7 +763,7 @@ bool SliceSettingsBridge::setFilamentColor(int slotIndex, const QColor& color) {
     {
         QWriteLocker locker(&m_lock);
         schemaChanged = applyChangedItemsLocked(result.changed_items);
-        m_filamentSlots = filamentSlotItems(active->filament_slots);
+        m_filamentSlots = filamentSlotItems(active->filament_slots, m_items);
         setPendingLocked(&pendingChanged);
     }
     publishActiveSlicingConfig(active->revision, active->filament_slots);
@@ -1038,7 +1038,15 @@ QVariantList SliceSettingsBridge::presetOptions(
 }
 
 QVariantList SliceSettingsBridge::filamentSlotItems(
-    const std::vector<libslicer::FilamentSlotInfo>& filamentSlots) {
+    const std::vector<libslicer::FilamentSlotInfo>& filamentSlots,
+    const std::vector<libslicer::SettingItem>& settings) {
+    // Read the material process from the existing settings contract instead of
+    // extending the binary SDK's FilamentSlotInfo layout.
+    const auto process = std::find_if(settings.begin(), settings.end(), [](const auto& item) {
+        return item.key == "filament_process_type";
+    });
+    const auto processTypes = process == settings.end() ? QStringList{}
+        : QString::fromStdString(process->value).split(';');
     QVariantList result;
     result.reserve(static_cast<qsizetype>(filamentSlots.size()));
     for (const auto& slot : filamentSlots) {
@@ -1050,6 +1058,9 @@ QVariantList SliceSettingsBridge::filamentSlotItems(
             {QStringLiteral("compatiblePresets"), presetOptions(slot.compatible_presets)},
             {QStringLiteral("vendor"), QString::fromStdString(slot.vendor)},
             {QStringLiteral("materialType"), QString::fromStdString(slot.material_type)},
+            {QStringLiteral("processType"), slot.index < static_cast<std::size_t>(processTypes.size())
+                ? processTypes.at(static_cast<qsizetype>(slot.index))
+                : processTypes.size() == 1 ? processTypes.front() : QString::fromStdString(slot.physical_tool_role)},
             {QStringLiteral("diameter"), slot.diameter_mm},
             {QStringLiteral("physicalToolIndex"), static_cast<qulonglong>(slot.physical_tool_index)},
             {QStringLiteral("physicalToolName"), QString::fromStdString(slot.physical_tool_name)},
@@ -1108,7 +1119,7 @@ bool SliceSettingsBridge::replaceConfig(GPlatform::SlicingConfigActivationResult
                 if (item.group == libslicer::SettingGroup::Process)
                     m_processBaseline.emplace(item.key, item.value);
         }
-        m_filamentSlots = filamentSlotItems(result.filamentSlots);
+        m_filamentSlots = filamentSlotItems(result.filamentSlots, m_items);
         m_itemIndex.clear();
         for (std::size_t index = 0; index < m_items.size(); ++index) {
             m_itemIndex.emplace(m_items[index].key, index);

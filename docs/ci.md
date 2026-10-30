@@ -19,6 +19,7 @@ SDK 及源码子模块默认使用触发提交记录的 gitlink，不跟随菜�
 构建结束后查询 App、SDK、OrcaSlicer、SmoothUI、SmoothUIDock 的真实远端分支，在一个提交中刷新默认分支的两份菜单。
 两平台共享刷新并发组，遇到并发源码提交时重新读取最新默认分支再生成，禁止强推。
 构建失败也尝试刷新；取消的运行不刷新。没有定时或分支事件驱动的独立菜单任务。
+`ci/delivery/` 候选分支仍执行安装包构建，但不刷新默认分支菜单，避免在 producer 验证期间推进交付目标、触发并发保护。正式交付分支更新后的构建照常刷新菜单。
 菜单是上一次成功刷新的快照；新建的依赖分支在下一次构建结束后出现。已存在的选项会在运行时重新解析分支头。
 菜单无需独立仓库或长期 CI 分支，也无需记住任何提交说明标记。
 
@@ -70,7 +71,5 @@ node --test scripts/ci/artifact-upload/test-retry.cjs
 Windows 初始化依赖时优先复用同一台机器上已有、远端地址一致的 Git 仓库；仍按本次 gitlink 获取缺少的提交，并执行 SDK 版本和内容校验。复用仅包含 Git 对象，不包含旧工作区未提交内容，不依赖旧运行目录的保留。
 
 Windows CI status 是手动只读入口：输入主仓库 SDK 构建的 run-id-attempt，可用同机 App runner 查看 producer 的日志尾部和编译进程，不获取构建锁、不修改源码或发布指针。自定义 producer 目录时设置 App 仓库变量 `GPLATFORM_WINDOWS_PRODUCER_ROOT`（默认 `C:/gp-ci`）。
-
-macOS CI status 使用同机 App runner 只读查看 producer 日志和进程资源占用；可输入 run-id-attempt，留空选择最近运行。它不获取构建锁，不输出进程命令参数；自定义目录使用 `GPLATFORM_MACOS_PRODUCER_ROOT`，默认 `~/gp-ci`。`ci/macos-status` 分支 push 也可执行该检查。
 
 Windows 与 SDK producer 统一使用 `core.autocrlf=true` 的 Git 检出规则，仓库 `.gitattributes` 优先。标准 CMake 和 CI 共用来源校验：Git 检出直接核对实际 fork 内容、提交及工作区状态与所选平台 SDK 一致，不改写源码目录中的来源清单；纯文件分发包仍严格验证随包清单。

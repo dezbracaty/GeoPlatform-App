@@ -19,7 +19,8 @@ PanelSurface {
     readonly property var machine: SliceSettingsBridge.selectedMachine
     readonly property var slots: SliceSettingsBridge.filamentSlots
     readonly property bool fiberCapable: slots.some(function (slot) {
-        return slot.physicalToolRole === "continuous_fiber";
+        return slot.physicalToolRole === "continuous_fiber"
+            || slot.physicalToolRole === "thermoplastic+continuous_fiber";
     })
     readonly property bool editingEnabled: !TaskStateNotifier.isBusy
     readonly property color secondaryText: SmoothUI.dark ? SmoothUI.theme.res.textFillColorSecondary : "#7b8795"
