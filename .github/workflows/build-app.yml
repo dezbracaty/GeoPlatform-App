@@ -125,7 +125,7 @@ jobs:
           path: control
           persist-credentials: false
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        timeout-minutes: 10
+        timeout-minutes: 20
         with:
           ref: ${{ needs.prepare.outputs.app_sha }}
           path: source
