@@ -99,11 +99,14 @@ jobs:
     timeout-minutes: 220
     env:
       # Apply before checkout, including on Windows with system autocrlf=true.
-      GIT_CONFIG_COUNT: '2'
+      GIT_CONFIG_COUNT: ${{ matrix.platform == 'windows' && '3' || '2' }}
       GIT_CONFIG_KEY_0: core.autocrlf
       GIT_CONFIG_VALUE_0: 'false'
       GIT_CONFIG_KEY_1: core.eol
       GIT_CONFIG_VALUE_1: lf
+      # Git for Windows supports this backend; macOS keeps its native backend.
+      GIT_CONFIG_KEY_2: http.sslBackend
+      GIT_CONFIG_VALUE_2: openssl
       GIT_HTTP_LOW_SPEED_LIMIT: '1024'
       GIT_HTTP_LOW_SPEED_TIME: '60'
     steps:
