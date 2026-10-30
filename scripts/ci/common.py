@@ -75,7 +75,7 @@ def init_source_submodules(source, *, consumer=False):
             continue
         if path == sdk and not consumer:
             continue
-        git(source, "submodule", "update", "--init", "--recursive", "--checkout", "--", path, env=env)
+        git(source, "submodule", "update", "--init", "--recursive", "--checkout", "--depth=1", "--", path, env=env)
         if text_git(Path(source) / path, "rev-parse", "HEAD") != links[path]:
             raise RuntimeError("Initialized submodule differs from its fixed gitlink")
     if consumer:

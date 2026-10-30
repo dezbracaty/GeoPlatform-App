@@ -41,6 +41,9 @@ class SubmoduleTests(unittest.TestCase):
         self.source = root / "source"
         for repo in [self.remote, self.source]:
             self.repository(repo)
+        (self.remote / "payload").write_text("ancestor")
+        self.git(self.remote, "add", "payload")
+        self.git(self.remote, "commit", "-qm", "Older dependency history")
         (self.remote / "payload").write_text("original")
         self.git(self.remote, "add", "payload")
         self.git(self.remote, "commit", "-qm", "Original dependency")
@@ -50,7 +53,7 @@ class SubmoduleTests(unittest.TestCase):
         self.library = "deps/library with space"
         self.sdk = common.SDK_PATH if CONSUMER else "App/" + common.SDK_PATH
         for name, path in [("library", self.library), ("sdk", self.sdk)]:
-            self.declare(name, path, self.remote if CONSUMER or name == "library" else root / "must-not-fetch")
+            self.declare(name, path, self.remote.as_uri() if CONSUMER or name == "library" else root / "must-not-fetch")
             self.git(self.source, "update-index", "--add", "--cacheinfo", "160000", self.pinned, path)
         self.declare("stale", "ThirdParty/testTransaction2", root / "removed-repository")
         self.commit()
@@ -67,6 +70,9 @@ class SubmoduleTests(unittest.TestCase):
         self.assertEqual((self.source / self.library / "payload").read_text(), "original")
         self.assertFalse((self.source / "ThirdParty/testTransaction2").exists())
         self.assertEqual((self.source / self.sdk / ".git").exists(), CONSUMER)
+        for path in [self.library] + ([self.sdk] if CONSUMER else []):
+            self.assertEqual(self.git(self.source / path, "rev-parse", "--is-shallow-repository"), "true")
+            self.assertEqual(self.git(self.source / path, "rev-list", "--count", "HEAD"), "1")
 
     def test_missing_declaration_fails_before_any_dependency_checkout(self):
         self.git(self.source, "config", "--file", ".gitmodules", "--remove-section", "submodule.library")
