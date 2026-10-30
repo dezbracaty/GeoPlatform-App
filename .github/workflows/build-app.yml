@@ -1,0 +1,206 @@
+name: Build App
+run-name: 'Build App | request=${{ inputs.request_id || github.run_id }} | source=${{ inputs.source_ref }}'
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: App branch or complete SHA to build
+        type: string
+        default: feature/gplatform-ui
+      request_id:
+        description: Optional caller correlation ID
+        type: string
+        default: ''
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      app_sha: ${{ steps.source.outputs.app_sha }}
+      sdk_sha: ${{ steps.source.outputs.sdk_sha }}
+      windows_labels: ${{ steps.windows.outputs.labels }}
+      macos_labels: ${{ steps.macos.outputs.labels }}
+      prepared_at: ${{ steps.ready.outputs.prepared_at }}
+      attempt: ${{ steps.ready.outputs.attempt }}
+    steps:
+      - name: Check CI credentials
+        env:
+          HAS_SOURCE: ${{ secrets.GPLATFORM_SOURCE_TOKEN != '' }}
+          HAS_WORKFLOW: ${{ secrets.GPLATFORM_WORKFLOW_TOKEN != '' }}
+        run: |
+          python3 - <<'PY'
+          import os
+          missing = [key[4:] for key, value in os.environ.items() if key.startswith('HAS_') and value.lower() != 'true']
+          if missing:
+              raise SystemExit('Missing CI credentials: ' + ', '.join(missing))
+          PY
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: control
+          persist-credentials: false
+      - id: source
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        with:
+          github-token: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
+          script: |
+            const ref = process.env.SOURCE_REF;
+            let sha;
+            if (/^[0-9a-f]{40}$/.test(ref)) {
+              const {data} = await github.rest.repos.getCommit({...context.repo, ref});
+              if (data.sha !== ref) throw new Error('App SHA did not resolve exactly');
+              sha = data.sha;
+            } else {
+              const {data} = await github.rest.repos.getBranch({...context.repo, branch:ref});
+              sha = data.commit.sha;
+            }
+            const {data:sdk} = await github.rest.repos.getContent({...context.repo, path:'ThirdParty/libs/GPlatformSDK', ref:sha});
+            if (!sdk.submodule_git_url || !/^[0-9a-f]{40}$/.test(sdk.sha))
+              throw new Error('App commit does not contain the SDK submodule');
+            core.setOutput('app_sha', sha);
+            core.setOutput('sdk_sha', sdk.sha);
+            await core.summary.addHeading('Fixed build inputs').addTable([
+              [{data:'App SHA',header:true}, {data:'SDK SHA',header:true}],
+              [sha, sdk.sha]
+            ]).write();
+      - id: windows
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        env:
+          CI_RUNNER_MODE: preflight
+          CI_RUNNER_LABELS: ${{ vars.GPLATFORM_WINDOWS_RUNNER_LABELS }}
+        with:
+          github-token: ${{ secrets.GPLATFORM_WORKFLOW_TOKEN }}
+          script: await require('./control/scripts/ci/runner_queue.js')({github, context, core});
+      - id: macos
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        env:
+          CI_RUNNER_MODE: preflight
+          CI_RUNNER_LABELS: ${{ vars.GPLATFORM_MACOS_RUNNER_LABELS }}
+        with:
+          github-token: ${{ secrets.GPLATFORM_WORKFLOW_TOKEN }}
+          script: await require('./control/scripts/ci/runner_queue.js')({github, context, core});
+      - id: ready
+        run: |
+          echo "prepared_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+  build:
+    name: app-build-${{ matrix.platform }}
+    needs: prepare
+    if: needs.prepare.outputs.attempt == github.run_attempt
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows, macos]
+    runs-on: ${{ fromJSON(matrix.platform == 'windows' && needs.prepare.outputs.windows_labels || needs.prepare.outputs.macos_labels) }}
+    timeout-minutes: 220
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: control
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ needs.prepare.outputs.app_sha }}
+          path: source
+          token: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
+          persist-credentials: false
+          submodules: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - name: Build, check and package App
+        id: package
+        shell: python
+        env:
+          GPLATFORM_SOURCE_TOKEN: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
+          APP_SHA: ${{ needs.prepare.outputs.app_sha }}
+          SDK_SHA: ${{ needs.prepare.outputs.sdk_sha }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          import os, subprocess, sys
+          subprocess.run([sys.executable, 'control/scripts/ci/build.py', '--source-dir', 'source',
+                          '--platform', os.environ['PLATFORM'], '--app-sha', os.environ['APP_SHA'],
+                          '--sdk-sha', os.environ['SDK_SHA']], check=True)
+      - name: Upload required installer and checksums
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: app-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.package.outputs.deliverables }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - name: Clean owned package staging
+        if: always()
+        shell: python
+        run: |
+          import os, pathlib, sys
+          sys.path.insert(0, 'control/scripts/ci')
+          from common import remove_owned_tree
+          value = os.environ.get('APP_PACKAGE_ROOT')
+          if value:
+              path = pathlib.Path(value).resolve()
+              parent = pathlib.Path(os.environ['RUNNER_TEMP']).resolve()
+              if path.parent != parent or not path.name.startswith('app-package-'):
+                  raise RuntimeError('Refusing to clean an unowned directory')
+              remove_owned_tree(path, parent)
+      - name: Clean task checkouts
+        if: always()
+        shell: python
+        run: |
+          import os, pathlib, sys
+          sys.path.insert(0, 'control/scripts/ci')
+          from common import remove_owned_tree
+          workspace = pathlib.Path(os.environ['GITHUB_WORKSPACE']).resolve()
+          for name in ('source', 'control'):
+              path = workspace / name
+              if path.is_symlink() or path.resolve().parent != workspace:
+                  raise RuntimeError('Refusing to clean a checkout outside this workspace')
+              if path.exists():
+                  if not (path / '.git').exists():
+                      raise RuntimeError('Refusing to clean a directory without its task checkout marker')
+                  remove_owned_tree(path, workspace, require_git=True)
+  queue_guard:
+    needs: prepare
+    if: needs.prepare.outputs.attempt == github.run_attempt
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: control
+          persist-credentials: false
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        env:
+          CI_RUNNER_MODE: guard
+          CI_RUNNER_LABELS: ${{ needs.prepare.outputs.windows_labels }}
+          CI_PREPARED_AT: ${{ needs.prepare.outputs.prepared_at }}
+          CI_EXPECTED_JOBS: '["app-build-windows", "app-build-macos"]'
+        with:
+          script: await require('./control/scripts/ci/runner_queue.js')({github, context, core});
+  result:
+    if: always()
+    needs: [prepare, build, queue_guard]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          CURRENT_ATTEMPT: ${{ github.run_attempt }}
+        with:
+          script: |
+            const results = JSON.parse(process.env.RESULTS);
+            await core.summary.addHeading('Build results').addCodeBlock(JSON.stringify(results,null,2),'json').write();
+            if (results.prepare.result === 'success' && results.prepare.outputs.attempt !== process.env.CURRENT_ATTEMPT)
+              core.setFailed('Partial reruns are rejected before scheduling builds; choose Re-run all jobs or start a new workflow.');
+            if (Object.values(results).some(job => job.result !== 'success'))
+              core.setFailed('Both platform builds, packaging and uploads must pass.');
