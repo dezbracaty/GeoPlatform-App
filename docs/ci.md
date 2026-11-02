@@ -13,6 +13,8 @@
 
 准备任务固定 App SHA，读取其中 `ThirdParty/libs/GPlatformSDK` 的 gitlink。两平台消费同一个 App SHA 和 SDK SHA，不提供“最新 SDK”或单独切换源码依赖的选项。
 
+App 消费 SDK 格式 3 / UI package 1，只管理 SDK 与 Orca 两个源码引用。SmoothUI、SmoothUIDock 及其 KDDockWidgets 实现由生产者编成 SDK，App 不克隆这些实现仓库；构建前验证完整 SDK manifest、UI 资源合同及 Orca 受管内容/版本，不改写来源清单。
+
 控制 workflow/CI 脚本来自本次 workflow 提交，产品代码来自固定的 App 提交；两者分别记录。App 仓库自己的 `.github/`、`scripts/ci/`、`tests/ci/`、`docs/ci.md` 由本仓库维护，主仓库同步产品源码时保留。
 
 ## runner 与少量配置

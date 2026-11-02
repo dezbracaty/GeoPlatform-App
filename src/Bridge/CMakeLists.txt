@@ -71,7 +71,7 @@ target_include_directories(Bridge PUBLIC
 # Link dependencies
 target_link_libraries(Bridge
     PUBLIC
-        SmoothUIImpl
+        GPlatform::UI
         Qt6::Core
         Qt6::Concurrent
         Foundation::QmlRegistration

@@ -1,6 +1,7 @@
 """Use the existing standalone App build/check/package entries."""
 from __future__ import annotations
 import argparse
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -25,24 +26,49 @@ def runtime_env(build, env):
     return result
 
 
+def source_contract(source):
+    spec = importlib.util.spec_from_file_location('selected_app_source_inputs', source / 'cmake/source_inputs.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def validate_sdk(source, slots):
+    contract = source_contract(source)
+    result = {}
     for slot in slots:
-        root = source / "ThirdParty/libs/GPlatformSDK" / slot
-        metadata = json.loads((root / "sdk-build.json").read_text())
-        if str(metadata.get("SDK_FORMAT")) != "2" or metadata.get("GPLATFORM_SDK_ARCH") != slot.split("/")[0]:
-            raise RuntimeError("App requires a matching format-2 SDK")
-        manifest = json.loads((root / "sdk-manifest.json").read_text())
-        actual = {p.relative_to(root).as_posix() for p in root.rglob("*")
-                  if p.is_file() and p != root / "sdk-manifest.json"}
-        if actual != set(manifest):
-            raise RuntimeError("SDK inventory differs from manifest")
-        for name, expected in manifest.items():
-            relative = Path(name)
-            if relative.is_absolute() or ".." in relative.parts or "\\" in name:
-                raise RuntimeError("Unsafe SDK manifest path")
-            path = root / relative
-            if not path.resolve().is_relative_to(root.resolve()) or digest(path) != expected:
-                raise RuntimeError(f"SDK payload hash differs: {name}")
+        root = source / 'ThirdParty/libs/GPlatformSDK' / slot
+        metadata = json.loads((root / 'sdk-build.json').read_text())
+        system = 'Windows' if slot.split('/')[0] == 'AMD64' else 'Darwin'
+        if (metadata.get('SDK_FORMAT') != 3 or metadata.get('GPLATFORM_SDK_ARCH') != slot.split('/')[0]
+                or metadata.get('CMAKE_BUILD_TYPE') != 'Release' or metadata.get('CMAKE_SYSTEM_NAME') != system):
+            raise RuntimeError('App requires a matching format-3 SDK')
+        contract.verify_sdk_package(root, metadata)
+        result[slot] = metadata
+    first = next(iter(result.values()))
+    for metadata in result.values():
+        for key in ('Qt6_VERSION', 'SOURCE_STATE', 'APP_SOURCE_STATE', 'SOURCE_INPUTS', 'SOURCE_REVISIONS',
+                    'DEPENDENCIES', 'UI_BINARY_PACKAGE_VERSION', 'CONSUMER_SOURCE_FORKS'):
+            if metadata.get(key) != first.get(key):
+                raise RuntimeError(f'SDK architecture slots have different {key}')
+    return result
+
+
+def validate_source_inputs(source, metadata):
+    contract = source_contract(source)
+    expected = contract.consumer_inputs(next(iter(metadata.values())))
+    contract.verify(source / 'ThirdParty', None, expected)
+
+
+def windows_entry(source, target, cmake_args, env):
+    command = ("$ErrorActionPreference = 'Stop'; try { "
+               '$global:LASTEXITCODE = 0; '
+               '& $env:CI_BUILD_ENTRY -Preset release -Targets $env:CI_BUILD_TARGET '
+               '-CMakeArgs @($env:CI_CMAKE_ARGS | ConvertFrom-Json); exit $LASTEXITCODE '
+               '} catch { [Console]::Error.WriteLine($_); exit 1 }')
+    step_env = dict(env, CI_BUILD_ENTRY=str(source / 'scripts/build.ps1'),
+                    CI_BUILD_TARGET=target, CI_CMAKE_ARGS=json.dumps(cmake_args))
+    run(['pwsh', '-NoProfile', '-Command', command], cwd=source, env=step_env)
 
 
 def build(source, platform, app_sha, sdk_sha):
@@ -61,7 +87,8 @@ def build(source, platform, app_sha, sdk_sha):
     with machine_lock():
         prepare_cached_source(source, app_sha, platform, consumer=True)
         init_source_submodules(source, consumer=True)
-        validate_sdk(source, slots)
+        metadata = validate_sdk(source, slots)
+        validate_source_inputs(source, metadata)
         cmake_args = ["-DGPLATFORM_BUILD_SDK_CHECKS=ON"]
         if os.environ.get("Qt6_DIR"):
             cmake_args.append("-DQt6_DIR=" + os.environ["Qt6_DIR"])
@@ -69,12 +96,7 @@ def build(source, platform, app_sha, sdk_sha):
             if os.name != "nt":
                 raise RuntimeError("Windows build requires a Windows runner")
             def entry(target):
-                # -Command plus a parameter array handles PowerShell string[]
-                # without concatenating untrusted arguments into executable text.
-                command = "& $env:CI_BUILD_ENTRY -Preset release -Targets $env:CI_BUILD_TARGET -CMakeArgs @($env:CI_CMAKE_ARGS | ConvertFrom-Json); exit $LASTEXITCODE"
-                step_env = dict(env, CI_BUILD_ENTRY=str(source / "scripts/build.ps1"),
-                                CI_BUILD_TARGET=target, CI_CMAKE_ARGS=json.dumps(cmake_args))
-                run(["pwsh", "-NoProfile", "-Command", command], cwd=source, env=step_env)
+                windows_entry(source, target, cmake_args, env)
             entry("GPlatform")
             entry("SDKConsumerExtensionCheck")
             run(["ctest", "--test-dir", source / "build-Release", "-R", "^SDKConsumerExtensionCheck$",

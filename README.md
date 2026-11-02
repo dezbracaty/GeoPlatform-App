@@ -1,7 +1,7 @@
 # GeoPlatform-App
 
 GPlatform 应用开发仓库，使用 CMake 编译上层源码并链接预编译的 [GeoPlatform-SDK](https://github.com/dezbracaty/GeoPlatform-SDK)。
-开发应用只需本仓库及 SDK 子模块，无需完整源码主仓库。
+开发应用只需本仓库及 SDK、Orca 子模块，无需完整源码主仓库。
 
 ## 可开发的源码
 
@@ -12,7 +12,7 @@ GPlatform 应用开发仓库，使用 CMake 编译上层源码并链接预编译
 | `src/Document/` | 文档与对象管理 |
 | `src/` 中其他模块 | 应用组合、交互、切片、打印机、服务等业务功能 |
 | `qml/`、`resources/` | 页面、组件及应用资源 |
-| `ThirdParty/SmoothUI/`、`SmoothUIDock/`、`OrcaSlicer/` | 根项目和 App 共用的第三方源码子模块 |
+| `ThirdParty/OrcaSlicer/` | 保留源码交付的切片依赖 |
 | `cmake/GPlatformThirdParty.cmake`、`cmake/thirdparty/` | 共用的第三方依赖入口与原有 fetch 规则 |
 | `ThirdParty/libs/GPlatformSDK/` | 项目内部库及其公开接口的二进制子模块 |
 
@@ -33,7 +33,7 @@ git -C ThirdParty/libs/GPlatformSDK lfs pull
 
 SDK 路径固定为 `ThirdParty/libs/GPlatformSDK/<架构>/<构建类型>/`。
 版本由本仓库记录的子模块提交指针决定，无需在目录名中写版本。
-SDK 格式 2 提供内部库交付；配套版本由当前 App 记录的 SDK gitlink 决定。
+SDK 格式 3 提供内部库与 UI 二进制/同源 QML 资源；SmoothUI、SmoothUIDock 及其 KD 依赖不需要私有源码 checkout。配套版本由当前 App 记录的 SDK gitlink 决定。
 旧版本记录的 SDK SHA 需要从迁移归档恢复；不将旧完整 SDK 混入当前交付。
 Git App 根据真实 Git 受管文件及 HEAD 校验 SDK 绑定的内容摘要，无需导出清单；没有 Git 元数据的文件包必须提供 `ThirdParty/source-inputs.json` 并通过同一摘要校验。
 
@@ -86,11 +86,11 @@ $env:Qt6_DIR = 'C:/path/to/Qt/msvc2022_64/lib/cmake/Qt6'
 上面的通用命令和下面的更新、扩展检查命令在 Windows 下也应使用所选 VS CMake 执行。
 
 CMake 会编译本仓库的 Base、AppDB、Document 和业务源码，并链接 SDK 中的库。
-SDK 格式 2 只提供内部库（含 Tr、TransDB、JournalSystem）及对应构建的公开/生成头文件，不包含第三方库。
+SDK 格式 3 提供内部库（含 Tr、TransDB、JournalSystem）、SmoothUI/SmoothUIDock/KDDockWidgets 二进制闭包及配套公开声明、同源 QML 资源；其他公开第三方仍由原 fetch provider 提供。
 App 检查 SDK 的平台、格式、编译器及 MSVC 工具链和运行库，根据 SDK 元数据校验依赖版本与开关，查找匹配的 Qt，再用与根项目相同的 fetch 规则准备第三方目标，最后导入内部 SDK。
 VTK、OCCT、RTTR、Embree、spdlog 等从原有机器级缓存使用配套安装的库和头文件；兼容缓存可复用，缺失时由原有规则下载或构建。Eigen/cereal 是头文件库，Filament 沿用官方预编译包。
-SmoothUI、SmoothUIDock/KDDockWidgets 和 miniz 在 App 构建中从子模块源码编译；libslicer 使用原有独立构建缓存。其缓存键含源码绝对路径，因此不同 checkout 首次可能重新编译 libslicer，不迁移缓存或复用含其他源码路径的构建树。
-不混用旧完整 SDK 格式或不同平台/配置的头文件；没有格式 2 的平台槽会明确报缺失，需要根项目在相应平台生产。
+SmoothUI、SmoothUIDock/KDDockWidgets 由 SDK 提供；miniz 仍从 Orca 子模块源码编译，libslicer 使用原有独立构建缓存。其缓存键含源码绝对路径，因此不同 checkout 首次可能重新编译 libslicer，不迁移缓存或复用含其他源码路径的构建树。
+不混用旧完整 SDK 格式或不同平台/配置的头文件；没有配套格式 3 的平台槽会明确报缺失，需要根项目在相应平台生产。
 不提供单独的环境检查入口；preset 和共享 fetch 入口不额外限制并发数。OrcaSlicer 自身依赖脚本保留其已有构建行为。
 Windows 必须提供有效的 `Qt6_DIR`；缺失或目录不含 `Qt6Config.cmake` 时，在 `project()` 前报错停止。
 可通过环境变量、`-DQt6_DIR=...` 或本地 CMake 配置提供，已有合法缓存也算已提供；显式 CMake 值优先于环境默认值。

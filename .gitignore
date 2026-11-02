@@ -8,3 +8,7 @@ compile_commands.json
 /imports/
 dist/
 package/
+
+# Python contract and CI helpers generate bytecode locally.
+__pycache__/
+*.py[cod]

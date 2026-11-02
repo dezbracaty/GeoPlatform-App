@@ -3,16 +3,6 @@
 	url = https://github.com/dezbracaty/GeoPlatform-SDK.git
 	branch = feature/gplatform-ui
 
-[submodule "ThirdParty/SmoothUI"]
-	path = ThirdParty/SmoothUI
-	url = https://github.com/dezbracaty/SmoothUI-Lib
-	branch = feature/gplatform-ui
-
-[submodule "ThirdParty/SmoothUIDock"]
-	path = ThirdParty/SmoothUIDock
-	url = https://github.com/dezbracaty/SmoothUI-Dock.git
-	branch = feature/gplatform-ui
-
 [submodule "ThirdParty/OrcaSlicer"]
 	path = ThirdParty/OrcaSlicer
 	url = https://github.com/dezbracaty/OrcaSlicer.git

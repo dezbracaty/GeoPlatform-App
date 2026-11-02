@@ -50,7 +50,7 @@ class SubmoduleTests(unittest.TestCase):
         self.pinned = self.git(self.remote, "rev-parse", "HEAD")
         (self.remote / "payload").write_text("new branch head")
         self.git(self.remote, "commit", "-qam", "New dependency head")
-        self.library = "deps/library with space"
+        self.library = "ThirdParty/OrcaSlicer"
         self.sdk = common.SDK_PATH if CONSUMER else "App/" + common.SDK_PATH
         for name, path in [("library", self.library), ("sdk", self.sdk)]:
             self.declare(name, path, self.remote.as_uri() if CONSUMER or name == "library" else root / "must-not-fetch")
@@ -60,6 +60,15 @@ class SubmoduleTests(unittest.TestCase):
         self.environment = patch.dict(os.environ, GIT_ALLOW_PROTOCOL="file")
         self.environment.start()
         self.addCleanup(self.environment.stop)
+
+    def test_extra_private_ui_gitlink_is_rejected_before_checkout(self):
+        self.declare('SmoothUI', 'ThirdParty/SmoothUI', self.remote.as_uri())
+        self.git(self.source, 'update-index', '--add', '--cacheinfo', '160000', self.pinned, 'ThirdParty/SmoothUI')
+        self.commit()
+        with self.assertRaisesRegex(RuntimeError, 'exactly'):
+            common.init_source_submodules(self.source, consumer=True)
+        self.assertFalse((self.source / self.library / '.git').exists())
+        self.assertFalse((self.source / self.sdk / '.git').exists())
 
     def test_stale_declaration_is_skipped_and_real_dependency_uses_gitlink(self):
         output = io.StringIO()
@@ -221,7 +230,7 @@ class SubmoduleTests(unittest.TestCase):
     def test_consumer_requires_actual_sdk_gitlink(self):
         self.git(self.source, "update-index", "--force-remove", "--", self.sdk)
         self.git(self.source, "commit", "-qm", "Remove SDK gitlink")
-        with self.assertRaisesRegex(RuntimeError, "SDK gitlink is missing"):
+        with self.assertRaisesRegex(RuntimeError, "exactly"):
             common.init_source_submodules(self.source, consumer=True)
         self.assertFalse((self.source / self.library / ".git").exists())
 

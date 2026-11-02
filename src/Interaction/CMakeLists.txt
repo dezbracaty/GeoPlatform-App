@@ -196,7 +196,7 @@ target_link_libraries(Interaction
         Parametric   # Parametric modeling gateway + services
         Printer      # Printer workflow handlers and startup validation
         GPlatformServices # Handler-level application services
-        SmoothUIImpl # SmoothUI implementation for MenuData access
+        GPlatform::UI # Public MenuData declarations and their binary implementation
         Slicing      # Slicing job service and libslicer adapter contract
 )
 

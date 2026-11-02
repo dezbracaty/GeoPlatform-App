@@ -8,10 +8,6 @@
         "edit.paste": "Ctrl+v",
         "edit.delete": ["Backspace", "Delete"],
 
-        "geometry.create.sphere": "Ctrl+1",
-        "geometry.create.cube": "Ctrl+2",
-        "geometry.create.cylinder": "Ctrl+3",
-
         "camera.fitScene": "Space",
         "camera.resetDefault": "Shift+Space",
         "camera.view.front": "1",

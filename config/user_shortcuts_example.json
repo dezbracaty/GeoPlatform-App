@@ -4,9 +4,7 @@
     "shortcuts": {
         "edit.undo": "Ctrl+z",
         "edit.redo": "Ctrl+Shift+z",
-        "camera.reset": "r",
-        "geometry.create.sphere": "s",
-        "geometry.create.cube": "c"
+        "camera.reset": "r"
     },
     "metadata": {
         "created": "2025-09-30",

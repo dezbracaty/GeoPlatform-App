@@ -39,9 +39,17 @@ if(NOT _sdk_system STREQUAL CMAKE_SYSTEM_NAME)
     message(FATAL_ERROR "This SDK was built for ${_sdk_system}; consumer uses ${CMAKE_SYSTEM_NAME}")
 endif()
 string(JSON _sdk_format ERROR_VARIABLE _sdk_format_error GET "${_sdk_info}" SDK_FORMAT)
-if(_sdk_format_error OR NOT _sdk_format EQUAL 2)
-    message(FATAL_ERROR "This App requires an internal-only SDK (format 2). Build and package the matching SDK in the root project; the previous full SDK cannot be mixed with the fetch provider.")
+if(_sdk_format_error OR NOT _sdk_format EQUAL 3)
+    message(FATAL_ERROR "This App requires SDK format 3 with UI package 1. Build and package a matching SDK in the root project; source UI providers and older SDKs cannot be mixed.")
 endif()
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/source_inputs.py" verify
+    --third-party "${CMAKE_CURRENT_LIST_DIR}/../ThirdParty"
+    --manifest "${CMAKE_CURRENT_LIST_DIR}/../ThirdParty/source-inputs.json"
+    --metadata "${_sdk_slot}/sdk-build.json"
+    --sdk-root "${_sdk_slot}" --mode consumer
+    COMMAND_ERROR_IS_FATAL ANY)
+
 if(NOT EXISTS "${_sdk_slot}/lib/cmake/GPlatformSDK/GPlatformSDKConfig.cmake")
     message(FATAL_ERROR "Cannot load GPlatformSDK: package configuration is missing from ${_sdk_slot}")
 endif()
@@ -69,7 +77,15 @@ math(EXPR _sdk_dependency_last "${_sdk_dependency_count} - 1")
 foreach(index RANGE ${_sdk_dependency_last})
     string(JSON key MEMBER "${_sdk_dependencies}" ${index})
     string(JSON expected GET "${_sdk_dependencies}" "${key}")
-    if(DEFINED ${key} AND NOT "${${key}}" STREQUAL "${expected}")
+    set(_sdk_requested "${${key}}")
+    if(key STREQUAL "SMOOTHUI_BUILD_STATIC_LIB" AND DEFINED ${key})
+        if(${key})
+            set(_sdk_requested ON)
+        else()
+            set(_sdk_requested OFF)
+        endif()
+    endif()
+    if(DEFINED ${key} AND NOT "${_sdk_requested}" STREQUAL "${expected}")
         message(FATAL_ERROR "${key}=${${key}} conflicts with the SDK requirement ${expected}. Use matching SDK dependencies.")
     endif()
     set(${key} "${expected}")
@@ -88,12 +104,6 @@ if(NOT Qt6_FOUND)
         "Example: cmake --preset release -DQt6_DIR=\"<Qt>/lib/cmake/Qt6\"\n"
         "Use a new build directory when changing Qt installations.")
 endif()
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
-execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/source_inputs.py" verify
-    --third-party "${CMAKE_CURRENT_LIST_DIR}/../ThirdParty"
-    --manifest "${CMAKE_CURRENT_LIST_DIR}/../ThirdParty/source-inputs.json"
-    --metadata "${_sdk_slot}/sdk-build.json"
-    COMMAND_ERROR_IS_FATAL ANY)
 include("${CMAKE_CURRENT_LIST_DIR}/GPlatformThirdParty.cmake")
 # Detect recipes/ABI inputs that disagree after provider resolution as well.
 foreach(index RANGE ${_sdk_dependency_last})
@@ -105,6 +115,7 @@ foreach(index RANGE ${_sdk_dependency_last})
 endforeach()
 set(GPlatformSDK_DIR "${_sdk_slot}/lib/cmake/GPlatformSDK" CACHE PATH "Selected SDK package" FORCE)
 find_package(GPlatformSDK CONFIG REQUIRED PATHS "${GPlatformSDK_DIR}" NO_DEFAULT_PATH)
+set(GPLATFORM_I18N_EXTRA_SOURCES "${_sdk_slot}/share/ui/i18n/ui_messages.hpp")
 
 function(gplatform_get_sdk_runtime_files output)
     if(APPLE)

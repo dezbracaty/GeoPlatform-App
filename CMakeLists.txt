@@ -42,7 +42,9 @@ endif()
 
 set(VERSION_STR "${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH}")
 
-set(QML_IMPORT_PATH ${CMAKE_BINARY_DIR}/qt/qml CACHE STRING "" FORCE)
+set(GPLATFORM_QML_IMPORT_ROOTS "${GPLATFORM_UI_IMPORT_ROOT}" "${CMAKE_BINARY_DIR}/qt/qml" "${CMAKE_BINARY_DIR}")
+list(REMOVE_DUPLICATES GPLATFORM_QML_IMPORT_ROOTS)
+set(QML_IMPORT_PATH "${GPLATFORM_QML_IMPORT_ROOTS}" CACHE STRING "QML module import roots" FORCE)
 
 if(CMAKE_HOST_WIN32)
     find_package(Qt6 CONFIG REQUIRED COMPONENTS Core Quick QuickControls2 Network Quick3D Concurrent Multimedia Widgets
@@ -297,6 +299,7 @@ qt_add_resources(${PROJECT_NAME} startup_resources
 qt_add_qml_module(${PROJECT_NAME}
     URI "GPlatform"
     VERSION "1.0"
+    IMPORT_PATH ${GPLATFORM_QML_IMPORT_ROOTS}
     QML_FILES ${PACKAGED_QML_FILES} ${PACKAGED_QML_SINGLETONS}
     RESOURCES ${RESOURCES_FILES}
     RESOURCE_PREFIX /qt/qml
@@ -377,13 +380,7 @@ if (SMOOTHUI_BUILD_STATIC_LIB)
         AppDB               # AppDB library (includes BaseDB, TransDB, and spdlog via transitive dependencies)
         Parametric          # Parametric modeling system
         Render              # Render library
-        # SmoothUI static plugin targets (handled by CMake)
-        SmoothUIplugin
-        SmoothUIControlsplugin
-        SmoothUIImplplugin
-        SmoothUIDockplugin
-        SmoothUIDock
-        KDAB::kddockwidgets
+        GPlatform::UI
         JournalSystem       # JournalSystem library
         $<$<AND:$<BOOL:${ENABLE_BREAKPAD}>,$<BOOL:${BREAKPAD_FOUND}>>:breakpad>  # Google Breakpad if enabled
     )
@@ -398,9 +395,7 @@ else()
         Parametric          # Parametric modeling system
         Render              # Render library
         Qt6::Quick3D
-        SmoothUI
-        SmoothUIDock
-        KDAB::kddockwidgets
+        GPlatform::UI
         JournalSystem
     )
 

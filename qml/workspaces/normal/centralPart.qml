@@ -259,42 +259,6 @@ Item {
             cutToolPopup.open()
     }
 
-    // 兼容性属性（保持向后兼容）
-// Left Print Toolbar - 使用 HoverExpandableButton 分组
-
-    // Functions
-
-    function createPrintObject(objectType) {
-
-        // Create object on print bed surface (z = 0)
-        let params = {
-            "x": 0,
-            "y": 0,
-            "z": 0  // On print bed surface
-        };
-
-        // Add specific parameters for each object type
-        switch (objectType) {
-        case "cube":
-            params.width = 20.0;  // 20mm cube
-            params.height = 20.0;
-            params.depth = 20.0;
-            ActionManager.triggerAction("geometry.create.cube", params);
-            break;
-        case "sphere":
-            params.radius = 10.0;  // 10mm radius sphere
-            ActionManager.triggerAction("geometry.create.sphere", params);
-            break;
-        case "cylinder":
-            params.radius = 8.0;   // 8mm radius cylinder
-            params.height = 15.0;  // 15mm height
-            ActionManager.triggerAction("geometry.create.cylinder", params);
-            break;
-        }
-
-    }
-
-
     // 快速操作菜单组件 - 使用 SmoothUI.QuickActionMenu 支持多级菜单和搜索过滤
     // 直接使用 TMenuGroup.items，与 MenuBar 统一数据源
     QuickActionMenu {

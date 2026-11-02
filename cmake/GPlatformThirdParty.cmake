@@ -28,7 +28,7 @@ endif()
 set(FETCHCONTENT_BASE_DIR "${CMAKE_FETCH_CACHE}" CACHE PATH "Base directory for FetchContent")
 set(FETCHCONTENT_UPDATES_DISCONNECTED ON CACHE BOOL "Disable automatic updates for FetchContent")
 
-foreach(fork SmoothUI SmoothUIDock OrcaSlicer SmoothUIDock/KDDockWidgets)
+foreach(fork OrcaSlicer)
     if(NOT EXISTS "${GPLATFORM_THIRDPARTY_SOURCE_DIR}/${fork}/CMakeLists.txt")
         message(FATAL_ERROR "Missing App/ThirdParty/${fork}. Run git submodule update --init --recursive before configure, or use the complete exported App package.")
     endif()
@@ -53,13 +53,6 @@ endif()
 set(EMBREE_VERSION "4.4.0" CACHE STRING "Embree version to use")
 include(fetch_embree)
 
-# SmoothUIImpl links this private Qt module; load it before adding the fork.
-find_package(Qt6 REQUIRED COMPONENTS QmlPrivate)
-
-add_subdirectory("${GPLATFORM_THIRDPARTY_SOURCE_DIR}/SmoothUI"
-    "${CMAKE_BINARY_DIR}/third_party/SmoothUI")
-add_subdirectory("${GPLATFORM_THIRDPARTY_SOURCE_DIR}/SmoothUIDock"
-    "${CMAKE_BINARY_DIR}/third_party/SmoothUIDock")
 if(NOT TARGET miniz)
     add_subdirectory("${GPLATFORM_THIRDPARTY_SOURCE_DIR}/OrcaSlicer/deps_src/miniz"
         "${CMAKE_BINARY_DIR}/third_party/miniz" EXCLUDE_FROM_ALL)
@@ -69,7 +62,3 @@ if(GPLATFORM_ENABLE_LIBSLICER)
     set(libslicer_DIR "${GPLATFORM_LIBSLICER_PACKAGE_DIR}" CACHE PATH "Exact libslicer package directory used by GPlatform" FORCE)
     find_package(libslicer CONFIG REQUIRED PATHS "${GPLATFORM_LIBSLICER_PACKAGE_DIR}" NO_DEFAULT_PATH)
 endif()
-set(GPLATFORM_I18N_EXTRA_SOURCES
-    "${GPLATFORM_THIRDPARTY_SOURCE_DIR}/SmoothUI/Controls/FileBrowserDialog.qml"
-    "${GPLATFORM_THIRDPARTY_SOURCE_DIR}/SmoothUI/Controls/FilePicker.qml"
-    "${GPLATFORM_THIRDPARTY_SOURCE_DIR}/SmoothUI/QuickActionMenu.qml")

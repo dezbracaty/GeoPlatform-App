@@ -126,8 +126,8 @@ def _init_pinned_submodules(source, env, *, skip=None, require_sdk=False):
         metadata, _, path = entry.partition(b"\t")
         if metadata.startswith(b"160000 commit "):
             links[path.decode()] = metadata.split()[2].decode()
-    if require_sdk and SDK_PATH not in links:
-        raise RuntimeError("App SDK gitlink is missing from the fixed source commit")
+    if require_sdk and set(links) != {SDK_PATH, "ThirdParty/OrcaSlicer"}:
+        raise RuntimeError("App must own exactly its SDK and Orca source gitlinks")
     if not links:
         return
     if not (Path(source) / ".gitmodules").is_file():
