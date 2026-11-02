@@ -136,7 +136,8 @@ void SlicingPreviewBridge::installCommittedOutput(PreparedOutputPublication prep
         m_previewCursorSnapEnabled = false;
     }
     ++m_publicationEpoch;
-    if (m_activePreview) applyPreviewPanelRenderStateForViewType(m_previewPanelViewType, false, false);
+    // Every newly accepted result starts in Line Type, including repeated imports and slices.
+    if (m_activePreview) setPreviewPanelViewType(QStringLiteral("lineType"));
     if (wasLoading) emit isLoadingChanged();
     if (modifierChanged) emit previewInspectModifierPressedChanged();
     if (snapChanged) emit previewCursorSnapEnabledChanged();
