@@ -12,6 +12,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts/ci"))
 from build import cache_value, validate_sdk, validate_source_inputs, windows_entry
 from common import digest
+from fs_fixture import directory_link
 
 
 class AppSDKChecks(unittest.TestCase):
@@ -70,11 +71,27 @@ class AppSDKChecks(unittest.TestCase):
         root = self.source / "ThirdParty/libs/GPlatformSDK/arm64/Release"
         outside = self.source / "outside.a"
         outside.write_bytes(b"external")
-        (root / "lib/test.a").unlink()
-        (root / "lib/test.a").symlink_to(outside)
-        self.manifest(root)
-        with self.assertRaisesRegex(RuntimeError, "missing, changed or outside"):
+        if os.name == 'nt':
+            # A real directory junction needs no symlink privilege. Keep the
+            # original manifest reference to lib/test.a as the attack input.
+            external_directory = self.source / 'external-sdk-library'
+            external_directory.mkdir()
+            outside = external_directory / 'test.a'
+            outside.write_bytes((root / 'lib/test.a').read_bytes())
+            (root / 'lib/test.a').unlink()
+            (root / 'lib').rmdir()
+            directory_link(root / 'lib', external_directory)
+            self.assertFalse((root / 'lib/test.a').resolve().is_relative_to(root.resolve()))
+            rejection = 'complete package manifest|missing, changed or outside'
+        else:
+            (root / "lib/test.a").unlink()
+            (root / "lib/test.a").symlink_to(outside)
+            self.manifest(root)
+            rejection = 'missing, changed or outside'
+        sentinel = outside.read_bytes()
+        with self.assertRaisesRegex(RuntimeError, rejection):
             validate_sdk(self.source, self.slots)
+        self.assertEqual(outside.read_bytes(), sentinel)
 
     def test_wrong_architecture_fails(self):
         root = self.source / "ThirdParty/libs/GPlatformSDK/x86_64/Release"
@@ -113,11 +130,24 @@ class AppSDKChecks(unittest.TestCase):
 
     def test_backslash_manifest_escape_is_rejected(self):
         root = self.source / 'ThirdParty/libs/GPlatformSDK/arm64/Release'
-        # On POSIX this can be a literal filename: still reject the Windows escape.
-        (root / '..\\outside').write_bytes(b'bad')
-        self.manifest(root)
-        with self.assertRaisesRegex(RuntimeError, 'outside the package'):
-            validate_sdk(self.source, self.slots)
+        if os.name == 'nt':
+            # Backslashes are separators on Windows, so inject the invalid
+            # serialized key instead of accidentally creating an outside file.
+            outside = root.parent / 'outside'
+            outside.write_bytes(b'preserve')
+            manifest = json.loads((root / 'sdk-manifest.json').read_text())
+            manifest['..\\outside'] = digest(outside)
+            (root / 'sdk-manifest.json').write_text(json.dumps(manifest))
+            self.assertIn('..\\outside', json.loads((root / 'sdk-manifest.json').read_text()))
+            with self.assertRaisesRegex(RuntimeError, 'complete package manifest|outside the package'):
+                validate_sdk(self.source, self.slots)
+            self.assertEqual(outside.read_bytes(), b'preserve')
+        else:
+            # POSIX permits a literal backslash: exercise the lexical guard too.
+            (root / '..\\outside').write_bytes(b'bad')
+            self.manifest(root)
+            with self.assertRaisesRegex(RuntimeError, 'outside the package'):
+                validate_sdk(self.source, self.slots)
 
     def test_old_sdk_and_incomplete_provenance_are_rejected(self):
         root = self.source / "ThirdParty/libs/GPlatformSDK/arm64/Release"

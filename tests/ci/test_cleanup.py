@@ -8,6 +8,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts/ci"))
 from common import _retry_readonly, remove_owned_tree
+from fs_fixture import directory_link
 
 
 class CleanupTests(unittest.TestCase):
@@ -54,7 +55,7 @@ class CleanupTests(unittest.TestCase):
         sentinel.write_text("preserve")
         parent = self.root / "workspace"
         parent.mkdir()
-        (parent / "source").symlink_to(outside, target_is_directory=True)
+        directory_link(parent / "source", outside)
         with self.assertRaises(RuntimeError):
             remove_owned_tree(parent / "source", parent)
         self.assertEqual(sentinel.read_text(), "preserve")

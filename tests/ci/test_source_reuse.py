@@ -10,6 +10,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts/ci"))
 from common import prepare_cached_source
+from fs_fixture import directory_link
 
 
 class SourceReuseTests(unittest.TestCase):
@@ -79,7 +80,7 @@ class SourceReuseTests(unittest.TestCase):
     def test_external_git_metadata_is_rejected_without_resetting_index(self):
         external = self.workspace / "external-metadata"
         (self.source / ".git").rename(external)
-        (self.source / ".git").symlink_to(external, target_is_directory=True)
+        directory_link(self.source / ".git", external)
         (self.source / "payload").write_text("do not reset")
         before = (external / "index").read_bytes(), (external / "index").stat().st_mtime_ns
         with self.assertRaisesRegex(RuntimeError, "outside"):
@@ -91,7 +92,7 @@ class SourceReuseTests(unittest.TestCase):
         target = self.workspace / "external"
         target.mkdir()
         (target / "sentinel").write_text("preserve")
-        (self.source / "build-Release").symlink_to(target, target_is_directory=True)
+        directory_link(self.source / "build-Release", target)
         with self.assertRaisesRegex(RuntimeError, "untracked directory"):
             prepare_cached_source(self.source, self.sha, "windows")
         self.assertEqual((target / "sentinel").read_text(), "preserve")
