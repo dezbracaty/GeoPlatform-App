@@ -1,4 +1,5 @@
 #include "GCodeImportHandler.hpp"
+#include "ImportFileFormat.hpp"
 #include "InteractionRegistration.hpp"
 
 REGISTER_INTERACTION_ACTION(GCodeImportHandler, "load_gcode_file")
@@ -97,9 +98,9 @@ bool GCodeImportHandler::onInitialize() {
 
     // 检查文件扩展名
     QString suffix = QFileInfo(m_filePath).suffix().toLower();
-    if (suffix != "gcode" && suffix != "gco" && suffix != "g") {
+    if (classifyImportFile(m_filePath) != ImportFileFormat::GCode) {
         if (m_context) {
-            m_context->setError(ActionErrorCode::InvalidParams, QString("Unsupported file format: %1 (expected .gcode, .gco, .g)")
+            m_context->setError(ActionErrorCode::InvalidParams, tr("Unsupported file format: %1. Only G-code (*.gcode) files are supported.")
                               .arg(suffix));
         }
         LOG_ERROR("Unsupported GCode file format: {}", suffix.toStdString());
@@ -154,7 +155,7 @@ const QHash<QString, QVariantMap>& GCodeImportHandler::aiDescriptorTable() const
         {"load_gcode_file", makeDescriptor(
             "load_gcode_file",
             "Import GCode",
-            "Load a local GCode file from allowed paths.",
+            "Load a local .gcode file from allowed paths.",
             "write",
             gcodeSchema,
             {"import", "gcode", "slicing"}

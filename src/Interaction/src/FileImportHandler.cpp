@@ -1,4 +1,5 @@
 #include "FileImportHandler.hpp"
+#include "ImportFileFormat.hpp"
 #include "ActionManager.hpp"
 #include "EnvironmentSwitchHandler.hpp"
 #include "InteractionRegistration.hpp"
@@ -41,7 +42,14 @@ void FileImportHandler::onEnter(std::shared_ptr<ActionContext> context) {
 
     params.insert("filePath", file.absoluteFilePath());
     const QString suffix = file.suffix().toLower();
-    const bool isGCode = suffix == "gcode" || suffix == "gco" || suffix == "g";
+    const auto format = classifyImportFile(file.absoluteFilePath());
+    if (format == ImportFileFormat::Unsupported) {
+        context->setError(ActionErrorCode::InvalidParams,
+                          tr("Unsupported file format: %1. Only STL (*.stl) and G-code (*.gcode) files are supported.")
+                              .arg(suffix));
+        return;
+    }
+    const bool isGCode = format == ImportFileFormat::GCode;
     const QString importer = isGCode ? "load_gcode_file" : "import_model";
     if (isGCode && !params.contains("confirm")) {
         params.insert("confirm", true);

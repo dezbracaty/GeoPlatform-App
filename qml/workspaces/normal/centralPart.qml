@@ -166,31 +166,6 @@ Item {
 
     }
 
-    RowLayout {
-        anchors.top: parent.top
-        anchors.topMargin: 64
-        anchors.right: parent.right
-        anchors.rightMargin: PrintWorkspaceStyle.toolbarWidth + 28
-        spacing: PrintWorkspaceStyle.space8
-        visible: centralFragment.width >= 760
-                 && x >= leftPrintToolbar.x + leftPrintToolbar.width + PrintWorkspaceStyle.space12
-        z: 20
-
-        Button {
-            objectName: "print.viewport.fitScene"
-            text: qsTr("Fit Scene")
-            icon.name: FluentIcons.graph_Zoom
-            enabled: centralFragment.objectCount > 0
-            onClicked: ActionManager.triggerAction("camera.fitScene", {})
-        }
-        Button {
-            objectName: "print.viewport.viewPlatform"
-            text: qsTr("View Platform")
-            icon.name: FluentIcons.graph_GridView
-            onClicked: ActionManager.triggerAction("camera.resetDefault", {})
-        }
-    }
-
     FloatingSettingsPanel {
         id: modelColorPaintPopup
         objectName: "modelColorPaintPopup"

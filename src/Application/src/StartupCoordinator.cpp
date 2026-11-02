@@ -8,6 +8,7 @@
 #include <PrintBedTemplateDB.hpp>
 #include <QGuiApplication>
 #include <QQuickWindow>
+#include <QScreen>
 #include <QQuickItem>
 #include <QDesktopServices>
 #include <QStandardPaths>
@@ -119,6 +120,20 @@ void StartupCoordinator::attachMainWindow(QObject* object) {
     auto* window = qobject_cast<QQuickWindow*>(object);
     if (!window || stopped() || (m_main && m_main != window)) return;
     m_main = window;
+#ifdef Q_OS_WIN
+    // FramelessWindow has already added its app bar by this point. Use the
+    // actual native frame and this monitor's work area, in Qt logical pixels.
+    m_mainMinimumSize = window->minimumSize();
+    connect(window, &QWindow::screenChanged, this,
+            [this](QScreen* screen) { watchMainScreen(screen); });
+    connect(window, &QWindow::windowStateChanged, this,
+            [this](Qt::WindowState state) {
+                if (state == Qt::WindowNoState)
+                    QTimer::singleShot(0, this, [this] { fitMainWindowToWorkArea(false); });
+            });
+    watchMainScreen(window->screen());
+    QTimer::singleShot(0, this, [this] { fitMainWindowToWorkArea(true); });
+#endif
     if (m_splash) {
         m_splash->setTransientParent(window);
         m_splash->raise();
@@ -128,6 +143,41 @@ void StartupCoordinator::attachMainWindow(QObject* object) {
         [this](QQuickWindow::SceneGraphError, const QString& error) { fail(error); },
         Qt::QueuedConnection);
 }
+
+#ifdef Q_OS_WIN
+void StartupCoordinator::watchMainScreen(QScreen* screen) {
+    disconnect(m_workAreaConnection);
+    if (screen) {
+        m_workAreaConnection = connect(screen, &QScreen::availableGeometryChanged,
+                this, [this] { fitMainWindowToWorkArea(false); });
+    }
+    fitMainWindowToWorkArea(false);
+}
+
+void StartupCoordinator::fitMainWindowToWorkArea(bool center) {
+    if (!m_main || !m_main->screen() || m_main->windowState() != Qt::WindowNoState)
+        return;
+    const QRect available = m_main->screen()->availableGeometry();
+    if (available.isEmpty()) return;
+    const int inset = 16;
+    const QRect bounds = available.adjusted(inset, inset, -inset, -inset);
+    const QMargins frame = m_main->frameMargins();
+    const QSize maximumClient(qMax(1, bounds.width() - frame.left() - frame.right()),
+                              qMax(1, bounds.height() - frame.top() - frame.bottom()));
+    // A fixed 1200x700 minimum must not force a window beyond a small/high-DPI
+    // work area. Keep the normal minimum whenever this screen can accommodate it.
+    m_main->setMinimumSize(m_mainMinimumSize.boundedTo(maximumClient));
+    m_main->resize(m_main->size().boundedTo(maximumClient));
+    const QSize frameSize = m_main->frameGeometry().size();
+    const QPoint old = m_main->framePosition();
+    const QPoint position = center
+        ? QPoint(bounds.x() + (bounds.width() - frameSize.width()) / 2,
+                 bounds.y() + (bounds.height() - frameSize.height()) / 2)
+        : QPoint(qBound(bounds.left(), old.x(), qMax(bounds.left(), bounds.right() - frameSize.width() + 1)),
+                 qBound(bounds.top(), old.y(), qMax(bounds.top(), bounds.bottom() - frameSize.height() + 1)));
+    m_main->setFramePosition(position);
+}
+#endif
 
 void StartupCoordinator::attachWorkspace(QObject* object) {
     auto* item = qobject_cast<QQuickItem*>(object);

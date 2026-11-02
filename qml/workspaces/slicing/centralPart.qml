@@ -232,7 +232,6 @@ Item {
     property bool gridVisible: true  // Default to true for print bed grid
     property bool hasSelection: SelectionBridge.hasSelection
     readonly property bool pathLegendVisible: SlicingPreviewBridge.previewPanelVisible && SlicingPreviewBridge.previewInspectorOpen
-    property bool slicingSettingsVisible: false
     readonly property bool manualSupportActive: SlicingHandlerBridge.manualSupportActive
     property bool manualSupportPanelVisible: false
     property bool manualSupportDebugPanelVisible: false
@@ -468,42 +467,25 @@ Item {
                     }
 
                     IconButton {
+                        objectName: "slicing.preview.togglePanel"
                         icon.height: 20
                         icon.name: FluentIcons.graph_Color
                         icon.width: 20
                         enabled: true
-                        highlighted: pathLegendVisible
+                        highlighted: pathLegendVisible && !SlicingPreviewBridge.previewPanelFolded
                         implicitHeight: PrintWorkspaceStyle.toolbarButtonSize
                         implicitWidth: PrintWorkspaceStyle.toolbarButtonSize
                         radius: 6
 
                         onClicked: {
-                            SlicingPreviewBridge.togglePreviewInspector()
+                            SlicingPreviewBridge.previewInspectorOpen = true
+                            SlicingPreviewBridge.setPreviewPanelVisible(true)
+                            SlicingPreviewBridge.togglePreviewPanelFolded()
                         }
 
                         ToolTip {
                             delay: Theme.tooltipDelay
-                            text: pathLegendVisible ? qsTr("Hide Preview Panel") : qsTr("Show Preview Panel")
-                            visible: parent.hovered
-                        }
-                    }
-
-                    IconButton {
-                        icon.height: 20
-                        icon.name: FluentIcons.graph_Settings
-                        icon.width: 20
-                        highlighted: slicingSettingsVisible
-                        implicitHeight: PrintWorkspaceStyle.toolbarButtonSize
-                        implicitWidth: PrintWorkspaceStyle.toolbarButtonSize
-                        radius: 6
-
-                        onClicked: {
-                            slicingSettingsVisible = !slicingSettingsVisible
-                        }
-
-                        ToolTip {
-                            delay: Theme.tooltipDelay
-                            text: slicingSettingsVisible ? qsTr("Hide Slice Settings") : qsTr("Show Slice Settings")
+                            text: SlicingPreviewBridge.previewPanelFolded ? qsTr("Expand panel") : qsTr("Collapse panel")
                             visible: parent.hovered
                         }
                     }
@@ -577,101 +559,6 @@ Item {
                             text: manualSupportDebugPanelVisible ? qsTr("Hide Manual Support Debug Panel") : qsTr("Show Manual Support Debug Panel")
                             visible: parent.hovered
                         }
-                    }
-                }
-            }
-        }
-    }
-
-    // Slicing Settings Panel（切片参数专用面板）
-    DraggablePanel {
-        id: slicingSettingsPanel
-
-        property int contentWidthHint: 860
-
-        contentMargin: 0
-        dragHandleHeight: 14
-        height: Math.min(parent.height - 90, 680)
-        maxX: parent.width - width - 16
-        maxY: parent.height - height - 16
-        minX: 16
-        minY: 16
-        showDragHandle: true
-        visible: slicingSettingsVisible
-        width: Math.min(parent.width - 32, Math.max(620, Math.min(1120, contentWidthHint)))
-        x: parent.width - width - 16
-        y: Math.max(16, Math.min((parent.height - height) / 2, parent.height - height - 16))
-        z: 99
-
-        contentItem: Component {
-            ColumnLayout {
-                anchors.fill: parent
-                spacing: 0
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 36
-                    color: "transparent"
-
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 12
-                        anchors.rightMargin: 8
-                        spacing: 8
-
-                        Icon {
-                            color: Theme.res.textFillColorPrimary
-                            height: 16
-                            source: FluentIcons.graph_Print
-                            width: 16
-                        }
-
-                        Label {
-                            Layout.fillWidth: true
-                            color: Theme.res.textFillColorPrimary
-                            font: Typography.bodyStrong
-                            text: qsTr("Slice Settings")
-                        }
-
-                        IconButton {
-                            Layout.preferredHeight: 28
-                            Layout.preferredWidth: 28
-                            icon.height: 14
-                            icon.name: FluentIcons.graph_ChromeClose
-                            icon.width: 14
-                            radius: 4
-
-                            onClicked: {
-                                slicingSettingsVisible = false
-                            }
-
-                            ToolTip {
-                                delay: Theme.tooltipDelay
-                                text: qsTr("Close")
-                                visible: parent.hovered
-                            }
-                        }
-                    }
-
-                    Rectangle {
-                        anchors.bottom: parent.bottom
-                        color: Theme.res.dividerStrokeColorDefault
-                        height: 1
-                        width: parent.width
-                    }
-                }
-
-                SlicingSettingsContent {
-                    id: slicingSettingsContent
-                    Layout.fillHeight: true
-                    Layout.fillWidth: true
-
-                    Component.onCompleted: {
-                        slicingSettingsPanel.contentWidthHint = preferredWidth
-                    }
-
-                    onPreferredWidthChanged: {
-                        slicingSettingsPanel.contentWidthHint = preferredWidth
                     }
                 }
             }

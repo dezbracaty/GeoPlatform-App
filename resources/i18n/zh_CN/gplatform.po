@@ -3734,3 +3734,24 @@ msgstr "弯曲与间隔"
 
 msgid "Default line width"
 msgstr "默认线宽"
+
+msgid "Supported Files (*.stl *.gcode)"
+msgstr "支持的文件 (*.stl *.gcode)"
+
+msgid "GCode Files (*.gcode)"
+msgstr "GCode 文件 (*.gcode)"
+
+msgid "Supports .gcode files"
+msgstr "支持 .gcode 文件"
+
+msgid "Supports .stl files"
+msgstr "支持 .stl 文件"
+
+msgid "Unsupported file format: %1. Only STL (*.stl) and G-code (*.gcode) files are supported."
+msgstr "不支持的文件格式：%1。仅支持 STL (*.stl) 和 G-code (*.gcode) 文件。"
+
+msgid "Unsupported file format: %1. Only STL (*.stl) model files are supported."
+msgstr "不支持的文件格式：%1。仅支持 STL (*.stl) 模型文件。"
+
+msgid "Unsupported file format: %1. Only G-code (*.gcode) files are supported."
+msgstr "不支持的文件格式：%1。仅支持 G-code (*.gcode) 文件。"

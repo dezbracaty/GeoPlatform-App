@@ -1,4 +1,5 @@
 #include "UnifiedModelImportHandler.hpp"
+#include "ImportFileFormat.hpp"
 #include "InteractionRegistration.hpp"
 
 REGISTER_INTERACTION_ACTION(
@@ -208,6 +209,16 @@ bool UnifiedModelImportHandler::onInitialize() {
         const QUrl fileUrl = filePath.toUrl();
         m_filePath = fileUrl.isLocalFile() ? fileUrl.toLocalFile() : filePath.toString();
     }
+    // Apply the product's temporary import policy before any loader or scene mutation.
+    const QString suffix = QFileInfo(m_filePath).suffix().toLower();
+    if (classifyImportFile(m_filePath) != ImportFileFormat::Stl) {
+        if (m_context) {
+            m_context->setError(ActionErrorCode::InvalidParams,
+                               tr("Unsupported file format: %1. Only STL (*.stl) model files are supported.")
+                                   .arg(suffix));
+        }
+        return false;
+    }
     LOG_INFO("Importing model from: {}", m_filePath.toStdString());
 
     // 3MF project files go directly through libslicer. Generic mesh formats
@@ -300,7 +311,7 @@ const QHash<QString, QVariantMap>& UnifiedModelImportHandler::aiDescriptorTable(
         QVariantMap importModel = makeDescriptor(
             "import_model",
             "Import 3D Model",
-            "Import a 3D model file.",
+            "Import an STL model file.",
             "write",
             modelSchema,
             {"import", "file", "scene"});
@@ -318,7 +329,7 @@ const QHash<QString, QVariantMap>& UnifiedModelImportHandler::aiDescriptorTable(
         QVariantMap libraryImport = makeDescriptor(
             "model.library.import",
             "Import Local Library Model",
-            "Import one model selected from the local model library by opaque libraryItemId.",
+            "Import one STL model selected from the local model library by opaque libraryItemId.",
             "write",
             makeInputSchema({
                 {"libraryItemId", "string", true},

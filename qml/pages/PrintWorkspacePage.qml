@@ -138,8 +138,8 @@ Item {
                 property string dragFileType: ""  // "model" or "gcode"
 
                 // 支持的文件扩展名
-                property var modelExtensions: ["stl", "obj", "3mf", "glb", "gltf", "ply", "3ds", "dae", "fbx"]
-                property var gcodeExtensions: ["gcode", "gco", "g"]
+                property var modelExtensions: ["stl"]
+                property var gcodeExtensions: ["gcode"]
 
                 // 检查文件类型
                 function getFileType(url) {
@@ -246,8 +246,8 @@ Item {
                             Label {
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 text: dropArea.dragFileType === "gcode" ?
-                                    qsTr("Supports .gcode and .gco files") :
-                                    qsTr("Supports .stl, .obj, .3mf, and other formats")
+                                    qsTr("Supports .gcode files") :
+                                    qsTr("Supports .stl files")
                                 font: Typography.caption
                                 color: root.SmoothUI.theme.res.textFillColorSecondary
                             }

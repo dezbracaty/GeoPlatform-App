@@ -1,4 +1,5 @@
 #include "SlicingHandler.hpp"
+#include "ImportFileFormat.hpp"
 #include "InteractionRegistration.hpp"
 
 REGISTER_INTERACTION_ACTION(
@@ -243,6 +244,14 @@ void SlicingHandler::onEnter(std::shared_ptr<ActionContext> context) {
 
         // 检查文件
         QFileInfo fileInfo(m_importFilePath);
+        if (classifyImportFile(m_importFilePath) != ImportFileFormat::GCode) {
+            if (m_context) {
+                m_context->setError(ActionErrorCode::InvalidParams,
+                                   tr("Unsupported file format: %1. Only G-code (*.gcode) files are supported.")
+                                       .arg(fileInfo.suffix()));
+            }
+            return;
+        }
         if (!fileInfo.exists()) {
             if (m_context) {
                 m_context->setError(ActionErrorCode::TargetNotFound, QString("File not found: %1").arg(m_importFilePath));

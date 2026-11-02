@@ -305,6 +305,12 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
                         // Initialize JournalSystem for UI testing support
                         journal = new JournalSystem(&app);
                         AppInfo::getInstance()->setJournalService(journal);
+                        // AI TESTING POLICY: AI agents MUST NOT directly call
+                        // journal.entry.execute / JournalSystem.execute_entry to test the app.
+                        // Author complete events/Journal.json files and use the shared
+                        // journal_runner.py --run JSON-file interface instead.
+                        // Single-entry dispatch is internal transport for that file runner;
+                        // it is NOT an approved AI testing interface.
                         journal->setActionInvoker(
                             [](const QString& actionCode,
                                const QVariantMap& params,
@@ -389,7 +395,7 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
                             }
                         }
 
-                        // Python owns Journal timing and validation; the application owns its restart.
+                        // The shared JSON-file runner owns timing/validation; the application owns its restart.
                         if (ghostPort < 1 || ghostPort > 65535) {
                             LOG_ERROR("Invalid Journal port: {}", ghostPort);
                             startup.fail(StartupCoordinator::tr("Invalid Journal port"));

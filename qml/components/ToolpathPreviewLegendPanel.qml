@@ -11,6 +11,8 @@ PanelSurface {
     SmoothUI.theme: Theme.of(root)
 
     objectName: "slicing.preview.inspector"
+    Accessible.role: Accessible.Pane
+    Accessible.name: qsTr("Toolpath Types")
     readonly property bool codeTab: SlicingPreviewBridge.previewInspectorTab === "gcode"
     property var panelData: ({})
     property real maximumExpandedHeight: 560
@@ -64,7 +66,7 @@ PanelSurface {
 
     width: 400
     height: SlicingPreviewBridge.previewPanelFolded
-            ? 44 : Math.max(44, Math.min(maximumExpandedHeight, 620,
+            ? 42 : Math.max(42, Math.min(maximumExpandedHeight, 620,
                                          shellColumn.implicitHeight + 16))
     surfaceRadius: PrintWorkspaceStyle.dialogRadius
     elevation: 2
@@ -92,40 +94,28 @@ PanelSurface {
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: 28
-            spacing: 6
-            IconButton {
-                objectName: "slicing.preview.foldInspector"
-                Layout.preferredWidth: 28
-                Layout.preferredHeight: 28
-                icon.name: SlicingPreviewBridge.previewPanelFolded ? FluentIcons.graph_ChevronDown : FluentIcons.graph_ChevronUp
-                icon.width: 12
-                icon.height: 12
-                onClicked: SlicingPreviewBridge.togglePreviewPanelFolded()
-            }
+            Layout.preferredHeight: 26
+            Layout.rightMargin: 2
+            spacing: 8
             Button {
                 objectName: "slicing.preview.typesTab"
-                Layout.preferredHeight: 28
+                Layout.preferredHeight: 26
                 text: qsTr("Toolpath Types")
                 highlighted: !root.codeTab
                 onClicked: SlicingPreviewBridge.previewInspectorTab = "types"
             }
             Button {
                 objectName: "slicing.preview.gcodeTab"
-                Layout.preferredHeight: 28
+                Layout.preferredHeight: 26
                 text: "G-code"
                 highlighted: root.codeTab
                 onClicked: SlicingPreviewBridge.previewInspectorTab = "gcode"
             }
             Item { Layout.fillWidth: true }
-            IconButton {
-                objectName: "slicing.preview.closeInspector"
-                Layout.preferredWidth: 28
-                Layout.preferredHeight: 28
-                icon.name: FluentIcons.graph_ChromeClose
-                icon.width: 12
-                icon.height: 12
-                onClicked: SlicingPreviewBridge.previewInspectorOpen = false
+            PrintPopoverHeader.PanelFoldButton {
+                objectName: "slicing.preview.foldInspector"
+                folded: SlicingPreviewBridge.previewPanelFolded
+                onToggleRequested: SlicingPreviewBridge.togglePreviewPanelFolded()
             }
         }
 

@@ -4,12 +4,14 @@
 #include <QPointer>
 #include <QElapsedTimer>
 #include <QTimer>
+#include <QSize>
 #include <functional>
 #include <QFuture>
 #include <SlicingBackend.hpp>
 
 class QQuickWindow;
 class QQuickItem;
+class QScreen;
 
 // Application-owned startup state. Both QML engines observe this C++ object;
 // neither engine owns it and neither can set ready.
@@ -57,6 +59,12 @@ private slots:
 private:
     void initializeScene();
     void tick();
+#ifdef Q_OS_WIN
+    void watchMainScreen(QScreen* screen);
+    void fitMainWindowToWorkArea(bool center);
+    QMetaObject::Connection m_workAreaConnection;
+    QSize m_mainMinimumSize;
+#endif
     QString m_stage{"Bootstrap"};
     QString m_text;
     QString m_error;

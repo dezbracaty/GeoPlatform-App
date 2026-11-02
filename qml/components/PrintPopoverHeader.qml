@@ -144,4 +144,20 @@ Rectangle {
             }
         }
     }
+    // Shared by persistent workspace panels so placement and glyphs stay in sync.
+    component PanelFoldButton: IconButton {
+        required property bool folded
+        signal toggleRequested
+        Layout.preferredWidth: 26
+        Layout.preferredHeight: 26
+        flat: true
+        icon.name: folded ? FluentIcons.graph_ChevronRightSmall : FluentIcons.graph_ChevronDownSmall
+        icon.width: 12
+        icon.height: 12
+        Accessible.name: folded ? qsTr("Expand panel") : qsTr("Collapse panel")
+        ToolTip.visible: hovered
+        ToolTip.text: Accessible.name
+        ToolTip.delay: Theme.tooltipDelay
+        onClicked: toggleRequested()
+    }
 }

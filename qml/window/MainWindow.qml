@@ -102,9 +102,6 @@ FramelessWindow {
     
     Component.onCompleted: {
         StartupState.attachMainWindow(window)
-        // Trigger layout recalculation
-        width = width
-        height = height
     }
     
     // Keep the native surface mapped for Prepare's first frame, while blocking

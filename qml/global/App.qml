@@ -34,12 +34,9 @@ Starter {
                 parentWindow = window
         }
         var filters = actionCode === "import_stl"
-                ? [qsTr("STL Files (*.stl)"), qsTr("All Files (*)")]
-                : [qsTr("Supported Files (*.stl *.obj *.3mf *.glb *.gltf *.ply *.3ds *.dae *.fbx *.gcode *.gco *.g)"),
-                   qsTr("GCode Files (*.gcode *.gco *.g)"),
-                   qsTr("3D Models (*.stl *.obj *.3mf *.glb *.gltf *.ply *.3ds *.dae *.fbx)"),
-                   qsTr("3MF Projects (*.3mf)"), qsTr("STL Files (*.stl)"),
-                   qsTr("OBJ Files (*.obj)"), qsTr("All Files (*)")]
+                ? [qsTr("STL Files (*.stl)")]
+                : [qsTr("Supported Files (*.stl *.gcode)"),
+                   qsTr("STL Files (*.stl)"), qsTr("GCode Files (*.gcode)")]
         var requestId = FilePicker.openFile(Object.assign(SettingsHelper.getImportFileDialogState(), {
             title: actionCode === "import_stl" ? qsTr("Import STL") : qsTr("Import File"),
             nameFilters: filters, parentWindow: parentWindow
