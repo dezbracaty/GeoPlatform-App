@@ -1,7 +1,10 @@
-#include <CubeDB.hpp>
-#include <SphereDB.hpp>
-#include <CylinderDB.hpp>
-#include <ConeDB.hpp>
+#include <ModelGraphUtil.hpp>
+#include <ModelGraphRelations.hpp>
+#include <ModelInstanceDB.hpp>
+#include <vtkCubeSource.h>
+#include <vtkSphereSource.h>
+#include <vtkTriangleFilter.h>
+#include <vtkPolyData.h>
 #include <GlbDB.hpp>
 #include <FiberMaskDB.hpp>
 #include <ManualSupportDB.hpp>
@@ -30,8 +33,7 @@ public:
 };
 static_assert(std::is_abstract_v<ActorWithoutPick>);
 static_assert(!std::is_abstract_v<ActorWithPick>);
-static_assert(!std::is_abstract_v<CubeDB> && !std::is_abstract_v<SphereDB> &&
-              !std::is_abstract_v<CylinderDB> && !std::is_abstract_v<ConeDB>);
+
 
 namespace {
 bool near(float actual, float expected) {
@@ -48,9 +50,18 @@ int main(int argc, char** argv) {
     QCoreApplication::setOrganizationName("GPlatformTests");
     QCoreApplication::setApplicationName("PrimitivePickCheck");
     Log::setup(argv, QStringLiteral("PrimitivePickCheck"));
-    auto cube = trans::TransDB::create<CubeDB>();
-    cube->setUniformSize(2);
-    cube->setTransform(Transform{});
+    ModelGraphRelations::registerRelations();
+    auto cubeSource = vtkSmartPointer<vtkCubeSource>::New();
+    cubeSource->SetXLength(2);
+    cubeSource->SetYLength(2);
+    cubeSource->SetZLength(2);
+    auto cubeTriangles = vtkSmartPointer<vtkTriangleFilter>::New();
+    cubeTriangles->SetInputConnection(cubeSource->GetOutputPort());
+    cubeTriangles->Update();
+    auto cubeGraph = ModelGraphUtil::createSinglePartObject(
+        {"Cube", {}, "generated"}, cubeTriangles->GetOutput(), ModelGraphUtil::InstanceCreateInfo{});
+    if (!cubeGraph || !cubeGraph.instance) return fail("Could not create cube model");
+    auto cube = std::static_pointer_cast<ActorDB>(cubeGraph.instance);
     const auto hit = cube->intersectPickRay({0, 0, 5}, {0, 0, -2});
     if (!hit || !near(hit->worldDistance, 4) || !near(hit->localPosition.z, 1))
         return fail("A visible cube must resolve a CPU object pick in world units");
@@ -62,7 +73,11 @@ int main(int argc, char** argv) {
     if (!inside || !near(inside->worldDistance, 1))
         return fail("A ray starting inside a cube must hit the exit face");
 
-    cube->setCenter({2, 0, 0});
+    cubeSource->SetCenter(2, 0, 0);
+    cubeTriangles->Update();
+    if (!ModelGraphUtil::replaceInstancePartGeometry(cube->getDBInstanceID(),
+            cubeGraph.parts.front()->getDBInstanceID(), cubeTriangles->GetOutput()))
+        return fail("Could not replace cube geometry");
     Transform transform;
     transform.rotateZ(90);
     transform.setScale({2, 3, 4});
@@ -82,50 +97,27 @@ int main(int argc, char** argv) {
     cube->setTransform(transform);
     if (cube->intersectPickRay({10, 24, 40}, {0, 0, -1}))
         return fail("A singular transform must not produce a hit");
-    cube->setTransform(Transform{});
-    cube->setCenter({0, 0, 0});
-    cube->setUniformSize(0);
-    if (cube->intersectPickRay({0, 0, 5}, {0, 0, -1}))
-        return fail("Degenerate geometry must not produce a hit");
-    auto sphere = trans::TransDB::create<SphereDB>();
-    sphere->setRadius(1);
+    auto sphereSource = vtkSmartPointer<vtkSphereSource>::New();
+    sphereSource->SetRadius(1);
+    sphereSource->SetThetaResolution(64);
+    sphereSource->SetPhiResolution(32);
+    sphereSource->Update();
+    auto sphereGraph = ModelGraphUtil::createSinglePartObject(
+        {"Sphere", {}, "generated"}, sphereSource->GetOutput(), ModelGraphUtil::InstanceCreateInfo{});
+    if (!sphereGraph || !sphereGraph.instance) return fail("Could not create sphere model");
+    auto sphere = std::static_pointer_cast<ActorDB>(sphereGraph.instance);
     const auto sphereHit = sphere->intersectPickRay({0, 0, 5}, {0, 0, -1});
     if (!sphereHit || !near(sphereHit->worldDistance, 4) ||
         sphere->intersectPickRay({0.9f, 0.9f, 5}, {0, 0, -1}))
-        return fail("Sphere picking must use its surface rather than its bounding box");
-    sphere->setRadius(2);
+        return fail("Sphere model picking must use its surface rather than its bounding box");
+    sphereSource->SetRadius(2);
+    sphereSource->Update();
+    if (!ModelGraphUtil::replaceInstancePartGeometry(sphere->getDBInstanceID(),
+            sphereGraph.parts.front()->getDBInstanceID(), sphereSource->GetOutput()))
+        return fail("Could not replace sphere geometry");
     const auto resized = sphere->intersectPickRay({0, 0, 5}, {0, 0, -1});
     if (!resized || !near(resized->worldDistance, 3))
-        return fail("Geometry changes must invalidate the cached pick locator");
-    sphere->setProperty<float>(SphereDB::PROP_Radius(), 3.0f);
-    const auto genericWrite = sphere->intersectPickRay({0, 0, 5}, {0, 0, -1});
-    if (!genericWrite || !near(genericWrite->worldDistance, 2))
-        return fail("Generic property writes must not leave stale pick geometry");
-
-    auto cylinder = trans::TransDB::create<CylinderDB>();
-    cylinder->setHeight(2);
-    cylinder->setRadius(1);
-    const auto cap = cylinder->intersectPickRay({0, 5, 0}, {0, -1, 0});
-    if (!cap || !near(cap->worldDistance, 4) ||
-        cylinder->intersectPickRay({0.9f, 5, 0.9f}, {0, -1, 0}))
-        return fail("Cylinder caps must use circular geometry");
-    cylinder->setCapping(false);
-    if (cylinder->intersectPickRay({0, 5, 0}, {0, -1, 0}))
-        return fail("An uncapped cylinder must not pick an invisible cap");
-
-    auto cone = trans::TransDB::create<ConeDB>();
-    cone->setHeight(2);
-    cone->setRadius(1);
-    cone->setDirection(2);
-    const auto side = cone->intersectPickRay({5, 0, 0}, {-1, 0, 0});
-    if (!side || !near(side->worldDistance, 4.5f))
-        return fail("Cone direction and tapered surface must participate in picking");
-    const auto base = cone->intersectPickRay({0, 0, -5}, {0, 0, 1}, 5);
-    if (!base || !near(base->worldDistance, 4))
-        return fail("A capped cone must pick its base");
-    cone->setCapping(false);
-    if (cone->intersectPickRay({0, 0, -5}, {0, 0, 1}, 5))
-        return fail("An uncapped cone must not pick an invisible base");
+        return fail("Model geometry replacement must invalidate the cached pick locator");
 
     // Exercise the same virtual interface used by PickService.
     const ActorDB& sphereActor = *sphere;
@@ -172,8 +164,8 @@ int main(int argc, char** argv) {
         if (actor->isPickable() || actor->intersectPickRay({0, 0, 5}, {0, 0, -1}))
             return fail("Presentation-only actors must explicitly remain non-pickable");
     }
-    std::cout << "PASS abstract ActorDB contract, four primitive picks, transforms, "
-                 "exact misses, cache invalidation, caps, GLB and presentation policies" << std::endl;
+    std::cout << "PASS abstract ActorDB contract, model picks, transforms, "
+                 "exact misses, cache invalidation, GLB and presentation policies" << std::endl;
     Log::shutdown();
     return 0;
 }

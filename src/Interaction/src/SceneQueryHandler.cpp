@@ -6,7 +6,6 @@ REGISTER_INTERACTION_ACTION(SceneQueryHandler, "query.objects")
 #include "ActionHandlerRegistry.hpp"
 #include <DocumentManager.hpp>
 #include "AIDescriptorHelper.hpp"
-#include <ActorDB.hpp>
 #include <ModelInstanceDB.hpp>
 #include <ModelObjectDB.hpp>
 #include <algorithm>
@@ -25,46 +24,31 @@ bool containsKeyword(const QString& textLower, const QStringList& keywords) {
     return false;
 }
 
-QString inferObjectType(TypeID typeId,
-                        const QString& displayName,
+QString inferObjectType(const QString& displayName,
                         const QString& dataSource,
                         const QString& fileFormat) {
     const QString displayLower = displayName.toLower();
     const QString sourceLower = dataSource.toLower();
 
-    switch (typeId) {
-        case TypeID::CYLINDER_DB:
-            return "cylinder";
-        case TypeID::CONE_DB:
-            return "cone";
-        case TypeID::SPHERE_DB:
-            return "sphere";
-        case TypeID::CUBE_DB:
-            return "cube";
-        case TypeID::MODEL_INSTANCE_DB: {
-            if (fileFormat.compare("glb", Qt::CaseInsensitive) == 0)
-                return "glb";
-            if (containsKeyword(displayLower, {"cylinder", "圆柱", "圆柱体"}) ||
-                containsKeyword(sourceLower, {"cylinder", "圆柱", "圆柱体"})) {
-                return "cylinder";
-            }
-            if (containsKeyword(displayLower, {"sphere", "球", "球体"}) ||
-                containsKeyword(sourceLower, {"sphere", "球", "球体"})) {
-                return "sphere";
-            }
-            if (containsKeyword(displayLower, {"cone", "圆锥", "三角锥", "锥体"}) ||
-                containsKeyword(sourceLower, {"cone", "圆锥", "三角锥", "锥体"})) {
-                return "cone";
-            }
-            if (containsKeyword(displayLower, {"cube", "方块", "立方", "立方体", "正方体"}) ||
-                containsKeyword(sourceLower, {"cube", "方块", "立方", "立方体", "正方体"})) {
-                return "cube";
-            }
-            return "mesh";
-        }
-        default:
-            return "unknown";
+    if (fileFormat.compare("glb", Qt::CaseInsensitive) == 0)
+        return "glb";
+    if (containsKeyword(displayLower, {"cylinder", "圆柱", "圆柱体"}) ||
+        containsKeyword(sourceLower, {"cylinder", "圆柱", "圆柱体"})) {
+        return "cylinder";
     }
+    if (containsKeyword(displayLower, {"sphere", "球", "球体"}) ||
+        containsKeyword(sourceLower, {"sphere", "球", "球体"})) {
+        return "sphere";
+    }
+    if (containsKeyword(displayLower, {"cone", "圆锥", "三角锥", "锥体"}) ||
+        containsKeyword(sourceLower, {"cone", "圆锥", "三角锥", "锥体"})) {
+        return "cone";
+    }
+    if (containsKeyword(displayLower, {"cube", "方块", "立方", "立方体", "正方体"}) ||
+        containsKeyword(sourceLower, {"cube", "方块", "立方", "立方体", "正方体"})) {
+        return "cube";
+    }
+    return "mesh";
 }
 
 QStringList canonicalTokens(const QString& rawQuery) {
@@ -159,65 +143,52 @@ bool SceneQueryHandler::executeQuery(std::shared_ptr<ActionContext> context) con
     const int limit = std::clamp(params.value("limit", 50).toInt(), 1, 200);
     const QStringList tokens = canonicalTokens(query);
 
-    const std::vector<TypeID> candidateTypes = {
-        TypeID::CUBE_DB,
-        TypeID::SPHERE_DB,
-        TypeID::CONE_DB,
-        TypeID::CYLINDER_DB,
-        TypeID::MODEL_INSTANCE_DB
-    };
-
     QVariantList objects;
-    for (const TypeID typeId : candidateTypes) {
-        const auto instances = docManager->getDBInstancesByType(typeId);
-        for (const auto& instance : instances) {
-            auto actor = std::dynamic_pointer_cast<ActorDB>(instance);
-            if (!actor) {
-                continue;
-            }
-
-            auto model = std::dynamic_pointer_cast<ModelInstanceDB>(instance);
-            auto object = model ? model->object() : nullptr;
-            const QString displayName = QString::fromStdString(actor->getDisplayName());
-            const QString dataSource = object
-                ? QString::fromStdString(object->getSourceFile()) : QString();
-            const QString fileFormat = object
-                ? QString::fromStdString(object->getFileFormat()) : QString();
-            const QString objectType = inferObjectType(
-                typeId, displayName, dataSource, fileFormat);
-            if (!typeFilter.isEmpty() && typeFilter != "any" && objectType != typeFilter) {
-                continue;
-            }
-
-            const Vector3 pos = actor->getPosition();
-            const QString searchable = QString("%1 %2 %3 %4")
-                                           .arg(objectType,
-                                                typeIdToString(typeId),
-                                                displayName,
-                                                dataSource);
-            if (!matchesQuery(tokens, searchable)) {
-                continue;
-            }
-
-            QVariantMap item;
-            item.insert("dbId", actor->getDBInstanceID().getValue());
-            item.insert("modelId", actor->getDBInstanceID().getValue());
-            item.insert("type", objectType);
-            item.insert("typeId", typeIdToString(typeId));
-            item.insert("displayName", displayName);
-            if (!dataSource.isEmpty()) {
-                item.insert("dataSource", dataSource);
-            }
-            item.insert("position", QVariantMap{
-                                        {"x", static_cast<double>(pos.x)},
-                                        {"y", static_cast<double>(pos.y)},
-                                        {"z", static_cast<double>(pos.z)}
-                                    });
-            objects.push_back(item);
-            if (objects.size() >= limit) {
-                break;
-            }
+    const TypeID typeId = TypeID::MODEL_INSTANCE_DB;
+    const auto instances = docManager->getDBInstancesByType(typeId);
+    for (const auto& instance : instances) {
+        auto actor = std::dynamic_pointer_cast<ModelInstanceDB>(instance);
+        if (!actor) {
+            continue;
         }
+
+        auto object = actor->object();
+        const QString displayName = QString::fromStdString(actor->getDisplayName());
+        const QString dataSource = object
+            ? QString::fromStdString(object->getSourceFile()) : QString();
+        const QString fileFormat = object
+            ? QString::fromStdString(object->getFileFormat()) : QString();
+        const QString objectType = inferObjectType(
+            displayName, dataSource, fileFormat);
+        if (!typeFilter.isEmpty() && typeFilter != "any" && objectType != typeFilter) {
+            continue;
+        }
+
+        const Vector3 pos = actor->getPosition();
+        const QString searchable = QString("%1 %2 %3 %4")
+                                       .arg(objectType,
+                                            typeIdToString(typeId),
+                                            displayName,
+                                            dataSource);
+        if (!matchesQuery(tokens, searchable)) {
+            continue;
+        }
+
+        QVariantMap item;
+        item.insert("dbId", actor->getDBInstanceID().getValue());
+        item.insert("modelId", actor->getDBInstanceID().getValue());
+        item.insert("type", objectType);
+        item.insert("typeId", typeIdToString(typeId));
+        item.insert("displayName", displayName);
+        if (!dataSource.isEmpty()) {
+            item.insert("dataSource", dataSource);
+        }
+        item.insert("position", QVariantMap{
+                                    {"x", static_cast<double>(pos.x)},
+                                    {"y", static_cast<double>(pos.y)},
+                                    {"z", static_cast<double>(pos.z)}
+                                });
+        objects.push_back(item);
         if (objects.size() >= limit) {
             break;
         }

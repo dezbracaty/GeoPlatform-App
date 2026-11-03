@@ -21,10 +21,7 @@ enum class TypeID : uint32_t {
 
     // Actor DB types
     ACTOR_DB = 10,
-    CUBE_DB = 11,
-    SPHERE_DB = 12,
-    CONE_DB = 13,
-    CYLINDER_DB = 14,
+    // 11-14 are retired primitive actor IDs. Do not reuse.
     // 15 was the removed legacy printable-mesh type. Keep the slot unused so stored type
     // identifiers are never silently reinterpreted.
     // 16 is reserved after removal of the legacy triangle-highlight mesh type.
@@ -137,14 +134,6 @@ inline QString typeIdToString(TypeID typeId) {
             return "SCENE_DB";
         case TypeID::ACTOR_DB:
             return "ACTOR_DB";
-        case TypeID::CUBE_DB:
-            return "CUBE_DB";
-        case TypeID::SPHERE_DB:
-            return "SPHERE_DB";
-        case TypeID::CONE_DB:
-            return "CONE_DB";
-        case TypeID::CYLINDER_DB:
-            return "CYLINDER_DB";
         case TypeID::GLB_DB:
             return "GLB_DB";
         case TypeID::CUT_PREVIEW_DB:

@@ -3755,3 +3755,27 @@ msgstr "不支持的文件格式：%1。仅支持 STL (*.stl) 模型文件。"
 
 msgid "Unsupported file format: %1. Only G-code (*.gcode) files are supported."
 msgstr "不支持的文件格式：%1。仅支持 G-code (*.gcode) 文件。"
+
+msgid "Create Cube"
+msgstr "创建立方体"
+
+msgid "Create a cube model"
+msgstr "创建立方体模型"
+
+msgid "Create Sphere"
+msgstr "创建球体"
+
+msgid "Create a sphere model"
+msgstr "创建球体模型"
+
+msgid "Create Cylinder"
+msgstr "创建圆柱"
+
+msgid "Create a cylinder model"
+msgstr "创建圆柱模型"
+
+msgid "Create Cone"
+msgstr "创建圆锥"
+
+msgid "Create a cone model"
+msgstr "创建圆锥模型"

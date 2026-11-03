@@ -30,10 +30,6 @@ set(APPDB_HEADERS
     include/SceneBounds.hpp
     include/ViewportCoordinateSystem.hpp
     include/CoordinateTransform.hpp
-    include/SphereDB.hpp
-    include/CubeDB.hpp
-    include/ConeDB.hpp
-    include/CylinderDB.hpp
     include/ModelObjectDB.hpp
     include/ModelPartDB.hpp
     include/ModelInstanceDB.hpp
@@ -81,10 +77,6 @@ set(APPDB_SOURCES
     src/SceneBounds.cpp
     src/ViewportCoordinateSystem.cpp
     src/CoordinateTransform.cpp
-    src/SphereDB.cpp
-    src/CubeDB.cpp
-    src/ConeDB.cpp
-    src/CylinderDB.cpp
     src/ModelObjectDB.cpp
     src/ModelPartDB.cpp
     src/ModelInstanceDB.cpp

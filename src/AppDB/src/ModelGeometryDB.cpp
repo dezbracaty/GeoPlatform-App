@@ -247,6 +247,14 @@ ModelGeometryDB::ReadHandle ModelGeometryDB::read() const {
     return ReadHandle(m_runtime->currentVersion, m_runtime->revision);
 }
 
+bool ModelGeometryDB::validatePolyData(vtkPolyData* polyData, std::string* error) {
+    if (!polyData) {
+        setError(error, "Geometry source is null");
+        return false;
+    }
+    return validatePrintablePolyData(*polyData, error);
+}
+
 bool ModelGeometryDB::replacePolyData(
     vtkPolyData* polyData, const std::string& sourceTag, std::string* error) {
     if (!polyData) {
@@ -256,7 +264,7 @@ bool ModelGeometryDB::replacePolyData(
 
     auto copied = vtkSmartPointer<vtkPolyData>::New();
     copied->DeepCopy(polyData);
-    if (!validatePrintablePolyData(*copied, error)) return false;
+    if (!validatePolyData(copied, error)) return false;
 
     auto next = std::make_shared<Version>();
     next->polyData = std::move(copied);

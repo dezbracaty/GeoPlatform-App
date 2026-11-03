@@ -1078,10 +1078,6 @@ void DocumentManager::clearAllGeometry() {
     TransactionManager::instance().beginTransaction("Clear All Geometry");
 
     const TypeID geometryTypes[] = {
-        TypeID::CUBE_DB,
-        TypeID::SPHERE_DB,
-        TypeID::CONE_DB,
-        TypeID::CYLINDER_DB,
         TypeID::GLB_DB,
         TypeID::MODEL_OBJECT_DB,
     };

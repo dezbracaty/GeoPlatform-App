@@ -59,9 +59,7 @@ protected:
 private:
     // 参数
     QString m_filePath;
-    Vector3 m_position{0, 0, 0};
     float m_scale{1.0f};
-    Vector3 m_color{0.8f, 0.8f, 0.8f}; // 默认灰色
     QString m_name;
 
     // 加载结果 - 直接使用ModelLoaderUtil的LoadResult类型
@@ -85,15 +83,4 @@ private:
 
     void createModelFromResult();
     void createModelsFromProject();
-
-    void applyTransformations(
-        const std::shared_ptr<class ModelInstanceDB>& instance,
-        const Vector3& importPosition);
-
-    // 选择目标打印床并计算普通网格的初始摆放位置。越界状态由
-    // PrintBedRelations 根据模型世界 BBox 维护，不在导入器中检测。
-    std::shared_ptr<class PrintBedDB> resolveTargetPrintBed() const;
-    Vector3 calculateImportPosition(
-        const Vector3& modelSize,
-        const std::shared_ptr<class PrintBedDB>& targetPrintBed) const;
 };

@@ -36,6 +36,7 @@ set(INTERACTION_SOURCES
     src/CameraNavigationActionHandler.cpp
     src/EnvironmentSwitchHandler.cpp
     src/ViewportInputRouter.cpp
+    src/ModelCreationUtil.cpp
     src/UnifiedModelImportHandler.cpp
     src/FileImportHandler.cpp
     src/GCodeImportHandler.cpp
@@ -93,6 +94,7 @@ set(INTERACTION_HEADERS
     include/CameraNavigationActionHandler.hpp
     include/EnvironmentSwitchHandler.hpp
     include/ViewportInputRouter.hpp
+    include/ModelCreationUtil.hpp
     include/UnifiedModelImportHandler.hpp
     include/FileImportHandler.hpp
     include/GCodeImportHandler.hpp
