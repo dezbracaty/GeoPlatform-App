@@ -94,6 +94,7 @@ public:
         copy->setDragable(isDragable());
         copy->setOpacity(getOpacity());
         copy->setUseCellColors(m_useCellColors);
+        copy->setDrawOnTop(m_drawOnTop);
         return copy;
     }
 
@@ -112,6 +113,15 @@ public:
         notifyGeometryChange();
     }
     bool usesCellColors() const { return m_useCellColors; }
+
+    // Interaction gizmos may intentionally cover scene geometry, matching
+    // Orca's cleared-depth gizmo pass. Ordinary previews keep scene occlusion.
+    void setDrawOnTop(bool enabled) {
+        if (m_drawOnTop == enabled) return;
+        m_drawOnTop = enabled;
+        notifyGeometryChange();
+    }
+    bool drawsOnTop() const { return m_drawOnTop; }
 
 protected:
     void setPropertyImpl(const trans::Prop& prop, const std::any& value) override {
@@ -141,4 +151,5 @@ private:
     vtkSmartPointer<vtkPolyData> m_geometry;
     vtkSmartPointer<vtkStaticCellLocator> m_pickLocator;
     bool m_useCellColors{false};
+    bool m_drawOnTop{false};
 };

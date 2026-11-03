@@ -159,6 +159,14 @@ set_target_properties(InteractionPick PROPERTIES
 )
 
 # 创建静态库
+# Pure App computation has no Handler/DB or slicing dependency and is shared
+# with the geometry regression check without recompiling production sources.
+add_library(FlattenGeometry STATIC src/FlattenGeometry.cpp include/FlattenGeometry.hpp)
+target_include_directories(FlattenGeometry PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_link_libraries(FlattenGeometry PUBLIC BaseGeometry::BaseGeometry)
+target_compile_features(FlattenGeometry PUBLIC cxx_std_17)
+set_target_properties(FlattenGeometry PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 add_library(Interaction STATIC
     ${INTERACTION_SOURCES}
     ${INTERACTION_HEADERS}
@@ -176,6 +184,7 @@ target_include_directories(Interaction
 # 链接库
 target_link_libraries(Interaction
     PUBLIC
+        FlattenGeometry
         Qt6::Core
         Qt6::Gui
         Qt6::Quick

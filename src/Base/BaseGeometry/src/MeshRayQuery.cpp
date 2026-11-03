@@ -212,6 +212,9 @@ bool MeshRayQuery::build(const std::vector<QVector3D>& vertices,
         return false;
     }
 
+    // Prevent shared-edge cracks in triangulated interaction polygons.
+    rtcSetSceneFlags(m_impl->scene, RTC_SCENE_FLAG_ROBUST);
+
     m_impl->vertices.reserve(vertices.size());
     for (const QVector3D& vertex : vertices) {
         m_impl->vertices.push_back({vertex.x(), vertex.y(), vertex.z()});

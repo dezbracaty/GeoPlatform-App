@@ -3,10 +3,13 @@ cmake_minimum_required(VERSION 3.21)
 project(BaseGeometry LANGUAGES CXX)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui)
+find_package(Eigen3 REQUIRED)
 
 add_library(BaseGeometry STATIC
     include/MeshRayQuery.hpp
     src/MeshRayQuery.cpp
+    include/MeshConvexHull.hpp
+    src/MeshConvexHull.cpp
 )
 add_library(BaseGeometry::BaseGeometry ALIAS BaseGeometry)
 
@@ -19,8 +22,11 @@ target_link_libraries(BaseGeometry
     PUBLIC
         Qt6::Core
         Qt6::Gui
+        Eigen3::Eigen
     PRIVATE
         Foundation
+        Qhull::qhullcpp
+        Qhull::qhullstatic_r
 )
 
 target_compile_features(BaseGeometry PUBLIC cxx_std_17)
