@@ -231,6 +231,7 @@ add_subdirectory(src/services)
 add_subdirectory(src/Printer)
 add_subdirectory(src/Bridge)
 add_subdirectory(src/Interaction)
+add_subdirectory(src/Rendering)
 
 set(GENERATED_APPLICATION_MODULE_REGISTRATION
     "${CMAKE_CURRENT_BINARY_DIR}/GeneratedApplicationModuleRegistration.cpp")
@@ -781,6 +782,17 @@ if(GPLATFORM_BUILD_SDK_CHECKS)
     target_link_libraries(SDKConsumerExtensionCheck PRIVATE BaseDB Document BaseGeometry BaseRender Render)
     add_test(NAME SDKConsumerExtensionCheck COMMAND SDKConsumerExtensionCheck)
     set_tests_properties(SDKConsumerExtensionCheck PROPERTIES TIMEOUT 180)
+    add_executable(RendererDBSyncExtensionCheck tests/RendererDBSyncExtensionCheck.cpp)
+    target_link_libraries(RendererDBSyncExtensionCheck PRIVATE
+        AppRendering RendererBackendVtk RendererBackendComposition
+        AppDB Document BaseRender Qt6::OpenGL ${VTK_LIBRARIES})
+    gplatform_link_self_registering_modules(RendererDBSyncExtensionCheck AppRendering)
+    if(COMMAND vtk_module_autoinit)
+        vtk_module_autoinit(TARGETS RendererDBSyncExtensionCheck MODULES ${VTK_LIBRARIES})
+    endif()
+    add_test(NAME RendererDBSyncExtensionCheck COMMAND RendererDBSyncExtensionCheck)
+    set_tests_properties(RendererDBSyncExtensionCheck PROPERTIES TIMEOUT 25)
+
     add_executable(PrimitivePickCheck tests/PrimitivePickCheck.cpp)
     target_link_libraries(PrimitivePickCheck PRIVATE AppDB DBRelations Qt6::Core)
     add_test(NAME PrimitivePickCheck COMMAND PrimitivePickCheck)

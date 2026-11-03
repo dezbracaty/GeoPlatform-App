@@ -5,6 +5,7 @@
 ## 入口与所有权
 
 App 接口：`src/Base/BaseRender/include/IRendererSession.hpp`、`IRendererBackendFactory.hpp`、`IRenderPickCapability.hpp`、`PresentableFrame.hpp`、`FrameSynchronization.hpp`、`GraphicsContextHandle.hpp`、`RendererInstanceContext.hpp`。
+App 具体渲染：`src/Rendering/Vtk/`、`src/Rendering/Filament/` 和 `src/Rendering/Common/`。通过 SDK 的 `Core/RendererBackends/{Vtk,Filament}/include/` 声明继承基类、访问原生资源并注册工厂。
 App 交互：`src/Interaction/src/PickService.cpp`、`ViewportInputRouter.cpp` 及对应头文件；DB read view 在 `src/Document/`。
 
 宿主实现：
@@ -12,17 +13,17 @@ App 交互：`src/Interaction/src/PickService.cpp`、`ViewportInputRouter.cpp` �
 - `Core/src/Render/src/RenderingBootstrap.cpp`：设置实际图形 API，并注册已编译后端。
 - `Core/src/Render/src/threadRenderQmlItem.cpp`：视图绑定、Session 创建与 Qt Scene Graph/窗口生命周期。
 - `Core/RendererBackends/Vtk/src/VtkRendererSession.cpp` 及 `Core/RendererBackends/Vtk/src/private/DBRenderAdapter.cpp`：VTK Session、文档订阅与更新队列。
-- `Core/RendererBackends/Filament/src/FilamentRendererSession.cpp` 与 private 目录中的 SceneAdapter/DBSync：Filament 对应职责。
+- `Core/RendererBackends/Filament/src/FilamentRendererSession.cpp` 与 private 目录中的 SceneAdapter：Filament 运行与资源管理；具体 DBSync 位于 App。
 - 两个后端各自的 README、CMake 与宿主 `Core/cmake/RendererBackendSDK.cmake`：组合与私有类型边界。
 
 新 DB 的业务注册不自动赋予后端绘制支持。核对当前角色、工厂中的类型注册、DBSync 和该后端实际支持的能力。
-不能从 App 引入私有 RenderThread、VTK/Filament 数据类型来绕过公共 Session/能力接口。
+界面和交互不能引入私有 RenderThread 或原生渲染类型绕过 Session/能力接口；App 的 Rendering 模块可使用公开的原生扩展头，不能访问私有线程实现。
 
 ## 复用次序与新增边界
 
 先看相同 role/view 的现有用法与实际后端，再选择修改位置：DB/关系输入 → 现有同步/外观工具 → 后端 DBSync/native 资源 → Session/帧协议 → Qt 呈现。上游状态错误不靠后端特例修补，单个材质或几何同步问题不默认改变公共帧接口。
 `APP_ROOT/src/Base/BaseRender/include/RendererBackendCatalog.hpp` 和 `IRendererBackendFactory.hpp` 已提供后端查找与 Session 创建；沿当前注册/组合方式接入，不加第二套后端管理器。
-宿主 `Core/RendererBackends/Common/src/ModelRenderAppearanceResolver.cpp` 处理共享模型外观语义；涉及耗材色/源外观时先查已有 resolver 与两个后端调用，不在 App、VTK、Filament 各维护一份规则。后端特有实现保持私有，不为了复用一小段代码扩大公共 SDK 面积。
+App `src/Rendering/Common/ModelRenderAppearanceResolver.cpp` 处理共享模型外观语义；涉及耗材色/源外观时先查已有 resolver 与两个后端调用，不在 App、VTK、Filament 各维护一份规则。后端特有实现保持私有，不为了复用一小段代码扩大公共 SDK 面积。
 新增公共字段或能力前明确输入/输出、线程、坐标、资源归属及不支持时的结果，检查现有消费者能否继续遵守契约。只修改当前需求影响的路径；不能通过无条件全量 rebuild、复制场景或额外线程掩盖原有失效/调度错误。
 
 ## 线程与文档更新
