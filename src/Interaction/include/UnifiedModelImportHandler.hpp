@@ -6,6 +6,7 @@
 #include <libslicer/Library.hpp>
 #include <QFutureWatcher>
 #include <QString>
+#include <QPointer>
 #include <QObject>
 #include <memory>
 #include <atomic>
@@ -47,6 +48,7 @@ protected:
     void onBackgroundCompleted() override;
     void onCleanup() override;
     QVariant getCompletionResult() const override;
+    bool shouldKeepActive() const override { return !m_unitDialog.isNull(); }
 
     // 任务描述（显示在状态栏）
     QString getTaskDescription() const override {
@@ -56,7 +58,17 @@ protected:
         return QString("正在导入模型...");
     }
 
+private slots:
+    void resolveUnitChoice(int choice);
+
 private:
+    bool showUnitDialog();
+    void closeUnitDialog();
+    QPointer<QObject> m_unitDialog;
+    DBInstanceID m_unitPrintBedId;
+    float m_suggestedUnitScale{1.0f};
+    bool m_unitResolved{false};
+
     // 参数
     QString m_filePath;
     float m_scale{1.0f};

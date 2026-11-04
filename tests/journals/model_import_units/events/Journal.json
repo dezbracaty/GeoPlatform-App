@@ -1,0 +1,319 @@
+{
+  "formatVersion": 2,
+  "entries": [
+    {
+      "atMs": 1500,
+      "kind": "action",
+      "payload": {
+        "code": "file.import",
+        "params": {
+          "filePath": "../fixtures/meter.stl"
+        }
+      }
+    },
+    {
+      "atMs": 6500,
+      "kind": "action",
+      "payload": {
+        "code": "screenshot.capture",
+        "params": {
+          "filepath": "screenshots/01-meter-confirm.png",
+          "notify": false
+        }
+      }
+    },
+    {
+      "atMs": 7000,
+      "kind": "input.mouse",
+      "payload": {
+        "target": "import.units.convert",
+        "button": 1,
+        "buttons": 1,
+        "event": "press"
+      }
+    },
+    {
+      "atMs": 7010,
+      "kind": "input.mouse",
+      "payload": {
+        "target": "import.units.convert",
+        "button": 1,
+        "buttons": 0,
+        "event": "release"
+      }
+    },
+    {
+      "atMs": 9000,
+      "kind": "action",
+      "payload": {
+        "code": "screenshot.capture",
+        "params": {
+          "filepath": "screenshots/02-meter-created.png",
+          "notify": false
+        }
+      }
+    },
+    {
+      "atMs": 9500,
+      "kind": "action",
+      "payload": {
+        "code": "edit.undo",
+        "params": {}
+      }
+    },
+    {
+      "atMs": 10500,
+      "kind": "action",
+      "payload": {
+        "code": "screenshot.capture",
+        "params": {
+          "filepath": "screenshots/02a-meter-undo-empty.png",
+          "notify": false
+        }
+      }
+    },
+    {
+      "atMs": 11000,
+      "kind": "action",
+      "payload": {
+        "code": "edit.redo",
+        "params": {}
+      }
+    },
+    {
+      "atMs": 12500,
+      "kind": "action",
+      "payload": {
+        "code": "screenshot.capture",
+        "params": {
+          "filepath": "screenshots/02b-meter-redo.png",
+          "notify": false
+        }
+      }
+    },
+    {
+      "atMs": 13500,
+      "kind": "action",
+      "payload": {
+        "code": "geometry.clear",
+        "params": {}
+      }
+    },
+    {
+      "atMs": 15000,
+      "kind": "action",
+      "payload": {
+        "code": "file.import",
+        "params": {
+          "filePath": "../fixtures/inch.stl"
+        }
+      }
+    },
+    {
+      "atMs": 21000,
+      "kind": "action",
+      "payload": {
+        "code": "screenshot.capture",
+        "params": {
+          "filepath": "screenshots/03-inch-confirm.png",
+          "notify": false
+        }
+      }
+    },
+    {
+      "atMs": 21500,
+      "kind": "input.mouse",
+      "payload": {
+        "target": "import.units.keep",
+        "button": 1,
+        "buttons": 1,
+        "event": "press"
+      }
+    },
+    {
+      "atMs": 21510,
+      "kind": "input.mouse",
+      "payload": {
+        "target": "import.units.keep",
+        "button": 1,
+        "buttons": 0,
+        "event": "release"
+      }
+    },
+    {
+      "atMs": 23500,
+      "kind": "action",
+      "payload": {
+        "code": "screenshot.capture",
+        "params": {
+          "filepath": "screenshots/04-inch-kept.png",
+          "notify": false
+        }
+      }
+    },
+    {
+      "atMs": 24000,
+      "kind": "action",
+      "payload": {
+        "code": "geometry.clear",
+        "params": {}
+      }
+    },
+    {
+      "atMs": 25500,
+      "kind": "action",
+      "payload": {
+        "code": "file.import",
+        "params": {
+          "filePath": "../fixtures/inch.stl"
+        }
+      }
+    },
+    {
+      "atMs": 31500,
+      "kind": "input.mouse",
+      "payload": {
+        "target": "import.units.convert",
+        "button": 1,
+        "buttons": 1,
+        "event": "press"
+      }
+    },
+    {
+      "atMs": 31510,
+      "kind": "input.mouse",
+      "payload": {
+        "target": "import.units.convert",
+        "button": 1,
+        "buttons": 0,
+        "event": "release"
+      }
+    },
+    {
+      "atMs": 33500,
+      "kind": "action",
+      "payload": {
+        "code": "screenshot.capture",
+        "params": {
+          "filepath": "screenshots/05-inch-converted.png",
+          "notify": false
+        }
+      }
+    },
+    {
+      "atMs": 34000,
+      "kind": "action",
+      "payload": {
+        "code": "geometry.clear",
+        "params": {}
+      }
+    },
+    {
+      "atMs": 35500,
+      "kind": "action",
+      "payload": {
+        "code": "file.import",
+        "params": {
+          "filePath": "../fixtures/meter.stl"
+        }
+      }
+    },
+    {
+      "atMs": 41500,
+      "kind": "input.mouse",
+      "payload": {
+        "target": "import.units.cancel",
+        "button": 1,
+        "buttons": 1,
+        "event": "press"
+      }
+    },
+    {
+      "atMs": 41510,
+      "kind": "input.mouse",
+      "payload": {
+        "target": "import.units.cancel",
+        "button": 1,
+        "buttons": 0,
+        "event": "release"
+      }
+    },
+    {
+      "atMs": 43500,
+      "kind": "action",
+      "payload": {
+        "code": "screenshot.capture",
+        "params": {
+          "filepath": "screenshots/06-cancel-empty.png",
+          "notify": false
+        }
+      }
+    },
+    {
+      "atMs": 45000,
+      "kind": "action",
+      "payload": {
+        "code": "file.import",
+        "params": {
+          "filePath": "../fixtures/meter.stl"
+        }
+      }
+    },
+    {
+      "atMs": 51000,
+      "kind": "input.key",
+      "payload": {
+        "event": "press",
+        "key": 16777216,
+        "window": {
+          "objectName": "gplatform.main"
+        }
+      }
+    },
+    {
+      "atMs": 51010,
+      "kind": "input.key",
+      "payload": {
+        "event": "release",
+        "key": 16777216,
+        "window": {
+          "objectName": "gplatform.main"
+        }
+      }
+    },
+    {
+      "atMs": 53000,
+      "kind": "action",
+      "payload": {
+        "code": "screenshot.capture",
+        "params": {
+          "filepath": "screenshots/07-escape-empty.png",
+          "notify": false
+        }
+      }
+    },
+    {
+      "atMs": 54500,
+      "kind": "action",
+      "payload": {
+        "code": "file.import",
+        "params": {
+          "filePath": "../fixtures/meter.stl",
+          "unit": "m",
+          "scale": 2
+        }
+      }
+    },
+    {
+      "atMs": 61000,
+      "kind": "action",
+      "payload": {
+        "code": "screenshot.capture",
+        "params": {
+          "filepath": "screenshots/08-explicit-unit-retry.png",
+          "notify": false
+        }
+      }
+    }
+  ]
+}

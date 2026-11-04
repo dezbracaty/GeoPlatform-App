@@ -1,4 +1,4 @@
-"""Check English qsTr sources and the compiled Chinese startup translations."""
+"""Check English qsTr sources and the compiled Chinese startup, guide and import dialog translations."""
 import argparse
 import ast
 import struct
@@ -36,7 +36,9 @@ for index in range(count):
     catalog[raw[offset:offset+length].decode('utf-8')] = raw[start:start+size].decode('utf-8')
 translated = set()
 for name in ('qml/startup/StartupWindow.qml', 'src/Application/src/StartupCoordinator.cpp',
-             'src/Application/src/main.cpp'):
+             'src/Application/src/main.cpp', 'qml/components/UserGuide.qml',
+             'qml/dialogs/ImportUnitDialog.qml',
+             'src/Interaction/src/UnifiedModelImportHandler.cpp'):
     source = (root / name).read_text(encoding='utf-8')
     for match in re.finditer(r'\b(?:qsTr|tr)\(\s*' + literal, source):
         message = ast.literal_eval(match.group(1))
@@ -45,4 +47,4 @@ for name in ('qml/startup/StartupWindow.qml', 'src/Application/src/StartupCoordi
         assert value != message and chinese.search(value), f'Missing Chinese translation: {message}'
         assert set(re.findall(r'%\d+', value)) == set(re.findall(r'%\d+', message)), message
         translated.add(message)
-print(f'PASS: {checked} English qsTr call sites; {len(translated)} translated startup messages')
+print(f'PASS: {checked} English qsTr call sites; {len(translated)} translated startup, guide and import dialog messages')
