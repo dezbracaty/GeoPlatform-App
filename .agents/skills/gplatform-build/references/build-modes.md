@@ -27,6 +27,7 @@ App 路径相对 `APP_ROOT`；完整源码宿主用 `HOST_ROOT` 明示。
 当前 macOS 薄架构 build tree 为 `build-arm64-Release/Debug`、`build-x86_64-Release/Debug`，universal 为 `build-universal-Release/Debug`；其他平台 native 为 `build-Release/Debug`。这些来自 presets，实际使用时重新核对。
 `cmake/GPlatformBuildInputs.cmake` 在 project 前处理输入；Windows 必须提供包含 `Qt6Config.cmake` 的 `Qt6_DIR`，并使用 MSVC 与匹配 Qt。macOS/Linux 使用标准 Qt 查找输入；不要写死个人安装路径。
 cache/命令行值优先，环境只初始化未定义项。Windows 诊断缺 Qt、工具链不匹配和 SDK 契约时保留当前选择，不静默切换另一套安装。
+MSVC/Ninja 通过共享 `GPlatformMsvcDependencies.cmake` 为本项目编译器调用固定 `VSLANG=1033` 并匹配 `/showIncludes` 前缀，保留用户已有 launcher。首次切换会使相关编译命令失效并重新编译；复用旧缓存时可用 Ninja 的只读 `-t deps` 确认头文件依赖实际被记录，不能只检查链接成功。
 Ninja、Python、Git/LFS 与各平台工具按当前构建诊断检查；依赖缓存由 CMake recipe 管理，不无条件删除机器级缓存。
 
 ## libslicer 与增量来源
