@@ -162,7 +162,7 @@ def git_identity(directory):
         return dict(commit=None, dirty=None)
 
 
-def final_status(execution, checks, methods=None):
+def final_status(execution, checks, methods):
     if not execution.get('success') or execution.get('acceptance') == 'failed':
         return 'failed'
     required = [check for check in checks if check['required']]
@@ -170,11 +170,9 @@ def final_status(execution, checks, methods=None):
         return 'failed'
     if any(check['status'] != 'passed' for check in required):
         return 'not_verified'
-    if methods is not None:
-        if any(method['status'] == 'failed' for method in methods):
-            return 'failed'
-        return 'passed' if methods and all(method['status'] == 'passed' for method in methods) else 'not_verified'
-    return 'passed' if required or execution.get('acceptance') == 'passed' else 'not_verified'
+    if any(method['status'] == 'failed' for method in methods):
+        return 'failed'
+    return 'passed' if methods and all(method['status'] == 'passed' for method in methods) else 'not_verified'
 
 
 def write_case_result(output, result, checks):

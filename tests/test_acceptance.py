@@ -188,7 +188,7 @@ class AcceptanceCheck(unittest.TestCase):
         result = self.run_job(SessionFixture(self.writer, dict(success=False, acceptance='failed', cleanupErrors=['failed cleanup'])))
         self.assertEqual(result['status'], 'failed')
         self.assertEqual(read_json(self.root/'result/checks.json')[0]['status'], 'not_run')
-        self.assertEqual(final_status(dict(success=True, acceptance='not_verified'), [dict(required=True, status='not_run')]), 'not_verified')
+        self.assertEqual(final_status(dict(success=True, acceptance='not_verified'), [dict(required=True, status='not_run')], []), 'not_verified')
 
     def test_failed_ui_step_reason_is_preserved_in_business_result(self):
         result = self.run_job(SessionFixture(overrides=dict(success=False, acceptance='failed', results=[
