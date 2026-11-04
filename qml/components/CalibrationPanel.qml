@@ -35,6 +35,7 @@ Item {
             keys.push(field.key)
         })
         form=view.values
+        if(view.context)context=view.context
         // Keep field rows and unchanged option groups alive across edits and
         // visibility changes. Metadata and values have separate bindings.
         if(JSON.stringify(fields)!==JSON.stringify(fieldDefinitions))fieldDefinitions=fields
@@ -77,6 +78,7 @@ Item {
     }
     function record() {
         showCompletion=false;resultSubmitted=false;resultInput.text="";resultY.text="";resultNotes.text=""
+        formError="";flowSampleChoice.currentIndex=-1
         observed.checked=false;enablePA.checked=false;overrideRetraction.checked=false
         resultPopup.open()
     }
@@ -111,7 +113,7 @@ Item {
         parent:QtControls.Overlay.overlay
         preferredWidth:600
         preferredHeight:Math.min(parent?parent.height-32:680,
-            [1,2,3].indexOf(root.form.mode)>=0?(root.form.mode===2?674:558):root.form.mode===5?466:[10,11].indexOf(root.form.mode)>=0?650:root.form.mode===13?320:560)
+            [1,2,3].indexOf(root.form.mode)>=0?(root.form.mode===2?674:558):root.form.mode===5?590:[10,11].indexOf(root.form.mode)>=0?650:root.form.mode===13?320:560)
         title:Calib.title(root.form.mode)+"校准"
         windowEscapeEnabled:true
         ScrollView {
@@ -123,7 +125,7 @@ Item {
                 spacing:Theme.space12
                 Label {
                     Layout.fillWidth:true
-                    text:(root.context.printer||SliceSettingsBridge.selectedMachineModelId)+" / "+(root.context.material||SliceSettingsBridge.selectedFilamentPresetName)+" · 材料槽 1"
+                    text:(root.context.printer||SliceSettingsBridge.selectedMachineModelId)+" / "+(root.context.material||SliceSettingsBridge.selectedFilamentPresetName)+" · 材料槽 "+(Number(root.context.slot||0)+1)
                     font:Typography.caption;color:Theme.res.textFillColorSecondary;wrapMode:Text.Wrap
                 }
                 Repeater {
@@ -177,11 +179,17 @@ Item {
                                 Layout.preferredWidth:220
                                 model:fieldRow.definition.choices
                                 textRole:"label"
-                                currentIndex:{
+                                function formIndex() {
                                     const current=String(root.form[fieldRow.definition.key])
                                     return fieldRow.definition.choices.findIndex(function(c){return c.value===current})
                                 }
-                                onActivated:root.setValue(fieldRow.definition.key,fieldRow.definition.choices[currentIndex].value)
+                                currentIndex:formIndex()
+                                onActivated:{
+                                    root.setValue(fieldRow.definition.key,fieldRow.definition.choices[currentIndex].value)
+                                    // The shared ComboBox assigns currentIndex on selection.
+                                    // Rebind it so reopening/refining reflects the library form.
+                                    currentIndex=Qt.binding(function(){return formIndex()})
+                                }
                             }
                             TextField {
                                 visible:fieldRow.definition.type==="text"
@@ -208,12 +216,6 @@ Item {
                 Label {
                     Layout.fillWidth:true;wrapMode:Text.Wrap
                     text:Calib.guidance(root.form.mode)
-                    font:Typography.caption;color:Theme.res.textFillColorSecondary
-                }
-                Label {
-                    visible:!!root.fieldDefinitions.flow_type&&root.fieldDefinitions.flow_type.visible
-                    Layout.fillWidth:true
-                    text:"本轮流量基准："+(root.context.flowRatio||"—")
                     font:Typography.caption;color:Theme.res.textFillColorSecondary
                 }
                 Label {
@@ -312,6 +314,8 @@ Item {
             root.showCompletion?330:axes||result.key==="filament_retraction_length"||result.key==="pressure_advance"&&!result.pressureAdvanceEnabled?560:500)
         property var result:CalibrationBridge.resultContext
         property bool axes:[10,11].indexOf(result.mode)>=0
+        property bool flow:result.mode===5
+        property var sample:flowSampleChoice.currentIndex>=0?CalibrationBridge.flowSamples[flowSampleChoice.currentIndex]||{}:({})
         ScrollView {
             anchors.fill:parent;anchors.margins:20;contentWidth:availableWidth;clip:true
             ColumnLayout {
@@ -320,9 +324,28 @@ Item {
                 ColumnLayout {
                     visible:!root.showCompletion;Layout.fillWidth:true;spacing:12
                     RowLayout {
+                        visible:!resultPopup.flow
                         Label {text:resultPopup.axes?"X 轴结果":resultPopup.result.key==="filament_flow_ratio"?"最终流量比例":"本次结果";Layout.fillWidth:true}
                         TextField {id:resultInput;objectName:"calibrationResultValue";Layout.preferredWidth:220;placeholderText:"根据实物填写"}
                         Label {text:resultPopup.result.unit||""}
+                    }
+                    RowLayout {
+                        visible:resultPopup.flow
+                        Label {text:"最佳样块标记";Layout.fillWidth:true}
+                        ComboBox {
+                            id:flowSampleChoice
+                            objectName:"calibrationFlowSampleChoice"
+                            Layout.preferredWidth:220
+                            model:CalibrationBridge.flowSamples
+                            textRole:"label"
+                            currentIndex:-1
+                        }
+                    }
+                    Label {
+                        visible:resultPopup.flow;Layout.fillWidth:true;wrapMode:Text.Wrap
+                        text:flowSampleChoice.currentIndex<0?"请选择实物顶面最平整、线条连接均匀的样块。":
+                            "本轮基准："+Number(resultPopup.sample.baseline).toPrecision(6)+" → 建议流量比例："+Number(resultPopup.sample.candidate).toPrecision(6)+
+                            (resultPopup.sample.error?"\n"+resultPopup.sample.error:"")
                     }
                     RowLayout {
                         visible:resultPopup.axes
@@ -330,19 +353,19 @@ Item {
                         TextField {id:resultY;objectName:"calibrationResultY";Layout.preferredWidth:220;placeholderText:"根据实物填写"}
                     }
                     Label {text:"观察备注";font:Typography.caption;color:Theme.res.textFillColorSecondary}
-                    TextArea {id:resultNotes;Layout.fillWidth:true;Layout.preferredHeight:76;placeholderText:"实物表现、选中的标记或速度区间";wrapMode:TextEdit.Wrap}
+                    TextArea {id:resultNotes;objectName:"calibrationResultNotes";Layout.fillWidth:true;Layout.preferredHeight:76;placeholderText:"实物表现、选中的标记或速度区间";wrapMode:TextEdit.Wrap}
                     Label {
                         Layout.fillWidth:true;wrapMode:Text.Wrap
-                        text:resultPopup.result.appliesToMaterial?"应用位置：材料槽 1 / "+resultPopup.result.material+"\n当前值："+(resultPopup.result.oldValue==="nil"?"继承打印机（"+resultPopup.result.inheritedRetraction+" mm）":resultPopup.result.oldValue):"本次仅记录观察，不自动写入设备或推断切片参数。"
+                        text:resultPopup.result.appliesToMaterial?"应用位置：材料槽 "+(Number(resultPopup.result.slot)+1)+" / "+resultPopup.result.material+"\n当前值："+(resultPopup.result.oldValue==="nil"?"继承打印机（"+resultPopup.result.inheritedRetraction+" mm）":resultPopup.result.oldValue):"本次仅记录观察，不自动写入设备或推断切片参数。"
                         font:Typography.caption;color:Theme.res.textFillColorSecondary
                     }
-                    CheckBox {id:enablePA;visible:resultPopup.result.key==="pressure_advance"&&!resultPopup.result.pressureAdvanceEnabled;text:"同时启用当前材料的压力提前"}
-                    CheckBox {id:overrideRetraction;visible:resultPopup.result.key==="filament_retraction_length";text:"覆盖当前材料继承的回抽长度"}
+                    CheckBox {id:enablePA;objectName:"calibrationResultEnablePA";visible:resultPopup.result.key==="pressure_advance"&&!resultPopup.result.pressureAdvanceEnabled;text:"同时启用当前材料的压力提前"}
+                    CheckBox {id:overrideRetraction;objectName:"calibrationResultOverrideRetraction";visible:resultPopup.result.key==="filament_retraction_length";text:"覆盖当前材料继承的回抽长度"}
                     CheckBox {id:observed;objectName:"calibrationResultObserved";text:"已完成试打印，并检查实物"}
                 }
                 Label {visible:root.showCompletion;Layout.fillWidth:true;wrapMode:Text.Wrap;text:CalibrationBridge.recordPath;font:Typography.caption;color:Theme.res.textFillColorSecondary}
                 Label {visible:!CalibrationBridge.configurationValid&&!root.showCompletion;Layout.fillWidth:true;wrapMode:Text.Wrap;text:"配置已改变，请重新校准后采纳结果。";color:Theme.res.systemFillColorCaution}
-                Label {visible:root.resultSubmitted&&CalibrationBridge.error.length>0;Layout.fillWidth:true;wrapMode:Text.Wrap;text:CalibrationBridge.error;color:Theme.res.systemFillColorCritical}
+                Label {visible:root.resultSubmitted&&(CalibrationBridge.error.length>0||root.formError.length>0);Layout.fillWidth:true;wrapMode:Text.Wrap;text:CalibrationBridge.error||root.formError;color:Theme.res.systemFillColorCritical}
             }
         }
         footerData:RowLayout {
@@ -353,14 +376,20 @@ Item {
                 visible:!root.showCompletion
                 objectName:"calibrationAcceptResult"
                 text:resultPopup.result.appliesToMaterial?"应用到当前材料":"保存观察记录"
-                enabled:observed.checked&&CalibrationBridge.configurationValid&&!TaskStateNotifier.isBusy
+                enabled:observed.checked&&CalibrationBridge.configurationValid&&!TaskStateNotifier.isBusy&&(!resultPopup.flow||!!resultPopup.sample.selectable)
                 highlighted:true
-                onClicked:{root.resultSubmitted=true;CalibrationBridge.acceptResult({observed:observed.checked,value:resultInput.text,valueY:resultY.text,notes:resultNotes.text,enablePressureAdvance:enablePA.checked,overrideRetraction:overrideRetraction.checked})}
+                onClicked:{root.resultSubmitted=true;CalibrationBridge.acceptResult({observed:observed.checked,value:resultInput.text,valueY:resultY.text,notes:resultNotes.text,enablePressureAdvance:enablePA.checked,overrideRetraction:overrideRetraction.checked,
+                    taskId:resultPopup.sample.taskId,plateIndex:resultPopup.sample.plateIndex,objectIndex:resultPopup.sample.objectIndex})}
             }
             Button {
-                visible:root.showCompletion&&CalibrationBridge.resultContext.canRefine
+                objectName:"calibrationContinueRefinement"
+                visible:root.showCompletion&&CalibrationBridge.canContinueRefinement
                 text:"继续精调";highlighted:true
-                onClicked:{resultPopup.close();root.open(CalibrationBridge.parameters.mode,CalibrationBridge.parameters);root.setValue("next_pass","")}
+                onClicked:{
+                    const view=CalibrationBridge.refinementForm()
+                    if(view.error){root.formError=Calib.message(view.error);root.resultSubmitted=true;return}
+                    if(root.applyForm(view)){root.formContextValid=true;resultPopup.close();root.showCompletion=false;parametersPopup.open()}
+                }
             }
             Button {visible:root.showCompletion&&root.resultWasApplied;text:"前往参数设置";onClicked:{resultPopup.close();if(root.printHost)root.printHost.openSliceSettings({})}}
         }

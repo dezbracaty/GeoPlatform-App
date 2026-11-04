@@ -24,6 +24,12 @@ struct SlicingConfigActivationResult {
     explicit operator bool() const noexcept { return success; }
 };
 
+struct SlicingConfigPatchResult {
+    libslicer::SettingsResult settings;
+    std::uint64_t appliedRevision{0};
+    explicit operator bool() const noexcept { return bool(settings); }
+};
+
 // Process-level infrastructure gateway for the slicer SDK. QML bridges only
 // project its configuration state; job handlers execute through this service.
 class SlicingBackend final {
@@ -39,6 +45,8 @@ public:
         const libslicer::ConfigSelection& selection,
         const std::vector<std::pair<std::string, std::string>>& patch = {});
     libslicer::SettingsResult applyConfigPatch(
+        const std::vector<std::pair<std::string, std::string>>& patch);
+    SlicingConfigPatchResult applyConfigPatchIfRevision(std::uint64_t expectedRevision,
         const std::vector<std::pair<std::string, std::string>>& patch);
     libslicer::SettingsResult setConfigValue(std::string_view key, std::string_view value);
     libslicer::SettingsResult resetConfigValue(std::string_view key);

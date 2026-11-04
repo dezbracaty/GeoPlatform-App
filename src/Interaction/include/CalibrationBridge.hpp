@@ -33,6 +33,8 @@ class CalibrationBridge final : public QObject {
     Q_PROPERTY(QVariantMap parameters READ parameters NOTIFY changed)
     Q_PROPERTY(QVariantMap resultContext READ resultContext NOTIFY changed)
     Q_PROPERTY(QString recordPath READ recordPath NOTIFY changed)
+    Q_PROPERTY(QVariantList flowSamples READ flowSamples NOTIFY changed)
+    Q_PROPERTY(bool canContinueRefinement READ canContinueRefinement NOTIFY changed)
 public:
     static CalibrationBridge* instance();
     static CalibrationBridge* create(QQmlEngine*, QJSEngine*);
@@ -52,6 +54,9 @@ public:
     QVariantMap parameters() const { return m_parameters; }
     QVariantMap resultContext() const;
     QString recordPath() const { return m_recordPath; }
+    QVariantList flowSamples() const { return m_flowSamples; }
+    bool canContinueRefinement() const;
+    Q_INVOKABLE QVariantMap refinementForm();
 
     Q_INVOKABLE QVariantMap currentContext() const;
     Q_INVOKABLE QVariantMap parameterForm(int mode, const QVariantMap& values = {});
@@ -80,11 +85,12 @@ private:
     std::uint64_t m_generation = 0;
     float m_progress = -1.0f;
     int m_selectedPlate = -1;
-    QVariantList m_plates;
+    QVariantList m_plates, m_flowSamples;
     QVariantMap m_parameters;
     std::optional<libslicer::CalibrationParameters> m_form;
     void startWork(bool prepare, int plate = -1);
     void finishWork();
     void invalidate();
     void refreshPlates();
+    void refreshFlowSamples();
 };

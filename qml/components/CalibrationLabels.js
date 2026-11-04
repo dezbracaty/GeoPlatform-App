@@ -3,7 +3,8 @@
 // Presentation and translation only. Field values, options, units, edit rules
 // and validation are supplied by libslicer through CalibrationBridge.
 function label(source) {
-    return ({"Extruder type":"挤出机类型","Method":"方法","Calibration type":"校准类型",
+    return ({"Calibration material":"校准材料","Calibration flow baseline":"本轮流量基准",
+        "Extruder type":"挤出机类型","Method":"方法","Calibration type":"校准类型",
         "Top surface pattern":"顶面图案","Material temperature range":"材料快捷范围",
         "Test model":"测试模型","Shaper type":"整形器类型","Print numbers":"打印数值",
         "Start PA":"起始 PA","End PA":"结束 PA","PA step":"PA 步长",

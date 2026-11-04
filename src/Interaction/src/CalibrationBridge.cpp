@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <utility>
 
 REGISTER_INTERACTION_QML_SINGLETON_CUSTOM(
     CalibrationBridge, "CalibrationBridge", &CalibrationBridge::create)
@@ -84,10 +85,20 @@ QVariantMap formDiagnostics(const std::vector<libslicer::SliceDiagnostic>& diagn
 }
 QVariantMap formView(const libslicer::CalibrationParameters& form) {
     QVariantList fields;
+    const auto materials = SliceSettingsBridge::instance()->filamentSlots();
     for (const auto& f : form.fields) {
         QVariantList choices;
-        for (const auto& choice : f.enum_items)
-            choices << QVariantMap{{"value", QString::fromStdString(choice.value)}, {"label", QString::fromStdString(choice.label)}};
+        for (const auto& choice : f.enum_items) {
+            auto label = QString::fromStdString(choice.label);
+            if (f.key == "flow_filament_slot") {
+                const auto index = QString::fromStdString(choice.value).toInt();
+                if (index >= 0 && index < materials.size()) {
+                    const auto material = materials[index].toMap();
+                    label = QStringLiteral("%1 · %2 · %3").arg(index + 1).arg(material.value("presetName").toString(), material.value("physicalToolName").toString());
+                }
+            }
+            choices << QVariantMap{{"value", QString::fromStdString(choice.value)}, {"label", label}};
+        }
         fields << QVariantMap{{"key", QString::fromStdString(f.key)}, {"label", QString::fromStdString(f.label)},
             {"unit", QString::fromStdString(f.unit)}, {"enabled", f.enabled && !f.read_only}, {"choices", choices},
             {"visible", f.visible},
@@ -96,6 +107,12 @@ QVariantMap formView(const libslicer::CalibrationParameters& form) {
     }
     auto view = formDiagnostics(form.diagnostics);
     view.insert("values", formValues(form)); view.insert("fields", fields); view.insert("canRefine", form.can_refine);
+    const auto values = formValues(form);
+    const int slot = form.mode == libslicer::CalibMode::Calib_Flow_Rate ? values.value("flow_filament_slot").toInt() : 0;
+    const auto material = slot >= 0 && slot < materials.size() ? materials[slot].toMap() : QVariantMap{};
+    view.insert("context", QVariantMap{{"slot", slot}, {"material", material.value("presetName")},
+        {"printer", SliceSettingsBridge::instance()->selectedMachine().value("name")},
+        {"flowRatio", values.value("flow_baseline_ratio")}});
     return view;
 }
 DBInstanceID printBed() {
@@ -138,6 +155,8 @@ struct CalibrationBridge::Session {
     QString error;
     QStringList details;
     bool success = false, canRefine = false;
+    std::optional<std::uint64_t> appliedRevision;
+    bool canContinue = false;
     GPlatform::PreparedToolpathPreview prepared;
 };
 
@@ -162,6 +181,23 @@ CalibrationBridge::CalibrationBridge(QObject* parent) : QObject(parent) {
 }
 CalibrationBridge::~CalibrationBridge() { shutdown(); }
 bool CalibrationBridge::configurationValid() const { return m_session && m_session->valid->load(); }
+bool CalibrationBridge::canContinueRefinement() const { return m_session && m_session->canContinue && !m_running && !m_closing; }
+QVariantMap CalibrationBridge::refinementForm() {
+    if (!canContinueRefinement() || !m_session->canRefine || !m_session->appliedRevision ||
+        TaskStateNotifier::instance()->isBusy() || !GPlatform::SlicingBackend::instance().configurationChangesAllowed())
+        return {{"error", QStringLiteral("本轮结果尚不可继续精调。")}};
+    const auto session = m_session;
+    const auto profile = GPlatform::SlicingBackend::instance().activeProfileSnapshot();
+    if (!profile || profile->revision != *session->appliedRevision) {
+        invalidate(); return {{"error", QStringLiteral("配置已改变，请重新校准。")}};
+    }
+    try {
+        auto form = libslicer::calibration_parameters(session->request.mode, profile->config, parameterValues(m_parameters));
+        form = libslicer::update_calibration_parameters(std::move(form), "next_pass", "");
+        m_form = std::move(form);
+        return formView(*m_form);
+    } catch (const std::exception& e) { return {{"error", QString::fromUtf8(e.what())}}; }
+}
 bool CalibrationBridge::previewActive() const {
     const auto output = SlicingPreviewBridge::instance()->currentOutput();
     return m_session && output && output->calibrationTaskId == m_session->id;
@@ -223,14 +259,17 @@ bool CalibrationBridge::prepare(const QVariantMap& parameters) {
         session->canRefine = form.can_refine;
         m_form = form;
     } catch (const std::exception& e) { m_error = QString::fromUtf8(e.what()); emit changed(); return false; }
-    session->materialName = SliceSettingsBridge::instance()->selectedFilamentPresetName();
+    const auto materials = SliceSettingsBridge::instance()->filamentSlots();
+    const auto slot = session->request.mode == libslicer::CalibMode::Calib_Flow_Rate ? session->request.flow_filament_slot : 0;
+    if (slot >= std::size_t(materials.size())) { m_error = QStringLiteral("目标材料不存在。"); emit changed(); return false; }
+    session->materialName = materials[qsizetype(slot)].toMap().value("presetName").toString();
     session->request.config = profile->config;
     invalidate();
     m_session = session;
     m_parameters = formValues(*m_form);
     m_details.clear();
     m_recordPath.clear();
-    m_plates.clear(); m_selectedPlate = -1;
+    m_plates.clear(); m_flowSamples.clear(); m_selectedPlate = -1;
     startWork(true);
     return true;
 }
@@ -242,7 +281,10 @@ void CalibrationBridge::cancel() {
     emit changed();
 }
 void CalibrationBridge::invalidate() {
-    if (!m_session || !m_session->valid->exchange(false)) return;
+    if (!m_session) return;
+    const bool wasValid = m_session->valid->exchange(false);
+    const bool wasContinuable = std::exchange(m_session->canContinue, false);
+    if (!wasValid && !wasContinuable) return;
     if (m_running) cancel();
     else m_state = "stale";
     SlicingPreviewBridge::instance()->notifyCalibrationOutputInvalidated();
@@ -262,7 +304,7 @@ bool CalibrationBridge::selectPlate(int index) {
 }
 void CalibrationBridge::clear() {
     if (m_running) { cancel(); return; }
-    invalidate(); m_session.reset(); m_form.reset(); m_parameters.clear(); m_plates.clear();
+    invalidate(); m_session.reset(); m_form.reset(); m_parameters.clear(); m_plates.clear(); m_flowSamples.clear();
     m_selectedPlate = -1; m_state = "idle"; m_error.clear(); m_details.clear(); m_recordPath.clear(); emit changed();
 }
 void CalibrationBridge::shutdown() {
@@ -372,6 +414,20 @@ void CalibrationBridge::refreshPlates() {
             {"ready",bool(p.output)},{"error",p.error}, {"objects",int(m_session->task->plates()[i].objects.size())}};
     }
 }
+void CalibrationBridge::refreshFlowSamples() {
+    m_flowSamples.clear();
+    if (!m_session || !m_session->task || m_selectedPlate < 0 ||
+        m_selectedPlate >= int(m_session->plates.size()) || !m_session->plates[m_selectedPlate].output) return;
+    const auto& objects = m_session->task->plates()[m_selectedPlate].objects;
+    for (std::size_t i = 0; i < objects.size(); ++i) {
+        if (!objects[i].flow_sample) continue;
+        const auto& sample = *objects[i].flow_sample;
+        const auto result = m_session->task->flow_result(std::size_t(m_selectedPlate), i);
+        m_flowSamples << QVariantMap{{"taskId", m_session->id}, {"plateIndex", m_selectedPlate}, {"objectIndex", int(i)},
+            {"label", QString::fromStdString(sample.label)}, {"baseline", sample.baseline_flow_ratio},
+            {"candidate", sample.calibrated_flow_ratio}, {"selectable", bool(result)}, {"error", diagnostics(result.diagnostics)}};
+    }
+}
 void CalibrationBridge::finishWork() {
     if (m_closing || !m_running || !m_session) return;
     const auto session=m_session;
@@ -413,17 +469,22 @@ void CalibrationBridge::finishWork() {
         m_message=m_state=="cancelled"?QStringLiteral("校准已取消"):m_state=="stale"?QStringLiteral("配置已变更，请重新准备校准。"):QStringLiteral("校准失败");
         if (session->failed>=0 && !m_error.isEmpty()) m_error.prepend(QStringLiteral("打印盘 %1：\n").arg(session->failed+1));
     }
+    refreshFlowSamples();
     emit changed(); emit completed(accepted);
 }
 QVariantMap CalibrationBridge::resultContext() const {
     if (!m_session) return {};
     const auto key=resultKey(m_session->request.mode);
     const auto& config=m_session->profile.config;
+    const auto slot = m_session->request.mode == libslicer::CalibMode::Calib_Flow_Rate ? m_session->request.flow_filament_slot : 0;
+    QString oldValue = key.isEmpty() ? QString() : first(config, key.toUtf8().constData());
+    if (m_session->request.mode == libslicer::CalibMode::Calib_Flow_Rate)
+        oldValue = m_parameters.value("flow_baseline_ratio").toString();
     return {{"title",title(m_session->request.mode)},{"mode",int(m_session->request.mode)},
-        {"key",key},{"oldValue",key.isEmpty()?QString():first(config,key.toUtf8().constData())},
+        {"key",key},{"oldValue",oldValue},
         {"material",m_session->materialName},
         {"canRefine",m_session->canRefine},
-        {"appliesToMaterial",!key.isEmpty()},{"slot",0},
+        {"appliesToMaterial",!key.isEmpty()},{"slot",qulonglong(slot)},
         {"unit",m_session->request.mode==libslicer::CalibMode::Calib_Input_shaping_freq?QStringLiteral("Hz"):
             key=="nozzle_temperature"?QStringLiteral("℃"):key=="filament_max_volumetric_speed"?QStringLiteral("mm³/s"):
             key=="filament_retraction_length"?QStringLiteral("mm"):
@@ -436,6 +497,7 @@ QVariantMap CalibrationBridge::resultContext() const {
 bool CalibrationBridge::acceptResult(const QVariantMap& observation) {
     if (!m_session || m_running || m_closing || !configurationValid() || TaskStateNotifier::instance()->isBusy() ||
         !previewActive() || m_selectedPlate<0 || m_selectedPlate>=int(m_session->plates.size()) || !m_session->plates[m_selectedPlate].output) return false;
+    const auto session = m_session;
     m_error.clear();
     const auto fail=[this](const QString& error){m_error=error;emit changed();return false;};
     if (!observation.value("observed").toBool()) return fail(QStringLiteral("请先检查试打印实物。"));
@@ -443,7 +505,21 @@ bool CalibrationBridge::acceptResult(const QVariantMap& observation) {
     if (!active || active->revision!=m_session->profile.revision) { invalidate(); return fail(QStringLiteral("材料或打印配置已经改变，请重新校准。")); }
     const auto key=resultKey(m_session->request.mode);
     const auto input=observation.value("value").toString().trimmed();
-    if (input.isEmpty()) return fail(QStringLiteral("请填写观察结果。"));
+    const bool flow = m_session->request.mode == libslicer::CalibMode::Calib_Flow_Rate;
+    libslicer::CalibrationFlowResult flowResult;
+    const libslicer::FlowCalibrationSample* flowSample = nullptr;
+    int sampleIndex = -1;
+    if (flow) {
+        bool indexOk = false, plateOk = false;
+        sampleIndex = observation.value("objectIndex").toInt(&indexOk);
+        const int plateIndex = observation.value("plateIndex").toInt(&plateOk);
+        if (observation.value("taskId").toString() != m_session->id || !indexOk || !plateOk ||
+            plateIndex != m_selectedPlate || sampleIndex < 0)
+            return fail(QStringLiteral("请选择当前打印盘的校准样块。"));
+        flowResult = m_session->task->flow_result(std::size_t(plateIndex), std::size_t(sampleIndex));
+        if (!flowResult) return fail(diagnostics(flowResult.diagnostics));
+        flowSample = &*m_session->task->plates()[plateIndex].objects[sampleIndex].flow_sample;
+    } else if (input.isEmpty()) return fail(QStringLiteral("请填写观察结果。"));
     if (m_session->request.mode==libslicer::CalibMode::Calib_Input_shaping_freq ||
         m_session->request.mode==libslicer::CalibMode::Calib_Input_shaping_damp) {
         const double maximum=m_session->request.mode==libslicer::CalibMode::Calib_Input_shaping_freq?500:1;
@@ -452,8 +528,8 @@ bool CalibrationBridge::acceptResult(const QVariantMap& observation) {
             if(!ok || !std::isfinite(n) || n<0 || n>maximum) return fail(QStringLiteral("请填写有效的 X、Y 轴结果。"));
         }
     }
-    std::vector<std::pair<std::string,std::string>> patch;
-    if (!key.isEmpty()) {
+    std::vector<std::pair<std::string,std::string>> patch = flowResult.config_patch;
+    if (!key.isEmpty() && !flow) {
         bool ok=false; const double number=input.toDouble(&ok);
         if (!ok || !std::isfinite(number) || number<0 ||
             ((key=="filament_flow_ratio" || key=="filament_max_volumetric_speed") && number<=0) ||
@@ -476,27 +552,52 @@ bool CalibrationBridge::acceptResult(const QVariantMap& observation) {
     const auto directory=QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)+"/calibration";
     if (!QDir().mkpath(directory)) return fail(QStringLiteral("无法创建校准记录目录。"));
     const auto path=directory+"/"+m_session->id+".json";
-    QJsonObject record{{"version",1},{"task",m_session->id},{"mode",int(m_session->request.mode)},
+    const auto slot = flow ? m_session->request.flow_filament_slot : 0;
+    QJsonObject record{{"version",2},{"task",m_session->id},{"mode",int(m_session->request.mode)},
         {"plate",m_selectedPlate},{"parameters",QJsonObject::fromVariantMap(m_parameters)},
         {"observation",QJsonObject::fromVariantMap(observation)}, {"materialKey",key},
         {"machine",QString::fromStdString(active->selection.machine_model_id)},
-        {"materialPreset",active->selection.filament_preset_ids.empty()?QString():QString::fromStdString(active->selection.filament_preset_ids.front())},
+        {"materialSlot",qint64(slot)}, {"configurationRevision",qint64(active->revision)},
+        {"materialPreset",slot >= active->selection.filament_preset_ids.size()?QString():QString::fromStdString(active->selection.filament_preset_ids[slot])},
         {"at",QDateTime::currentDateTimeUtc().toString(Qt::ISODate)}, {"applied",false}};
+    if (flowSample) {
+        record.insert("sampleIndex", sampleIndex); record.insert("sampleLabel", QString::fromStdString(flowSample->label));
+        record.insert("baselineFlowRatio", flowSample->baseline_flow_ratio); record.insert("calibratedFlowRatio", flowSample->calibrated_flow_ratio);
+        record.insert("logicalExtruder", qint64(flowResult.logical_extruder_index));
+        record.insert("physicalTool", qint64(flowResult.physical_tool_index)); record.insert("nozzleDiameterMm", flowResult.nozzle_diameter_mm);
+    }
     const auto write=[&](){QSaveFile f(path);f.setDirectWriteFallback(false);if(!f.open(QIODevice::WriteOnly))return false;const auto data=QJsonDocument(record).toJson();return f.write(data)==data.size() && f.commit();};
     if(!write()) return fail(QStringLiteral("校准观察记录保存失败，未修改配置。"));
+    m_recordPath=path;
     if (!patch.empty()) {
-        const auto result=GPlatform::SlicingBackend::instance().applyConfigPatch(patch);
+        m_session->canContinue = false;
+        const auto result=GPlatform::SlicingBackend::instance().applyConfigPatchIfRevision(m_session->profile.revision,patch);
         if (!result) {
-            QStringList errors;for(const auto& d:result.diagnostics)errors<<QString::fromStdString(d.message);
+            if (std::any_of(result.settings.diagnostics.begin(), result.settings.diagnostics.end(),
+                [](const auto& d) { return d.key == "revision"; })) invalidate();
+            QStringList errors;for(const auto& d:result.settings.diagnostics)errors<<QString::fromStdString(d.message);
             return fail(errors.isEmpty()?QStringLiteral("校准值未通过配置校验。"):errors.join('\n'));
         }
-        record.insert("applied",true);
-        const bool saved=write();
-        SliceSettingsBridge::instance()->refreshActiveConfig();
+        session->appliedRevision = result.appliedRevision;
         invalidate();
-        if(!saved)m_error=QStringLiteral("当前配置已更新，但记录状态更新失败；观察记录仍保留，预设尚未保存。");
+        record.insert("applied",true);
+        record.insert("appliedRevision",qint64(result.appliedRevision));
+        const bool saved=write();
+        const bool refreshed=SliceSettingsBridge::instance()->refreshActiveConfig();
+        if (refreshed && m_session == session && !m_closing && session->canRefine && !TaskStateNotifier::instance()->isBusy() &&
+            GPlatform::SlicingBackend::instance().configurationChangesAllowed()) {
+            const auto current=GPlatform::SlicingBackend::instance().activeProfileSnapshot();
+            session->canContinue = current && current->revision == result.appliedRevision;
+        }
+        if (m_session == session && !m_closing) {
+            if(!refreshed)m_error=QStringLiteral("当前配置已更新，但界面刷新失败；请重新载入配置。预设尚未保存。");
+            if(!saved)m_error=QStringLiteral("当前配置已更新，但记录状态更新失败；观察记录仍保留，预设尚未保存。");
+        }
     }
-    m_recordPath=path;
-    emit changed(); emit resultAccepted(!patch.empty(),path);
+    if (m_session == session && !m_closing) {
+        m_recordPath=path;
+        emit changed();
+        if (m_session == session && !m_closing) emit resultAccepted(!patch.empty(),path);
+    }
     return true;
 }
