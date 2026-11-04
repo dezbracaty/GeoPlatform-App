@@ -74,6 +74,7 @@ Item {
 
                                 Button {
                                     id: selectSlotButton
+                                    objectName: "model.color.paint.slot." + (slotChip.index + 1)
                                     anchors.fill: parent
                                     padding: 4
                                     highlighted: slotChip.selected
@@ -227,6 +228,7 @@ Item {
                     font: Typography.caption
                 }
                 Slider {
+                    objectName: "model.color.paint.brushSize"
                     Layout.fillWidth: true
                     from: 0.5
                     to: 100
@@ -242,6 +244,7 @@ Item {
                 visible: root.currentTool === "fill"
 
                 CheckBox {
+                    objectName: "model.color.paint.edgeDetection"
                     text: qsTr("Edge detection")
                     checked: ModelColorPaintBridge.edgeDetection
                     onToggled: ModelColorPaintBridge.edgeDetection = checked
@@ -255,6 +258,7 @@ Item {
                     font: Typography.caption
                 }
                 Slider {
+                    objectName: "model.color.paint.fillAngle"
                     Layout.fillWidth: true
                     visible: ModelColorPaintBridge.edgeDetection
                     from: 0
@@ -298,6 +302,7 @@ Item {
                     font: Typography.caption
                 }
                 Slider {
+                    objectName: "model.color.paint.gapArea"
                     Layout.fillWidth: true
                     from: 0
                     to: 5
@@ -306,6 +311,7 @@ Item {
                     onMoved: ModelColorPaintBridge.gapArea = value
                 }
                 Label {
+                    objectName: "model.color.paint.gapStatus"
                     Layout.fillWidth: true
                     text: ModelColorPaintBridge.gapPreviewPending
                           ? qsTr("Finding small color regions…")
@@ -319,6 +325,7 @@ Item {
                     wrapMode: Text.WordWrap
                 }
                 Button {
+                    objectName: "model.color.paint.gapApply"
                     text: qsTr("Perform gap fill")
                     highlighted: true
                     enabled: !ModelColorPaintBridge.gapPreviewPending
@@ -335,11 +342,13 @@ Item {
                 spacing: 14
 
                 CheckBox {
+                    objectName: "model.color.paint.verticalOnly"
                     text: qsTr("Vertical")
                     checked: ModelColorPaintBridge.verticalOnly
                     onToggled: ModelColorPaintBridge.verticalOnly = checked
                 }
                 CheckBox {
+                    objectName: "model.color.paint.horizontalOnly"
                     text: qsTr("Horizontal")
                     checked: ModelColorPaintBridge.horizontalOnly
                     onToggled: ModelColorPaintBridge.horizontalOnly = checked
@@ -439,11 +448,13 @@ Item {
                 spacing: 8
 
                 Button {
+                    objectName: "model.color.paint.erase"
                     text: qsTr("Erase")
                     highlighted: ModelColorPaintBridge.currentColorIndex === 0
                     onClicked: ModelColorPaintBridge.currentColorIndex = 0
                 }
                 Button {
+                    objectName: "model.color.paint.eraseAll"
                     text: qsTr("Erase all painting")
                     onClicked: ModelColorPaintBridge.clearPainting()
                 }
