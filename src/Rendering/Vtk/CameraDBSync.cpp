@@ -202,7 +202,8 @@ void CameraDBSync::syncProjectionParameters() {
             camera->SetViewAngle(state.fieldOfView);
         } else {
             camera->SetParallelProjection(1);
-            camera->SetParallelScale(state.orthographicSize);
+            // CameraDB stores the full vertical span; VTK expects its half.
+            camera->SetParallelScale(state.orthographicSize * 0.5);
         }
     });
 }
@@ -279,7 +280,7 @@ void CameraDBSync::syncAllCameraProperties() {
             camera->SetViewAngle(fieldOfView);
         } else {
             camera->SetParallelProjection(1);
-            camera->SetParallelScale(orthographicSize);
+            camera->SetParallelScale(orthographicSize * 0.5);
         }
 
         camera->SetClippingRange(nearClip, farClip);
