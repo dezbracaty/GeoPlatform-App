@@ -48,46 +48,6 @@ ToolbarSurface {
                         }
                     },
                     {
-                        targetName: "print.create.cube",
-                        icon: FluentIcons.graph_CubeShape,
-                        text: qsTr("Create Cube"),
-                        tooltip: qsTr("Create a cube model"),
-                        enabled: true,
-                        action: function() {
-                            ActionManager.triggerAction("geometry.create.cube", { size: 20 });
-                        }
-                    },
-                    {
-                        targetName: "print.create.sphere",
-                        icon: FluentIcons.graph_CircleShapeSolid,
-                        text: qsTr("Create Sphere"),
-                        tooltip: qsTr("Create a sphere model"),
-                        enabled: true,
-                        action: function() {
-                            ActionManager.triggerAction("geometry.create.sphere", { radius: 10 });
-                        }
-                    },
-                    {
-                        targetName: "print.create.cylinder",
-                        icon: FluentIcons.graph_CubeShape,
-                        text: qsTr("Create Cylinder"),
-                        tooltip: qsTr("Create a cylinder model"),
-                        enabled: true,
-                        action: function() {
-                            ActionManager.triggerAction("geometry.create.cylinder", { radius: 10, height: 20 });
-                        }
-                    },
-                    {
-                        targetName: "print.create.cone",
-                        icon: FluentIcons.graph_CubeShape,
-                        text: qsTr("Create Cone"),
-                        tooltip: qsTr("Create a cone model"),
-                        enabled: true,
-                        action: function() {
-                            ActionManager.triggerAction("geometry.create.cone", { radius: 10, height: 20 });
-                        }
-                    },
-                    {
                         icon: FluentIcons.graph_Export,
                         text: qsTr("Export STL"),
                         tooltip: qsTr("Export selected model as STL"),

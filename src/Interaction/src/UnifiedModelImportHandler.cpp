@@ -29,6 +29,14 @@ REGISTER_INTERACTION_ACTION(
 #include "SliceSettingsBridge.hpp"
 
 #include <QFileInfo>
+#include <QGuiApplication>
+#include <QLocale>
+#include <QQmlComponent>
+#include <QQmlContext>
+#include <QQmlEngine>
+#include <QQuickItem>
+#include <QQuickWindow>
+#include <cmath>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QMetaObject>
@@ -39,14 +47,90 @@ REGISTER_INTERACTION_ACTION(
 #include <QtConcurrent>
 
 #include <vtkCellArray.h>
+#include <vtkCleanPolyData.h>
+#include <vtkFeatureEdges.h>
+#include <vtkMassProperties.h>
+#include <vtkNew.h>
 #include <vtkPoints.h>
 #include <vtkPolyData.h>
+#include <vtkPolyDataNormals.h>
 #include <vtkSmartPointer.h>
 
 #include <unordered_map>
 #include <numeric>
 
 namespace {
+
+bool finite(const Vector3& point) {
+    return std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z);
+}
+
+float suggestedUnitScale(const ModelLoaderUtil::LoadResult& mesh) {
+    if (!mesh.success || mesh.triangles.empty()) return 1.0f;
+    vtkNew<vtkPoints> points;
+    points->SetDataTypeToDouble();
+    vtkNew<vtkCellArray> cells;
+    for (const auto& triangle : mesh.triangles) {
+        vtkIdType ids[3];
+        const Vector3 vertices[]{triangle.vertex1, triangle.vertex2, triangle.vertex3};
+        for (int i = 0; i < 3; ++i) {
+            if (!finite(vertices[i])) return 1.0f;
+            ids[i] = points->InsertNextPoint(vertices[i].x, vertices[i].y, vertices[i].z);
+        }
+        cells->InsertNextCell(3, ids);
+    }
+    vtkNew<vtkPolyData> data;
+    data->SetPoints(points);
+    data->SetPolys(cells);
+    vtkNew<vtkCleanPolyData> clean;
+    clean->SetInputData(data);
+    // Open/non-manifold surfaces cannot provide a reliable solid volume.
+    vtkNew<vtkFeatureEdges> edges;
+    edges->SetInputConnection(clean->GetOutputPort());
+    edges->BoundaryEdgesOn();
+    edges->NonManifoldEdgesOn();
+    edges->FeatureEdgesOff();
+    edges->ManifoldEdgesOff();
+    edges->Update();
+    if (edges->GetOutput()->GetNumberOfCells() != 0) return 1.0f;
+
+    vtkNew<vtkPolyDataNormals> normals;
+    normals->SetInputConnection(clean->GetOutputPort());
+    normals->ConsistencyOn();
+    normals->AutoOrientNormalsOn();
+    normals->SplittingOff();
+    vtkNew<vtkMassProperties> mass;
+    mass->SetInputConnection(normals->GetOutputPort());
+    mass->Update();
+    // Orca stores mesh volume in float; use the same precision at thresholds.
+    const float volume = static_cast<float>(mass->GetVolume());
+    if (!std::isfinite(volume) || volume <= 0) return 1.0f;
+    // Same meter-first thresholds as Orca Model::looks_like_saved_in_meters()
+    // and Model::looks_like_imperial_units(). These are hints, never auto-fixes.
+    if (volume < 0.008) return 1000.0f;
+    if (volume < 8.0) return 25.4f;
+    return 1.0f;
+}
+
+bool applyImportUnitScale(ModelLoaderUtil::LoadResult& mesh, float factor) {
+    if (!std::isfinite(factor) || factor <= 0 ||
+        !finite(mesh.boundingBoxMin * factor) || !finite(mesh.boundingBoxMax * factor) ||
+        !finite(mesh.center * factor)) return false;
+    // Preflight all vertices before mutation, including malformed loader data.
+    for (const auto& triangle : mesh.triangles) {
+        if (!finite(triangle.vertex1 * factor) || !finite(triangle.vertex2 * factor) ||
+            !finite(triangle.vertex3 * factor)) return false;
+    }
+    for (auto& triangle : mesh.triangles) {
+        triangle.vertex1 = triangle.vertex1 * factor;
+        triangle.vertex2 = triangle.vertex2 * factor;
+        triangle.vertex3 = triangle.vertex3 * factor;
+    }
+    mesh.boundingBoxMin = mesh.boundingBoxMin * factor;
+    mesh.boundingBoxMax = mesh.boundingBoxMax * factor;
+    mesh.center = mesh.center * factor;
+    return true;
+}
 
 vtkSmartPointer<vtkPolyData> polyDataFromProjectPart(
     const libslicer::ProjectImportPart& part) {
@@ -139,6 +223,7 @@ UnifiedModelImportHandler::UnifiedModelImportHandler(QObject* parent)
 }
 
 UnifiedModelImportHandler::~UnifiedModelImportHandler() {
+    closeUnitDialog();
     if (m_cancelRequested) {
         m_cancelRequested->store(true, std::memory_order_release);
     }
@@ -155,6 +240,9 @@ bool UnifiedModelImportHandler::onInitialize() {
         }
         return false;
     }
+    closeUnitDialog();
+    m_unitResolved = false;
+    m_suggestedUnitScale = 1.0f;
     m_cancelRequested = std::make_shared<std::atomic_bool>(false);
     m_filePath.clear();
     m_createdObjectId.clear();
@@ -225,11 +313,19 @@ bool UnifiedModelImportHandler::onInitialize() {
         return false;
     }
 
-    auto scale = getParam("scale");
-    if (scale.isValid()) {
-        m_scale = scale.toFloat();
-        if (m_scale <= 0) m_scale = 1.0f;
+    bool scaleValid = false;
+    m_scale = getParam("scale", 1.0f).toFloat(&scaleValid);
+    const QString unit = getParam("unit", QStringLiteral("auto")).toString();
+    const float unitScale = unit == "m" ? 1000.0f : unit == "in" ? 25.4f : 1.0f;
+    if (!scaleValid || !std::isfinite(m_scale) || m_scale <= 0 ||
+        (unit != "auto" && unit != "mm" && unit != "m" && unit != "in") ||
+        !std::isfinite(m_scale * unitScale)) {
+        m_context->setError(ActionErrorCode::InvalidParams,
+            tr("Import scale must be finite and positive; unit must be auto, mm, m or in."));
+        return false;
     }
+    m_scale *= unitScale;
+    m_unitResolved = unit != "auto";
 
     auto name = getParam("name");
     if (name.isValid()) {
@@ -250,6 +346,7 @@ const QHash<QString, QVariantMap>& UnifiedModelImportHandler::aiDescriptorTable(
         {"filePath", "string", true},
         {"printBedId", "number", false},
         {"scale", "number", false},
+        {"unit", "string", false},
         {"name", "string", false},
         {"x", "number", false},
         {"y", "number", false},
@@ -262,7 +359,7 @@ const QHash<QString, QVariantMap>& UnifiedModelImportHandler::aiDescriptorTable(
         QVariantMap importModel = makeDescriptor(
             "import_model",
             "Import 3D Model",
-            "Import an STL model file.",
+            "Import an STL model file. Optional unit: auto (ask when suspicious), mm, m or in; scale is an additional multiplier.",
             "write",
             modelSchema,
             {"import", "file", "scene"});
@@ -271,7 +368,7 @@ const QHash<QString, QVariantMap>& UnifiedModelImportHandler::aiDescriptorTable(
         QVariantMap importStl = makeDescriptor(
             "import_stl",
             "Import STL",
-            "Import an STL file.",
+            "Import an STL file. Optional unit: auto, mm, m or in; scale is an additional multiplier.",
             "write",
             modelSchema,
             {"import", "file", "scene"});
@@ -280,12 +377,13 @@ const QHash<QString, QVariantMap>& UnifiedModelImportHandler::aiDescriptorTable(
         QVariantMap libraryImport = makeDescriptor(
             "model.library.import",
             "Import Local Library Model",
-            "Import one STL model selected from the local model library by opaque libraryItemId.",
+            "Import one STL model selected from the local model library by opaque libraryItemId. Optional unit: auto, mm, m or in.",
             "write",
             makeInputSchema({
                 {"libraryItemId", "string", true},
                 {"printBedId", "number", false},
-                {"scale", "number", false}
+                {"scale", "number", false},
+                {"unit", "string", false}
             }),
             {"model-library", "local", "import"});
         libraryImport.insert("async", true);
@@ -527,6 +625,18 @@ void UnifiedModelImportHandler::onBackgroundCompleted() {
         (m_isGlbImport
              ? !m_glbLoadResult.printableTriangles.empty()
              : !m_loadResult.triangles.empty())) {
+        if (!m_isGlbImport && !m_unitResolved) {
+            m_suggestedUnitScale = suggestedUnitScale(m_loadResult);
+            if (m_suggestedUnitScale > 1.0f) {
+                if (!showUnitDialog()) {
+                    m_context->setError(ActionErrorCode::ContractValidation, m_loadResult.errorMessage);
+                    m_context->setResult(QVariantMap{{"success", false},
+                        {"needsUnitConfirmation", true}, {"suggestedScale", m_suggestedUnitScale}});
+                    emit importCompleted({}, false, m_loadResult.errorMessage);
+                }
+                return;
+            }
+        }
         // 更新进度：正在创建对象
         updateTaskProgress(0.95f);
         updateTaskDescription(QString("正在创建模型对象..."));
@@ -800,7 +910,97 @@ void UnifiedModelImportHandler::createModelFromResult() {
         CameraNavigationController::fitScene(camera);
 }
 
+bool UnifiedModelImportHandler::showUnitDialog() {
+    // Use the existing window's engine/theme; the handler owns only this dialog.
+    if (!qobject_cast<QGuiApplication*>(QCoreApplication::instance())) {
+        m_loadResult.errorMessage = tr("Model units need confirmation. Import again with unit set to mm, m or in.");
+        return false;
+    }
+    QQuickWindow* window = qobject_cast<QQuickWindow*>(QGuiApplication::focusWindow());
+    if (!window || !window->isVisible() || !qmlEngine(window)) {
+        window = nullptr;
+        for (auto* candidate : QGuiApplication::allWindows()) {
+            auto* quick = qobject_cast<QQuickWindow*>(candidate);
+            if (quick && quick->isVisible() && qmlEngine(quick)) { window = quick; break; }
+        }
+    }
+    auto bed = ModelCreationUtil::resolvePrintBed(getParam("printBedId"));
+    if (!window || !bed) {
+        m_loadResult.errorMessage = tr("Model units need confirmation. Import again with unit set to mm, m or in.");
+        return false;
+    }
+    m_unitPrintBedId = bed->getDBInstanceID();
+    const auto size = m_loadResult.boundingBoxMax - m_loadResult.boundingBoxMin;
+    const auto dimensions = [this](const Vector3& value) {
+        const QLocale locale;
+        return tr("%1 × %2 × %3 mm").arg(locale.toString(value.x, 'g', 6),
+            locale.toString(value.y, 'g', 6), locale.toString(value.z, 'g', 6));
+    };
+    QQmlComponent component(qmlEngine(window),
+        QUrl(QStringLiteral("qrc:/qt/qml/GPlatform/qml/dialogs/ImportUnitDialog.qml")));
+    auto* dialog = component.createWithInitialProperties({
+        {"hostItem", QVariant::fromValue(window->contentItem())},
+        {"fileName", QFileInfo(m_filePath).fileName()},
+        {"currentSize", dimensions(size)},
+        {"convertedSize", dimensions(size * m_suggestedUnitScale)},
+        {"suspectedUnit", m_suggestedUnitScale == 1000.0f ? tr("meters") : tr("inches")},
+        {"conversionFactor", m_suggestedUnitScale}});
+    if (!dialog) {
+        LOG_WARN("Cannot create import unit dialog: {}", component.errorString().toStdString());
+        m_loadResult.errorMessage = tr("Cannot open the model unit confirmation dialog.");
+        return false;
+    }
+    dialog->setParent(this);
+    QQmlEngine::setObjectOwnership(dialog, QQmlEngine::CppOwnership);
+    m_unitDialog = dialog;
+    connect(dialog, SIGNAL(decision(int)), this, SLOT(resolveUnitChoice(int)));
+    connect(window, &QObject::destroyed, dialog, [this] { resolveUnitChoice(0); });
+    QMetaObject::invokeMethod(dialog, "open");
+    return true;
+}
+
+void UnifiedModelImportHandler::closeUnitDialog() {
+    if (auto* dialog = m_unitDialog.data()) {
+        m_unitDialog.clear();
+        disconnect(dialog, nullptr, this, nullptr);
+        QMetaObject::invokeMethod(dialog, "close");
+        dialog->deleteLater();
+    }
+}
+
+void UnifiedModelImportHandler::resolveUnitChoice(int choice) {
+    if (!m_unitDialog || getState() != State::Active || !m_context) return;
+    closeUnitDialog();
+    m_unitResolved = true;
+    const bool tracked = !m_context->getInvocationId().trimmed().isEmpty();
+    const ScopedTransactionContextMetadata scope(getActionCode(), m_context->getInvocationMetadata(), tracked);
+    if (choice != 1 && choice != 2) {
+        m_cancelRequested->store(true, std::memory_order_release);
+        m_loadResult.errorMessage = tr("Model import cancelled.");
+        m_context->setError(ActionErrorCode::ContractValidation, m_loadResult.errorMessage);
+        auto result = getCompletionResult().toMap();
+        result.insert("cancelled", true);
+        m_context->setResult(result);
+        emit importCompleted({}, false, m_loadResult.errorMessage);
+    } else if (!DocumentManager::instance()->getDB<PrintBedDB>(m_unitPrintBedId)) {
+        m_context->setError(ActionErrorCode::TargetNotFound, tr("The target print bed is no longer available."));
+        emit importCompleted({}, false, m_context->getError());
+    } else if (choice == 2 && !applyImportUnitScale(m_loadResult, m_suggestedUnitScale)) {
+        m_context->setError(ActionErrorCode::InvalidParams, tr("Converted model coordinates are not finite."));
+        emit importCompleted({}, false, m_context->getError());
+    } else {
+        // Retain the intended bed while the confirmation is displayed.
+        m_context->setParam("printBedId", QVariant::fromValue(m_unitPrintBedId.getValue()));
+        onBackgroundCompleted();
+        m_context->setResult(getCompletionResult());
+    }
+    completeInvocation(m_context);
+    m_loadResult.triangles.clear();
+    setActive(false);
+}
+
 void UnifiedModelImportHandler::onCleanup() {
+    closeUnitDialog();
     // 清理资源
     if (m_cancelRequested) {
         m_cancelRequested->store(true, std::memory_order_release);
