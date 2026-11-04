@@ -22,6 +22,8 @@ description: 配置、编译、运行或排查 GPlatform 构建。先核对现�
 
 ## 按模式构建
 
+**严格要求：所有 build 必须使用项目已维护的正式 CMake presets。** 不得以临时 CMake 工程、手写编译/链接命令、手工复制 DLL、借用旧交付库等方式替代标准构建、部署或当前版本的验收。正式 preset 支持的配置参数和已注册测试目标可以按任务使用；诊断、清理后也要重新执行对应的标准 configure/build 流程。源码修改后必须重建实际被测程序，独立库结果不得冒充 App 验收。
+
 1. macOS 选择 `arm_release/arm_debug`、`x86_release/x86_debug` 或 `universal_release/universal_debug`；Windows/Linux 选择 `release/debug`，以当前 presets 的条件为准。
 2. 在所选源码根目录执行 `cmake --preset <preset>`，再执行 `cmake --build --preset <preset>`。并发数按当前资源和用户要求选择，不固定在技能中。
 3. 完整宿主标准目标是 `gplatform_build`，包含应用与 SDK 导出所需产物；独立 App 标准目标是 `GPlatform`。
