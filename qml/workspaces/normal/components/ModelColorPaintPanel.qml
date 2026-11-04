@@ -143,6 +143,7 @@ Item {
                             font: Typography.caption
                         }
                         ComboBox {
+                            objectName: "model.color.paint.defaultFilament"
                             Layout.fillWidth: true
                             model: ModelColorPaintBridge.filamentSlots.map(
                                        function(slot) {
@@ -276,6 +277,7 @@ Item {
                     font: Typography.caption
                 }
                 Slider {
+                    objectName: "model.color.paint.heightRange"
                     Layout.fillWidth: true
                     from: 0.1
                     to: 8
