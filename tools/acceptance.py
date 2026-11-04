@@ -225,7 +225,12 @@ def run_case(root, name, application, output, exports, session, journal_loader):
         result['journalAcceptance'] = execution.get('acceptance')
         result['completedEntries'] = execution.get('completedEntries', 0)
         require(execution.get('outputPath') and Path(execution['outputPath']).resolve() == output, 'Journal output directory differs from requested run')
-        require(execution.get('success'), execution.get('error') or 'Journal execution or cleanup failed')
+        failed_step = next((step for step in execution.get('results', []) if step.get('status') == 'failed'), None)
+        reason = (execution.get('error') or (failed_step or {}).get('message') or
+                  '; '.join(execution.get('cleanupErrors', [])) or 'Journal execution or cleanup failed')
+        if failed_step:
+            result['failedStep'] = {key: failed_step.get(key) for key in ['index', 'kind', 'message']}
+        require(execution.get('success'), reason)
         require(execution.get('completedEntries') == len(case['document']['entries']), 'Journal did not complete every step')
         require(execution.get('journalSha256') == case['hashes']['journal'], 'Journal changed after preflight')
         require(load_case(root, name, journal_loader)['hashes'] == case['hashes'], 'Assets or expectations changed during execution')
