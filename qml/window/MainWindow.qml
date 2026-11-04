@@ -15,6 +15,7 @@ FramelessWindow {
             notificationRestoreVisibility = visibility
     }
     property alias infoBarManager: infobar_manager
+    readonly property var journalService: AppInfo.journalService
     width: 1382
     // macOS adds a 60 px native title bar, so the complete initial window is 1382x954.
     height: 894
@@ -83,6 +84,22 @@ FramelessWindow {
                     window.topmost = !window.topmost
                 }
             }
+            IconLabel {
+                objectName: "journal.status"
+                visible: !!window.journalService
+                         && (window.journalService.recording || window.journalService.replaying)
+                Layout.alignment: Qt.AlignVCenter
+                Layout.leftMargin: 12
+                Layout.rightMargin: 12
+                spacing: 6
+                font: Typography.caption
+                text: window.journalService && window.journalService.recording
+                      ? qsTr("Journal recording") : qsTr("Journal replaying — please do not interact")
+                icon.name: window.journalService && window.journalService.recording
+                           ? FluentIcons.graph_Record : FluentIcons.graph_Play
+                icon.color: window.journalService && window.journalService.recording
+                            ? Theme.res.systemFillColorCritical : Theme.accentColor.defaultBrushFor()
+            }
         }
     }
     
@@ -124,6 +141,18 @@ FramelessWindow {
         id: infobar_manager
         target: window.contentItem
         messageMaximumWidth: 380
+    }
+
+    Connections {
+        target: window.journalService
+        function onRecordingChanged() {
+            infobar_manager.showInfo(window.journalService.recording
+                ? qsTr("Journal recording started") : qsTr("Journal recording stopped"), 3000)
+        }
+        function onReplayingChanged() {
+            infobar_manager.showInfo(window.journalService.replaying
+                ? qsTr("Journal replay started") : qsTr("Journal replay ended"), 3000)
+        }
     }
 
     NotificationOverlay {

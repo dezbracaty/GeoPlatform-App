@@ -3887,3 +3887,21 @@ msgstr "目标打印平台已不可用。"
 
 msgid "Converted model coordinates are not finite."
 msgstr "转换后的模型坐标不是有限数值。"
+
+msgid "Journal recording"
+msgstr "Journal 录制中"
+
+msgid "Journal replaying — please do not interact"
+msgstr "Journal 回放中，请勿手动操作"
+
+msgid "Journal recording started"
+msgstr "Journal 已开始录制"
+
+msgid "Journal recording stopped"
+msgstr "Journal 已停止录制"
+
+msgid "Journal replay started"
+msgstr "Journal 已开始回放"
+
+msgid "Journal replay ended"
+msgstr "Journal 回放已结束"

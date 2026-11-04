@@ -37,14 +37,16 @@ for index in range(count):
 translated = set()
 for name in ('qml/startup/StartupWindow.qml', 'src/Application/src/StartupCoordinator.cpp',
              'src/Application/src/main.cpp', 'qml/components/UserGuide.qml',
-             'qml/dialogs/ImportUnitDialog.qml',
+             'qml/dialogs/ImportUnitDialog.qml', 'qml/window/MainWindow.qml',
              'src/Interaction/src/UnifiedModelImportHandler.cpp'):
     source = (root / name).read_text(encoding='utf-8')
     for match in re.finditer(r'\b(?:qsTr|tr)\(\s*' + literal, source):
         message = ast.literal_eval(match.group(1))
         assert not chinese.search(message), f'Non-English translation source: {message}'
+        if message == "GPlatform":  # Product branding remains unchanged in Chinese.
+            continue
         value = catalog.get(message, message)
         assert value != message and chinese.search(value), f'Missing Chinese translation: {message}'
         assert set(re.findall(r'%\d+', value)) == set(re.findall(r'%\d+', message)), message
         translated.add(message)
-print(f'PASS: {checked} English qsTr call sites; {len(translated)} translated startup, guide and import dialog messages')
+print(f'PASS: {checked} English qsTr call sites; {len(translated)} translated startup, guide, import dialog and main window messages')
