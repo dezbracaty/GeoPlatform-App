@@ -5,7 +5,7 @@ description: 编写或执行 GPlatform 的真实应用 Journal 验收。先明�
 
 # Journal 应用验收
 
-本技能随 App 保存，正式 Python 工具当前位于完整宿主的 `ThirdParty/JournalSystem/tools/`。先确认实际工具、场景、被测可执行文件和验证资产；独立 App 缺少工具时说明依赖，不能改用自造私有 RPC 冒充同一验收。
+本技能随 App 保存，正式 Python 工具当前位于完整宿主的 `ThirdParty/JournalSystem/tools/`。模型与场景由 `APP_ROOT/tests/TestAssets` 固定子模块维护，入口为 `scenarios/<id>/events/Journal.json`；通过 `tools/run_acceptance.py` 统一执行及业务验收，规则见 `docs/acceptance.md`。先确认实际工具、场景、被测可执行文件和验证资产；独立 App 通过 `--journal-tools` 提供正式工具，不能改用自造私有 RPC 冒充同一验收。
 
 ## 明确验收入口
 

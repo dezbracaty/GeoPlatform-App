@@ -68,6 +68,28 @@ class SubmoduleTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'exactly'):
             common.init_source_submodules(self.source, consumer=True)
         self.assertFalse((self.source / self.library / '.git').exists())
+
+    def test_optional_test_assets_skip_product_checkout_and_keep_explicit_pin(self):
+        path = common.TEST_ASSETS_PATH
+        self.declare('assets', path, self.remote.as_uri())
+        self.git(self.source, 'config', '--file', '.gitmodules', 'submodule.assets.update', 'none')
+        self.git(self.source, 'update-index', '--add', '--cacheinfo', '160000', self.pinned, path)
+        self.commit()
+        common.init_source_submodules(self.source, consumer=True)
+        self.assertFalse((self.source / path / '.git').exists())
+        self.git(self.source, '-c', 'protocol.file.allow=always', 'submodule', 'update', '--init', '--checkout', '--', path)
+        self.assertEqual(self.git(self.source / path, 'rev-parse', 'HEAD'), self.pinned)
+        common.init_source_submodules(self.source, consumer=True)
+        self.assertFalse((self.source / path / '.git').exists())
+
+    def test_optional_test_assets_cannot_be_required_product_dependency(self):
+        self.declare('assets', common.TEST_ASSETS_PATH, self.remote.as_uri())
+        self.git(self.source, 'config', '--file', '.gitmodules', 'submodule.assets.update', 'checkout')
+        self.git(self.source, 'update-index', '--add', '--cacheinfo', '160000', self.pinned, common.TEST_ASSETS_PATH)
+        self.commit()
+        with self.assertRaisesRegex(RuntimeError, 'update=none'):
+            common.init_source_submodules(self.source, consumer=True)
+        self.assertFalse((self.source / self.library / '.git').exists())
         self.assertFalse((self.source / self.sdk / '.git').exists())
 
     def test_stale_declaration_is_skipped_and_real_dependency_uses_gitlink(self):

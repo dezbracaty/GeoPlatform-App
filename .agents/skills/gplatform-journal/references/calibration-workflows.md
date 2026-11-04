@@ -4,7 +4,7 @@
 
 ## 复用已有场景
 
-场景入口均为 `Core/tests/journals/<目录>/events/Journal.json`，同目录的 `metadata.json` 说明前置配置、输入和独立预期。以实际代码核对 metadata，勿把历史执行结果当作本次通过依据。
+场景入口均为 `App/tests/TestAssets/scenarios/<目录>/events/Journal.json`，场景目录的 `metadata.json` 说明前置配置、输入和独立预期。以实际代码核对 metadata，勿把历史执行结果当作本次通过依据。
 
 | 校准分支 | 场景目录 |
 | --- | --- |

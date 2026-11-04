@@ -13,6 +13,7 @@ import subprocess
 import time
 
 SDK_PATH = "ThirdParty/libs/GPlatformSDK"
+TEST_ASSETS_PATH = "tests/TestAssets"
 
 def run(args, *, cwd=None, env=None, data=None, capture=False, attempts=1):
     if attempts < 1:
@@ -126,23 +127,35 @@ def _init_pinned_submodules(source, env, *, skip=None, require_sdk=False):
         metadata, _, path = entry.partition(b"\t")
         if metadata.startswith(b"160000 commit "):
             links[path.decode()] = metadata.split()[2].decode()
-    if require_sdk and set(links) != {SDK_PATH, "ThirdParty/OrcaSlicer"}:
-        raise RuntimeError("App must own exactly its SDK and Orca source gitlinks")
+    if require_sdk and set(links) - {TEST_ASSETS_PATH} != {SDK_PATH, "ThirdParty/OrcaSlicer"}:
+        raise RuntimeError("App must own exactly SDK and Orca product gitlinks, with optional TestAssets")
     if not links:
         return
     if not (Path(source) / ".gitmodules").is_file():
         raise RuntimeError("Fixed source gitlinks have no .gitmodules declarations")
     output = git(source, "config", "-z", "--file", ".gitmodules", "--get-regexp", r"^submodule\..*\.path$")
-    paths = [entry.split(b"\n", 1)[1].decode() for entry in output.split(b"\0") if entry]
+    declarations = [entry.split(b"\n", 1) for entry in output.split(b"\0") if entry]
+    paths = [path.decode() for key, path in declarations]
     if len(paths) != len(set(paths)):
         raise RuntimeError("Duplicate submodule path declarations")
     if set(links) - set(paths):
         raise RuntimeError("Fixed source gitlink is missing its .gitmodules declaration")
+    if TEST_ASSETS_PATH in links:
+        key = next(key.decode().rsplit('.', 1)[0] + '.update' for key, path in declarations
+                   if path.decode() == TEST_ASSETS_PATH)
+        if text_git(source, 'config', '--file', '.gitmodules', '--get', key) != 'none':
+            raise RuntimeError('Optional TestAssets must declare update=none')
     for path in paths:
         if path.startswith("-") or Path(path).is_absolute() or ".." in Path(path).parts:
             raise ValueError("Invalid submodule path")
         if path not in links:
             print(f"Skipping stale submodule declaration: {path!r}")
+            continue
+        if path == TEST_ASSETS_PATH:
+            # Product builds do not consume test assets. Preserve cached Git/LFS
+            # objects while preventing an old initialized pin from dirtying CI.
+            git(source, 'submodule', 'deinit', '--force', '--', path, env=env)
+            print('Skipping optional pinned TestAssets; initialize explicitly for acceptance')
             continue
         if path == skip:
             # Producer never downloads SDK inputs; drop an old initialized worktree

@@ -1,8 +1,0 @@
-{
-  "name": "Workspace panels and page navigation",
-  "description": "Replay the real prepare/preview/realistic page flow, compact filament selection, and matching panel folds. Persistent Fit Scene/View Platform buttons and preview parameter entry must be absent. Screenshot files are diagnostic; no trusted pixel baseline is available.",
-  "applicationEnvironment": {
-    "GP_LOG_CONSOLE": "1",
-    "QT_SCALE_FACTOR": "1"
-  }
-}

@@ -1,19 +1,19 @@
 # Journal 协议、执行与证据
 
-下面源码路径相对完整宿主 `HOST_ROOT`。独立 App 的已有场景在 `APP_ROOT/tests/journals`，但不能假定完整 Python 工具也已随 App 交付。
+下面源码路径相对完整宿主 `HOST_ROOT`。共享场景在 `APP_ROOT/tests/TestAssets/scenarios`，但不能假定完整 Python 工具也已随 App 交付。
 
 ## 真实定义与场景
 
 - `ThirdParty/JournalSystem/tools/journal_runner.py`：`load_journal()`、允许的 entry kinds、回放、比较与 `finish_result()`。
 - `ThirdParty/JournalSystem/tools/journal_execution_session.py`：CLI/GUI 共用的启动、握手、环境、结果目录和清理。
 - `ThirdParty/JournalSystem/tools/journalsystem_gui.py`：GUI 使用同一个 session。
-- `Core/tests/journals/README.md`：应用场景约定、受控模型与独立参考。
-- `Core/tests/journals/machine_selector`：标准鼠标/键盘输入及 screenshot.capture 示例。
+- `App/docs/acceptance.md`：应用场景约定、受控模型与独立参考。
+- `App/tests/TestAssets/scenarios/machine_selector`：标准鼠标/键盘输入及 screenshot.capture 示例。
 
 ## 先复用场景、资产和执行能力
 
 从现有场景核对真实输入入口、前置配置、对象生命周期、可观察终态与独立预期。复用操作片段时重新确认 objectName、坐标与时序适用于当前界面，不将旧场景中的 opaque DB ID 或当前输出当成新真值。
-宿主 `Core/tests/journals/assets/basic/manifest.json` 与 `operations.json` 包含受控模型、几何/路径参考及用途；`scripts/generate_basic_test_data.py` 是已有生成/检查入口。先检查是否覆盖当前需求，再补确实缺少的最小资产，不为每个操作复制一个模型目录。共享资产变更需检查依赖它的场景和预期。
+资产子模块 `APP_ROOT/tests/TestAssets/models/basic/manifest.json` 与 `operations.json` 包含受控模型、几何/路径参考及用途；资产仓库 `tools/generate_basic_test_data.py` 是生成/检查入口，宿主保留兼容转发。先检查是否覆盖当前需求，再补确实缺少的最小资产，不为每个操作复制一个模型目录。共享资产变更需检查依赖它的场景和预期。
 `journal_runner.py` 已有 `load_journal()`、比较器、`finish_result()`；`JournalExecutionSession` 负责进程/握手/清理，`session_repository.py` 负责会话目录和文件管理。只增加场景时直接使用这些能力，不再实现手工发送/调度、截图比较或报告汇总。
 测试资产需要来源、单位和独立预期即可，不添加与现有协议平行的业务查询/断言系统。扩展正式观测能力前先判断现有原生检查或断言是否足够；缺少能力时明确缺口，不能用注入状态或绕过生产入口补出“通过”。
 
@@ -42,7 +42,7 @@ Journal 顶层仅 `formatVersion: 2` 与 `entries`；每条仅 `atMs/kind/payloa
 `journal_runner.py --run ... --app ... --output ...` 使用共享 JournalExecutionSession。指定 `--app` 时启动独立实例、选择本地端口，以 replay ID 验证身份和 ready；不要向碰巧监听的另一个程序发送命令。
 `--output` 必须是新目录。保留输入哈希、entry 结果、startup log、`execution_result.json` 与 `verification_report.html`。结果路径通过正式服务与 session 获取，不硬编码开发者日志目录。
 包含 `applicationEnvironment` 的场景需要由 session 启动程序；测试 fixture 环境需与实际设备任务区分。关闭/清理失败也纳入执行结果，不能丢弃诊断后重写为成功。
-`HOST_ROOT/scripts/run_journals.py` 当前运行批量验收的路径有 Windows 设置恢复逻辑，非 Windows 只可列举；macOS/Linux 使用共享正式 runner/session，不能照搬批量入口。
+`APP_ROOT/tools/run_acceptance.py` 在正式 session 之后执行 metadata 声明的业务检查，保存 `case_result.json`；宿主 `scripts/run_journals.py` 只转发。Windows 自动恢复原有 App INI；其他平台用 `--settings-file` 显式提供待恢复的设置文件。GUI 直接回放仍只报告 Journal 原始 acceptance。
 
 ## 断言与结果
 
