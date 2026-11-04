@@ -24,7 +24,7 @@ def print_files(directory):
                   'G1 X.21 Y.21', 'G1 X9.79 E.1', 'G1 Y9.79 E.1', 'G1 X.21 E.1', 'G1 Y.21 E.1']
     raw = ('\n'.join(lines) + '\n').encode()
     config = dict(printer_settings_id='P3 0.4 nozzle', single_extruder_multi_material=0,
-                  filament_map=[1, 2, 3], physical_extruder_map=[1, 2, 3], filament_type=['PLA']*3)
+                  filament_map=[1, 2, 3], physical_extruder_map=[1, 2, 3], filament_type=['PLA']*3, filament_diameter=['1.75']*3)
     (directory / 'job.gcode').write_bytes(raw)
     with zipfile.ZipFile(directory / 'job.gcode.3mf', 'w') as archive:
         archive.writestr('Metadata/plate_1.gcode', raw)
@@ -133,6 +133,23 @@ class AcceptanceCheck(unittest.TestCase):
         session = SessionFixture()
         self.assertEqual(self.run_job(session)['status'], 'blocked')
         self.assertEqual(session.calls, 0)
+
+    def test_unsupported_expectation_is_never_silently_ignored(self):
+        self.metadata['expected']['unimplementedRequirement'] = True
+        self.save_metadata()
+        session = SessionFixture()
+        self.assertEqual(self.run_job(session)['status'], 'blocked')
+        self.assertEqual(session.calls, 0)
+
+    def test_declared_mmu_mode_must_match_serialized_mode(self):
+        self.metadata['expected']['singleExtruderMultiMaterial'] = True
+        self.save_metadata()
+        self.assertEqual(self.run_job(SessionFixture(self.writer))['status'], 'failed')
+
+    def test_declared_filament_diameter_must_match_package(self):
+        self.metadata['expected']['filamentDiameterMm'] = 2.85
+        self.save_metadata()
+        self.assertEqual(self.run_job(SessionFixture(self.writer))['status'], 'failed')
 
     def test_model_hash_mismatch_blocks_before_start(self):
         model = self.assets/'models/cube.stl'

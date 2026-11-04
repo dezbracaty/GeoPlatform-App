@@ -27,6 +27,10 @@ def require(condition, message):
 
 def validate_expectations(expected):
     """Reject invalid declared geometry before starting a costly UI replay."""
+    supported = {'cubeDimensionsMm', 'layerCount', 'layerHeightMm', 'filament', 'physicalToolBands',
+                 'maxExtrusionCrossSectionMm2', 'requireSkirt', 'requirePrimeTower', 'printableBoundsXY',
+                 'printerSettingsId', 'singleExtruderMultiMaterial', 'serializedSettings', 'filamentDiameterMm'}
+    require(not set(expected) - supported, f'Unsupported expectations: {sorted(set(expected) - supported)}')
     def positive(value):
         return type(value) in {int, float} and math.isfinite(value) and value > 0
     dimensions = expected.get('cubeDimensionsMm')
@@ -36,6 +40,9 @@ def validate_expectations(expected):
     require(abs(count * height - dimensions[2]) < 1e-5, 'Expected layer count/height differs from model height')
     require(isinstance(expected.get('filament'), str) and expected['filament'], 'Missing expected filament')
     require(positive(expected.get('maxExtrusionCrossSectionMm2', .64)), 'Invalid extrusion cross-section limit')
+    require(positive(expected.get('filamentDiameterMm', 1.75)), 'Invalid expected filament diameter')
+    for key in ['requireSkirt', 'requirePrimeTower', 'singleExtruderMultiMaterial']:
+        require(key not in expected or type(expected[key]) is bool, f'{key} must be boolean')
     bands = expected.get('physicalToolBands')
     require(isinstance(bands, list) and bands, 'Missing expected tool bands')
     previous = 0
@@ -124,7 +131,7 @@ def verify_job(gcode, package, expected):
     validate_expectations(expected)
     raw = Path(gcode).read_bytes()
     text = raw.decode('utf8')
-    result = analyze_gcode(text, expected.get('maxExtrusionCrossSectionMm2', .64))
+    result = analyze_gcode(text, expected.get('maxExtrusionCrossSectionMm2', .64), expected.get('filamentDiameterMm', 1.75))
     layers = result.pop('layers')
     count, height = expected['layerCount'], expected['layerHeightMm']
     require(len(layers) == count, f'Expected {count} model layers; found {len(layers)}')
@@ -152,8 +159,10 @@ def verify_job(gcode, package, expected):
         config = json.loads(archive.read('Metadata/project_settings.config'))
         require(config['printer_settings_id'] == expected.get('printerSettingsId', 'P3 0.4 nozzle'),
                 'Printer preset differs from expectation')
-        require(str(config['single_extruder_multi_material']) in {'0', 'False', 'false'},
-                'Single-nozzle MMU mode is enabled')
+        mode = str(config['single_extruder_multi_material']).lower()
+        require(mode in {'0', '1', 'false', 'true'}, 'Invalid serialized single-nozzle MMU mode')
+        require((mode in {'1', 'true'}) == expected.get('singleExtruderMultiMaterial', False),
+                'Single-nozzle MMU mode differs from expectation')
         for key, value in expected.get('serializedSettings', {}).items():
             require(config.get(key) == value,
                     f'{key}: expected serialized value {value!r}, found {config.get(key)!r}')
@@ -165,6 +174,8 @@ def verify_job(gcode, package, expected):
                 found_tools.add(tool)
                 require(config['filament_type'][slot] == expected['filament'],
                         f'T{tool} material differs from expectation')
+                require(abs(float(config['filament_diameter'][slot]) - expected.get('filamentDiameterMm', 1.75)) < 1e-6,
+                        f'T{tool} filament diameter differs from cross-section calculation')
         require(found_tools == used_tools, 'Expected material/tool bindings are missing')
     # A sliced-job 3MF may intentionally contain no editable mesh. Measure the
     # cube from its emitted outer-wall centerlines and advertised line width.
