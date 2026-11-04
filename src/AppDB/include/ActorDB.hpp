@@ -278,7 +278,7 @@ public:
     /**
      * @brief 初始化子Actor的特有属性
      *
-     * 子类（如 SphereDB, CubeDB）应该覆盖这个方法
+     * 子类（如 ModelInstanceDB）应该覆盖这个方法
      * 来初始化自己的特有属性
      */
     virtual void initializeSubActorProperties() {

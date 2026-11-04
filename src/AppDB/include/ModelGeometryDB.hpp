@@ -62,6 +62,8 @@ public:
 
     static const trans::Prop& PROP_GeometryVersion();
 
+    // Shared preflight for graph construction and geometry publication.
+    static bool validatePolyData(vtkPolyData* polyData, std::string* error = nullptr);
     ReadHandle read() const;
     bool replacePolyData(vtkPolyData* polyData,
                          const std::string& source = {},

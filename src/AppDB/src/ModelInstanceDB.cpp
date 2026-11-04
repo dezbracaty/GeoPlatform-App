@@ -2,6 +2,7 @@
 
 std::optional<ActorDB::PickHit> ModelInstanceDB::intersectPickRay(
     const Vector3& origin, const Vector3& direction, float maxDistance) const {
+    if (!isPickable()) return std::nullopt;
     const auto hit = intersectWorldRay(origin, direction, maxDistance);
     if (!hit) return std::nullopt;
     return PickHit{hit->worldDistance, hit->worldPosition, hit->objectLocalPosition,

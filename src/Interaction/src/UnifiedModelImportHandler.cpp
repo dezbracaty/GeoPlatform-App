@@ -17,7 +17,7 @@ REGISTER_INTERACTION_ACTION(
 #include <CameraNavigationController.hpp>
 #include "TransactionManager.hpp"
 #include "CameraDB.hpp"
-#include "ModelPositionUtil.hpp"
+#include "ModelCreationUtil.hpp"
 #include "Foundation/Log.h"
 #include "AIDescriptorHelper.hpp"
 #include "LocalModelLibraryService.h"
@@ -34,7 +34,6 @@ REGISTER_INTERACTION_ACTION(
 #include <QMetaObject>
 #include <QPointer>
 #include <QTimer>
-#include <QColor>
 #include <QUrl>
 #include <QVariantList>
 #include <QtConcurrent>
@@ -48,16 +47,6 @@ REGISTER_INTERACTION_ACTION(
 #include <numeric>
 
 namespace {
-
-DBInstanceID activeSlicingConfigId() {
-    auto* document = DocumentManager::instance();
-    if (!document) return DBInstanceID();
-    const auto configs = document->getDBInstancesByType(
-        TypeID::SLICING_CONFIG_DB);
-    return configs.empty()
-        ? DBInstanceID()
-        : configs.front()->getDBInstanceID();
-}
 
 vtkSmartPointer<vtkPolyData> polyDataFromProjectPart(
     const libslicer::ProjectImportPart& part) {
@@ -175,9 +164,7 @@ bool UnifiedModelImportHandler::onInitialize() {
     m_isGlbImport = false;
     m_projectLoadResult = {};
     m_isProjectImport = false;
-    m_position = Vector3(0, 0, 0);
     m_scale = 1.0f;
-    m_color = Vector3(0.8f, 0.8f, 0.8f);
     m_name.clear();
 
     // 获取文件路径参数
@@ -238,48 +225,12 @@ bool UnifiedModelImportHandler::onInitialize() {
         return false;
     }
 
-    // 获取位置参数 - 支持两种格式
-    // 1. 直接的 x, y, z 参数
-    auto x = getParam("x");
-    auto y = getParam("y");
-    auto z = getParam("z");
-    if (x.isValid() && y.isValid() && z.isValid()) {
-        m_position = Vector3(x.toFloat(), y.toFloat(), z.toFloat());
-    }
-    // 2. position 对象参数
-    else {
-        auto position = getParam("position");
-        if (position.isValid() && position.canConvert<QVariantMap>()) {
-            auto posMap = position.toMap();
-            m_position = Vector3(
-                posMap.value("x", 0.0).toFloat(),
-                posMap.value("y", 0.0).toFloat(),
-                posMap.value("z", 0.0).toFloat()
-            );
-        }
-    }
-
-    // 获取缩放参数
     auto scale = getParam("scale");
     if (scale.isValid()) {
         m_scale = scale.toFloat();
         if (m_scale <= 0) m_scale = 1.0f;
     }
 
-    // 获取颜色参数 - 支持 "#RRGGBB" 或颜色名 (如 "red")
-    auto colorStr = getParam("color");
-    if (colorStr.isValid() && colorStr.typeId() == QMetaType::QString) {
-        QColor qColor(colorStr.toString());
-        if (qColor.isValid()) {
-            m_color = Vector3(
-                qColor.redF(),
-                qColor.greenF(),
-                qColor.blueF()
-            );
-        }
-    }
-
-    // 获取名称参数
     auto name = getParam("name");
     if (name.isValid()) {
         m_name = name.toString();
@@ -592,9 +543,9 @@ void UnifiedModelImportHandler::onBackgroundCompleted() {
                      m_createdObjectId.toStdString());
         } else {
             if (m_context) {
-                m_context->setError(ActionErrorCode::Internal, "Failed to create mesh object");
+                m_context->setError(ActionErrorCode::Internal, m_loadResult.errorMessage);
             }
-            emit importCompleted("", false, "Failed to create mesh object");
+            emit importCompleted("", false, m_loadResult.errorMessage);
             LOG_ERROR("Failed to create mesh object from loaded data");
         }
     } else {
@@ -607,9 +558,9 @@ void UnifiedModelImportHandler::onBackgroundCompleted() {
 }
 
 void UnifiedModelImportHandler::createModelsFromProject() {
-    auto targetPrintBed = resolveTargetPrintBed();
+    auto targetPrintBed = ModelCreationUtil::resolvePrintBed(getParam("printBedId"));
     auto* document = DocumentManager::instance();
-    const DBInstanceID slicingConfigId = activeSlicingConfigId();
+    const DBInstanceID slicingConfigId = ModelCreationUtil::activeSlicingConfigId();
     auto slicingConfig = document
         ? document->getDB<GPlatform::SlicingConfigDB>(slicingConfigId)
         : nullptr;
@@ -829,109 +780,24 @@ void UnifiedModelImportHandler::createModelsFromProject() {
 }
 
 void UnifiedModelImportHandler::createModelFromResult() {
-    TransactionGuard guard("Import Model");
-    try {
-        auto targetPrintBed = resolveTargetPrintBed();
-        if (!targetPrintBed) {
-            LOG_ERROR("UnifiedModelImportHandler::createModelFromResult - no usable PrintBedDB for model import");
-            m_createdObjectId.clear();
-            guard.rollback();
-            return;
-        }
-
-        // 先计算位置（在对象创建之前）
-        Vector3 modelSize = m_loadResult.boundingBoxMax - m_loadResult.boundingBoxMin;
-        const Vector3 importPosition = calculateImportPosition(modelSize, targetPrintBed);
-        LOG_INFO("Calculated import position: ({}, {}, {})",
-                 importPosition.x, importPosition.y, importPosition.z);
-
-        auto triangles = m_isGlbImport
-            ? std::move(m_glbLoadResult.printableTriangles)
-            : std::move(m_loadResult.triangles);
-        if (triangles.empty()) {
-            LOG_ERROR("Failed to create imported model part geometry");
-            guard.rollback();
-            return;
-        }
-        Transform instanceTransform;
-        instanceTransform.identity();
-        auto graph = ModelGraphUtil::createSinglePartObject(
-            {m_name.toStdString(), m_filePath.toStdString(),
-             ModelLoaderUtil::getFormatType(m_filePath).toStdString(), true},
-            triangles,
-            ModelGraphUtil::InstanceCreateInfo{
-                instanceTransform, targetPrintBed->getDBInstanceID(), true, 0,
-                activeSlicingConfigId()});
-        if (!graph || !graph.instance || graph.parts.empty()) {
-            LOG_ERROR("Failed to create imported model graph: {}", graph.error);
-            guard.rollback();
-            return;
-        }
-        if (m_isGlbImport &&
-            !graph.object->publishGlbSourceAsset(m_glbLoadResult.asset)) {
-            LOG_ERROR("Failed to retain imported GLB source appearance");
-            guard.rollback();
-            return;
-        }
-        if (auto material = graph.parts.front()->getMaterial()) {
-            material->setColor(m_color);
-            material->setDiffuseColor(m_color);
-        }
-        // Generic mesh formats carry appearance only. They deliberately do
-        // not acquire a filament binding until the user assigns one.
-        graph.parts.front()->setFilamentBindingMode(
-            static_cast<int>(
-                ModelFilamentBindingMode::InheritProjectDefault));
-        applyTransformations(graph.instance, importPosition);
-
-        m_createdObjectId = QString::number(
-            graph.instance->getDBInstanceID().getValue());
-        m_createdObjectIds = {m_createdObjectId};
-
-        guard.commit();
-        // 自动调整相机以适应新模型
-        if (auto cameraDB = CameraNavigationController::currentCamera()) {
-            CameraNavigationController::fitScene(cameraDB);
-        }
-        LOG_INFO("Created model graph with {} triangles, bounds: ({},{},{}) to ({},{},{})",
-                 m_loadResult.faceCount,
-                 m_loadResult.boundingBoxMin.x, m_loadResult.boundingBoxMin.y, m_loadResult.boundingBoxMin.z,
-                 m_loadResult.boundingBoxMax.x, m_loadResult.boundingBoxMax.y, m_loadResult.boundingBoxMax.z);
-
-    } catch (const std::exception& e) {
-        guard.rollback();
-        LOG_ERROR("Exception while creating model graph: {}", e.what());
-        m_createdObjectId.clear();
-        m_createdObjectIds.clear();
-    } catch (...) {
-        guard.rollback();
-        LOG_ERROR("Unknown exception while creating model graph");
-        m_createdObjectId.clear();
-        m_createdObjectIds.clear();
+    if (m_isGlbImport)
+        m_loadResult.triangles = std::move(m_glbLoadResult.printableTriangles);
+    const auto graph = ModelCreationUtil::createModel(
+        m_loadResult,
+        {m_name.toStdString(), m_filePath.toStdString(),
+         ModelLoaderUtil::getFormatType(m_filePath).toStdString(), true},
+        getParams(), m_isGlbImport ? m_glbLoadResult.asset : nullptr);
+    if (!graph || !graph.instance) {
+        m_loadResult.errorMessage = QString::fromStdString(graph.error);
+        if (m_context)
+            m_context->setError(ActionErrorCode::Internal, m_loadResult.errorMessage);
+        LOG_ERROR("Failed to create imported model: {}", graph.error);
+        return;
     }
-}
-
-void UnifiedModelImportHandler::applyTransformations(
-    const std::shared_ptr<ModelInstanceDB>& instance,
-    const Vector3& importPosition) {
-    if (!instance) return;
-
-    Vector3 finalPosition = importPosition;
-    float minZ = m_loadResult.boundingBoxMin.z;
-    if (minZ < 0) {
-        finalPosition.z += -minZ;  // 平移量等于最低点 z 坐标的绝对值
-        LOG_INFO("Adjusted model Z position: moved up by {} units to place on platform", -minZ);
-    }
-
-    // 记录最终位置用于日志
-    LOG_INFO("Using import position: model placed at ({}, {}, {})",
-             finalPosition.x, finalPosition.y, finalPosition.z);
-
-    // 使用 Transform 系统设置位置和缩放
-    Transform transform = instance->getTransform();
-    transform.setPosition(finalPosition);
-    transform.setScale(Vector3(1.0f, 1.0f, 1.0f));
-    instance->setTransform(transform);
+    m_createdObjectId = QString::number(graph.instance->getDBInstanceID().getValue());
+    m_createdObjectIds = {m_createdObjectId};
+    if (auto camera = CameraNavigationController::currentCamera())
+        CameraNavigationController::fitScene(camera);
 }
 
 void UnifiedModelImportHandler::onCleanup() {
@@ -974,89 +840,5 @@ QVariant UnifiedModelImportHandler::getCompletionResult() const {
         result["vertexCount"] = static_cast<qulonglong>(m_loadResult.vertexCount);
         result["faceCount"] = static_cast<qulonglong>(m_loadResult.faceCount);
     }
-    return result;
-}
-
-std::shared_ptr<PrintBedDB> UnifiedModelImportHandler::resolveTargetPrintBed() const {
-    auto* docManager = DocumentManager::instance();
-    if (!docManager) {
-        return nullptr;
-    }
-
-    auto isUsablePrintBed = [](const std::shared_ptr<PrintBedDB>& bed) {
-        return bed && bed->getTemplateDBId().isValid() &&
-            bed->getWidth() > 0.0f && bed->getHeight() > 0.0f;
-    };
-
-    const auto printBedIdParam = getParam("printBedId");
-    if (printBedIdParam.isValid()) {
-        const DBInstanceID printBedId(printBedIdParam.toULongLong());
-        if (printBedId.isValid()) {
-            auto bed = std::dynamic_pointer_cast<PrintBedDB>(
-                docManager->getDBInstance(printBedId));
-            if (isUsablePrintBed(bed)) {
-                return bed;
-            }
-            LOG_WARN("UnifiedModelImportHandler::resolveTargetPrintBed - printBedId {} is not a usable PrintBedDB",
-                     printBedId.getValue());
-        }
-    }
-
-    for (const auto& object : docManager->getDBInstancesByType(TypeID::PRINT_BED_DB)) {
-        auto bed = std::dynamic_pointer_cast<PrintBedDB>(object);
-        if (isUsablePrintBed(bed)) return bed;
-    }
-    return {};
-}
-
-Vector3 UnifiedModelImportHandler::calculateImportPosition(
-    const Vector3& modelSize,
-    const std::shared_ptr<PrintBedDB>& targetPrintBed) const {
-    if (!targetPrintBed) {
-        LOG_WARN("UnifiedModelImportHandler::calculateImportPosition - no target print bed, using origin");
-        return Vector3(0, 0, 0);
-    }
-
-    const DBInstanceID targetPrintBedId = targetPrintBed->getDBInstanceID();
-    const Vector3 plateCenter = targetPrintBed->getCenter();
-    const float plateWidth = targetPrintBed->getWidth();
-    const float plateHeight = targetPrintBed->getHeight();
-    const float safetyMargin = 10.0f;
-
-    if (modelSize.x > plateWidth || modelSize.y > plateHeight) {
-        LOG_WARN("UnifiedModelImportHandler::calculateImportPosition - model size {}x{} exceeds print bed {} size {}x{}, centering on bed",
-                 modelSize.x, modelSize.y, targetPrintBedId.getValue(), plateWidth, plateHeight);
-        return Vector3(
-            plateCenter.x, plateCenter.y, targetPrintBed->getOrigin().z);
-    }
-
-    std::vector<ModelPositionUtil::ExistingObject> existingObjects;
-    const auto modelInstances = DocumentManager::instance()->getDBInstancesByType(
-        TypeID::MODEL_INSTANCE_DB);
-    existingObjects.reserve(modelInstances.size());
-    for (const auto& object : modelInstances) {
-        const auto instance = std::dynamic_pointer_cast<ModelInstanceDB>(object);
-        if (!instance ||
-            instance->getParentPrintBedDBId() != targetPrintBedId) continue;
-
-        const auto bounds = instance->worldBounds();
-        if (!bounds.valid) continue;
-        const Vector3 size = bounds.max - bounds.min;
-        if (size.x <= 0.01f || size.y <= 0.01f || size.z <= 0.01f) continue;
-        existingObjects.push_back({(bounds.min + bounds.max) * 0.5f, size});
-    }
-
-    const ModelPositionUtil::PlacementArea placementArea{
-        plateWidth,
-        plateHeight,
-        plateCenter
-    };
-    Vector3 result = ModelPositionUtil::findAvailablePosition(
-        modelSize, existingObjects, placementArea, safetyMargin);
-
-    // PrintBed::Center.z is the solid bed body's center. Printable models sit
-    // on the build-volume base at Origin.z.
-    result.z = targetPrintBed->getOrigin().z;
-    LOG_DEBUG("智能摆放结果: ({:.1f}, {:.1f}, {:.1f})", result.x, result.y, result.z);
     return result;
 }

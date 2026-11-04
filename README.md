@@ -16,9 +16,10 @@ GPlatform 应用开发仓库，使用 CMake 编译上层源码并链接预编译
 | `cmake/GPlatformThirdParty.cmake`、`cmake/thirdparty/` | 共用的第三方依赖入口与原有 fetch 规则 |
 | `ThirdParty/libs/GPlatformSDK/` | 项目内部库及其公开接口的二进制子模块 |
 
-底层事务实现、渲染实现和内置 VTK/Filament 后端由 SDK 提供。
-BaseRender 源码提供渲染器工厂、会话等扩展接口；内置后端仍依赖部分应用 DB 类型。
-新增 DB 不会自动得到内置后端的绘制支持。修改 SDK 共享类的布局、虚函数表或接口签名，需要使用重新编译的配套 SDK。
+底层事务实现、通用渲染基类、线程、Session、帧交换和原生资源管理由 SDK 提供。
+`src/Rendering/` 提供 VTK/Filament 的具体 DBSync、业务注册和模型材质规则，随 App 源码编译。
+新增业务 DB 的绘制支持或修改具体 DBSync，只需修改并编译 App；SDK 通过公开的基类及工厂声明支持继承和注册。
+修改 SDK 基类布局、虚函数表或运行机制时，仍需重新生产配套 SDK。BaseRender 与界面继续使用后端无关的 Session/帧/拾取契约。
 
 ## 获取代码与 SDK
 

@@ -21,21 +21,25 @@ REGISTER_INTERACTION_ACTION(
 #include "AIDescriptorHelper.hpp"
 #include <DocumentManager.hpp>
 #include <TransactionManager.hpp>
-#include <SphereDB.hpp>
-#include <CubeDB.hpp>
-#include <ConeDB.hpp>
-#include <CylinderDB.hpp>
 #include <PrintBedDB.hpp>
 #include "SlicingPreviewBridge.hpp"
-#include <limits>
 #include <cmath>
 #include <CameraDB.hpp>
-#include <SystemTypes.hpp>
 #include <CameraNavigationController.hpp>
 #include "Foundation/Log.h"
-#include "ModelSettingsBridge.hpp"
 #include "SelectionBridge.hpp"
-#include <ModelPositionUtil.hpp>
+#include "ModelCreationUtil.hpp"
+#include <ModelInstanceDB.hpp>
+#include <vtkCellArray.h>
+#include <vtkCleanPolyData.h>
+#include <vtkConeSource.h>
+#include <vtkCubeSource.h>
+#include <vtkCylinderSource.h>
+#include <vtkPolyData.h>
+#include <vtkSphereSource.h>
+#include <vtkTransform.h>
+#include <vtkTransformPolyDataFilter.h>
+#include <vtkTriangleFilter.h>
 #include <GeometryCommandBridge.hpp>
 #include <ParametricCommandNames.hpp>
 
@@ -75,13 +79,23 @@ CreateGeometryHandler::CreateGeometryHandler(QObject* parent)
 const QHash<QString, QVariantMap>& CreateGeometryHandler::aiDescriptorTable() const {
     namespace Names = GPlatform::Parametric::CommandNames;
 
-    // 通用几何体参数
     auto geometrySchema = makeInputSchema({
         {"x", "number", false},
         {"y", "number", false},
         {"z", "number", false},
+        {"position", "object", false},
+        {"printBedId", "number", false},
+        {"name", "string", false},
         {"color", "object", false}
-    }, true);  // allowUnknownParams = true
+    });
+    const auto shapeSchema = [geometrySchema](const QStringList& dimensions) {
+        auto schema = geometrySchema;
+        auto properties = schema.value("properties").toMap();
+        for (const auto& dimension : dimensions)
+            properties.insert(dimension, QVariantMap{{"type", "number"}});
+        schema.insert("properties", properties);
+        return schema;
+    };
 
     // 通用模型参数（用于 parametric actions）
     auto modelIdSchema = makeInputSchema({
@@ -114,17 +128,17 @@ const QHash<QString, QVariantMap>& CreateGeometryHandler::aiDescriptorTable() co
 
     static const QHash<QString, QVariantMap> table = {
         {"geometry.create.sphere", makeDescriptor(
-            "geometry.create.sphere", "Create Sphere", "Creates a sphere geometry object.",
-            "write", geometrySchema, {"geometry", "parametric"})},
+            "geometry.create.sphere", "Create Sphere", "Creates a printable sphere mesh model.",
+            "write", shapeSchema({"radius"}), {"geometry", "model"})},
         {"geometry.create.cube", makeDescriptor(
-            "geometry.create.cube", "Create Cube", "Creates a cube geometry object.",
-            "write", geometrySchema, {"geometry", "parametric"})},
+            "geometry.create.cube", "Create Cube", "Creates a printable cube mesh model.",
+            "write", shapeSchema({"size"}), {"geometry", "model"})},
         {"geometry.create.cone", makeDescriptor(
-            "geometry.create.cone", "Create Cone", "Creates a cone geometry object.",
-            "write", geometrySchema, {"geometry", "parametric"})},
+            "geometry.create.cone", "Create Cone", "Creates a printable cone mesh model.",
+            "write", shapeSchema({"radius", "height"}), {"geometry", "model"})},
         {"geometry.create.cylinder", makeDescriptor(
-            "geometry.create.cylinder", "Create Cylinder", "Creates a cylinder geometry object.",
-            "write", geometrySchema, {"geometry", "parametric"})},
+            "geometry.create.cylinder", "Create Cylinder", "Creates a printable cylinder mesh model.",
+            "write", shapeSchema({"radius", "height"}), {"geometry", "model"})},
         {"geometry.clear", makeDescriptor(
             "geometry.clear", "Clear All Geometry", "Clears all geometry objects from the scene.",
             "write", {}, {"geometry", "scene"})},
@@ -198,14 +212,9 @@ void CreateGeometryHandler::onEnter(std::shared_ptr<ActionContext> context) {
     LOG_INFO("CreateGeometryHandler::onEnter - actionCode: {}", actionCode.toStdString());
 
     // 根据actionCode执行不同的创建操作
-    if (actionCode == "geometry.create.sphere") {
-        createSphere(params);
-    } else if (actionCode == "geometry.create.cube") {
-        createCube(params);
-    } else if (actionCode == "geometry.create.cone") {
-        createCone(params);
-    } else if (actionCode == "geometry.create.cylinder") {
-        createCylinder(params);
+    if (actionCode == "geometry.create.sphere" || actionCode == "geometry.create.cube" ||
+        actionCode == "geometry.create.cone" || actionCode == "geometry.create.cylinder") {
+        createPrimitive(actionCode, params);
     } else if (GPlatform::Parametric::CommandNames::isParametricActionType(actionCode)) {
         QVariantMap parametricResult;
         QString parametricError;
@@ -230,170 +239,120 @@ void CreateGeometryHandler::onEnter(std::shared_ptr<ActionContext> context) {
     onExit();
 }
 
-void CreateGeometryHandler::createSphere(const QVariantMap& params) {
-    // 使用TransactionGuard确保可撤销
-    TransactionGuard guard("Create Sphere");
-
-    // 创建SphereDB实例
-    auto sphere = trans::TransDB::create<SphereDB>();
-    if (!sphere) {
-        LOG_WARN("Failed to create SphereDB");
+void CreateGeometryHandler::createPrimitive(const QString& actionCode, const QVariantMap& params) {
+    const QString shape = actionCode.section('.', -1);
+    const auto positive = [&params](const char* key, float fallback) {
+        bool ok = false;
+        const float value = params.value(key, fallback).toFloat(&ok);
+        return ok && std::isfinite(value) && value > 0 ? value : 0.0f;
+    };
+    vtkSmartPointer<vtkPolyData> body;
+    QString name;
+    if (shape == "cube") {
+        const float size = positive("size", 1.0f);
+        if (size > 0) {
+            auto source = vtkSmartPointer<vtkCubeSource>::New();
+            source->SetXLength(size);
+            source->SetYLength(size);
+            source->SetZLength(size);
+            source->Update();
+            body = source->GetOutput();
+        }
+        name = "Cube";
+    } else if (shape == "sphere") {
+        const float radius = positive("radius", 0.6f);
+        if (radius > 0) {
+            auto source = vtkSmartPointer<vtkSphereSource>::New();
+            source->SetRadius(radius);
+            source->SetThetaResolution(64);
+            source->SetPhiResolution(32);
+            source->Update();
+            body = source->GetOutput();
+        }
+        name = "Sphere";
+    } else if (shape == "cone") {
+        const float radius = positive("radius", 0.5f);
+        const float height = positive("height", 1.2f);
+        if (radius > 0 && height > 0) {
+            auto source = vtkSmartPointer<vtkConeSource>::New();
+            source->SetRadius(radius);
+            source->SetHeight(height);
+            source->SetResolution(64);
+            source->SetDirection(0, 0, 1);
+            source->CappingOn();
+            source->Update();
+            body = source->GetOutput();
+        }
+        name = "Cone";
+    } else if (shape == "cylinder") {
+        const float radius = positive("radius", 0.4f);
+        const float height = positive("height", 1.0f);
+        if (radius > 0 && height > 0) {
+            auto source = vtkSmartPointer<vtkCylinderSource>::New();
+            source->SetRadius(radius);
+            source->SetHeight(height);
+            source->SetResolution(64);
+            source->CappingOn();
+            auto transform = vtkSmartPointer<vtkTransform>::New();
+            transform->RotateX(90);
+            auto filter = vtkSmartPointer<vtkTransformPolyDataFilter>::New();
+            filter->SetInputConnection(source->GetOutputPort());
+            filter->SetTransform(transform);
+            filter->Update();
+            body = filter->GetOutput();
+        }
+        name = "Cylinder";
+    }
+    if (!body) {
+        m_context->setError(ActionErrorCode::InvalidParams,
+                           "Model dimensions must be finite positive numbers");
         return;
     }
 
-    // 设置半径
-    double radius = params.value("radius", 0.6).toDouble();
-    sphere->setRadius(radius);
-
-    // 智能位置计算
-    Vector3 basePosition = extractPosition(params);
-    if (basePosition.x == 0.0f && basePosition.y == 0.0f && basePosition.z == 0.0f) {
-        // 用户没有指定位置，使用智能摆放
-        Vector3 sphereSize(radius * 2, radius * 2, radius * 2);
-        basePosition = findAvailablePosition(sphereSize);
-
-        // 检查智能摆放是否成功
-        if (std::isnan(basePosition.x)) {
-            LOG_ERROR("Sphere创建失败: 智能摆放无法找到合适位置，终止创建操作");
-            return;
-        }
+    // Weld primitive seams and cap vertices, then publish only triangles just
+    // like the file loader. No temporary files or standalone primitive DBs.
+    auto clean = vtkSmartPointer<vtkCleanPolyData>::New();
+    clean->SetInputData(body);
+    auto triangulate = vtkSmartPointer<vtkTriangleFilter>::New();
+    triangulate->SetInputConnection(clean->GetOutputPort());
+    triangulate->PassLinesOff();
+    triangulate->PassVertsOff();
+    triangulate->Update();
+    auto* mesh = triangulate->GetOutput();
+    ModelLoaderUtil::LoadResult result;
+    result.modelName = params.value("name", name).toString();
+    result.vertexCount = static_cast<std::size_t>(mesh->GetNumberOfPoints());
+    result.faceCount = static_cast<std::size_t>(mesh->GetNumberOfPolys());
+    double bounds[6];
+    mesh->GetBounds(bounds);
+    result.boundingBoxMin = Vector3(bounds[0], bounds[2], bounds[4]);
+    result.boundingBoxMax = Vector3(bounds[1], bounds[3], bounds[5]);
+    result.triangles.reserve(result.faceCount);
+    vtkIdType count;
+    const vtkIdType* ids;
+    auto* cells = mesh->GetPolys();
+    for (cells->InitTraversal(); cells->GetNextCell(count, ids);) {
+        double points[3][3];
+        for (int corner = 0; corner < 3; ++corner)
+            mesh->GetPoint(ids[corner], points[corner]);
+        result.triangles.emplace_back(
+            Vector3(points[0][0], points[0][1], points[0][2]),
+            Vector3(points[1][0], points[1][1], points[1][2]),
+            Vector3(points[2][0], points[2][1], points[2][2]));
     }
-
-    // 应用贴底逻辑
-    if (ModelSettingsBridge::instance()->snapToGround()) {
-        Vector3 adjustedPosition = ModelPositionUtil::adjustPositionToBed(basePosition, sphere);
-        sphere->setPosition(adjustedPosition);
-    } else {
-        sphere->setPosition(basePosition);
-    }
-
-    // 设置材质颜色和属性
-    setMaterialProperties(sphere, params, "sphere");
-
-    // 创建完成后智能适应相机
-    smartFitCamera();
-}
-
-void CreateGeometryHandler::createCube(const QVariantMap& params) {
-    TransactionGuard guard("Create Cube");
-
-    auto cube = trans::TransDB::create<CubeDB>();
-    if (!cube) {
-        LOG_WARN("Failed to create CubeDB");
+    result.success = !result.triangles.empty();
+    const auto graph = ModelCreationUtil::createModel(
+        result, {result.modelName.toStdString(), {}, "generated", true}, params);
+    if (!graph || !graph.instance) {
+        m_context->setError(ActionErrorCode::Internal, QString::fromStdString(graph.error));
         return;
     }
-
-    float size = params.value("size", 1.0).toFloat();
-    Vector3 sizeVec(size, size, size); // CubeDB expects Vector3 for size
-    cube->setSize(sizeVec);
-
-    // 智能位置计算
-    Vector3 basePosition = extractPosition(params);
-    if (basePosition.x == 0.0f && basePosition.y == 0.0f && basePosition.z == 0.0f) {
-        // 用户没有指定位置，使用智能摆放
-        basePosition = findAvailablePosition(sizeVec);
-
-        // 检查智能摆放是否成功
-        if (std::isnan(basePosition.x)) {
-            LOG_ERROR("Cube创建失败: 智能摆放无法找到合适位置，终止创建操作");
-            return;
-        }
-    }
-
-    // 应用贴底逻辑
-    if (ModelSettingsBridge::instance()->snapToGround()) {
-        Vector3 adjustedPosition = ModelPositionUtil::adjustPositionToBed(basePosition, cube);
-        cube->setPosition(adjustedPosition);
-    } else {
-        cube->setPosition(basePosition);
-    }
-
-    // 设置材质颜色和属性
-    setMaterialProperties(cube, params, "cube");
-
-    // 创建完成后智能适应相机
-    smartFitCamera();
-}
-
-void CreateGeometryHandler::createCone(const QVariantMap& params) {
-    TransactionGuard guard("Create Cone");
-
-    auto cone = trans::TransDB::create<ConeDB>();
-    if (!cone) {
-        LOG_WARN("Failed to create ConeDB");
-        return;
-    }
-
-    double height = params.value("height", 1.2).toDouble();
-    double radius = params.value("radius", 0.5).toDouble();
-    cone->setHeight(height);
-    cone->setRadius(radius);
-
-    // 智能位置计算
-    Vector3 basePosition = extractPosition(params);
-    if (basePosition.x == 0.0f && basePosition.y == 0.0f && basePosition.z == 0.0f) {
-        // 用户没有指定位置，使用智能摆放
-        Vector3 coneSize(radius * 2, radius * 2, height);
-        basePosition = findAvailablePosition(coneSize);
-
-        // 检查智能摆放是否成功
-        if (std::isnan(basePosition.x)) {
-            LOG_ERROR("Cone创建失败: 智能摆放无法找到合适位置，终止创建操作");
-            return;
-        }
-    }
-    if (ModelSettingsBridge::instance()->snapToGround()) {
-        Vector3 adjustedPosition = ModelPositionUtil::adjustPositionToBed(basePosition, cone);
-        cone->setPosition(adjustedPosition);
-    } else {
-        cone->setPosition(basePosition);
-    }
-
-    // 设置材质颜色和属性
-    setMaterialProperties(cone, params, "cone");
-
-    // 创建完成后智能适应相机
-    smartFitCamera();
-}
-
-void CreateGeometryHandler::createCylinder(const QVariantMap& params) {
-    TransactionGuard guard("Create Cylinder");
-
-    auto cylinder = trans::TransDB::create<CylinderDB>();
-    if (!cylinder) {
-        LOG_WARN("Failed to create CylinderDB");
-        return;
-    }
-
-    double height = params.value("height", 1.0).toDouble();
-    double radius = params.value("radius", 0.4).toDouble();
-    cylinder->setHeight(height);
-    cylinder->setRadius(radius);
-
-    // 智能位置计算
-    Vector3 basePosition = extractPosition(params);
-    if (basePosition.x == 0.0f && basePosition.y == 0.0f && basePosition.z == 0.0f) {
-        // 用户没有指定位置，使用智能摆放
-        Vector3 cylinderSize(radius * 2, radius * 2, height);
-        basePosition = findAvailablePosition(cylinderSize);
-
-        // 检查智能摆放是否成功
-        if (std::isnan(basePosition.x)) {
-            LOG_ERROR("Cylinder创建失败: 智能摆放无法找到合适位置，终止创建操作");
-            return;
-        }
-    }
-    if (ModelSettingsBridge::instance()->snapToGround()) {
-        Vector3 adjustedPosition = ModelPositionUtil::adjustPositionToBed(basePosition, cylinder);
-        cylinder->setPosition(adjustedPosition);
-    } else {
-        cylinder->setPosition(basePosition);
-    }
-
-    // 设置材质颜色和属性
-    setMaterialProperties(cylinder, params, "cylinder");
-
-    // 创建完成后智能适应相机
+    const QString id = QString::number(graph.instance->getDBInstanceID().getValue());
+    m_context->setResult(QVariantMap{
+        {"success", true}, {"objectId", id}, {"modelId", id},
+        {"objectIds", QVariantList{id}},
+        {"vertexCount", static_cast<qulonglong>(result.vertexCount)},
+        {"faceCount", static_cast<qulonglong>(result.faceCount)}});
     smartFitCamera();
 }
 
@@ -502,70 +461,6 @@ void CreateGeometryHandler::clearAll() {
     SelectionBridge::instance()->clearSelection();
 }
 
-Vector3 CreateGeometryHandler::extractPosition(const QVariantMap& params) {
-    float x = params.value("x", 0.0).toFloat();
-    float y = params.value("y", 0.0).toFloat();
-    float z = params.value("z", 0.0).toFloat();
-
-    return Vector3(x, y, z);
-}
-
-
-void CreateGeometryHandler::setMaterialProperties(std::shared_ptr<ActorDB> actor, const QVariantMap& params, const QString& geometryType) {
-    auto material = actor->getMaterial();
-    if (!material) {
-        LOG_WARN("No material found for actor");
-        return;
-    }
-
-    // 从参数中获取颜色，如果没有提供则使用基于位置的随机颜色
-    Vector3 color;
-    if (params.contains("color")) {
-        // 如果提供了颜色参数
-        QVariantMap colorMap = params.value("color").toMap();
-        color.x = colorMap.value("r", 0.5).toFloat();
-        color.y = colorMap.value("g", 0.7).toFloat();
-        color.z = colorMap.value("b", 0.9).toFloat();
-    } else {
-        // 使用基于位置的随机颜色生成算法（与原始代码完全一致）
-        Vector3 position = extractPosition(params);
-        int hash = static_cast<int>(position.x * 73856093) ^
-                   static_cast<int>(position.y * 19349663) ^
-                   static_cast<int>(position.z * 83492791);
-
-        float r = ((hash & 0xFF) / 255.0f) * 0.7f + 0.3f; // 范围 0.3-1.0
-        float g = (((hash >> 8) & 0xFF) / 255.0f) * 0.7f + 0.3f;
-        float b = (((hash >> 16) & 0xFF) / 255.0f) * 0.7f + 0.3f;
-
-        color = Vector3(r, g, b);
-    }
-
-    // 设置材质属性 - 根据几何体类型使用不同的参数
-    material->setColor(color);
-
-    if (geometryType == "sphere") {
-        material->setSpecular(0.5f);
-        material->setSpecularPower(30.0f);
-    } else if (geometryType == "cube") {
-        material->setSpecular(0.4f);
-        material->setSpecularPower(20.0f);
-    } else if (geometryType == "cone") {
-        material->setSpecular(0.6f);
-        material->setSpecularPower(40.0f);
-    } else if (geometryType == "cylinder") {
-        material->setSpecular(0.3f);
-        material->setSpecularPower(10.0f);
-    } else if (geometryType == "printbed") {
-        // Print bed uses a more subdued appearance
-        material->setSpecular(0.2f);
-        material->setSpecularPower(5.0f);
-        // Set default light blue color for print bed if no color specified
-        if (!params.contains("color")) {
-            material->setColor(Vector3(0.3f, 0.5f, 0.8f)); // Light blue
-        }
-    }
-}
-
 void CreateGeometryHandler::smartFitCamera() {
     // 通过DocumentManager获取相机实例并执行智能fit
     auto docManager = DocumentManager::instance();
@@ -581,62 +476,4 @@ void CreateGeometryHandler::smartFitCamera() {
     }
 
     CameraNavigationController::fitScene(camera);
-}
-
-Vector3 CreateGeometryHandler::findAvailablePosition(const Vector3& objectSize, float margin) {
-    // 获取DocumentManager实例
-    auto* docManager = DocumentManager::instance();
-    if (!docManager) {
-        LOG_WARN("DocumentManager不可用，使用默认位置");
-        return Vector3(0.0f, 0.0f, 0.0f);
-    }
-
-    // 收集所有几何体对象的位置和尺寸信息
-    std::vector<ModelPositionUtil::ExistingObject> existingObjects;
-
-    // 获取所有几何体类型的对象
-    std::vector<TypeID> geometryTypes = {
-        TypeID::CUBE_DB,
-        TypeID::SPHERE_DB,
-        TypeID::CYLINDER_DB,
-        TypeID::CONE_DB,
-        TypeID::MODEL_INSTANCE_DB
-    };
-
-    for (auto typeId : geometryTypes) {
-        auto objects = docManager->getDBInstancesByType(typeId);
-        for (const auto& objPtr : objects) {
-            auto actor = std::dynamic_pointer_cast<ActorDB>(objPtr);
-            if (!actor) continue;
-
-            try {
-                // 获取对象当前位置
-                Vector3 position = actor->getPosition();
-
-                // 获取对象包围盒来确定尺寸
-                const auto bounds = actor->localBounds();
-                Vector3 size = bounds.max - bounds.min;
-
-                // 添加到现有对象列表
-                existingObjects.push_back({position, size});
-
-            } catch (const std::exception& e) {
-                LOG_WARN("获取{}对象信息失败: {}", static_cast<int>(typeId), e.what());
-            }
-        }
-    }
-
-    // 调用ModelPositionUtil的智能摆放算法
-    Vector3 availablePosition = ModelPositionUtil::findAvailablePosition(objectSize, existingObjects, margin);
-
-    // 检查是否找到了有效位置
-    if (std::isnan(availablePosition.x) || std::isnan(availablePosition.y) || std::isnan(availablePosition.z)) {
-        LOG_ERROR("智能摆放失败: 无法找到合适的摆放位置，创建操作终止");
-        // 返回一个不可能的位置来标识失败
-        return Vector3(std::numeric_limits<float>::quiet_NaN(),
-                      std::numeric_limits<float>::quiet_NaN(),
-                      std::numeric_limits<float>::quiet_NaN());
-    }
-
-    return availablePosition;
 }

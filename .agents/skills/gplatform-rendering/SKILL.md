@@ -5,7 +5,7 @@ description: 开发或调试 GPlatform 的渲染、DBSync、拾取与帧交换�
 
 # 渲染开发
 
-本技能随 App 保存。App 提供 `src/Base/BaseRender` 中的接口和交互消费者；修改内置后端或 Qt 呈现实现需要可访问的完整源码宿主。缺少私有源码时限定接口级定位，说明需要的实现，不猜测其内部行为。
+本技能随 App 保存。App 提供 `src/Base/BaseRender` 中的接口、交互消费者和 `src/Rendering` 中的具体 DBSync/业务规则；修改 SDK 渲染基类、线程、资源管理或 Qt 呈现实现需要可访问的完整源码宿主。缺少私有源码时限定接口级定位，说明需要的实现，不猜测其内部行为。
 
 ## 定位链路
 
@@ -32,7 +32,7 @@ description: 开发或调试 GPlatform 的渲染、DBSync、拾取与帧交换�
 
 ## 修改边界
 
-- 后端通过 BaseRender 的工厂、Session 和能力接口扩展；不要将 VTK/Filament 类型或私有头文件暴露给 App。
+- 界面和交互通过 BaseRender 的工厂、Session 和能力接口消费渲染；具体 DBSync 放在 App 的 `src/Rendering`，仅该模块使用 SDK 公开的 VTK/Filament 扩展声明。不能包含私有线程、Session 或 Adapter 实现头文件。
 - 文档通知可能来自 GUI 或后台线程。VTK 回调先排队，由渲染线程管理 DBSync；不能在回调中直接操作其映射和原生渲染资源。
 - 核对角色、view ID、generation、物理尺寸和设备标识，保留多视口、标签切换、resize、暂停和销毁路径。
 - `frameReady` 只是通知；权威帧由具体 Session 持有，消费者调用 `tryAcquireReadyFrame()`。保留 acquired、discard、release 和 GPU completion 各自的职责。

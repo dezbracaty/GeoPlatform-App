@@ -112,6 +112,10 @@ ModelGraphUtil::CreateResult ModelGraphUtil::createObject(
             result.error = "A model part has no valid mesh";
             return result;
         }
+        // Reject malformed input before any DB lifecycle or relation changes.
+        // Publication below uses this same geometry validation contract.
+        if (!ModelGeometryDB::validatePolyData(part.geometry, &result.error))
+            return result;
         if (part.defaultFilamentSlot < 1 || !order.insert(part.orderIndex).second) {
             result.error = "Part order must be unique and filament slot positive";
             return result;
