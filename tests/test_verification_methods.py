@@ -5,7 +5,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
-from verification_methods import METHODS, VALIDATORS, verification_plan
+from verification_methods import METHODS, SUPPLEMENTAL_VALIDATORS, verification_plan
 
 
 class MethodContractTest(unittest.TestCase):
@@ -18,20 +18,25 @@ class MethodContractTest(unittest.TestCase):
         result = json.loads((root/'case-result.schema.json').read_text(encoding='utf8'))
         self.assertEqual(set(result['properties']['methodResults']['items']['properties']['method']['enum']), set(METHODS))
         self.assertEqual(set(schema['properties']['checks']['items']['properties']['validator']['enum']),
-                         {v for v, spec in VALIDATORS.items() if spec['source'] == 'artifacts'})
+                         set(SUPPLEMENTAL_VALIDATORS))
 
-    def test_physical_printing_cannot_be_fulfilled_by_software_adapters(self):
-        plan = verification_plan(dict(verification=dict(requiredMethods=['physical']), checks=[
+    def test_special_files_do_not_fulfil_db_acceptance(self):
+        plan = verification_plan(dict(verification=dict(requiredMethods=['db']), checks=[
             dict(id='print-job', validator='gcode-job', required=True)]), dict(entries=[]))
-        self.assertEqual(plan['missingMethods'], ['physical'])
+        self.assertEqual(plan['missingMethods'], ['db'])
 
-    def test_duplicate_methods_rejected(self):
-        with self.assertRaisesRegex(ValueError, 'distinct'):
-            verification_plan(dict(verification=dict(requiredMethods=['state','state'])), dict(entries=[]))
+    def test_scenario_must_choose_one_acceptance_type(self):
+        with self.assertRaisesRegex(ValueError, 'exactly one'):
+            verification_plan(dict(verification=dict(requiredMethods=['db','screenshot'])), dict(entries=[]))
+
+    def test_image_comparison_cannot_be_used_as_db_acceptance(self):
+        with self.assertRaisesRegex(ValueError, 'differs'):
+            verification_plan(dict(verification=dict(requiredMethods=['db'])),
+                              dict(entries=[dict(kind='verify.screenshot')]))
 
     def test_check_id_collision_rejected(self):
         with self.assertRaisesRegex(ValueError, 'collide'):
-            verification_plan(dict(verification=dict(requiredMethods=['state']), checks=[
+            verification_plan(dict(verification=dict(requiredMethods=['db']), checks=[
                 dict(id='journal-db', validator='gcode-job', required=True)]),
                 dict(entries=[dict(kind='verify.db')]))
 

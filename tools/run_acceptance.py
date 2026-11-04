@@ -8,7 +8,7 @@ import sys
 from datetime import datetime
 
 from acceptance import load_case, run_case, write_summary
-from verification_methods import METHODS, VALIDATORS
+from verification_methods import METHODS, SUPPLEMENTAL_VALIDATORS, VALIDATORS
 
 
 def main():
@@ -27,7 +27,8 @@ def main():
     parser.add_argument('--settings-file', type=Path, help='App INI to restore between cases (Windows default is detected)')
     args = parser.parse_args()
     if args.list_methods:
-        print(json.dumps(dict(schemaVersion=1, methods=METHODS, validators=VALIDATORS), ensure_ascii=True, indent=2))
+        print(json.dumps(dict(schemaVersion=2, methods=METHODS, validators=VALIDATORS,
+                              supplementalChecks=SUPPLEMENTAL_VALIDATORS), ensure_ascii=True, indent=2))
         return 0
     if args.source:
         args.assets = args.source / 'App/tests/TestAssets'

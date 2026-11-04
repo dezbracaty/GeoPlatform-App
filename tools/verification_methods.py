@@ -1,30 +1,17 @@
-"""Finite verification vocabulary shared by scenario planning and result gates.
-
-Execution backends (Journal, CTest) are not verification methods. Scenarios
-select these methods and supply data; only maintained adapters implement checks.
-"""
+"""Scenario acceptance uses the existing DB or standard-screenshot comparison."""
 METHODS = {
-    'state': dict(name='Business state', evidence='Expected and actual business data',
-                  availability='journal-adapter'),
-    'geometry': dict(name='Geometry and numerical properties', evidence='Independent geometric oracle and measured values',
-                     availability='native-tests-only'),
-    'toolpath': dict(name='Toolpath semantics', evidence='Parsed G-code and independent print requirements',
-                     availability='artifact-adapter'),
-    'artifact': dict(name='Artifact integrity and consistency', evidence='Fresh files, format, hashes and package consistency',
-                     availability='artifact-adapter'),
-    'visual': dict(name='Visual comparison', evidence='Approved baseline, actual image and difference',
-                   availability='journal-adapter'),
-    'physical': dict(name='Physical printing', evidence='Device, firmware, materials, measurements and reviewer',
-                     availability='not-integrated'),
+    'db': dict(name='DB comparison', evidence='Actual DB serialization and expected DB state'),
+    'screenshot': dict(name='Standard screenshot comparison', evidence='Standard image, actual image and difference'),
 }
 
-# Adding a method changes the architecture contract. Adding a reusable adapter
-# within a method requires a documented input/output contract and rejection tests.
 VALIDATORS = {
-    'gcode-job': dict(methods=['toolpath', 'artifact'], source='artifacts'),
-    'journal-db': dict(methods=['state'], source='journal', kind='verify.db'),
-    'journal-screenshot': dict(methods=['visual'], source='journal', kind='verify.screenshot'),
+    'journal-db': dict(methods=['db'], source='journal', kind='verify.db'),
+    'journal-screenshot': dict(methods=['screenshot'], source='journal', kind='verify.screenshot'),
 }
+
+# Preserve the existing P3 file check as a separate specialized check. It does
+# not prove a scenario's DB or screenshot result and cannot satisfy either mode.
+SUPPLEMENTAL_VALIDATORS = {'gcode-job': dict(source='artifacts')}
 
 
 def verification_plan(metadata, document):
@@ -32,21 +19,22 @@ def verification_plan(metadata, document):
     if not isinstance(declaration, dict) or set(declaration) != {'requiredMethods'}:
         raise ValueError('verification must declare requiredMethods')
     required = declaration['requiredMethods']
-    if (not isinstance(required, list) or not required or
-            not all(isinstance(m, str) and m in METHODS for m in required) or
-            len(set(required)) != len(required)):
-        raise ValueError('requiredMethods must contain distinct registered method IDs')
+    if (not isinstance(required, list) or len(required) != 1 or
+            not isinstance(required[0], str) or required[0] not in METHODS):
+        raise ValueError('Select exactly one acceptance type: db or screenshot')
     checks = []
     for check in metadata.get('checks', []):
-        adapter = VALIDATORS.get(check.get('validator'))
+        adapter = SUPPLEMENTAL_VALIDATORS.get(check.get('validator'))
         if not adapter or adapter['source'] != 'artifacts':
             raise ValueError(f'Unknown artifact validator: {check.get("validator")}')
         checks.append(dict(id=check['id'], validator=check['validator'], required=check['required'],
-                           methods=adapter['methods']))
+                           methods=[], supplemental=True))
     for validator, adapter in VALIDATORS.items():
         if adapter['source'] == 'journal':
             indices = [i for i, entry in enumerate(document['entries'], 1) if entry['kind'] == adapter['kind']]
             if indices:
+                if adapter['methods'] != required:
+                    raise ValueError('Comparison kind differs from the scenario acceptance type; use captures for diagnostics')
                 checks.append(dict(id=validator, validator=validator, required=True,
                                    methods=adapter['methods'], entryIndices=indices))
     if len({c['id'] for c in checks}) != len(checks):
@@ -73,8 +61,8 @@ def journal_checks(plan, execution):
     """Use the formal executor's per-entry assertions, preserving its raw report."""
     checks = []
     for check in plan['checks']:
-        adapter = VALIDATORS[check['validator']]
-        if adapter['source'] != 'journal':
+        adapter = VALIDATORS.get(check['validator'])
+        if adapter is None:
             continue
         selected = [r for r in execution.get('results', []) if r.get('index') in check['entryIndices']]
         passed = (len(selected) == len(check['entryIndices']) and

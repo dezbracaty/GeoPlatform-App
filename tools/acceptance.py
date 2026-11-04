@@ -2,6 +2,7 @@
 
 No App RPCs, input scheduling or Journal acceptance rules are implemented here.
 """
+import base64
 import hashlib
 import html
 import inspect
@@ -13,7 +14,7 @@ import time
 from pathlib import Path
 
 from acceptance_checks import validate_expectations, verify_job
-from verification_methods import VALIDATORS, journal_checks, method_results, verification_plan
+from verification_methods import SUPPLEMENTAL_VALIDATORS, journal_checks, method_results, verification_plan
 
 
 class ContractError(ValueError):
@@ -76,8 +77,8 @@ def load_case(root, name, journal_loader):
     directory = inside(root, 'scenarios/' + name)
     metadata_path = directory / 'metadata.json'
     metadata = read_json(metadata_path)
-    require(type(metadata.get('schemaVersion')) is int and metadata['schemaVersion'] == 2 and metadata.get('id') == name, 'Expected scenario metadata v2 with a verification plan')
-    for key in ['name', 'testPurpose', 'scope']:
+    require(type(metadata.get('schemaVersion')) is int and metadata['schemaVersion'] == 3 and metadata.get('id') == name, 'Expected scenario metadata v3 with DB or screenshot acceptance')
+    for key in ['name', 'testPurpose', 'scope', 'acceptanceTarget']:
         require(isinstance(metadata.get(key), str) and metadata[key].strip(), f'Missing {key}')
     require(isinstance(metadata.get('inputs'), list), 'inputs must be an array')
     require(isinstance(metadata.get('unverifiedScopes'), list) and all(isinstance(s, str) for s in metadata['unverifiedScopes']),
@@ -131,13 +132,24 @@ def load_case(root, name, journal_loader):
         require(isinstance(check.get('id'), str) and check['id'] and check['id'] not in identifiers, 'Missing/duplicate check ID')
         identifiers.add(check['id'])
         require(type(check.get('required')) is bool, 'Check required must be boolean')
-        require(check.get('validator') in VALIDATORS and VALIDATORS[check['validator']]['source'] == 'artifacts',
+        require(check.get('validator') in SUPPLEMENTAL_VALIDATORS,
                 f'Unknown validator: {check.get("validator")}')
         require(check.get('artifacts') == ['gcode', 'package'] and all(k in artifacts for k in check['artifacts']), 'gcode-job requires gcode/package artifacts')
         require(isinstance(metadata.get('expected'), dict), 'gcode-job requires independent expectations')
         validate_expectations(metadata['expected'])
     plan = verification_plan(metadata, document)
     baselines = {}
+    for reference in metadata.get('dbBaselines', []):
+        require(set(reference) == {'entryIndex', 'file'}, 'Invalid DB baseline reference')
+        index = reference['entryIndex']
+        require(type(index) is int and 1 <= index <= len(document['entries']), 'Invalid DB baseline checkpoint')
+        checkpoint = document['entries'][index - 1]
+        require(checkpoint['kind'] == 'verify.db', 'DB baseline must reference verify.db')
+        baseline = inside(root, reference['file'])
+        require(baseline.is_file(), 'Missing standard DB file')
+        require(base64.b64decode(checkpoint['payload']['expectedSerialized'], validate=True) == baseline.read_bytes(),
+                'Standard DB file differs from the Journal expected state')
+        baselines[reference['file']] = digest(baseline)
     for entry in document['entries']:
         if entry['kind'] == 'verify.screenshot':
             relative = entry['payload']['baseline']
@@ -145,6 +157,9 @@ def load_case(root, name, journal_loader):
                     not Path(relative).is_absolute(), 'Nonportable screenshot baseline')
             baseline = (journal.parent / relative).resolve()
             require(baseline.is_relative_to(root) and baseline.is_file(), 'Screenshot baseline must exist inside the asset repository')
+            with baseline.open('rb') as stream:
+                require(not stream.read(100).startswith(b'version https://git-lfs.github.com/spec/'),
+                        'Standard screenshot is an unmaterialized LFS pointer; run git lfs pull')
             baselines[baseline.relative_to(root).as_posix()] = digest(baseline)
     return dict(id=name, metadata=metadata, journal=journal, document=document, verificationPlan=plan,
                 hashes=dict(catalog=digest(root / 'catalog.json'), metadata=digest(metadata_path),
@@ -180,9 +195,11 @@ def write_case_result(output, result, checks):
     result['checksPath'] = 'checks.json'
     result['requiredCheckCount'] = sum(check['required'] for check in checks)
     result['passedCheckCount'] = sum(check['status'] == 'passed' for check in checks)
+    result['supplementalResults'] = [check for check in checks if check.get('supplemental')]
     write_json(output / 'case_result.json', result)
     rows = ''.join('<tr><td>{}</td><td>{}</td><td>{}</td></tr>'.format(
-        html.escape(check['id']), html.escape(check['status']), html.escape(check.get('message', ''))) for check in checks)
+        html.escape(('Supplemental: ' if check.get('supplemental') else '') + check['id']),
+        html.escape(check['status']), html.escape(check.get('message', ''))) for check in checks)
     rows += ''.join('<tr><td>Method: {}</td><td>{}</td><td>{}</td></tr>'.format(
         html.escape(method['method']), html.escape(method['status']), html.escape(', '.join(method['checkIds'])))
         for method in result.get('methodResults', []))
@@ -210,7 +227,7 @@ def run_case(root, name, application, output, exports, session, journal_loader):
     root, output, application = Path(root).resolve(), Path(output).resolve(), Path(application).resolve()
     if output.exists():
         raise FileExistsError(output)
-    result = dict(schemaVersion=2, id=name, status='blocked', scope='', executionResultPath=None,
+    result = dict(schemaVersion=3, id=name, status='blocked', scope='', executionResultPath=None,
                   provenance=dict(assets=git_identity(root), applicationPath=str(application)), unverifiedScopes=[],
                   verificationPlan=None, methodResults=[])
     checks = []
@@ -272,7 +289,7 @@ def run_case(root, name, application, output, exports, session, journal_loader):
                                    for key, p in archived.items()}
         for check in metadata.get('checks', []):
             item = dict(id=check['id'], required=check['required'], status='failed', validator=check['validator'],
-                        methods=VALIDATORS[check['validator']]['methods'])
+                        methods=[], supplemental=True)
             try:
                 # A fixed registry of maintained validators; no code/commands from metadata.
                 report = verify_job(archived['gcode'], archived['package'], metadata['expected'])

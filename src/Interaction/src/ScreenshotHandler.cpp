@@ -131,6 +131,13 @@ QImage ScreenshotHandler::captureApplicationWindow() {
     QImage screenshot;
     QString captureMethod;
 
+#ifdef Q_OS_WIN
+    // Capture this window's rendered frame, not pixels from the desktop. The
+    // Windows screen grab can return a black surface and unrelated overlays.
+    screenshot = quickWindow->grabWindow();
+    captureMethod = QStringLiteral("QQuickWindow::grabWindow");
+#endif
+
     // Screen-backed capture is only trustworthy while this application owns
     // the foreground. On macOS QScreen::grabWindow() may otherwise return the
     // pixels of another application covering the same screen rectangle.
@@ -151,7 +158,7 @@ QImage ScreenshotHandler::captureApplicationWindow() {
     // captures what was actually composited for this native window. This is
     // the important difference from QQuickWindow::grabWindow() for the VTK +
     // Retina rendering path used by GPlatform.
-    if (QGuiApplication::applicationState() == Qt::ApplicationActive) {
+    if (screenshot.isNull() && QGuiApplication::applicationState() == Qt::ApplicationActive) {
         if (QScreen* screen = quickWindow->screen()) {
             const QPixmap nativeCapture = screen->grabWindow(quickWindow->winId());
             if (!nativeCapture.isNull()) {
