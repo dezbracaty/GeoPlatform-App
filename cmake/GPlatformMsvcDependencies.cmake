@@ -5,13 +5,14 @@ if(WIN32 AND NOT MSVC)
     message(FATAL_ERROR "Windows builds require MSVC and a matching Qt SDK.")
 endif()
 
-# Ninja parses /showIncludes by its exact prefix. Keep the compiler's language
-# and the generated Ninja rule consistent, including on localized Windows.
-# Existing user launchers remain inside this environment wrapper.
+# Ninja needs a UTF-8 dependency prefix even when MSVC uses a local code page.
+# Normalize only dependency lines; keep compiler arguments and exit status intact.
 if(MSVC AND CMAKE_GENERATOR MATCHES "^Ninja")
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
     foreach(_gplatform_language IN ITEMS C CXX)
         list(PREPEND CMAKE_${_gplatform_language}_COMPILER_LAUNCHER
-            "${CMAKE_COMMAND}" -E env VSLANG=1033 --)
+            "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/msvc_includes.py"
+            --prefix "${CMAKE_${_gplatform_language}_CL_SHOWINCLUDES_PREFIX}" --)
     endforeach()
     set(CMAKE_CL_SHOWINCLUDES_PREFIX "Note: including file: ")
 endif()
