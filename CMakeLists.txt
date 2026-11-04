@@ -87,6 +87,7 @@ set(QML_FILES
     qml/pages/generate3d/RightPart.qml
     qml/dialogs/VerificationFailureDialog.qml
     qml/dialogs/SliceConfigurationErrorDialog.qml
+    qml/dialogs/ImportUnitDialog.qml
     qml/dialogs/ZoomableImageViewer.qml
     qml/dialogs/ModelDetailPopup.qml
     qml/dialogs/PrinterControlPopup.qml
@@ -801,4 +802,9 @@ if(GPLATFORM_BUILD_SDK_CHECKS)
     target_link_libraries(ModelCreationCheck PRIVATE Interaction)
     add_test(NAME ModelCreationCheck COMMAND ModelCreationCheck)
     set_tests_properties(ModelCreationCheck PROPERTIES TIMEOUT 60)
+
+    add_executable(ModelImportCheck tests/ModelImportCheck.cpp)
+    target_link_libraries(ModelImportCheck PRIVATE Interaction)
+    add_test(NAME ModelImportCheck COMMAND ModelImportCheck)
+    set_tests_properties(ModelImportCheck PROPERTIES TIMEOUT 60)
 endif()

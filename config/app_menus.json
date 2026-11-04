@@ -78,6 +78,17 @@
               "enabled": true
             },
             {
+              "text": "创建基础模型",
+              "iconSource": "graph_Add",
+              "isMenu": true,
+              "items": [
+                {"text": "立方体", "iconSource": "graph_Checkbox", "actionCode": "geometry.create.cube", "enabled": true},
+                {"text": "球体", "iconSource": "graph_CircleShapeSolid", "actionCode": "geometry.create.sphere", "enabled": true},
+                {"text": "圆柱体", "iconSource": "graph_StatusCircleRing", "actionCode": "geometry.create.cylinder", "enabled": true},
+                {"text": "圆锥体", "iconSource": "graph_ConstructionCone", "actionCode": "geometry.create.cone", "enabled": true}
+              ]
+            },
+            {
               "separator": true
             },
             {

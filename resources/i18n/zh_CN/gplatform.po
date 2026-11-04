@@ -3779,3 +3779,111 @@ msgstr "创建圆锥"
 
 msgid "Create a cone model"
 msgstr "创建圆锥模型"
+
+msgid "This is the whole 3D workspace. Rotate, pan and zoom to inspect models on the build plate. Enter or Space advances the guide; Escape closes it."
+msgstr "这里是完整的三维工作区。通过旋转、平移和缩放，查看打印平台上的模型。按回车键或空格键进入下一步，按 Esc 关闭向导。"
+
+msgid "This guide covers the viewport and toolbars in this floating window. Navigation, print tabs, print status and AI belong to the main window."
+msgstr "本向导介绍当前浮动窗口的三维视图和工具栏。导航、打印标签页、打印状态和 AI 助手位于主窗口。"
+
+msgid "Main Navigation"
+msgstr "主导航"
+
+msgid "Use this area to move between 3D Print, Model Center and Dashboard. Settings and About are in the navigation footer. Model Center contains library and model entries; Dashboard is an overview with some demonstration content. In top navigation, More contains entries that do not fit. The guide keeps your current main page."
+msgstr "在此切换三维打印、模型中心和仪表盘。设置和关于位于导航底部。模型中心提供模型库和模型相关入口，仪表盘展示概览及部分演示内容。使用顶部导航时，放不下的入口会收进“更多”。向导会保留您当前的主页面。"
+
+msgid "Prepare is where you import, select and edit models before slicing. The surrounding toolbars and print controls support this workflow."
+msgstr "在准备页面导入、选择和编辑模型，为切片做好准备。周围的工具栏和打印控件可帮助您完成这些操作。"
+
+msgid "Preview shows an existing slicing result so you can inspect layers and toolpaths before exporting or printing. Without a result it shows its empty state. The guide does not start slicing."
+msgstr "预览页面展示已有的切片结果，方便您在导出或打印前检查层和打印路径。没有结果时会显示空状态。向导不会启动切片。"
+
+msgid "Realistic View"
+msgstr "真实效果"
+
+msgid "This page displays the same models with the realistic renderer. Use it to inspect their appearance; it is another view of your models."
+msgstr "此页面通过真实效果渲染器展示同一组模型，方便您检查外观。它是当前模型的另一种视图。"
+
+msgid "Left Toolbar"
+msgstr "左侧工具栏"
+
+msgid "The five groups organize model preparation: File imports and manages files; View controls the camera and viewport; Transform adjusts placement and size; Edit contains model editing tools; Slice prepares slicing operations. Select a model when a tool requires one. Some entries are unavailable or not yet implemented; their actual enabled state applies."
+msgstr "模型准备工具分为五组：“文件”用于导入和管理文件；“视图”用于控制相机和三维视图；“变换”用于调整位置和尺寸；“编辑”提供模型编辑工具；“切片”提供切片相关操作。需要操作模型时，请先选中模型。部分功能暂不可用或尚未实现，请以控件实际的可用状态为准。"
+
+msgid "Print Configuration and Status"
+msgstr "打印配置与状态"
+
+msgid "This whole area connects the printing workflow: choose printer, material and process settings, check model readiness and slicing results, and see device, transfer and print-job status. The available controls follow the current state. Export or print requires a valid result and the appropriate printer connection; the guide sends no job."
+msgstr "此区域串联打印流程：选择打印机、材料和工艺，检查模型是否就绪及切片结果，并查看设备、传输和打印任务状态。控件会根据当前状态启用。导出或打印需要有效的切片结果，打印还需要相应的打印机连接。向导不会发送打印任务。"
+
+msgid "The top-right AI button or Alt+I opens this assistant. Ask questions or request application operations, then read responses and operation results here. Sign in through Accounts and Services before using it. The guide shows the whole panel and preserves your draft, history and any ongoing request; it sends no message."
+msgstr "点击右上角的 AI 按钮或按 Alt+I 打开助手。您可以提问或请求执行应用操作，并在此查看回复和操作结果。使用前请先在“账户与服务”中登录。向导会展示整个面板，并保留草稿、历史记录和正在进行的请求，不会发送消息。"
+
+msgid "Preparing the highlighted control…"
+msgstr "正在准备高亮显示的控件…"
+
+msgid "Finish or cancel the current fiber-region or cut edit before changing workspaces. The guide preserves your edit and does not switch this page."
+msgstr "切换工作区前，请先完成或取消当前的纤维区域编辑或切割编辑。向导会保留当前编辑，不会切换此页面。"
+
+msgid "This workspace is not ready in the guide's window."
+msgstr "当前向导窗口中的工作区尚未就绪。"
+
+msgid "This control cannot currently be shown: %1\nCheck its prerequisites, continue to the next step or close the guide."
+msgstr "暂时无法显示此控件：%1\n请检查其使用条件，或继续下一步、关闭向导。"
+
+msgid "The target is hidden, unavailable or has not finished opening."
+msgstr "目标控件已隐藏、不可用或尚未打开完成。"
+
+msgid "Finish"
+msgstr "完成"
+
+msgid "Previous"
+msgstr "上一步"
+
+msgid "Model dimensions may use different units"
+msgstr "模型尺寸可能存在单位差异"
+
+msgid "This STL has no unit information. Its volume suggests the coordinates may be in %1. Choose how to import it."
+msgstr "此 STL 文件没有单位信息。根据模型体积判断，其坐标可能以%1为单位。请选择导入方式。"
+
+msgid "Current size: %1"
+msgstr "当前尺寸：%1"
+
+msgid "Size after conversion: %1"
+msgstr "转换后尺寸：%1"
+
+msgid "Cancel import"
+msgstr "取消导入"
+
+msgid "Keep original size"
+msgstr "保留原尺寸"
+
+msgid "Convert to millimeters (×%1)"
+msgstr "转换为毫米（×%1）"
+
+msgid "Import scale must be finite and positive; unit must be auto, mm, m or in."
+msgstr "导入缩放比例必须为有限正数，单位必须为 auto、mm、m 或 in。"
+
+msgid "Model units need confirmation. Import again with unit set to mm, m or in."
+msgstr "模型单位需要确认。请将 unit 指定为 mm、m 或 in 后重新导入。"
+
+msgid "%1 × %2 × %3 mm"
+msgstr "%1 × %2 × %3 毫米"
+
+msgid "meters"
+msgstr "米"
+
+msgid "inches"
+msgstr "英寸"
+
+msgid "Cannot open the model unit confirmation dialog."
+msgstr "无法打开模型单位确认窗口。"
+
+msgid "Model import cancelled."
+msgstr "已取消模型导入。"
+
+msgid "The target print bed is no longer available."
+msgstr "目标打印平台已不可用。"
+
+msgid "Converted model coordinates are not finite."
+msgstr "转换后的模型坐标不是有限数值。"

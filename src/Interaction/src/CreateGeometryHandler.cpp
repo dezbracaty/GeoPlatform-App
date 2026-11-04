@@ -249,7 +249,7 @@ void CreateGeometryHandler::createPrimitive(const QString& actionCode, const QVa
     vtkSmartPointer<vtkPolyData> body;
     QString name;
     if (shape == "cube") {
-        const float size = positive("size", 1.0f);
+        const float size = positive("size", 20.0f);
         if (size > 0) {
             auto source = vtkSmartPointer<vtkCubeSource>::New();
             source->SetXLength(size);
@@ -260,7 +260,7 @@ void CreateGeometryHandler::createPrimitive(const QString& actionCode, const QVa
         }
         name = "Cube";
     } else if (shape == "sphere") {
-        const float radius = positive("radius", 0.6f);
+        const float radius = positive("radius", 10.0f);
         if (radius > 0) {
             auto source = vtkSmartPointer<vtkSphereSource>::New();
             source->SetRadius(radius);
@@ -271,8 +271,8 @@ void CreateGeometryHandler::createPrimitive(const QString& actionCode, const QVa
         }
         name = "Sphere";
     } else if (shape == "cone") {
-        const float radius = positive("radius", 0.5f);
-        const float height = positive("height", 1.2f);
+        const float radius = positive("radius", 10.0f);
+        const float height = positive("height", 20.0f);
         if (radius > 0 && height > 0) {
             auto source = vtkSmartPointer<vtkConeSource>::New();
             source->SetRadius(radius);
@@ -285,8 +285,8 @@ void CreateGeometryHandler::createPrimitive(const QString& actionCode, const QVa
         }
         name = "Cone";
     } else if (shape == "cylinder") {
-        const float radius = positive("radius", 0.4f);
-        const float height = positive("height", 1.0f);
+        const float radius = positive("radius", 10.0f);
+        const float height = positive("height", 20.0f);
         if (radius > 0 && height > 0) {
             auto source = vtkSmartPointer<vtkCylinderSource>::New();
             source->SetRadius(radius);

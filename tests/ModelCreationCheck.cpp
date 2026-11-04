@@ -125,6 +125,19 @@ int main(int argc, char** argv) {
                     "Scene query must find the generated shape through its model instance");
             std::cout << "PASS " << shape.toStdString() << " model graph, placement, closed solid, undo/redo\n";
         }
+        // Context-menu actions carry no parameters; keep the printable toolbar dimensions.
+        for (const QString shape : {"cube", "sphere", "cylinder", "cone"}) {
+            const auto context = create(shape);
+            require(!context->hasError(), "Context-menu creation without dimensions must succeed");
+            const auto receipt = context->getResult().toMap();
+            auto instance = document->getDB<ModelInstanceDB>(DBInstanceID(receipt.value("modelId").toULongLong()));
+            require(static_cast<bool>(instance), "Context-menu creation must publish a model instance");
+            const auto bounds = instance->worldBounds();
+            require(bounds.valid && near(bounds.max.x - bounds.min.x, 20) &&
+                    near(bounds.max.y - bounds.min.y, 20) && near(bounds.max.z - bounds.min.z, 20),
+                    "Context-menu primitive dimensions must default to 20 mm");
+        }
+
         const auto count = document->getAllDBInstanceIds().size();
         for (const auto& params : {QVariantMap{{"size", 0}}, QVariantMap{{"size", -1}},
                                   QVariantMap{{"size", std::numeric_limits<double>::infinity()}},

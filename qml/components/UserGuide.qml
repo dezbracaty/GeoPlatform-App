@@ -305,6 +305,9 @@ Item {
         radius: 8
         blockTargetInteraction: true
         keyboardNavigation: true
+        finishText: qsTr("Finish")
+        nextText: qsTr("Next")
+        previousText: qsTr("Previous")
         onClosed: control.close(tour.lastCloseReason)
     }
 }
