@@ -174,7 +174,9 @@ Release 薄架构配置完成后，可在所选构建目录构建 `GPlatform_dis
 
 `tests/startup/check_translations.py` 属于 App 自身检查；
 `tests/startup/run_window_checks.py` 在 Windows 上运行，需要显式提供 `--application`、`--journal-tools` 和 `--output`。
-依赖 `Core/tests/journals` 的批量业务场景验收器位于完整仓库 `scripts/run_journals.py`，不随独立 App 交付。
+模型、场景 JSON 和预期由固定版本的 `tests/TestAssets` 子模块维护。
+共享业务验收入口为 `tools/run_acceptance.py`；独立 App 通过 `--journal-tools` 提供正式 JournalSystem 工具。
+目录、输入契约、统一报告和通过规则见 [应用验收架构](docs/acceptance.md)。
 
 Zed 用户可将 `zed-template/` 复制为本地 `.zed/`。当前模板提供 macOS/Linux Configure、Build，
 共用 `scripts/build.sh`；从编辑器环境设置 `Qt6_DIR`，可用 `GPLATFORM_PRESET` 选择预设，默认本机架构 Release。

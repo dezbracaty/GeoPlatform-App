@@ -5,7 +5,7 @@ description: 编写或执行 GPlatform 的真实应用 Journal 验收。先明�
 
 # Journal 应用验收
 
-本技能随 App 保存，正式 Python 工具当前位于完整宿主的 `ThirdParty/JournalSystem/tools/`。先确认实际工具、场景、被测可执行文件和验证资产；独立 App 缺少工具时说明依赖，不能改用自造私有 RPC 冒充同一验收。
+本技能随 App 保存，正式 Python 工具当前位于完整宿主的 `ThirdParty/JournalSystem/tools/`。模型与场景由 `APP_ROOT/tests/TestAssets` 固定子模块维护，入口为 `scenarios/<id>/events/Journal.json`；通过 `tools/run_acceptance.py` 统一执行及业务验收，规则见 `docs/acceptance.md`。先确认实际工具、场景、被测可执行文件和验证资产；独立 App 通过 `--journal-tools` 提供正式工具，不能改用自造私有 RPC 冒充同一验收。
 
 ## 明确验收入口
 
@@ -15,6 +15,7 @@ description: 编写或执行 GPlatform 的真实应用 Journal 验收。先明�
 
 查最接近场景的 Journal、metadata、输入资产、预期来源和当前页面/Action；不能只复制旧坐标、DB ID、延迟或截图路径。确定本次需要触发什么、观察什么，以及哪些现有断言已能覆盖。
 优先使用可复用的受控模型、独立参考和现有 JSON/runner/session/repository。增加普通场景只写声明式场景与必要资产，不为每个用例创建专属 Python 执行器、私有 RPC 或另一套报告。
+场景 metadata v2 必须从 `state/geometry/toolpath/artifact/visual/physical` 选择必需方法，遵循 `docs/verification-methods.md`；未知方法禁止使用。先补可复用检查能力，再批量填场景预期，不按机型、模型或用例名称新增验证方式。`--list` 的 `verificationPlan.missingMethods` 是补齐检查的入口；缺少任一必需方法不能判业务通过。
 已有协议能表达时直接使用；确需新观测能力时先检查现有业务/测试入口，再区分应补原生检查还是扩展正式协议。新 kind/字段必须有明确需求、实现和验证，不在场景里先编一个工具不支持的入口。
 
 ## 构造和执行

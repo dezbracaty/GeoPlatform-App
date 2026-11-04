@@ -1,5 +1,0 @@
-{
-  "name": "Primitive model Actions",
-  "description": "Invoke production Actions to create four printable meshes, undo/redo the cone, and request slicing for all models.",
-  "coverage": "Business Action invocation and slice request admission only; no toolbar mouse coverage or screenshot verification. Independent geometry, model graph, history, failure recovery and STL assertions are in ModelCreationCheck."
-}
