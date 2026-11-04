@@ -240,6 +240,27 @@ libslicer::SettingsResult SlicingBackend::applyConfigPatch(
     });
 }
 
+SlicingConfigPatchResult SlicingBackend::applyConfigPatchIfRevision(std::uint64_t expectedRevision,
+    const std::vector<std::pair<std::string, std::string>>& patch)
+{
+    if (!m_available) return {unavailableSettingsResult("libslicer is not initialized"), 0};
+    std::unique_lock<std::mutex> admissionLock(m_impl->configurationAdmissionMutex);
+    if (m_impl->activeLongJobs.load(std::memory_order_acquire) != 0) return {busySettingsResult(), 0};
+    const auto requested = patch;
+    return m_impl->invoke([this, expectedRevision, requested]() {
+        const auto active = m_impl->library->active_config();
+        if (!active || active->revision != expectedRevision) {
+            SlicingConfigPatchResult rejected;
+            rejected.settings.diagnostics.push_back({"revision", "Calibration configuration has changed"});
+            return rejected;
+        }
+        SlicingConfigPatchResult result;
+        result.settings = m_impl->library->apply_active_config_patch(requested);
+        if (result.settings) result.appliedRevision = m_impl->library->active_config()->revision;
+        return result;
+    });
+}
+
 libslicer::SettingsResult SlicingBackend::setConfigValue(
     std::string_view key, std::string_view value)
 {
