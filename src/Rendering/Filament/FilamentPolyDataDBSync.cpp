@@ -152,9 +152,16 @@ private:
         if (geometry.valid && m_renderable.rebuild(std::move(geometry), materials, transform)) {
             auto& manager = m_adapter.engine().getRenderableManager();
             const auto instance = manager.getInstance(utils::Entity::import(m_renderable.entityId()));
-            for (std::size_t i = 0; i < materials.size(); ++i)
+            if (source->drawsOnTop()) manager.setPriority(instance, 7);
+            for (std::size_t i = 0; i < materials.size(); ++i) {
+                if (source->drawsOnTop()) {
+                    auto* materialInstance = manager.getMaterialInstanceAt(instance, i);
+                    materialInstance->setDepthCulling(false);
+                    materialInstance->setDepthWrite(false);
+                }
                 if (materials[i].alpha < 1.f)
                     manager.getMaterialInstanceAt(instance, i)->setPolygonOffset(-1.f, -1.f);
+            }
             m_adapter.bindPickIdentity(m_renderable.entityId(), m_id);
             m_adapter.markPickGeometryChanged();
         }

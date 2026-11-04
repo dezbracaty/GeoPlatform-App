@@ -48,6 +48,17 @@ void configureDepth(vtkActor* actor) {
 
 } // namespace
 
+void TransientPolyDataActorDBSync::updateRenderLayer(bool drawOnTop) {
+    if (!m_renderThread || !m_actor) return;
+    const auto target = rendererForLayer(
+        drawOnTop ? RenderLayer::OVERLAY : RenderLayer::GEOMETRY);
+    if (!target || target == m_vtkRenderer) return;
+    if (m_vtkRenderer) m_vtkRenderer->RemoveActor(m_actor);
+    m_drawOnTop = drawOnTop;
+    m_vtkRenderer = target;
+    m_vtkRenderer->AddActor(m_actor);
+}
+
 void TransientPolyDataActorDBSync::createActor() {
     auto db = documentDB<TransientPolyDataActorDB>(m_id);
     if (!db) return;
@@ -64,6 +75,7 @@ void TransientPolyDataActorDBSync::createActor() {
 void TransientPolyDataActorDBSync::updateGeometry(const std::string&) {
     auto db = documentDB<TransientPolyDataActorDB>(m_id);
     if (!db || !m_actor) return;
+    updateRenderLayer(db->drawsOnTop());
     auto geometry = db->getGeometry();
     const bool useCellColors = db->usesCellColors();
     if (auto* mapper = vtkPolyDataMapper::SafeDownCast(m_actor->GetMapper())) {
