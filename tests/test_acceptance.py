@@ -63,7 +63,8 @@ class AcceptanceCheck(unittest.TestCase):
         write_json(self.assets / 'catalog.json', dict(schemaVersion=1, scenarioRoot='scenarios', modelCatalogs=[]))
         write_json(self.scenario / 'events/Journal.json', dict(formatVersion=2,
                    entries=[dict(atMs=0, kind='action', payload=dict(code='ui.ai.close', params={}))]))
-        self.metadata = dict(schemaVersion=1, id='job', name='Job', testPurpose='Verify nine-layer output',
+        self.metadata = dict(schemaVersion=2, id='job', name='Job', testPurpose='Verify nine-layer output',
+            verification=dict(requiredMethods=['toolpath', 'artifact']),
             scope='software-print-export', unverifiedScopes=['physical-printing'], inputs=[],
             artifacts={k: dict(location='exports', fileName=v) for k, v in
                        [('gcode', 'job.gcode'), ('package', 'job.gcode.3mf')]},
@@ -88,6 +89,8 @@ class AcceptanceCheck(unittest.TestCase):
         self.assertEqual(result['journalAcceptance'], 'not_verified')
         self.assertEqual(read_json(self.root/'result/execution_result.json')['acceptance'], 'not_verified')
         self.assertEqual(result['requiredCheckCount'], 1)
+        self.assertEqual({m['method']: m['status'] for m in result['methodResults']},
+                         dict(toolpath='passed', artifact='passed'))
         self.assertEqual(result['unverifiedScopes'], ['physical-printing'])
         for artifact in result['artifacts'].values():
             archived = self.root/'result'/artifact['path']
@@ -205,6 +208,128 @@ class AcceptanceCheck(unittest.TestCase):
             self.metadata.pop(field)
         self.save_metadata()
         self.assertEqual(self.run_job(SessionFixture())['status'], 'not_verified')
+
+    def test_unknown_method_blocks_before_start(self):
+        self.metadata['verification']['requiredMethods'] = ['one-off-job-check']
+        self.save_metadata()
+        session = SessionFixture()
+        self.assertEqual(self.run_job(session)['status'], 'blocked')
+        self.assertEqual(session.calls, 0)
+
+    def test_empty_method_plan_blocks_before_start(self):
+        self.metadata['verification']['requiredMethods'] = []
+        self.save_metadata()
+        session = SessionFixture()
+        self.assertEqual(self.run_job(session)['status'], 'blocked')
+        self.assertEqual(session.calls, 0)
+
+    def test_missing_required_method_cannot_be_hidden_by_other_passing_checks(self):
+        self.metadata['verification']['requiredMethods'].append('geometry')
+        self.save_metadata()
+        result = self.run_job(SessionFixture(self.writer))
+        self.assertEqual(result['status'], 'not_verified')
+        self.assertEqual(result['verificationPlan']['missingMethods'], ['geometry'])
+        self.assertEqual({m['method']: m['status'] for m in result['methodResults']},
+                         dict(toolpath='passed', artifact='passed', geometry='not_verified'))
+
+    def test_optional_check_does_not_fulfil_required_method(self):
+        self.metadata['checks'][0]['required'] = False
+        self.save_metadata()
+        result = self.run_job(SessionFixture(self.writer))
+        self.assertEqual(result['status'], 'not_verified')
+        self.assertEqual(result['verificationPlan']['missingMethods'], ['toolpath', 'artifact'])
+
+    def state_case(self):
+        for field in ['checks', 'artifacts', 'expected']:
+            self.metadata.pop(field)
+        self.metadata['verification']['requiredMethods'] = ['state']
+        self.save_metadata()
+        write_json(self.scenario/'events/Journal.json', dict(formatVersion=2, entries=[
+            dict(atMs=0, kind='verify.db', payload=dict(dbInstanceId='42',
+                 serializationFormat='transdb.cereal-portable-binary.v1', expectedSerialized='ZGI='))]))
+
+    def test_state_method_uses_formal_per_entry_assertion(self):
+        self.state_case()
+        result = self.run_job(SessionFixture(overrides=dict(acceptance='passed', results=[
+            dict(index=1, kind='verify.db', status='passed')
+        ])))
+        self.assertEqual(result['status'], 'passed')
+        self.assertEqual(result['methodResults'], [dict(method='state', status='passed', checkIds=['journal-db'])])
+
+    def test_journal_acceptance_alone_cannot_substitute_for_declared_checks(self):
+        self.state_case()
+        result = self.run_job(SessionFixture(overrides=dict(acceptance='passed', results=[])))
+        self.assertEqual(result['status'], 'not_verified')
+
+    def test_wrong_assertion_kind_cannot_fulfil_state_method(self):
+        self.state_case()
+        result = self.run_job(SessionFixture(overrides=dict(acceptance='passed', results=[
+            dict(index=1, kind='action', status='passed')
+        ])))
+        self.assertEqual(result['status'], 'not_verified')
+
+    def test_screenshot_capture_cannot_fulfil_visual_method(self):
+        for field in ['checks', 'artifacts', 'expected']:
+            self.metadata.pop(field)
+        self.metadata['verification']['requiredMethods'] = ['visual']
+        self.save_metadata()
+        write_json(self.scenario/'events/Journal.json', dict(formatVersion=2, entries=[
+            dict(atMs=0, kind='action', payload=dict(code='screenshot.capture', params={}))]))
+        result = self.run_job(SessionFixture())
+        self.assertEqual(result['status'], 'not_verified')
+        self.assertEqual(result['verificationPlan']['missingMethods'], ['visual'])
+
+    def test_visual_comparison_uses_formal_assertion_and_tracks_baseline(self):
+        for field in ['checks', 'artifacts', 'expected']:
+            self.metadata.pop(field)
+        self.metadata['verification']['requiredMethods'] = ['visual']
+        self.save_metadata()
+        baseline = self.assets/'baselines/approved.png'
+        baseline.parent.mkdir()
+        baseline.write_bytes(b'Unit-test baseline; not a production image')
+        write_json(self.scenario/'events/Journal.json', dict(formatVersion=2, entries=[
+            dict(atMs=0, kind='verify.screenshot', payload=dict(baseline='../../../baselines/approved.png', tolerance=.99))]))
+        result = self.run_job(SessionFixture(overrides=dict(acceptance='passed', results=[
+            dict(index=1, kind='verify.screenshot', status='passed')
+        ])))
+        self.assertEqual(result['status'], 'passed')
+        self.assertEqual(result['provenance']['inputs']['baselines'], {'baselines/approved.png': digest(baseline)})
+
+    def test_failed_state_assertion_is_preserved(self):
+        self.state_case()
+        result = self.run_job(SessionFixture(overrides=dict(success=False, acceptance='failed', results=[
+            dict(index=1, kind='verify.db', status='failed', message='DB state differs')
+        ])))
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['methodResults'][0]['status'], 'failed')
+
+    def test_skipped_journal_assertion_cannot_pass(self):
+        self.state_case()
+        result = self.run_job(SessionFixture(overrides=dict(acceptance='not_verified', results=[
+            dict(index=1, kind='verify.db', status='skipped')
+        ])))
+        self.assertEqual(result['status'], 'not_verified')
+
+    def test_capture_only_does_not_fulfil_state_method(self):
+        self.state_case()
+        write_json(self.scenario/'events/Journal.json', dict(formatVersion=2, entries=[
+            dict(atMs=0, kind='capture.db', payload=dict(dbInstanceId='42'))]))
+        result = self.run_job(SessionFixture())
+        self.assertEqual(result['status'], 'not_verified')
+        self.assertEqual(result['verificationPlan']['missingMethods'], ['state'])
+
+    def test_external_visual_baseline_blocks_before_start(self):
+        self.state_case()
+        self.metadata['verification']['requiredMethods'] = ['visual']
+        self.save_metadata()
+        outside = self.root/'outside.png'
+        outside.write_bytes(b'Not an asset')
+        write_json(self.scenario/'events/Journal.json', dict(formatVersion=2, entries=[
+            dict(atMs=0, kind='verify.screenshot', payload=dict(baseline='../../../../outside.png'))]))
+        session = SessionFixture()
+        result = self.run_job(session)
+        self.assertEqual(result['status'], 'blocked')
+        self.assertEqual(session.calls, 0)
 
     def test_existing_output_directory_is_never_overwritten(self):
         (self.root/'result').mkdir()

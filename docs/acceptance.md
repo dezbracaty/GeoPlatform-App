@@ -12,6 +12,10 @@ App `tools/acceptance.py` 拥有业务验收编排与最终结论；`tools/accep
 主仓库 `scripts/run_journals.py` 只是共享入口的兼容转发，不再在内存中替换执行器源码。
 完整宿主私有 C++ 回归继续留在 `Core/tests`，只改为读取固定资产。
 
+验证方式统一为 `state/geometry/toolpath/artifact/visual/physical` 六类，完整契约、实现边界及扩展规则见
+[验证方式与复用契约](verification-methods.md)。注册表由 App `tools/verification_methods.py` 唯一维护。
+CTest、Python、Journal 是执行入口；资产预检与操作回放成功不单独构成业务正确性证明。
+
 ## 输入与场景契约
 
 `catalog.json` 引用模型清单；模型清单记录稳定 ID、来源、单位、字节数、SHA-256 和独立预期。
@@ -19,7 +23,7 @@ App `tools/acceptance.py` 拥有业务验收编排与最终结论；`tools/accep
 每个场景固定为 `scenarios/<id>/events/Journal.json` 和同级 `metadata.json`。
 Journal 仍使用现有 v2 协议，不引入新 RPC、输入调度或业务查询 kind。
 
-metadata v1 声明 `id/name/testPurpose/scope/inputs/unverifiedScopes`；
+metadata v2 声明 `id/name/testPurpose/scope/inputs/unverifiedScopes/verification.requiredMethods`；
 有自动产物检查的场景还声明 `artifacts/checks/expected`，格式见资产仓库 `schemas/scenario.schema.json`。
 模型通过 `namespace/id` 引用。Journal 实际导入路径必须与声明一致，且不能逃逸资产目录。
 生产 Action 创建的模型记录 Action 和完整参数，并与 Journal 核对。
@@ -34,11 +38,12 @@ metadata v1 声明 `id/name/testPurpose/scope/inputs/unverifiedScopes`；
 2. 记录资产、App、Journal、metadata、模型、执行/验证代码与程序/已部署库的来源。
 3. 调用正式 `JournalExecutionSession` 启动独立实例并完成回放与清理。
 4. 核对全部步骤和输入哈希；检查声明产物是本次运行生成，归档并核对复制前后哈希。
-5. 调用固定的已维护检查器；metadata 不能提供任意脚本或 shell 命令。
+5. 按固定注册表调用公共检查器，并汇总每类必需方法的结果；metadata 不能提供任意脚本或 shell 命令。
 6. 输出每项检查、场景最终结论与批次汇总。每次输出目录必须是新目录。
 
-首个检查器 `gcode-job` 复用原高度涂色检查：250 层、50 mm 尺寸、T1/T2/T3 高度段、PLA、
-多喷头配置、裙边/擦料塔、打印区、温度等待、挤出截面积和包内外 G-code 一致性。
+公共检查器 `gcode-job` 参数化检查层数、立方体尺寸、喷头高度段、耗材、多喷头配置、裙边/擦料塔、
+打印区、温度等待、挤出截面积和包内外 G-code 一致性，同时提供 `toolpath/artifact` 证据。
+状态与视觉检查分别复用正式 `verify.db` 与 `verify.screenshot`，入口自动纳入方法结果。
 该检查器验证软件刀路，不验证固件宏和实机打印。
 
 ## 结果目录与判定
@@ -59,13 +64,14 @@ metadata v1 声明 `id/name/testPurpose/scope/inputs/unverifiedScopes`；
 内部结果引用使用相对路径。`case_result.json` 是业务结论唯一来源；HTML 与汇总引用该结论。
 预检阻塞时没有虚构的 Journal 执行文件；执行路径为空并保存具体原因。
 结果记录源码提交和 dirty 状态，同时保存关键文件哈希；未提交验证也可以追溯到实际输入。
+v2 结果新增 `verificationPlan` 与逐类 `methodResults`。缺少必需方法时明确列出缺口。
 
 | 状态 | 条件 |
 | --- | --- |
-| `passed` | 执行及清理成功、步骤完整、必需检查全部通过；或有正式通过的 Journal 断言且没有未完成必需检查 |
+| `passed` | 执行及清理成功、步骤完整、全部必需方法均有对应必需检查且全部通过 |
 | `failed` | 执行/清理失败、运行后缺产物、使用旧产物、收集时变化或必需检查不符 |
 | `blocked` | 启动前缺资产/实体、输入损坏、场景声明错误、未知检查器或缺程序/输出目录配置 |
-| `not_verified` | 已执行但没有足够检查，或必需检查未完成 |
+| `not_verified` | 已执行但缺少任一必需方法的检查，或必需检查未完成 |
 
 Journal `acceptance` 原样保留。有完整软件产物检查时，业务场景可为 `passed`，
 而原 Journal 仍为 `not_verified`；二者分别表示业务结果和 Journal 内置断言范围。
@@ -78,11 +84,12 @@ Journal `acceptance` 原样保留。有完整软件产物检查时，业务场�
 git -C App submodule update --init --checkout tests/TestAssets
 git -C App/tests/TestAssets lfs pull
 python App/tools/run_acceptance.py --list
+python App/tools/run_acceptance.py --list-methods
 python App/tools/run_acceptance.py --application build-Release/GPlatform/GPlatform.exe --cases p3_height_color_export --exports "$env:USERPROFILE/Downloads/GPlatform/Gcode" --output build-Release/Testing/AppAcceptance/new-run
 ```
 
 GUI 默认场景目录也指向资产仓库。GUI 直接回放显示的仍是 Journal 原始验收，
 完整业务验收使用上述共享入口，不能用 GUI 的执行成功替代最终 `case_result.json`。
 
-增加场景优先复用模型与检查器；新业务确需新检查器时，在共享模块中增加实现及能证明拒绝错误输出的测试。
+增加场景只选择已注册方式并复用模型、检查器和参数；新业务确需公共检查器时，在既定方法内增加实现及能证明拒绝错误输出的测试。
 截图基线需要独立审批与平台/DPR/主题/容差来源。实机验证单独记录，软件通过不自动升级为实机通过。

@@ -1,0 +1,86 @@
+"""Finite verification vocabulary shared by scenario planning and result gates.
+
+Execution backends (Journal, CTest) are not verification methods. Scenarios
+select these methods and supply data; only maintained adapters implement checks.
+"""
+METHODS = {
+    'state': dict(name='Business state', evidence='Expected and actual business data',
+                  availability='journal-adapter'),
+    'geometry': dict(name='Geometry and numerical properties', evidence='Independent geometric oracle and measured values',
+                     availability='native-tests-only'),
+    'toolpath': dict(name='Toolpath semantics', evidence='Parsed G-code and independent print requirements',
+                     availability='artifact-adapter'),
+    'artifact': dict(name='Artifact integrity and consistency', evidence='Fresh files, format, hashes and package consistency',
+                     availability='artifact-adapter'),
+    'visual': dict(name='Visual comparison', evidence='Approved baseline, actual image and difference',
+                   availability='journal-adapter'),
+    'physical': dict(name='Physical printing', evidence='Device, firmware, materials, measurements and reviewer',
+                     availability='not-integrated'),
+}
+
+# Adding a method changes the architecture contract. Adding a reusable adapter
+# within a method requires a documented input/output contract and rejection tests.
+VALIDATORS = {
+    'gcode-job': dict(methods=['toolpath', 'artifact'], source='artifacts'),
+    'journal-db': dict(methods=['state'], source='journal', kind='verify.db'),
+    'journal-screenshot': dict(methods=['visual'], source='journal', kind='verify.screenshot'),
+}
+
+
+def verification_plan(metadata, document):
+    declaration = metadata.get('verification')
+    if not isinstance(declaration, dict) or set(declaration) != {'requiredMethods'}:
+        raise ValueError('verification must declare requiredMethods')
+    required = declaration['requiredMethods']
+    if (not isinstance(required, list) or not required or
+            not all(isinstance(m, str) and m in METHODS for m in required) or
+            len(set(required)) != len(required)):
+        raise ValueError('requiredMethods must contain distinct registered method IDs')
+    checks = []
+    for check in metadata.get('checks', []):
+        adapter = VALIDATORS.get(check.get('validator'))
+        if not adapter or adapter['source'] != 'artifacts':
+            raise ValueError(f'Unknown artifact validator: {check.get("validator")}')
+        checks.append(dict(id=check['id'], validator=check['validator'], required=check['required'],
+                           methods=adapter['methods']))
+    for validator, adapter in VALIDATORS.items():
+        if adapter['source'] == 'journal':
+            indices = [i for i, entry in enumerate(document['entries'], 1) if entry['kind'] == adapter['kind']]
+            if indices:
+                checks.append(dict(id=validator, validator=validator, required=True,
+                                   methods=adapter['methods'], entryIndices=indices))
+    if len({c['id'] for c in checks}) != len(checks):
+        raise ValueError('Check IDs collide with a registered Journal check')
+    covered = {m for check in checks if check['required'] for m in check['methods']}
+    missing = [m for m in required if m not in covered]
+    return dict(requiredMethods=required, checks=checks, missingMethods=missing,
+                readiness='missing_checks' if missing else 'ready')
+
+
+def method_results(plan, checks):
+    results = []
+    for method in plan['requiredMethods']:
+        relevant = [c for c in checks if c['required'] and method in c.get('methods', [])]
+        expected_ids = {c['id'] for c in plan['checks'] if c['required'] and method in c['methods']}
+        status = ('failed' if any(c['status'] == 'failed' for c in relevant) else
+                  'passed' if expected_ids and expected_ids == {c['id'] for c in relevant} and
+                  all(c['status'] == 'passed' for c in relevant) else 'not_verified')
+        results.append(dict(method=method, status=status, checkIds=[c['id'] for c in relevant]))
+    return results
+
+
+def journal_checks(plan, execution):
+    """Use the formal executor's per-entry assertions, preserving its raw report."""
+    checks = []
+    for check in plan['checks']:
+        adapter = VALIDATORS[check['validator']]
+        if adapter['source'] != 'journal':
+            continue
+        selected = [r for r in execution.get('results', []) if r.get('index') in check['entryIndices']]
+        passed = (len(selected) == len(check['entryIndices']) and
+                  {r['index'] for r in selected} == set(check['entryIndices']) and
+                  all(r.get('kind') == adapter['kind'] and r.get('status') == 'passed' for r in selected))
+        failed = any(r.get('status') == 'failed' for r in selected)
+        checks.append(dict(check, status='passed' if passed else 'failed' if failed else 'not_verified',
+                           message='Formal Journal assertions', evidence=['execution_result.json']))
+    return checks
