@@ -1,7 +1,7 @@
 #pragma once
 
 #include "MeshRayQuery.hpp"
-#include "PlaneGrouping.hpp"
+#include "FlattenGeometry.hpp"
 #include "StandardActionHandler.hpp"
 #include <TempDBScope.hpp>
 #include <Transform.hpp>
@@ -47,8 +47,8 @@ private:
     std::shared_ptr<TransientPolyDataActorDB> m_candidatePreview;
     std::shared_ptr<TransientPolyDataActorDB> m_hoverPreview;
     MeshRayQuery m_candidateRayQuery;
-    placement::PlaneGroupingResult m_planeGroups;
-    placement::PlaneOverlayMesh m_planeOverlay;
+    std::vector<GPlatform::Interaction::FlattenPlane> m_planes;
+    std::vector<int> m_triangleToPlane;
     DBInstanceID m_modelId{INVALID_DB_ID};
     std::uint64_t m_meshRevision{0};
     Transform::Matrix4 m_candidateTransform{Transform::Matrix4::Identity()};

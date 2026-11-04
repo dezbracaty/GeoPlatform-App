@@ -36,6 +36,7 @@ endforeach()
 
 include(fetch_spdlog)
 include(fetch_eigen3)
+include(fetch_qhull)
 include(fetch_cereal)
 include(fetch_rttr)
 set(GPLATFORM_ENABLE_OCCT ON CACHE BOOL "Enable OpenCASCADE (OCCT) dependency integration" FORCE)
