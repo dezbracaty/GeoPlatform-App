@@ -16614,6 +16614,12 @@ msgstr "✖ 跳过 %1%：同一文件。\n"
 msgid "Continuous fiber"
 msgstr "连续纤维"
 
+msgid "Exclude from wipe tower"
+msgstr "不参与擦拭塔"
+
+msgid "This material does not extrude on the wipe tower. Currently fixed by the filament preset."
+msgstr "该材料不在擦拭塔上挤出。此设置当前由耗材预设固定，无法修改。"
+
 msgid "Enable continuous fiber fill debugging"
 msgstr "启用铺纤填充调试"
 
