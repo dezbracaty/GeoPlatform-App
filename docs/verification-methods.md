@@ -25,6 +25,9 @@ DB 检查点沿用 `verify.db`，格式为 `transdb.cereal-portable-binary.v1`�
 截图检查点沿用 `verify.screenshot`，引用资产仓库 `baselines/screenshots/<case>/` 中的标准图片。
 场景固定窗口、DPR、主题、语言与适用平台；比较容差写在正式检查点。
 截图必须检查实际画面，不能用黑图、其他窗口或错误输出作为标准。
+`verify.screenshot` 可用 `region: [x, y, width, height]` 指定一个物理像素矩形；省略时仍比较整窗。
+矩形必须在同尺寸的两张原图内，非法或越界不能通过。报告保存完整 expected/actual，diff 只标记该区域的差异，并写明比较范围。
+区域按验收目标预先声明：例如引导卡内容和选中标签分别比较，动态 FPS、非本场景目标的时间抖动渲染不作为 UI 引导的像素标准；不降低目标区域的精度，也不声称覆盖区域外外观。
 
 ## 本轮建立标准的过程
 
