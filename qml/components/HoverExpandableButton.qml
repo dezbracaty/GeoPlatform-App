@@ -38,9 +38,50 @@ Item {
         objectName: root.objectName.length > 0 ? root.objectName + ".button" : ""
         anchors.fill: parent
         hoverEnabled: true
-        highlighted: enabled && (checked || expandPopup.opened)
+        // An open tool group is a disclosure, not a selected tool.
+        highlighted: enabled && checked
+        backgroundColor: {
+            if (highlighted)
+                return Theme.checkedInputColor(mainButton, accentColor, SmoothUI.dark)
+            return enabled && (hovered || expandPopup.visible)
+                    ? SmoothUI.theme.res.subtleFillColorSecondary
+                    : SmoothUI.theme.res.subtleFillColorTransparent
+        }
+        SmoothUI.textColor: !enabled ? SmoothUI.theme.res.textFillColorDisabled
+                            : highlighted ? SmoothUI.theme.res.textOnAccentFillColorPrimary
+                            : SmoothUI.theme.res.textFillColorPrimary
+        Accessible.name: root.tooltip
         icon.width: 20
         icon.height: 20
+
+        // Keep explicit activation available for keyboard and touch input.
+        onClicked: {
+            if (root.expandItems.length > 0) {
+                expandPopup.open()
+                expandPopup.forceActiveFocus()
+            }
+        }
+
+        Icon {
+            objectName: root.objectName.length > 0 ? root.objectName + ".indicator" : ""
+            anchors.right: parent.right
+            anchors.rightMargin: 3
+            anchors.verticalCenter: parent.verticalCenter
+            width: 8
+            height: 8
+            visible: root.expandItems.length > 0
+            source: {
+                switch (root.expandDirection) {
+                    case 1: return FluentIcons.graph_ChevronDownSmall
+                    case 2: return FluentIcons.graph_ChevronLeftSmall
+                    case 3: return FluentIcons.graph_ChevronUpSmall
+                    default: return FluentIcons.graph_ChevronRightSmall
+                }
+            }
+            color: !mainButton.enabled ? mainButton.SmoothUI.theme.res.textFillColorDisabled
+                   : mainButton.highlighted ? mainButton.SmoothUI.textColor
+                   : mainButton.SmoothUI.theme.res.textFillColorSecondary
+        }
 
         onHoveredChanged: {
             root.isButtonHovered = hovered && root.enabled
@@ -163,6 +204,7 @@ Item {
 
         // 内容区域
         contentItem: Item {
+            objectName: root.objectName.length > 0 ? root.objectName + ".menu" : ""
             implicitWidth: column.implicitWidth
             implicitHeight: column.implicitHeight
 
