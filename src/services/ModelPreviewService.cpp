@@ -655,7 +655,11 @@ QImage ModelPreviewService::extract3mfThumbnail(const QString& filePath) {
         if (!data) {
             continue;
         }
-        image = QImage::fromData(static_cast<const uchar*>(data), static_cast<int>(size));
+        // The Qt overload takes an int. Never turn a large archive length
+        // into a negative image length through narrowing conversion.
+        if (size <= static_cast<size_t>(std::numeric_limits<int>::max())) {
+            image = QImage::fromData(static_cast<const uchar*>(data), static_cast<int>(size));
+        }
         mz_free(data);
         if (!image.isNull()) {
             break;

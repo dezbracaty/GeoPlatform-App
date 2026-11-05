@@ -37,5 +37,5 @@
 宿主/独立 App 的 libslicer 来自 `APP_ROOT/cmake/thirdparty/fetch_libslicer.cmake`：缓存按源码绝对路径、架构和 ABI 隔离，在 configure 时构建安装。先核对 CMakeCache 的 `GPLATFORM_LIBSLICER_CACHE_ROOT/INSTALL_DIR/PACKAGE_DIR` 与实际部署库。
 Orca 单独构建使用该库 presets，启用 `LIBSLICER_BUILD_TESTS` 并选择相关测试目标/标签；不要默认运行完整长模型矩阵。
 核查 `tests/libslic3r/test_continuous_fiber.cpp` 和 `tests/libslicer_api/test_config_api.cpp` 中与阶段相符的用例。普通模式回归可用 `[fiber-disabled]`；余域/mask/校准按实际标签选择。
-完整宿主另有 `Core/tests/slicing_regression` 和相关脚本，基线有来源与输入冻结规则，不能为了通过覆盖已有标准。
+完整宿主另有 `App/tests/TestAssets/slicing_regression` 和相关脚本，基线有来源与输入冻结规则，不能为了通过覆盖已有标准。
 几何修改检查最终占料与树脂余域；速度优化同时报告同条件耗时与结果等价；UI 截图和成功生成 G-code 文件不足以证明这些不变量。

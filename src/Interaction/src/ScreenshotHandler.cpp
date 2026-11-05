@@ -131,16 +131,9 @@ QImage ScreenshotHandler::captureApplicationWindow() {
     QImage screenshot;
     QString captureMethod;
 
-#ifdef Q_OS_WIN
-    // Capture this window's rendered frame, not pixels from the desktop. The
-    // Windows screen grab can return a black surface and unrelated overlays.
-    screenshot = quickWindow->grabWindow();
-    captureMethod = QStringLiteral("QQuickWindow::grabWindow");
-#endif
-
-    // Screen-backed capture is only trustworthy while this application owns
-    // the foreground. On macOS QScreen::grabWindow() may otherwise return the
-    // pixels of another application covering the same screen rectangle.
+    // Activate before grabbing either surface, so the first capture and later
+    // comparisons use the same foreground/focus state. Screen-backed capture
+    // can also include another application's pixels while we are inactive.
     if (QGuiApplication::applicationState() != Qt::ApplicationActive) {
         quickWindow->raise();
         quickWindow->requestActivate();
@@ -153,6 +146,13 @@ QImage ScreenshotHandler::captureApplicationWindow() {
             QThread::msleep(10);
         }
     }
+
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
+    // Read the application's rendered frame rather than desktop composition,
+    // which can include unrelated windows or macOS window animations.
+    screenshot = quickWindow->grabWindow();
+    captureMethod = QStringLiteral("QQuickWindow::grabWindow");
+#endif
 
     // QScreen::grabWindow() goes through the platform window system and
     // captures what was actually composited for this native window. This is

@@ -11,6 +11,10 @@ App `tools/acceptance.py` 拥有业务验收编排与最终结论；`tools/accep
 正式 JournalSystem 拥有进程启动/握手、Qt 输入回放、原始 DB/截图检查、清理和执行报告。
 主仓库 `scripts/run_journals.py` 只是共享入口的兼容转发，不再在内存中替换执行器源码。
 完整宿主私有 C++ 回归继续留在 `Core/tests`，只改为读取固定资产。
+原生切片回归的 catalog、模型、配置和三平台 G-code 基线由资产仓库 `slicing_regression/` 维护，
+直接算法调用与比较实现仍在宿主 `scripts/`；它们沿用原生回归格式，不转换为 GUI Journal。
+确定性模型生成器随资产维护，宿主旧生成入口仅转发。Journal 状态提示场景也统一从
+`scenarios/journal_status/` 读取。历史记录位于资产仓库 `docs/legacy-host/`，不参与当前通过判定。
 
 场景验收只提供 DB 对比和标准截图对比两种方式，具体约定见
 [验证方式与复用契约](verification-methods.md)。注册表由 App `tools/verification_methods.py` 唯一维护。
