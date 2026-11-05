@@ -87,6 +87,32 @@ class AcceptanceCheck(unittest.TestCase):
     def writer(self):
         print_files(self.exports)
 
+    def test_cli_shared_session_keeps_business_checks_and_restores_settings(self):
+        import run_acceptance
+        from unittest.mock import patch
+        settings = self.root / 'GPlatform.ini'
+        settings.write_bytes(b'original settings')
+        def writer():
+            self.writer()
+            settings.write_bytes(b'changed by application')
+        session = SessionFixture(writer)
+        # The integration can be run from a standalone checkout with explicit tools.
+        tools = Path(os.environ.get('JOURNAL_TOOLS', str(Path(__file__).resolve().parents[2] / 'ThirdParty/JournalSystem/tools')))
+        if not (tools / 'journal_execution_session.py').is_file():
+            self.skipTest('requires maintained Journal tools through JOURNAL_TOOLS')
+        output = self.root / 'cli-result'
+        with patch('builtins.print'):
+            code = run_acceptance.main([
+                '--assets', str(self.assets), '--journal-tools', str(tools),
+                '--application', str(self.application), '--cases', 'job',
+                '--exports', str(self.exports), '--output', str(output),
+                '--settings-file', str(settings)], session=session)
+        self.assertEqual(code, 0)
+        self.assertEqual(session.calls, 1)
+        self.assertEqual(settings.read_bytes(), b'original settings')
+        self.assertEqual(read_json(output / 'job/case_result.json')['status'], 'passed')
+        self.assertTrue(read_json(output / 'summary.json')['settingsRestored'])
+
     def test_pass_archives_real_files_and_preserves_original_acceptance(self):
         result = self.run_job(SessionFixture(self.writer))
         self.assertEqual(result['status'], 'passed')

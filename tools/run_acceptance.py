@@ -11,7 +11,7 @@ from acceptance import load_case, run_case, write_summary
 from verification_methods import METHODS, SUPPLEMENTAL_VALIDATORS, VALIDATORS
 
 
-def main():
+def main(argv=None, *, session=None):
     app_root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, help='Complete host source (compatibility entry)')
@@ -25,7 +25,7 @@ def main():
     parser.add_argument('--output', type=Path)
     parser.add_argument('--exports', type=Path, help='Actual App export directory; files must be generated in this run')
     parser.add_argument('--settings-file', type=Path, help='App INI to restore between cases (Windows default is detected)')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.list_methods:
         print(json.dumps(dict(schemaVersion=2, methods=METHODS, validators=VALIDATORS,
                               supplementalChecks=SUPPLEMENTAL_VALIDATORS), ensure_ascii=True, indent=2))
@@ -78,7 +78,7 @@ def main():
             restore_settings()
             print('BEGIN ' + name, flush=True)
             result = run_case(args.assets, name, args.application, output / name, args.exports,
-                              JournalExecutionSession(), load_journal)
+                              session if session is not None else JournalExecutionSession(), load_journal)
             summary['cases'].append(dict(id=name, status=result['status'], result=f'{name}/case_result.json'))
             statuses = [r['status'] for r in summary['cases']]
             summary['status'] = ('failed' if 'failed' in statuses else 'blocked' if 'blocked' in statuses else
