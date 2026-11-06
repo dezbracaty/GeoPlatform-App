@@ -116,6 +116,38 @@ class AcceptanceCheck(unittest.TestCase):
         self.assertEqual(read_json(output / 'job/case_result.json')['status'], 'passed')
         self.assertTrue(read_json(output / 'summary.json')['settingsRestored'])
 
+    def test_batch_cancellation_stops_before_next_case_and_keeps_results(self):
+        import run_acceptance
+        import shutil
+        import threading
+        from unittest.mock import patch
+        self.metadata['artifacts'] = {}
+        self.metadata['checks'] = []
+        self.save_metadata()
+        clone = self.assets / 'scenarios/job2'
+        shutil.copytree(self.scenario, clone)
+        copied = dict(self.metadata, id='job2', name='Second case')
+        write_json(clone / 'metadata.json', copied)
+        cancelled = threading.Event()
+        session = SessionFixture(writer=cancelled.set)
+        session.cancel_event = cancelled
+        output = self.root / 'cancelled-batch'
+        tools = Path(__file__).resolve().parents[2] / 'ThirdParty/JournalSystem/tools'
+        events = []
+        with patch('builtins.print'):
+            code = run_acceptance.main(['--assets', str(self.assets), '--journal-tools', str(tools),
+                '--application', str(self.application), '--cases', 'all', '--output', str(output)],
+                session=session, progress=events.append)
+        self.assertEqual(code, 1)
+        self.assertEqual(session.calls, 1)
+        summary = read_json(output / 'summary.json')
+        self.assertTrue(summary['cancelled'])
+        self.assertEqual(summary['completedCaseCount'], 1)
+        self.assertEqual(summary['notRunCases'], ['job2'])
+        self.assertEqual([e['phase'] for e in events], ['begin', 'end'])
+        manifest = read_json(output / 'screenshot_review.json')
+        self.assertEqual([c['status'] for c in manifest['cases']], ['passed', 'not_run'])
+
     def test_pass_archives_real_files_and_preserves_original_acceptance(self):
         result = self.run_job(SessionFixture(self.writer))
         self.assertEqual(result['status'], 'passed')
@@ -129,6 +161,61 @@ class AcceptanceCheck(unittest.TestCase):
             archived = self.root/'result'/artifact['path']
             self.assertTrue(archived.is_file())
             self.assertEqual(digest(archived), artifact['sha256'])
+
+    def test_batch_exports_with_identical_names_are_isolated_and_archived(self):
+        import run_acceptance
+        import shutil
+        from unittest.mock import patch
+        document = read_json(self.scenario / 'events/Journal.json')
+        document['entries'].insert(0, dict(atMs=0, kind='input.key', payload=dict(
+            event='press', key=0, target='fileBrowserLocation', text='${exports}')))
+        write_json(self.scenario / 'events/Journal.json', document)
+        clone = self.assets / 'scenarios/job2'
+        shutil.copytree(self.scenario, clone)
+        write_json(clone / 'metadata.json', dict(self.metadata, id='job2', name='Second case'))
+        destinations = []
+
+        class ExportSession(SessionFixture):
+            def run(inner, journal, **kwargs):
+                destination = Path(read_json(journal)['entries'][0]['payload']['text'])
+                destinations.append(destination)
+                inner.writer = lambda: print_files(destination)
+                return super().run(journal, **kwargs)
+
+        tools = Path(__file__).resolve().parents[2] / 'ThirdParty/JournalSystem/tools'
+        output = self.root / 'batch-exports'
+        with patch('builtins.print'):
+            code = run_acceptance.main(['--assets', str(self.assets), '--journal-tools', str(tools),
+                '--application', str(self.application), '--cases', 'all', '--output', str(output),
+                '--exports', str(self.exports)], session=ExportSession())
+        self.assertEqual(code, 0)
+        self.assertEqual(len(set(destinations)), 2)
+        self.assertFalse((self.exports / 'job.gcode').exists())
+        for name in ['job', 'job2']:
+            result = read_json(output / name / 'case_result.json')
+            self.assertEqual(result['status'], 'passed')
+            archived = output / name / result['artifacts']['gcode']['path']
+            self.assertEqual(archived.read_bytes(), (self.exports / output.name / name / 'job.gcode').read_bytes())
+
+    def test_excluded_batch_is_not_labeled_as_complete_asset_selection(self):
+        import run_acceptance
+        import shutil
+        from unittest.mock import patch
+        self.metadata.update(artifacts={}, checks=[])
+        self.save_metadata()
+        clone = self.assets / 'scenarios/job2'
+        shutil.copytree(self.scenario, clone)
+        write_json(clone / 'metadata.json', dict(self.metadata, id='job2', name='Second case'))
+        tools = Path(__file__).resolve().parents[2] / 'ThirdParty/JournalSystem/tools'
+        output = self.root / 'filtered-batch'
+        with patch('builtins.print'):
+            code = run_acceptance.main(['--assets', str(self.assets), '--journal-tools', str(tools),
+                '--application', str(self.application), '--cases', 'all', '--exclude', 'job2',
+                '--output', str(output)], session=SessionFixture())
+        self.assertEqual(code, 0)
+        summary = read_json(output / 'summary.json')
+        self.assertEqual(summary['selectionScope'], 'explicit')
+        self.assertEqual(summary['plannedCases'], ['job'])
 
     def test_wrong_tool_band_fails_even_when_every_step_completes(self):
         self.metadata['expected']['physicalToolBands'][0]['tool'] = 2

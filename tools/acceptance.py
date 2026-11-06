@@ -12,9 +12,11 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 from acceptance_checks import validate_expectations, verify_job, validate_project_gcode_expectations, verify_project_gcode
 from verification_methods import SUPPLEMENTAL_VALIDATORS, journal_checks, method_results, verification_plan
+from screenshot_review import snapshot_checkpoints, collect_screenshots, write_batch_report
 
 
 class ContractError(ValueError):
@@ -245,6 +247,7 @@ def write_case_result(output, result, checks):
     rows += ''.join('<tr><td>Method: {}</td><td>{}</td><td>{}</td></tr>'.format(
         html.escape(method['method']), html.escape(method['status']), html.escape(', '.join(method['checkIds'])))
         for method in result.get('methodResults', []))
+    review_link = '<p><a href="../report.html">批次结果索引</a> | <a href="review/screenshots.json">截图证据清单</a></p>' if result.get('screenshotReview') else ''
     body = ('<!doctype html><meta charset="utf-8"><title>Application acceptance</title>'
             '<h1>{}</h1><p>Status: {} | Scope: {}</p><p>{}</p>'
             '<p><a href="case_result.json">Case result</a> | <a href="checks.json">Business checks</a></p>'
@@ -252,16 +255,25 @@ def write_case_result(output, result, checks):
         html.escape(result['id']), html.escape(result['status']), html.escape(result.get('scope', '')),
         html.escape(result.get('error', '')), '<p><a href="verification_report.html">Original Journal report</a></p>'
         if result.get('executionResultPath') else '', rows)
-    (output / 'case_report.html').write_text(body, encoding='utf8')
+    (output / 'case_report.html').write_text(body + review_link, encoding='utf8')
 
 
 def write_summary(output, summary):
+    try:
+        write_batch_report(output, summary)
+    except Exception as exc:
+        summary['screenshotReviewError'] = str(exc)
+        # Auxiliary image processing must not remove the original batch report.
+        rows = ''.join('<tr><td><a href="{}/case_report.html">{}</a></td><td>{}</td></tr>'.format(
+            quote(case['id'], safe=''), html.escape(case['id']), html.escape(case['status']))
+            for case in summary['cases'])
+        (output / 'report.html').write_text(
+            '<!doctype html><meta charset="utf-8"><title>Acceptance summary</title>'
+            '<h1>{}</h1><p>{}</p><p>截图辅助对照不可用：{}</p>'
+            '<a href="summary.json">Machine-readable summary</a><table>{}</table>'.format(
+                html.escape(summary['status']), html.escape(summary.get('error') or summary.get('cleanupError') or ''),
+                html.escape(str(exc)), rows), encoding='utf8')
     write_json(output / 'summary.json', summary)
-    rows = ''.join('<tr><td><a href="{}/case_report.html">{}</a></td><td>{}</td></tr>'.format(
-        html.escape(c['id'], quote=True), html.escape(c['id']), html.escape(c['status'])) for c in summary['cases'])
-    (output / 'report.html').write_text('<!doctype html><meta charset="utf-8"><title>Acceptance summary</title>'
-        '<h1>{}</h1><p>{}</p><a href="summary.json">Machine-readable summary</a><table>{}</table>'.format(
-            html.escape(summary['status']), html.escape(summary.get('error', '') or summary.get('cleanupError', '')), rows), encoding='utf8')
 
 
 def materialize_journal(case, output, export_root):
@@ -321,7 +333,7 @@ def materialize_journal(case, output, export_root):
     return path, digest(path)
 
 
-def run_case(root, name, application, output, exports, session, journal_loader):
+def run_case(root, name, application, output, exports, session, journal_loader, *, review_screenshots=False):
     """Run one fresh session; preserve its report and evaluate declared business checks."""
     root, output, application = Path(root).resolve(), Path(output).resolve(), Path(application).resolve()
     if output.exists():
@@ -330,9 +342,14 @@ def run_case(root, name, application, output, exports, session, journal_loader):
                   provenance=dict(assets=git_identity(root), applicationPath=str(application)), unverifiedScopes=[],
                   verificationPlan=None, methodResults=[])
     checks = []
+    checkpoints = []
+    execution = {}
     try:
         case = load_case(root, name, journal_loader)
         metadata = case['metadata']
+        if review_screenshots:
+            checkpoints = snapshot_checkpoints(case, root)
+            require(not any(row.get('baselineError') for row in checkpoints), 'Screenshot standards changed after preflight')
         result.update(scope=metadata['scope'], unverifiedScopes=metadata.get('unverifiedScopes', []),
                       verificationPlan=case['verificationPlan'])
         result['methodResults'] = method_results(case['verificationPlan'], [])
@@ -344,6 +361,9 @@ def run_case(root, name, application, output, exports, session, journal_loader):
                                     journalLoaderSha256=digest(inspect.getfile(journal_loader)),
                                     appSource=git_identity(Path(__file__).resolve().parents[1]))
         app_root = Path(__file__).resolve().parents[1]
+        if review_screenshots:
+            result['provenance']['screenshotComparisonSha256'] = digest(Path(__file__).with_name('screenshot_comparison.py'))
+            result['provenance']['screenshotTextSha256'] = digest(Path(__file__).with_name('screenshot_text.py'))
         result['provenance']['slicerSource'] = git_identity(app_root / 'ThirdParty/OrcaSlicer')
         result['provenance']['sdkSource'] = git_identity(app_root / 'ThirdParty/libs/GPlatformSDK')
         if (app_root.parent / 'Core').is_dir():
@@ -365,6 +385,19 @@ def run_case(root, name, application, output, exports, session, journal_loader):
     except Exception as exc:
         output.mkdir(parents=True)
         result['error'] = str(exc)
+        if review_screenshots:
+            if not checkpoints:
+                try:
+                    journal = inside(root, f'scenarios/{name}/events/Journal.json')
+                    checkpoints = snapshot_checkpoints(dict(journal=journal, document=journal_loader(journal)),
+                                                       root, verify_hashes=False)
+                except Exception:
+                    pass  # Invalid/unreadable declarations remain explicit preflight failures.
+            try:
+                result['screenshotReview'] = collect_screenshots(checkpoints, dict(error=str(exc)), output)
+            except Exception as review_error:
+                result['screenshotReviewError'] = str(review_error)
+        result['executionStatus'] = 'not_started'
         write_case_result(output, result, checks)
         return result
     started = time.time_ns()
@@ -435,5 +468,14 @@ def run_case(root, name, application, output, exports, session, journal_loader):
                    for c in case['verificationPlan']['checks'] if c['id'] not in done]
         result['methodResults'] = method_results(case['verificationPlan'], checks)
     result['elapsedSeconds'] = round((time.time_ns() - started) / 1e9, 2)
+    result['executionStatus'] = ('completed' if execution.get('success') and
+        execution.get('completedEntries') == len(case['document']['entries']) else 'failed')
+    if review_screenshots:
+        try:
+            result['screenshotReview'] = collect_screenshots(checkpoints, execution, output)
+            result['reviewStatus'] = 'pending' if result['screenshotReview']['pendingCount'] else 'not_applicable'
+        except Exception as review_error:
+            result['screenshotReviewError'] = str(review_error)
+
     write_case_result(output, result, checks)
     return result

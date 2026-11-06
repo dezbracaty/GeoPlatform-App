@@ -54,6 +54,9 @@ DB 与截图验收分别复用正式 `verify.db` 与 `verify.screenshot`，入�
 
 ```text
 <run>/summary.json
+<run>/report.html                      批次结果与证据索引
+<run>/screenshot_review.json           辅助逐图对照清单
+<run>/review-decisions.json            可选人工备注，与自动结果分开
 <run>/<case>/execution_result.json       Journal 原始结果
 <run>/<case>/verification_report.html    Journal 原始报告
 <run>/<case>/application.log
@@ -63,6 +66,7 @@ DB 与截图验收分别复用正式 `verify.db` 与 `verify.screenshot`，入�
 <run>/<case>/checks.json
 <run>/<case>/case_result.json            场景业务结论
 <run>/<case>/case_report.html
+<run>/<case>/review/                   冻结原图与辅助派生图
 ```
 
 内部结果引用使用相对路径。`case_result.json` 是业务结论唯一来源；HTML 与汇总引用该结论。
@@ -91,8 +95,32 @@ python App/tools/run_acceptance.py --list-methods
 python App/tools/run_acceptance.py --application build-Release/GPlatform/GPlatform.exe --cases p3_height_color_export --exports "$env:USERPROFILE/Downloads/GPlatform/Gcode" --output build-Release/Testing/AppAcceptance/new-run
 ```
 
-GUI 默认场景目录也指向资产仓库。GUI 直接回放显示的仍是 Journal 原始验收，
-完整业务验收使用上述共享入口，不能用 GUI 的执行成功替代最终 `case_result.json`。
+GUI 默认场景目录也指向资产仓库。“运行场景”和“批量回归测试”均使用上述共享入口；
+录制页的诊断回放显示 Journal 原始验收，不能替代正式场景的 `case_result.json`。
+
+GUI 默认将结果保存在所选可执行文件旁的 `Journal/playbacks/session_…/`；macOS 即
+`GPlatform.app/Contents/MacOS/Journal/playbacks/`。CLI 的 `--output` 覆盖本次保存位置。
+批量结果在批次目录下按场景 ID 分目录。标准图片不从历史回放目录选择，而由每个检查点的
+`payload.baseline` 相对源 Journal 解析；正式场景通常引用 `baselines/screenshots/<case>/`。
+比较器先冻结为本次 `screenshots/screenshot_<序号>_expected.png`，再与同目录
+`screenshot_<序号>_actual.png` 比较并生成 `screenshot_<序号>_diff.png`。
+
+批量回归使用 `--cases all`，串行执行全部场景，逐项保存状态；取消后保留已完成和未运行项。
+多场景导出自动隔离到 `<exports>/<批次目录名>/<case>/`，避免相同文件名相互覆盖；
+单场景仍直接使用传入的导出目录。结果目录必须新建，不能复用上次目录。
+
+GUI 的“显示最近批量结果”打开本地 Python 窗口，也可手动打开已有批次：
+
+```sh
+python -m pip install -r App/tools/requirements.txt
+python App/tools/review_results.py <run-directory>
+```
+
+Python 需带可用的现代 Tk。每组卡片对应一个截图检查点；卡片区滚轮上下切换组，
+hover 展开标准图和差异提示图，点击后在同一窗口下方显示标准／本次／差异详情。
+详情支持同步缩放、拖动和切换完整像素差异；DB 结果、输入失败、缺图及未运行项单独保留状态。
+原始图像哈希绑定可选人工备注，另存 `review-decisions.json`，不会改写 `case_result.json` 或自动判定。
+对照提示、OCR 或备注不可用不改变自动结果；工具错误会保存在辅助诊断字段中。
 
 增加场景先确定数据验收还是画面验收，再补对应标准 DB 或标准截图，复用现有比较代码。
 截图基线需要独立审批与平台/DPR/主题/容差来源。实机结果不属于本轮场景验收。
@@ -133,9 +161,11 @@ python App/tools/run_acceptance.py --cases <comma-separated-ids> --application <
 
 文件选择和拖放通过正式 Qt 输入回放。`${inputDirectory:MODEL_ID}` 和 `${inputUri:MODEL_ID}`
 仅绑定已声明且哈希正确的仓库样本；`${exports}` 绑定保存窗口的位置字段。中断时分别报告计划、完成和未运行项。
-Journal 会话统一使用 1382×954 逻辑窗口、实际 DPR 1；截图应为 1382×954 像素。
-既有其他场景的 macOS 标准多数仍为 DPR 2，不能用缩放 PNG、放松容差或改写元数据冒充环境迁移；
-更新标准需核对独立预期、保存原始截图，并在匹配环境的新进程中复跑和检查错误状态。
+Journal 录制和回放统一使用 1382×954 逻辑窗口，保留系统原生 DPR；DPR 2 的整窗截图为
+2764×1908 像素。会话结束恢复原窗口大小、限制及显示状态；窗口放不下时明确失败。
+不再强制 DPR=1，也不通过缩放补偿重启程序。既有基线的 DPR 不作为启动时强制设置。
+正式截图验收仍比较原始图像，尺寸不同会失败；对照窗口的派生图可跨已知 DPR 展示，
+但不会代替自动验证。更新标准仍需核对独立预期、保留原始证据，并在目标环境的新进程中复跑。
 
 ### G-code 与文件包补充检查
 

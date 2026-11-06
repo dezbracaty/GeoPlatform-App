@@ -9,6 +9,7 @@ from datetime import datetime
 
 from acceptance import load_case, run_case, write_summary
 from verification_methods import METHODS, SUPPLEMENTAL_VALIDATORS, VALIDATORS
+from screenshot_review import checkpoint_declarations
 
 
 def select_cases(names, cases=None, *, exclude=''):
@@ -31,7 +32,7 @@ def update_run_summary(summary):
 
 
 
-def main(argv=None, *, session=None):
+def main(argv=None, *, session=None, progress=None):
     app_root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, help='Complete host source (compatibility entry)')
@@ -86,8 +87,17 @@ def main(argv=None, *, session=None):
         parser.error(str(exc))
     output = (args.output or Path('test-results/app-acceptance') / datetime.now().strftime('%Y%m%d_%H%M%S_%f')).resolve()
     output.mkdir(parents=True, exist_ok=False)
-    summary = dict(schemaVersion=1, status='not_verified', plannedCases=selected, cases=[])
+    summary = dict(schemaVersion=1, status='not_verified', plannedCases=selected, cases=[],
+                   applicationPath=str(args.application.resolve()), assetsRoot=str(args.assets.resolve()),
+                   selectionScope='all' if args.cases == 'all' and selected == names else 'explicit')
     update_run_summary(summary)
+    summary['screenshotCheckpoints'] = {}
+    for name in selected:
+        try:
+            document = load_journal(args.assets / 'scenarios' / name / 'events/Journal.json')
+            summary['screenshotCheckpoints'][name] = checkpoint_declarations(document)
+        except Exception:
+            pass  # run_case records the declaration/preflight failure.
     settings = args.settings_file
     if settings is None and os.name == 'nt':
         settings = Path(os.environ['LOCALAPPDATA']) / 'GPlatform/GPlatform' / (args.application.stem + '.ini')
@@ -99,15 +109,26 @@ def main(argv=None, *, session=None):
             else:
                 settings.unlink(missing_ok=True)
     try:
-        for name in selected:
+        for case_index, name in enumerate(selected, 1):
+            if session is not None and getattr(session, 'cancel_event', None) is not None and session.cancel_event.is_set():
+                summary['cancelled'] = True
+                raise InterruptedError('Replay cancelled by caller')
+            if progress:
+                progress(dict(case=name, index=case_index, total=len(selected), phase='begin'))
             restore_settings()
             print('BEGIN ' + name, flush=True)
-            result = run_case(args.assets, name, args.application, output / name, args.exports,
-                              session if session is not None else JournalExecutionSession(), load_journal)
+            case_exports = args.exports
+            if args.exports is not None and len(selected) > 1:
+                case_exports = args.exports / output.name / name
+                case_exports.mkdir(parents=True, exist_ok=False)
+            result = run_case(args.assets, name, args.application, output / name, case_exports,
+                              session if session is not None else JournalExecutionSession(), load_journal, review_screenshots=True)
             summary['cases'].append(dict(id=name, status=result['status'], result=f'{name}/case_result.json'))
             update_run_summary(summary)
             write_summary(output, summary)
             print('END ' + name + ': ' + result['status'], flush=True)
+            if progress:
+                progress(dict(case=name, index=case_index, total=len(selected), phase='end', status=result['status']))
     except Exception as exc:
         summary.update(status='failed', error=str(exc))
     finally:

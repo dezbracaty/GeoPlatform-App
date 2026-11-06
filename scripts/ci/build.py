@@ -9,6 +9,7 @@ import shutil
 import sys
 import tempfile
 
+from mac_regression import regression, package_and_regress
 from common import digest, git_env, init_source_submodules, machine_lock, prepare_cached_source, run, text_git, write_json
 
 
@@ -71,7 +72,7 @@ def windows_entry(source, target, cmake_args, env):
     run(['pwsh', '-NoProfile', '-Command', command], cwd=source, env=step_env)
 
 
-def build(source, platform, app_sha, sdk_sha):
+def build(source, platform, app_sha, sdk_sha, test_assets_sha=None):
     source = source.resolve()
     if text_git(source, "rev-parse", "HEAD") != app_sha:
         raise RuntimeError("App source SHA changed")
@@ -123,12 +124,40 @@ def build(source, platform, app_sha, sdk_sha):
                      "--no-tests=error", "--output-on-failure"], cwd=source,
                     env=runtime_env(source / directory, env))
             run([sys.executable, source / "scripts/build_macos_universal.py", "--source-dir", source,
-                 "--config", "Release", "--merge-only", "--dmg"], cwd=source, env=env)
+                 "--config", "Release", "--merge-only"], cwd=source, env=env)
             report = json.loads((source / "build-universal-Release/report.json").read_text())
             if report.get("status") != "passed" or report.get("architectures") != ["arm64", "x86_64"]:
                 raise RuntimeError("Universal package audit did not pass")
-            package = source / "build-universal-Release/GPlatform.dmg"
+            bundle = source / "build-universal-Release/GPlatform.app"
+            regression_output = Path(tempfile.mkdtemp(prefix="app-regression-", dir=os.environ["RUNNER_TEMP"]))
+            with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf8") as stream:
+                stream.write(f"regression_results={regression_output}\n")
+            with open(os.environ["GITHUB_ENV"], "a", encoding="utf8") as stream:
+                stream.write(f"APP_REGRESSION_ROOT={regression_output}\n")
+            # The established package helper reads the completed, signed App;
+            # it does not modify the bundle being exercised by GUI regression.
+            spec = importlib.util.spec_from_file_location('selected_macos_bundle', source / 'scripts/macos_bundle.py')
+            packaging = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(packaging)
+            package = output / 'GPlatform.dmg'
+            def make_installer():
+                packaging.create_disk_image(bundle, package, output / 'dmg.log')
+                if not package.is_file() or not package.stat().st_size:
+                    raise RuntimeError('Installer is missing or empty')
+                checksum = digest(package)
+                (output / (package.name + '.sha256')).write_text(f'{checksum}  {package.name}\n')
+                return dict(package=package.name, sha256=checksum)
+            stages = package_and_regress(make_installer,
+                lambda: regression(source, bundle, regression_output, env, test_assets_sha), output / 'mac-stages.json')
             architecture = "universal"
+            write_json(regression_output / 'regression-result.json', stages['regression'])
+            write_json(output / 'build-result.json', dict(app_sha=app_sha, sdk_sha=sdk_sha,
+                platform=platform, architecture=architecture, sdk_consumer_check='passed',
+                installer=stages['installer'], regression=stages['regression'], installation_tested=False))
+            if any(item['status'] != 'passed' for item in stages.values()):
+                raise RuntimeError('macOS installer or regression failed; both stage results are retained')
+            print('macOS installer and regression passed')
+            return
         if not package.is_file() or not package.stat().st_size:
             raise RuntimeError("Installer is missing or empty")
         destination = output / package.name
@@ -147,8 +176,11 @@ def main():
     p.add_argument("--platform", choices=("windows", "macos"), required=True)
     p.add_argument("--app-sha", required=True)
     p.add_argument("--sdk-sha", required=True)
+    p.add_argument('--test-assets-sha', help='Prepared TestAssets commit for macOS regression')
     a = p.parse_args()
-    build(a.source_dir, a.platform, a.app_sha, a.sdk_sha)
+    if a.platform == 'macos' and not a.test_assets_sha:
+        p.error('--test-assets-sha is required for macOS regression')
+    build(a.source_dir, a.platform, a.app_sha, a.sdk_sha, a.test_assets_sha)
 
 
 if __name__ == "__main__":

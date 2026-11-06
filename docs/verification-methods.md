@@ -43,7 +43,8 @@ DB 检查点沿用 `verify.db`，格式为 `transdb.cereal-portable-binary.v1`�
 现选方法无法观测主要目标时，先重写验收定义，不能通过录入当前状态制造覆盖。
 
 截图检查点沿用 `verify.screenshot`，引用资产仓库 `baselines/screenshots/<case>/` 中的标准图片。
-场景固定窗口、DPR、主题、语言与适用平台；比较容差写在正式检查点。
+录制与回放固定 1382×954 逻辑窗口，保留系统原生 DPR；主题、语言和适用平台仍由场景约定。
+基线的 DPR/imageSize 记录其来源，不要求执行器改变当前设备 DPR；比较容差写在正式检查点。
 截图必须检查实际画面，不能用黑图、其他窗口或错误输出作为标准。
 `verify.screenshot` 可用 `region: [x, y, width, height]` 指定一个物理像素矩形；省略时仍比较整窗。
 矩形必须在同尺寸的两张原图内，非法或越界不能通过。
@@ -60,7 +61,7 @@ DB 检查点沿用 `verify.db`，格式为 `transdb.cereal-portable-binary.v1`�
 报告保存完整 expected/actual，diff 只标记该区域的差异，并写明比较范围。
 区域按验收目标预先声明：例如引导卡内容和选中标签分别比较，动态 FPS、非本场景目标的时间抖动渲染不作为 UI 引导的像素标准；不降低目标区域的精度，也不声称覆盖区域外外观。
 
-Windows/macOS 的字体、窗口尺寸和 Qt 版本不同，标准不能混用。本轮主 `Journal.json`
+Windows/macOS 的字体、原生 DPR 和 Qt 版本不同，自动验收标准不能直接混用。本轮主 `Journal.json`
 使用 metadata 声明的 macOS 环境；原有 Windows 标准按原字节保存在对应 `windows/`
 目录，操作文件为 `windows/events/Journal.json`，原环境声明保存在 `windows/metadata.json`。
 这些历史平台文件不会加入当前 macOS 批次，也不因 macOS 通过而获得 Windows 通过结论。
@@ -93,3 +94,26 @@ DB 同样保存每个检查点的 expected/actual 原始字节及比较哈希。
 P3 的原有文件检查标为 supplementalResults，不能让缺少 DB 比较的场景变成 passed。
 
 场景逐项分类、目标与现有检查点见资产仓库 `docs/scenario-acceptance.md`。
+
+## 批次截图对照：辅助查看
+
+App 批次系统在正式回放之外生成 `screenshot_review.json`，由 `tools/review_results.py`
+展示每个检查点的标准图、本次图和差异提示。它属于批量回归结果查看能力，不增加 Journal
+验证方式，不把 `verify.screenshot` 改成只采集。没有标准、缺图、尺寸不兼容和未运行均明确显示。
+
+自动比较继续使用完整原图及原有 region/regions、tolerance、maxChannelDifference、blurRadius；
+原始尺寸不一致仍失败。以下处理只生成派生视图，不改变自动门禁或原始证据：
+
+- 对已知整窗尺寸（1382×954 的 1/2/3/4 倍）使用 LANCZOS 生成 1382×954 视图；
+  区域从基线物理像素按比例向外取整。相同尺寸的局部图可直接展示，未知的不同尺寸不拉伸。
+- 保留全部归一化后 RGBA 像素差异，并可切换到“原始像素差异”；这张图也属于派生图，
+  原始分辨率证据仍在各检查点的 expected.png／actual.png 和 Journal 正式报告中。
+- `visual-hints-v1` 以 OKLab 色差、最多一个标准像素的局部邻域及局部密度生成提示，
+  不做全局配准或几何拟合。红色为重点核对候选，淡橙色为较弱差异提示，均不表示通过。
+- 本地 OCR 可降低同位置同文字的重复提示，并框出识别到的数字变化候选。识别可能出错；
+  macOS 使用 Apple Vision，其他平台可选 Tesseract，不可用时明确提示，不能据此排除真实错误。
+  NumPy 辅助计算失败时退回 Pillow 像素差异；辅助图或清单失败只记录错误，正式结果不变。
+
+派生图和提示记录策略版本、源图尺寸、比较范围与 OCR 状态，原始图像保持字节及 SHA-256。
+可选人工“可接受／缺陷”及备注写入独立 `review-decisions.json`，绑定批次和两张原图哈希；
+未审核不会降级自动 passed，人工可接受也不会升级自动 failed。此窗口不更新仓库基线。
