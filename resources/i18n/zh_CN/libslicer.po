@@ -16851,3 +16851,18 @@ msgstr "补填加速度"
 
 msgid "Density of resin infill in the remaining internal area on fiber layers. Zero disables resin infill without disabling fiber."
 msgstr "铺纤层剩余内部区域的基材补填密度。设为 0 时关闭基材补填，但不关闭纤维铺设。"
+
+msgid "Tool change clearance lift"
+msgstr "换头避让抬升"
+
+msgid "Additional Z clearance during a physical tool change. Zero preserves existing behavior. Not supported with belt printers, manual tool changes or custom filament-change scripts."
+msgstr "物理工具切换时增加的 Z 向避让高度。设为 0 保持原有行为。不支持与传送带打印机、手动换料或自定义换料脚本共同使用。"
+
+msgid "Tool change clearance lift does not support belt printers or manual tool changes."
+msgstr "换头避让抬升不支持传送带打印机或手动换料。"
+
+msgid "Tool change clearance lift cannot be combined with custom filament start, end or change commands."
+msgstr "换头避让抬升不能与自定义耗材开始、结束或换料指令共同使用。"
+
+msgid "Tool change clearance lift must be finite and non-negative."
+msgstr "换头避让抬升必须是有限的非负数。"

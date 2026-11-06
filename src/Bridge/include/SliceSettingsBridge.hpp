@@ -104,6 +104,7 @@ signals:
     void hasPendingResliceChanged();
     void settingsChanged();
     void settingChanged(const QString& key, const QVariant& value);
+    void settingRejected(const QString& key, const QString& message);
     void schemaChanged();
     void machineSelectionChanged();
     void presetSelectionChanged();

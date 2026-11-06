@@ -1579,6 +1579,9 @@ Item {
             var value = extractControlValue(primaryControl)
             if (value !== undefined) {
                 SliceSettingsBridge.setSetting(paramKey, value)
+                // The library may reject or normalize this edit. Its accepted
+                // value remains authoritative, including unchanged revisions.
+                syncFromBridge()
             }
         }
 

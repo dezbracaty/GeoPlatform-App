@@ -3905,3 +3905,15 @@ msgstr "Journal 已开始回放"
 
 msgid "Journal replay ended"
 msgstr "Journal 回放已结束"
+
+msgid "Setting not applied"
+msgstr "设置未生效"
+
+msgid "Settings cannot be changed while slicing. Wait for the current task to finish."
+msgstr "切片期间无法修改设置，请等待当前任务完成。"
+
+msgid "This setting is no longer available."
+msgstr "此设置当前不可用。"
+
+msgid "Invalid value."
+msgstr "参数值无效。"

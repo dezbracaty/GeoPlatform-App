@@ -447,10 +447,15 @@ QVariant SliceSettingsBridge::getSetting(const QString& key, const QVariant& def
 }
 
 void SliceSettingsBridge::setSetting(const QString& key, const QVariant& value) {
-    if (configurationMutationBlocked("setting change"))
+    if (configurationMutationBlocked("setting change")) {
+        emit settingRejected(key,
+            tr("Settings cannot be changed while slicing. Wait for the current task to finish."));
         return;
+    }
 
     QVariant canonicalDisplay;
+    QString rejection;
+    QString settingLabel = key;
     bool pendingChanged = false;
     bool schemaChanged = false;
     bool valueChanged = false;
@@ -458,24 +463,41 @@ void SliceSettingsBridge::setSetting(const QString& key, const QVariant& value) 
         QWriteLocker locker(&m_lock);
         const auto* item = findItemLocked(key.toStdString());
         if (item == nullptr) {
-            LOG_WARN("SliceSettingsBridge: unknown setting '{}'", key.toStdString());
-            return;
+            rejection = tr("This setting is no longer available.");
+        } else {
+            settingLabel = translatedSettingText(QString::fromStdString(item->label));
+            const auto result = GPlatform::SlicingBackend::instance().setConfigValue(
+                item->key, serializeValueLocked(*item, value));
+            if (!result) {
+                QStringList reasons;
+                for (const auto& diagnostic : result.diagnostics) {
+                    QString message = translatedSettingText(QString::fromStdString(diagnostic.message));
+                    if (!diagnostic.key.empty() && diagnostic.key != item->key) {
+                        const auto* related = findItemLocked(diagnostic.key);
+                        const QString label = related
+                            ? translatedSettingText(QString::fromStdString(related->label))
+                            : QString::fromStdString(diagnostic.key);
+                        message = label + QStringLiteral(": ") + message;
+                    }
+                    reasons.push_back(message);
+                }
+                rejection = reasons.isEmpty() ? tr("Invalid value.") : reasons.join(QLatin1Char('\n'));
+            } else {
+                valueChanged = !result.changed_items.empty();
+                schemaChanged = applyChangedItemsLocked(result.changed_items);
+                const auto* canonical = findItemLocked(key.toStdString());
+                canonicalDisplay = canonical == nullptr ? value
+                                                        : displayValueLocked(*canonical, canonical->value);
+                if (valueChanged)
+                    setPendingLocked(&pendingChanged);
+            }
         }
-        const auto result = GPlatform::SlicingBackend::instance().setConfigValue(
-            item->key, serializeValueLocked(*item, value));
-        if (!result) {
-            const auto message = result.diagnostics.empty() ? std::string("invalid value")
-                                                            : result.diagnostics.front().message;
-            LOG_WARN("SliceSettingsBridge: rejected '{}': {}", key.toStdString(), message);
-            return;
-        }
-        valueChanged = !result.changed_items.empty();
-        schemaChanged = applyChangedItemsLocked(result.changed_items);
-        const auto* canonical = findItemLocked(key.toStdString());
-        canonicalDisplay = canonical == nullptr ? value
-                                                : displayValueLocked(*canonical, canonical->value);
-        if (valueChanged)
-            setPendingLocked(&pendingChanged);
+    }
+    // Notification observers may synchronously read settings; never notify under m_lock.
+    if (!rejection.isEmpty()) {
+        LOG_WARN("SliceSettingsBridge: rejected '{}': {}", key.toStdString(), rejection.toStdString());
+        emit settingRejected(key, settingLabel + QStringLiteral(": ") + rejection);
+        return;
     }
     if (valueChanged) {
         emit settingChanged(key, canonicalDisplay);

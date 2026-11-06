@@ -157,7 +157,9 @@ FramelessWindow {
 
     NotificationOverlay {
         id: notification_overlay
-        parent: window.contentItem
+        // Parameter editing uses a modal Popup on the Controls overlay. Keep
+        // rejection messages visible above that popup, not behind its content.
+        parent: Overlay.overlay
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.rightMargin: 16
@@ -179,6 +181,14 @@ FramelessWindow {
             dialog_slice_configuration_error.errorMessage = message
             dialog_slice_configuration_error.optionKey = optionKey
             dialog_slice_configuration_error.open()
+        }
+    }
+
+    Connections {
+        target: SliceSettingsBridge
+
+        function onSettingRejected(key, message) {
+            NotificationManager.showWarning(qsTr("Setting not applied"), message)
         }
     }
 
