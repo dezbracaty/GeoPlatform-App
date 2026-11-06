@@ -4125,6 +4125,18 @@ msgstr "刀路类型"
 msgid "Color by"
 msgstr "着色依据"
 
+msgid "Playback"
+msgstr "播放"
+
+msgid "Purpose: %1"
+msgstr "用途：%1"
+
+msgid "Expected: %1"
+msgstr "预期：%1"
+
+msgid "Data: %1 lines · %2 records · %3 ms\n%4"
+msgstr "数据：%1 行 · %2 条记录 · %3 毫秒\n%4"
+
 msgid "Import options"
 msgstr "导入选项"
 

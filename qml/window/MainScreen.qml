@@ -275,6 +275,7 @@ Item {
                     if (title === "Help") return qsTr("Help")
                     if (title === "View") return qsTr("View")
                     if (title === "Calibration") return qsTr("Calibration")
+                    if (title === "Playback") return qsTr("Playback")
                     return title
                 }
             }
