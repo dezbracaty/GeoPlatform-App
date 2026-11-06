@@ -147,7 +147,8 @@ private:
     bool isVisibleInMode(const QVariantMap& definition, bool showAdvancedMode) const;
     void setPendingLocked(bool* changed);
     void setConfigurationError(const QString& message);
-    bool replaceConfig(GPlatform::SlicingConfigActivationResult&& result, bool markPending);
+    bool replaceConfig(GPlatform::SlicingConfigActivationResult&& result, bool markPending,
+                       bool synchronizePlateMaterials = false);
 
     mutable QReadWriteLock m_lock;
     libslicer::ResolvedSelection m_selection;

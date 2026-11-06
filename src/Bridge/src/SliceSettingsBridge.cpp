@@ -4,6 +4,7 @@
 #include "Foundation/Log.h"
 #include "DocumentManager.hpp"
 #include "SlicingConfigDB.hpp"
+#include "PrintBedDB.hpp"
 #include "SlicingBackend.hpp"
 #include "TransactionManager.hpp"
 
@@ -809,7 +810,7 @@ bool SliceSettingsBridge::selectMachine(const QString& modelId, const QString& v
     libslicer::ConfigSelection selection;
     selection.machine_model_id = modelId.toStdString();
     selection.machine_variant_id = variantId.toStdString();
-    return replaceConfig(backend.activateConfig(selection), true);
+    return replaceConfig(backend.activateConfig(selection), true, true);
 }
 
 bool SliceSettingsBridge::selectProcessPreset(const QString& presetId) {
@@ -836,7 +837,7 @@ bool SliceSettingsBridge::selectProcessPreset(const QString& presetId) {
         selection.filament_preset_ids.clear();
         result = backend.activateConfig(selection);
     }
-    return replaceConfig(std::move(result), true);
+    return replaceConfig(std::move(result), true, true);
 }
 
 bool SliceSettingsBridge::selectFilamentPreset(const QString& presetId) {
@@ -854,7 +855,7 @@ bool SliceSettingsBridge::selectFilamentPresetForSlot(
     return replaceConfig(
         bridgeActivationResult(backend.setFilamentPreset(
             static_cast<std::size_t>(slotIndex), presetId.toStdString())),
-        true);
+        true, true);
 }
 
 bool SliceSettingsBridge::setFilamentToolMapping(const QVariantList& tools, bool automatic) {
@@ -895,7 +896,7 @@ bool SliceSettingsBridge::setFilamentSlotCount(int slotCount) {
     if (!replaceConfig(
         bridgeActivationResult(GPlatform::SlicingBackend::instance()
             .resizeFilamentSlots(static_cast<std::size_t>(slotCount))),
-        true)) {
+        true, true)) {
         return false;
     }
 
@@ -918,7 +919,7 @@ bool SliceSettingsBridge::addFilamentToTool(int physicalTool) {
     if (configurationMutationBlocked("add material to physical tool") || physicalTool < 0)
         return false;
     return replaceConfig(bridgeActivationResult(GPlatform::SlicingBackend::instance()
-        .addFilamentToTool(static_cast<std::size_t>(physicalTool))), true);
+        .addFilamentToTool(static_cast<std::size_t>(physicalTool))), true, true);
 }
 
 bool SliceSettingsBridge::setFilamentColor(int slotIndex, const QColor& color) {
@@ -1281,7 +1282,8 @@ QString SliceSettingsBridge::presetName(
         : QString::fromStdString(selected->name);
 }
 
-bool SliceSettingsBridge::replaceConfig(GPlatform::SlicingConfigActivationResult&& result, bool markPending) {
+bool SliceSettingsBridge::replaceConfig(GPlatform::SlicingConfigActivationResult&& result,
+                                       bool markPending, bool synchronizePlateMaterials) {
     if (!result) {
         const auto message = result.diagnostics.empty() ? std::string("unknown preset selection error")
             : result.diagnostics.front().key + ": " + result.diagnostics.front().message;
@@ -1298,10 +1300,53 @@ bool SliceSettingsBridge::replaceConfig(GPlatform::SlicingConfigActivationResult
     auto prepared = prepareConfiguration(std::move(view), GPlatform::SlicingBackend::instance().activeProjectMachine());
     {
         QReadLocker locker(&m_lock);
+        if (synchronizePlateMaterials) {
+            bool domainChanged = m_selection.machine_model_id != prepared.view.selection.machine_model_id ||
+                m_selection.machine_variant_id != prepared.view.selection.machine_variant_id ||
+                m_selection.filament_preset_ids.size() != prepared.view.selection.filament_preset_ids.size();
+            for (const char* key : {"filament_process_type", "physical_extruder_map",
+                    "toolhead_process_capabilities", "toolhead_filament_capacity",
+                    "filament_slots_bound_to_physical_tools", "filament_map"}) {
+                const auto* previous = findItemLocked(key);
+                const auto next = std::find_if(prepared.view.settings.begin(), prepared.view.settings.end(),
+                    [key](const auto& item) { return item.key == key; });
+                domainChanged = domainChanged ||
+                    (previous ? previous->value : std::string{}) !=
+                    (next != prepared.view.settings.end() ? next->value : std::string{});
+            }
+            synchronizePlateMaterials = domainChanged;
+        }
         if (m_selection.machine_model_id == prepared.view.selection.machine_model_id &&
             m_selection.machine_variant_id == prepared.view.selection.machine_variant_id &&
             m_selection.process_preset_id == prepared.view.selection.process_preset_id && !m_processBaseline.empty())
             prepared.processBaseline = m_processBaseline;
+    }
+    if (synchronizePlateMaterials) {
+        // Update every real plate on the document thread, before publishing the
+        // revision or any Bridge notification. Import refresh and explicit map
+        // edits deliberately do not repair bindings: slicing still validates them.
+        const auto target = GPlatform::SlicingBackend::instance().configSnapshot();
+        if (auto* document = DocumentManager::instance(); document && target) {
+            TransientUpdateGuard guard;
+            for (const auto& object : document->getDBInstancesByType(TypeID::PRINT_BED_DB)) {
+                const auto bed = std::dynamic_pointer_cast<PrintBedDB>(object);
+                if (!bed || bed->getProjectSemantics().empty()) continue;
+                try {
+                    std::vector<libslicer::ConfigDiagnostic> diagnostics;
+                    const auto semantics = libslicer::synchronize_project_plate_materials(
+                        bed->getProjectSemantics(), *target, &diagnostics);
+                    if (semantics != bed->getProjectSemantics()) bed->setProjectSemantics(semantics);
+                    for (const auto& diagnostic : diagnostics)
+                        LOG_WARN("SliceSettingsBridge: plate {} {}: {}", bed->getDBInstanceID().getValue(),
+                                 diagnostic.key, diagnostic.message);
+                } catch (const std::exception& error) {
+                    // Preserve malformed imported data for the strict slice
+                    // diagnostics, rather than discarding the whole plate.
+                    LOG_ERROR("SliceSettingsBridge: cannot synchronize plate {}: {}",
+                              bed->getDBInstanceID().getValue(), error.what());
+                }
+            }
+        }
     }
     publishActiveSlicingConfig(prepared.view.revision, prepared.view.filament_slots);
     if (!prepared.projectLocal) persistSelection(prepared.view.selection);
