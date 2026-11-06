@@ -22,6 +22,7 @@ CORE_SCENARIOS = {
     'three_mf_native_decision_yes',
     'three_mf_open_project_filepicker',
     'three_mf_shared_instances_geometry',
+    'three_mf_switch_p3',
     'three_mf_target2_geometry',
     'three_mf_target2_project_geometry',
     'three_mf_ui_choose_geometry',
