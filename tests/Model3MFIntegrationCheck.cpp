@@ -464,6 +464,68 @@ void checkPreviewPlacement() {
     std::cout << "preview placement: both imported plates/all source scopes; G-code bytes unchanged\n";
 }
 
+void checkPlateMaterialSynchronization() {
+    importAndWait("complete-project.3mf", "project");
+    auto* bridge = SliceSettingsBridge::instance();
+    const auto beds = objects<PrintBedDB>(TypeID::PRINT_BED_DB);
+    require(beds.size() == 2, "Material regression requires both imported plates");
+    std::vector<QJsonObject> expected;
+    for (const auto& bed : beds) {
+        auto semantics = QJsonDocument::fromJson(QByteArray::fromStdString(bed->getProjectSemantics())).object();
+        auto settings = semantics["settings"].toObject();
+        settings["sparse_infill_density"] = "23%";
+        semantics["settings"] = settings;
+        expected.push_back(semantics);
+        settings["filament_map"] = "1";
+        settings["filament_map_mode"] = "Auto For Flush";
+        semantics["settings"] = settings;
+        bed->setProjectSemantics(QJsonDocument(semantics).toJson(QJsonDocument::Compact).toStdString());
+    }
+    std::vector<std::string> partSemantics;
+    const auto parts = objects<ModelPartDB>(TypeID::MODEL_PART_DB);
+    for (const auto& part : parts) partSemantics.push_back(part->getProjectSemantics());
+    require(bridge->selectMachine("P3", "0.4"), "Cannot switch imported project to P3");
+    // Check immediately, without draining the queued platform-geometry signal:
+    // material synchronization must precede publication of the new revision.
+    const auto snapshot = GPlatform::SlicingBackend::instance().configSnapshot();
+    require(snapshot && snapshot->value("filament_map") == std::optional<std::string>("1,2,3,4,5,6"),
+            "P3 did not publish its six physical material bindings");
+    for (size_t i = 0; i < beds.size(); ++i)
+        require(QJsonDocument::fromJson(QByteArray::fromStdString(beds[i]->getProjectSemantics())).object() == expected[i],
+                "Not all plate mappings were synchronized, or unrelated semantics changed");
+    for (size_t i = 0; i < parts.size(); ++i)
+        require(parts[i]->getProjectSemantics() == partSemantics[i], "Machine switch changed part/modifier settings");
+    auto illegal = expected.front();
+    auto illegalSettings = illegal["settings"].toObject();
+    illegalSettings["filament_map"] = "7,2,3,4,5,6";
+    illegalSettings["filament_map_mode"] = "Manual";
+    illegal["settings"] = illegalSettings;
+    const auto illegalPayload = QJsonDocument(illegal).toJson(QJsonDocument::Compact).toStdString();
+    beds.front()->setProjectSemantics(illegalPayload);
+    require(bridge->selectProcessPreset(bridge->selectedProcessPresetId()), "Cannot refresh current process preset");
+    require(beds.front()->getProjectSemantics() == illegalPayload,
+            "Unchanged material domain silently repaired an explicit illegal plate mapping");
+    require(bridge->selectMachine("Flashforge AD5X", "0.4"), "Cannot return to ordinary machine");
+    for (const auto& bed : beds) {
+        auto semantics = QJsonDocument::fromJson(QByteArray::fromStdString(bed->getProjectSemantics())).object();
+        auto settings = semantics["settings"].toObject();
+        settings["filament_map"] = "1";
+        settings["filament_map_mode"] = "Manual";
+        semantics["settings"] = settings;
+        bed->setProjectSemantics(QJsonDocument(semantics).toJson(QJsonDocument::Compact).toStdString());
+    }
+    for (const auto count : {4, 2}) {
+        require(bridge->setFilamentSlotCount(count), "Cannot resize ordinary material slots");
+        for (const auto& bed : beds) {
+            const auto settings = QJsonDocument::fromJson(QByteArray::fromStdString(bed->getProjectSemantics())).object()["settings"].toObject();
+            require(settings["filament_map"].toString() == (count == 4 ? "1,1,1,1" : "1,1") &&
+                    settings["filament_map_mode"].toString() == "Manual" && settings["sparse_infill_density"].toString() == "23%",
+                    "Slot resize failed to preserve and resize both manual plate mappings");
+        }
+    }
+    std::cout << "all imported plates: synchronous P3 bindings, add/remove slots and local semantics preserved\n";
+}
+
 int main(int argc,char** argv) {
     qputenv("QT_QPA_PLATFORM","offscreen");
     QStandardPaths::setTestModeEnabled(true);
@@ -511,6 +573,7 @@ int main(int argc,char** argv) {
                 warnings.contains(QString::fromUtf8("修改过的 G-code 或自定义打印机／耗材预设")) &&
                 !warnings.contains("project.preset_gcode_warning"),
                 "Unknown-setting summary hid the custom preset warning or showed a protocol code");
+        checkPlateMaterialSynchronization();
     } catch (const std::exception& error) {std::cerr<<error.what()<<'\n'; status=1;}
     ActionManager::getInstance()->cleanupBeforeShutdown();
     ActionHandlerRegistry::instance().clearCache();
