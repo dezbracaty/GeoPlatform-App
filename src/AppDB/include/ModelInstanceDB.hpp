@@ -61,6 +61,7 @@ public:
     BoundingBox localBounds() const override;
     BoundingBox worldBounds() const override;
     BoundingBox worldBoundsAt(const Transform::Matrix4& matrix) const override;
+    BoundingBox modelPartBoundsAt(const Transform::Matrix4& matrix) const;
     std::optional<RayHit> intersectWorldRay(
         const Vector3& worldOrigin,
         const Vector3& worldDirection,
@@ -75,4 +76,7 @@ public:
 protected:
     void initializeSubActorProperties() override;
     bool ownsDefaultMaterial() const override { return false; }
+
+private:
+    BoundingBox boundsAt(const Transform::Matrix4& matrix, bool modelPartsOnly) const;
 };

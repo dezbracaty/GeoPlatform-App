@@ -6,7 +6,7 @@
 
 ## 技能选择
 
-- 所有 bug 修复与回归处理先读取 `.agents/skills/gplatform-bugfix/SKILL.md`，从行为合理性、架构职责、新增复杂度和任务范围评估方案，再按涉及模块组合下列技能。
+- 所有代码变更先读取 `.agents/skills/gplatform-bugfix/SKILL.md`，执行其中的修改范围检查点；bug 修复与回归处理同时执行完整的问题定位与验证流程，再按涉及模块组合下列技能。
 - 页面、面板、弹窗、主题、QML 与 Bridge 接线：`.agents/skills/gplatform-ui/SKILL.md`；先查现有页面和 SmoothUI 组件，优先复用控件、主题与交互，只补需求确有必要的能力。
 - DB、事务、Action、撤销重做、业务注册：`.agents/skills/gplatform-db-action/SKILL.md`。
 - 切片请求、配置、SDK、内核、连续纤维与预览：`.agents/skills/gplatform-slicing/SKILL.md`；算法库能力先定义输入输出契约，再查原始 GUI/内核调用链，优先提取复用并做必要协议封装。

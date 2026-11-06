@@ -16,6 +16,8 @@ PrintBedDB::~PrintBedDB() {
 // === 实现 ActorDB 的钩子函数 ===
 
 void PrintBedDB::initializeSubActorProperties() {
+    setProjectSemantics({});
+
     setTemplateDBId(DBInstanceID());
 
     // 网格显示属性
@@ -44,7 +46,9 @@ void PrintBedDB::afterSubActorPropertiesInitialized() {
     auto material = getMaterial();
     if (!material) return;
 
-    TransactionGuard guard("Init PrintBed Default Material (OrcaSlicer style)");
+    // Initialization already runs under DerivedUpdateGuard; never start an
+    // inner transaction that would commit a surrounding project operation.
+    DerivedUpdateGuard guard;
 
     material->setRenderingMode(static_cast<int>(MaterialDB::RenderingMode::PHONG));
     material->setDiffuseColor(Vector3(PrintBedViewDefaults::BED_COLOR_R,
@@ -256,11 +260,14 @@ ActorDB::BoundingBox PrintBedDB::localBounds() const {
 }
 
 std::shared_ptr<AutoRegisterDB> PrintBedDB::clone() const {
-    auto lock = getSharedLock();
-
-    // 使用工厂方法创建新实例
+    // Registration updates bed projections, including this source bed. Do not
+    // hold its actor lock while the factory runs those callbacks.
     auto cloned = trans::TransDB::create<PrintBedDB>();
+    auto lock = getSharedLock();
+    cloned->setDisplayName(AutoRegisterDB::serialize().value("displayName").toString().toStdString());
+    cloned->setProjectSemantics(getProjectSemantics());
 
+    // Dependency IDs are rebuilt by graph remapping, not copied by a node clone.
     cloned->setShowGrid(getShowGrid());
     cloned->setGridSpacing(getGridSpacing());
     cloned->setShowBounds(getShowBounds());

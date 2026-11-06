@@ -96,3 +96,58 @@ GUI 默认场景目录也指向资产仓库。GUI 直接回放显示的仍是 Jo
 
 增加场景先确定数据验收还是画面验收，再补对应标准 DB 或标准截图，复用现有比较代码。
 截图基线需要独立审批与平台/DPR/主题/容差来源。实机结果不属于本轮场景验收。
+
+## 3MF 的业务验收与样本回归
+
+3MF 保留 17 个业务场景，复用同一 catalog、metadata v3、正式 Journal 和共享执行入口。
+文件选择器、中文路径、拖放、工程替换、原生确认、取消重试、耗材槽、实例、撤销重做和视觉恢复按独立行为组织，
+不为每个输入文件生成一套 GUI 场景。覆盖矩阵见资产仓库 `docs/3mf-scenarios.md`。
+
+56 个官方原件（22,248,071 字节，51 种内容）位于 `models/three_mf_official/`，原始字节与重复来源路径均保留。
+manifest 固定上游提交、下载链接、大小和 SHA-256，许可来源另存 `licenses.json`。
+批量读取使用已有 `libslicer_api_tests` 的 `[project-corpus]`，原生行为对照使用
+`orca_plater_tests` 的 `[project-orca-reference]`；两者通过 `LIBSLICER_PROJECT_CORPUS` 指向样本目录，
+分别遍历 Geometry/Project 入口。前者允许原生拒绝并检查活动配置不被读取污染，后者对照原生读取成功/拒绝、
+有效配置及几何转换；这两项不能替代真实 App 的文件选择、交互与视口验收。
+
+每个业务场景只选择 DB 或截图门禁。`capture.db` 只是原始数据采集，只有正式 `verify.db` 或
+`verify.screenshot` 及相应独立标准才能满足门禁。单个配置 DB 不代表文档对象图、实例数、角色、
+历史或完整 Backend 配置；这些范围必须由实际对应对象的比较或原生专项分别证明。
+尚缺断言的场景保持 `not_verified`，不能因操作完成或输出文件检查通过而升级。
+
+App 的注册 CTest `Model3MFIntegrationCheck` 经实际 `file.import` 和导入 Handler
+核对属性序列化之外的所有权、共享关系、VTK 网格及部件局部矩阵，并检查工程替换、
+追加图的撤销重做、有效切片输入和 Backend 层高编辑／重开恢复。
+这是 App 原生集成补充，不替代 Journal 门禁、真实输入或视口检查。
+两个工程回归测试的源码和注册位于 `tests/`；完整宿主通过 `GPLATFORM_BUILD_TESTS`、
+独立 App 通过 `GPLATFORM_BUILD_SDK_CHECKS` 构建同一目标。
+Python 验收合同测试的依赖用 `python -m pip install -r App/tests/requirements.txt` 安装
+（独立 App 根目录使用 `tests/requirements.txt`），其中包含真实 metadata 的 JSON Schema 校验。
+
+```sh
+# 查看场景 ID 和标准准备状态
+python App/tools/run_acceptance.py --list
+# 按明确的 ID 列表执行，使用新结果目录和实际程序
+python App/tools/run_acceptance.py --cases <comma-separated-ids> --application <actual-executable> --output <new-run-directory> --exports <new-export-directory> --settings-file <actual-App-INI>
+```
+
+文件选择和拖放通过正式 Qt 输入回放。`${inputDirectory:MODEL_ID}` 和 `${inputUri:MODEL_ID}`
+仅绑定已声明且哈希正确的仓库样本；`${exports}` 绑定保存窗口的位置字段。中断时分别报告计划、完成和未运行项。
+Journal 会话统一使用 1382×954 逻辑窗口、实际 DPR 1；截图应为 1382×954 像素。
+既有其他场景的 macOS 标准多数仍为 DPR 2，不能用缩放 PNG、放松容差或改写元数据冒充环境迁移；
+更新标准需核对独立预期、保存原始截图，并在匹配环境的新进程中复跑和检查错误状态。
+
+### G-code 与文件包补充检查
+
+`three_mf_complete_workflow` 保留受控双盘工程的编辑、逐盘切片和导出，使用 `project-gcode`
+核对实际沉积、源盘局部范围、层数、声明的包内配置、包内外精确 G-code 字节及必需 MD5。
+盘切换使用正式 `plate.activate` Action；参数编辑和导出仍走真实输入，不宣称覆盖盘选择界面。
+这是补充门禁，不重复验证对象图、配置恢复或撤销重做，也不能满足缺失的 DB/截图门禁。
+其他任务原有的 `gcode-job` 同样仅作补充；官方原始样本不再各自维护 GUI 导出长链。
+
+输出检查支持原生 XY 平面、相对 I/J 圆心的 G2/G3，核对端点及内部圆弧极值；不支持的
+P/K/R、其他平面、绝对圆心和非平面沉积明确拒绝。均匀层的最少层数与 Z 格点由独立源事实、
+声明的 UI 层高和原内核中点规则推导；薄模型仍必须生成正确的一个初层。
+
+截图只覆盖 Journal 声明的目标区域。诊断截图、原生对照及输出检查分别报告，不据此宣称
+选择状态、全视口外观、完整刀路等价、设备行为或实物打印已经验收。

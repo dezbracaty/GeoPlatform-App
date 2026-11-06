@@ -1,6 +1,7 @@
 #include "ModelFilamentSlotResolver.hpp"
 
 #include <ModelPartDB.hpp>
+#include <ModelObjectDB.hpp>
 #include <SlicingConfigDB.hpp>
 
 #include <algorithm>
@@ -34,9 +35,14 @@ ResolvedModelFilamentSlot resolveModelFilamentSlot(
         slicingConfig, availableFilamentSlots);
     result.explicitlyBound = part.getFilamentBindingMode() ==
         static_cast<int>(ModelFilamentBindingMode::ExplicitSlot);
-    if (!result.explicitlyBound) return result;
-
-    const int requested = part.getDefaultFilamentSlot();
+    const bool inheritObject = part.getFilamentBindingMode() ==
+        static_cast<int>(ModelFilamentBindingMode::InheritObject);
+    if (!result.explicitlyBound && !inheritObject) return result;
+    const auto object = inheritObject ? part.object() : nullptr;
+    const int requested = inheritObject
+        ? (object ? object->getDefaultFilamentSlot() : 0)
+        : part.getDefaultFilamentSlot();
+    if (inheritObject && requested == 0) return result;
     result.requestedSlotValid = requested >= 1 &&
         (availableFilamentSlots == 0 ||
          static_cast<std::size_t>(requested) <= availableFilamentSlots);

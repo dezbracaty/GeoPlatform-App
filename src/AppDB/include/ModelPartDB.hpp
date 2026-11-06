@@ -19,7 +19,9 @@ class ModelSurfaceColorDB;
 enum class ModelPartRole : int {
     Model = 0,
     SupportEnforcer = 1,
-    SupportBlocker = 2
+    SupportBlocker = 2,
+    NegativeVolume = 3,
+    ParameterModifier = 4
 };
 
 /**
@@ -28,7 +30,8 @@ enum class ModelPartRole : int {
  */
 enum class ModelFilamentBindingMode : int {
     InheritProjectDefault = 0,
-    ExplicitSlot = 1
+    ExplicitSlot = 1,
+    InheritObject = 2
 };
 
 /** A semantic Part. Parent and child links live only in the relation graph. */
@@ -62,6 +65,12 @@ public:
     FIELD_VALUE_SIMPLE(ModelPartDB, int, OrderIndex)
     FIELD_VALUE_SIMPLE(ModelPartDB, int, DefaultFilamentSlot)
     FIELD_VALUE_SIMPLE(ModelPartDB, int, FilamentBindingMode)
+
+    // Imported project semantics; each field has one document owner.
+    FIELD_VALUE(ModelPartDB, std::string, ProjectSemantics)
+    FIELD_VALUE(ModelPartDB, std::string, SurfaceAnnotations)
+    FIELD_VALUE(ModelPartDB, std::string, AnnotationsTopologyFingerprint)
+    FIELD_VALUE_SIMPLE(ModelPartDB, int, AnnotationsSourceTriangleCount)
 
     TypeID getTypeID() const override { return TypeID::MODEL_PART_DB; }
     bool needsVTKSync() const override { return false; }

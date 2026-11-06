@@ -39,6 +39,7 @@ ToolbarSurface {
                 tooltip: qsTr("File")
                 expandItems: [
                     {
+                        targetName: "print.toolbar.file.import",
                         icon: FluentIcons.graph_Import,
                         text: qsTr("Import…"),
                         tooltip: qsTr("Import model or GCode file"),
@@ -66,12 +67,13 @@ ToolbarSurface {
                         }
                     },
                     {
+                        targetName: "print.toolbar.file.openProject",
                         icon: FluentIcons.graph_FolderOpen,
                         text: qsTr("Open Project"),
                         tooltip: qsTr("Open existing project"),
                         enabled: true,
                         action: function() {
-                            console.log("Open Project clicked");
+                            Global.starter.chooseProject({});
                         }
                     }
                 ]

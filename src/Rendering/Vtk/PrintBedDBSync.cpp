@@ -417,7 +417,29 @@ void PrintBedDBSync::createActor() {
         m_printVolumeActor = nullptr;
     }
 
+    syncAuxiliaryTransforms();
     LOG_DEBUG("PrintBedDBSync::createActor - Created Orca Bed3D platform actors for print bed");
+}
+
+void PrintBedDBSync::syncAuxiliaryTransforms() {
+    const auto bed = documentDB<PrintBedDB>(m_id);
+    if (!bed) return;
+    const auto source = bed->getTransformMatrix();
+    auto matrix = vtkSmartPointer<vtkMatrix4x4>::New();
+    for (int row=0;row<4;++row)
+        for (int column=0;column<4;++column)
+            matrix->SetElement(row,column,source(row,column));
+    const auto apply = [&](vtkActor* actor) { if (actor) actor->SetUserMatrix(matrix); };
+    for (const auto& actor : {m_gridActor,m_majorGridActor,m_bedTextureActor,m_printVolumeActor}) apply(actor);
+    for (const auto& actor : m_axisActors) apply(actor);
+    for (const auto& actor : m_collisionWallActors) apply(actor);
+    for (const auto& actor : m_collisionWallBorderActors) apply(actor);
+}
+
+void PrintBedDBSync::onTransformChanged(const std::string&) {
+    // ActorDBSync moves the primary bed. Its independent decorations must
+    // consume the same local-to-scene transform on this render thread.
+    syncAuxiliaryTransforms();
 }
 
 void PrintBedDBSync::initialize(const DBInstanceID& id,
@@ -813,6 +835,7 @@ void PrintBedDBSync::updatePrintBedGeometry() {
         LOG_DEBUG("PrintBedDBSync::updatePrintBedGeometry - Updated geometry: {}x{}x{}mm at ({},{},{})",
                   printBedDB->getWidth(), printBedDB->getHeight(), printBedDB->getThickness(),
                   printBedDB->getCenter().x, printBedDB->getCenter().y, printBedDB->getCenter().z);
+        printBedSync->syncAuxiliaryTransforms();
     });
 }
 
@@ -984,6 +1007,7 @@ void PrintBedDBSync::updatePlatformGeometry() {
 
         LOG_DEBUG("PrintBedDBSync::updatePlatformGeometry - Platform updated: {}x{}x{}mm at Z={}",
                   width, height, thickness, bedZ);
+        printBedSync->syncAuxiliaryTransforms();
     });
 }
 
@@ -1056,6 +1080,7 @@ void PrintBedDBSync::updatePrintVolumeGeometry() {
                 // LOG_INFO("PrintBedDBSync::updatePrintVolumeGeometry - Print volume actor removed");
             }
         }
+        printBedSync->syncAuxiliaryTransforms();
     });
 }
 
@@ -1148,6 +1173,7 @@ bool PrintBedDBSync::syncBedTextureActor(const PrintBedDB& bed) {
     if (m_bedTextureActor && m_vtkRenderer) m_vtkRenderer->RemoveActor(m_bedTextureActor);
     createBedTextureActor(bed, path);
     if (m_bedTextureActor && m_vtkRenderer) m_vtkRenderer->AddActor(m_bedTextureActor);
+    syncAuxiliaryTransforms();
     return m_bedTextureActor != nullptr;
 }
 
@@ -1224,6 +1250,7 @@ void PrintBedDBSync::rebuildBedDecorations(const PrintBedDB& bed) {
         m_vtkRenderer->AddActor(m_gridActor);
         m_vtkRenderer->AddActor(m_majorGridActor);
     }
+    syncAuxiliaryTransforms();
 }
 
 bool PrintBedDBSync::validateGeometry(vtkPolyData* geometry, const std::string& component) {
@@ -1329,6 +1356,7 @@ void PrintBedDBSync::updateCollisionWalls() {
         }
 
         printBedSync->m_vtkRenderer->Modified();
+        printBedSync->syncAuxiliaryTransforms();
     });
 }
 

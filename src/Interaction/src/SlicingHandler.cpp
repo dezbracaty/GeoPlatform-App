@@ -1,3 +1,4 @@
+#include <ModelCreationUtil.hpp>
 #include "SlicingHandler.hpp"
 #include "ImportFileFormat.hpp"
 #include "InteractionRegistration.hpp"
@@ -340,19 +341,9 @@ QStringList SlicingHandler::collectSliceTargets(const QString& actionCode) const
 }
 
 DBInstanceID SlicingHandler::defaultPrintBedId() const {
-    auto* document = DocumentManager::instance();
-    if (!document) return INVALID_DB_ID;
-    const auto beds = document->getDBInstancesByType(TypeID::PRINT_BED_DB);
-    DBInstanceID result = INVALID_DB_ID;
-    for (const auto& bed : beds) {
-        if (!bed) continue;
-        const DBInstanceID candidate = bed->getDBInstanceID();
-        if (!result.isValid() ||
-            candidate.getValue() < result.getValue()) {
-            result = candidate;
-        }
-    }
-    return result;
+    const auto requested = getParam("printBedId");
+    const auto bed = ModelCreationUtil::resolvePrintBed(requested);
+    return bed ? bed->getDBInstanceID() : INVALID_DB_ID;
 }
 
 QStringList SlicingHandler::collectPlateSliceTargets(

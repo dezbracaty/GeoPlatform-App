@@ -16,6 +16,7 @@ GPLATFORM_ADD_MODULE_REGISTRATION(
 #include <SkyboxDB.hpp>
 #include <PrintBedDB.hpp>
 #include <PrintBedTemplateDB.hpp>
+#include <SlicingConfigDB.hpp>
 #include <CameraDB.hpp>
 #include <ModelGraphUtil.hpp>
 #include <ModelInstanceDB.hpp>
@@ -409,8 +410,21 @@ bool SceneHandler::createSkybox(const QVariantMap& params) {
 }
 
 bool SceneHandler::createPrintBed(const QVariantMap& params) {
+    const auto establishActiveBed = [] {
+        auto* document = DocumentManager::instance();
+        const auto beds = document->getDBInstancesByType(TypeID::PRINT_BED_DB);
+        DBInstanceID first;
+        for (const auto& bed : beds)
+            if (!first.isValid() || bed->getDBInstanceID().getValue()<first.getValue()) first = bed->getDBInstanceID();
+        for (const auto& value : document->getDBInstancesByType(TypeID::SLICING_CONFIG_DB)) {
+            const auto config = std::dynamic_pointer_cast<GPlatform::SlicingConfigDB>(value);
+            if (config && !document->getDB<PrintBedDB>(config->getActivePrintBedDBId()))
+                config->setActivePrintBedDBId(first);
+        }
+    };
     // 幂等性检查：如果已存在 PrintBedDB，直接返回成功
     if (hasObjectOfType(static_cast<int>(TypeID::PRINT_BED_DB))) {
+        establishActiveBed();
         LOG_DEBUG("SceneHandler::createPrintBed - PrintBed already exists, skipping creation");
         return true;
     }
@@ -487,6 +501,7 @@ bool SceneHandler::createPrintBed(const QVariantMap& params) {
     LOG_INFO("SceneHandler::createPrintBed - Created PrintBedDB {}x{}x{}mm at ({},{},{}), printer='{}', profileSource='libslicer'",
              width, height, thickness, origin.x, origin.y, origin.z,
              printerModel.toStdString());
+    establishActiveBed();
     return true;
 }
 
@@ -509,79 +524,85 @@ bool SceneHandler::syncPrintBed(const QVariantMap& params, bool fitCamera) {
     if (printBeds.empty()) {
         return createPrintBed(params);
     }
-    auto printBed = std::dynamic_pointer_cast<PrintBedDB>(printBeds.front());
-    if (!printBed) {
-        LOG_ERROR("SceneHandler::syncPrintBed - Existing print bed has an invalid type");
-        return false;
-    }
-
-    const float x = params.value("x", 0.0).toFloat();
-    const float y = params.value("y", 0.0).toFloat();
-    const float z = params.value("z", 0.0).toFloat();
-    const float width = params.value("width").toFloat();
-    const float height = params.value("height").toFloat();
-    const float printHeight = params.value("printHeight").toFloat();
-    const float thickness = params.value("thickness", printBed->getThickness()).toFloat();
-    if (width <= 0.0f || height <= 0.0f || printHeight <= 0.0f) {
-        LOG_ERROR("SceneHandler::syncPrintBed - Invalid machine volume {}x{}x{}",
-                  width, height, printHeight);
-        return false;
-    }
-
-    const Vector3 origin(x, y, z);
-    const Polygon2 printableArea = printableAreaFromParams(params, x, y, width, height);
-    const std::string bedVendor = params.value("bedVendor").toString().toStdString();
-    const std::string printerModel = params.value("printerModel").toString().toStdString();
-    const std::string bedModelPath = params.value("bedModelPath").toString().toStdString();
-    const std::string bedTexturePath = params.value("bedTexturePath").toString().toStdString();
-    const std::string modelId = params.value("modelId").toString().toStdString();
-    const std::string variantId = params.value("variantId").toString().toStdString();
-    const auto currentTemplate = printBed->getTemplateDB();
-    const bool identityChanged = !currentTemplate ||
-        currentTemplate->getModelId() != modelId ||
-        currentTemplate->getVariantId() != variantId;
-
-    const bool geometryChanged = !sameFloat(printBed->getWidth(), width) ||
-        !sameFloat(printBed->getHeight(), height) ||
-        !sameFloat(printBed->getThickness(), thickness) ||
-        !sameFloat(printBed->getPrintHeight(), printHeight) ||
-        printBed->getOrigin() != origin || printBed->getPrintableArea() != printableArea;
-    const bool visualChanged = printBed->getBedVendor() != bedVendor ||
-        printBed->getBedPrinterModel() != printerModel ||
-        printBed->getBedModelPath() != bedModelPath ||
-        printBed->getBedTexturePath() != bedTexturePath;
-
-    if (!identityChanged && !geometryChanged && !visualChanged) {
-        return true;
-    }
-
-    // The platform is a projection of the active slicing configuration, not
-    // an independently undoable document edit.
-    DerivedUpdateGuard derivedUpdate;
-    auto printBedTemplate = currentTemplate;
-    if (identityChanged) {
-        printBedTemplate = findPrintBedTemplate(document, modelId, variantId);
-    }
-    if (!printBedTemplate) {
-        printBedTemplate = trans::TransDB::create<PrintBedTemplateDB>();
-        if (!printBedTemplate) {
-            LOG_ERROR("SceneHandler::syncPrintBed - Failed to create PrintBedTemplateDB");
+    // All real plates share the selected machine definition. Preserve each
+    // plate's display transform and project-local printing semantics.
+    const auto syncOne = [&](const std::shared_ptr<AutoRegisterDB>& bedObject) -> bool {
+        auto printBed = std::dynamic_pointer_cast<PrintBedDB>(bedObject);
+        if (!printBed) {
+            LOG_ERROR("SceneHandler::syncPrintBed - Existing print bed has an invalid type");
             return false;
         }
-    }
-    configurePrintBedTemplate(printBedTemplate, params, origin, width, height,
-                              thickness, printHeight);
-    if (printBed->getTemplateDBId() != printBedTemplate->getDBInstanceID()) {
-        printBed->setTemplateDBId(printBedTemplate->getDBInstanceID());
-    }
-    if (geometryChanged && fitCamera) {
-        if (auto cameraDB = CameraNavigationController::currentCamera()) {
-            CameraNavigationController::fitScene(cameraDB);
-        }
-    }
 
-    LOG_INFO("SceneHandler::syncPrintBed - Synced machine '{}' platform {}x{}x{} at origin ({},{},{}) resourcesChanged={}",
-             printerModel, width, height, printHeight, x, y, z, visualChanged);
+        const float x = params.value("x", 0.0).toFloat();
+        const float y = params.value("y", 0.0).toFloat();
+        const float z = params.value("z", 0.0).toFloat();
+        const float width = params.value("width").toFloat();
+        const float height = params.value("height").toFloat();
+        const float printHeight = params.value("printHeight").toFloat();
+        const float thickness = params.value("thickness", printBed->getThickness()).toFloat();
+        if (width <= 0.0f || height <= 0.0f || printHeight <= 0.0f) {
+            LOG_ERROR("SceneHandler::syncPrintBed - Invalid machine volume {}x{}x{}",
+                      width, height, printHeight);
+            return false;
+        }
+
+        const Vector3 origin(x, y, z);
+        const Polygon2 printableArea = printableAreaFromParams(params, x, y, width, height);
+        const std::string bedVendor = params.value("bedVendor").toString().toStdString();
+        const std::string printerModel = params.value("printerModel").toString().toStdString();
+        const std::string bedModelPath = params.value("bedModelPath").toString().toStdString();
+        const std::string bedTexturePath = params.value("bedTexturePath").toString().toStdString();
+        const std::string modelId = params.value("modelId").toString().toStdString();
+        const std::string variantId = params.value("variantId").toString().toStdString();
+        const auto currentTemplate = printBed->getTemplateDB();
+        const bool identityChanged = !currentTemplate ||
+            currentTemplate->getModelId() != modelId ||
+            currentTemplate->getVariantId() != variantId;
+
+        const bool geometryChanged = !sameFloat(printBed->getWidth(), width) ||
+            !sameFloat(printBed->getHeight(), height) ||
+            !sameFloat(printBed->getThickness(), thickness) ||
+            !sameFloat(printBed->getPrintHeight(), printHeight) ||
+            printBed->getOrigin() != origin || printBed->getPrintableArea() != printableArea;
+        const bool visualChanged = printBed->getBedVendor() != bedVendor ||
+            printBed->getBedPrinterModel() != printerModel ||
+            printBed->getBedModelPath() != bedModelPath ||
+            printBed->getBedTexturePath() != bedTexturePath;
+
+        if (!identityChanged && !geometryChanged && !visualChanged) {
+            return true;
+        }
+
+        // The platform is a projection of the active slicing configuration, not
+        // an independently undoable document edit.
+        DerivedUpdateGuard derivedUpdate;
+        auto printBedTemplate = currentTemplate;
+        if (identityChanged) {
+            printBedTemplate = findPrintBedTemplate(document, modelId, variantId);
+        }
+        if (!printBedTemplate) {
+            printBedTemplate = trans::TransDB::create<PrintBedTemplateDB>();
+            if (!printBedTemplate) {
+                LOG_ERROR("SceneHandler::syncPrintBed - Failed to create PrintBedTemplateDB");
+                return false;
+            }
+        }
+        configurePrintBedTemplate(printBedTemplate, params, origin, width, height,
+                                  thickness, printHeight);
+        if (printBed->getTemplateDBId() != printBedTemplate->getDBInstanceID()) {
+            printBed->setTemplateDBId(printBedTemplate->getDBInstanceID());
+        }
+        if (geometryChanged && fitCamera) {
+            if (auto cameraDB = CameraNavigationController::currentCamera()) {
+                CameraNavigationController::fitScene(cameraDB);
+            }
+        }
+
+        LOG_INFO("SceneHandler::syncPrintBed - Synced machine '{}' platform {}x{}x{} at origin ({},{},{}) resourcesChanged={}",
+                 printerModel, width, height, printHeight, x, y, z, visualChanged);
+        return true;
+    };
+    for (const auto& bed : printBeds) if (!syncOne(bed)) return false;
     return true;
 }
 

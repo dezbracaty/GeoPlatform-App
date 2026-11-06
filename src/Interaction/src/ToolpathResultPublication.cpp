@@ -1,6 +1,8 @@
 #include "ToolpathResultPublication.hpp"
 #include <SlicingPreviewBridge.hpp>
 #include <DocumentManager.hpp>
+#include <PrintBedDB.hpp>
+#include <PrintBedPlacementUtil.hpp>
 #include <ToolpathPreviewRelations.hpp>
 #include <TransactionManager.hpp>
 #include <stdexcept>
@@ -51,7 +53,13 @@ ToolpathPublicationResult publishToolpathResult(std::shared_ptr<SliceOutputRecor
                 preview->setSourceScope(output->sourceScope);
                 preview->setSourceModelDBId(output->sourceModelId);
                 preview->setPreviewData(std::move(data));
-                Transform identity; identity.identity(); preview->setTransform(identity);
+                const auto bed = document->getDB<PrintBedDB>(output->printBedId);
+                if (!bed) throw std::runtime_error("The preview print bed is unavailable");
+                // Toolpath coordinates stay plate-local, including exported G-code.
+                // Ownership does not compose transforms in the renderer.
+                Transform displayTransform;
+                displayTransform.setPosition(PrintBedPlacementUtil::sceneOffset(*bed));
+                preview->setTransform(displayTransform);
                 preview->setVisible(true);
                 if (beltAudit) {
                     preview->setShowLayerRangeStart(0); preview->setShowLayerRangeEnd(0); preview->setCurrentLayer(0);

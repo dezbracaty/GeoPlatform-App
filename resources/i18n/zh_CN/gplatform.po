@@ -3917,3 +3917,291 @@ msgstr "此设置当前不可用。"
 
 msgid "Invalid value."
 msgstr "参数值无效。"
+
+msgid "Open 3MF"
+msgstr "打开 3MF"
+
+msgid "Replace the current project?"
+msgstr "替换当前工程？"
+
+msgid "Open the complete project to restore its printer, settings and print plates, or import models using the current printer and process. Material slots are added when needed."
+msgstr "打开完整工程可恢复其中的打印机、参数和打印盘；导入模型时使用当前打印机与工艺，并按需增加耗材槽位。"
+
+msgid "The current models and print plates will be replaced with this project. The previous project's undo history will be cleared after the new project opens successfully."
+msgstr "当前模型和打印盘将被此工程替换。新工程成功打开后，将清除旧工程的撤销历史。"
+
+msgid "Import models"
+msgstr "导入模型"
+
+msgid "Open project"
+msgstr "打开工程"
+
+msgid "Replace and open"
+msgstr "替换并打开"
+
+msgid "%1× %2"
+msgstr "%1× %2"
+
+msgid "Project printer · %1"
+msgstr "工程打印机 · %1"
+
+msgid "%1 slot(s) · %2 · Edit…"
+msgstr "%1 个槽位 · %2 · 编辑…"
+
+msgid "Edit each filament preset and color"
+msgstr "编辑各耗材的预设和颜色"
+
+msgid "Unnamed printer"
+msgstr "未命名打印机"
+
+msgid "3MF Projects (*.3mf)"
+msgstr "3MF 工程 (*.3mf)"
+
+msgid "Supported Files (*.stl *.3mf *.gcode)"
+msgstr "支持的文件 (*.stl *.3mf *.gcode)"
+
+msgid "3MF Files (*.3mf)"
+msgstr "3MF 文件 (*.3mf)"
+
+msgid "Import STL"
+msgstr "导入 STL"
+
+msgid "Import File"
+msgstr "导入文件"
+
+msgid "Project import cancelled."
+msgstr "已取消工程导入。"
+
+msgid "A project import is already in progress."
+msgstr "正在导入工程，请等待当前操作完成。"
+
+msgid "The project file is not readable."
+msgstr "无法读取工程文件。"
+
+msgid "Choose whether to open this 3MF as a project or import its models."
+msgstr "请选择打开 3MF 工程，或仅导入其中的模型。"
+
+msgid "Project preparation failed."
+msgstr "工程读取准备失败。"
+
+msgid "The 3MF could not be prepared."
+msgstr "无法完成 3MF 读取准备。"
+
+msgid "This 3MF contains no editable models."
+msgstr "此 3MF 中没有可编辑的模型。"
+
+msgid "Confirm replacing the current project."
+msgstr "请确认是否替换当前工程。"
+
+msgid "The current configuration is unavailable."
+msgstr "当前配置不可用。"
+
+msgid "Project publication failed."
+msgstr "工程加载结果更新失败。"
+
+msgid "Choose a valid import mode."
+msgstr "请选择有效的导入方式。"
+
+msgid "3MF opened with unsupported settings omitted"
+msgstr "已忽略不支持的设置并打开 3MF"
+
+msgid "3MF opened with diagnostics"
+msgstr "3MF 已打开，请查看提示"
+
+msgid "3MF import"
+msgstr "3MF 导入"
+
+msgid "Unsupported file format: %1. Supported files: STL, 3MF and G-code."
+msgstr "不支持的文件格式：%1。支持 STL、3MF 和 G-code 文件。"
+
+msgid "Model import accepts STL or 3MF files."
+msgstr "模型导入支持 STL 或 3MF 文件。"
+
+msgid "Unable to apply tool mapping"
+msgstr "无法应用喷头映射"
+
+msgid "Unable to change filament color"
+msgstr "无法修改耗材颜色"
+
+msgid "The active filament configuration is unavailable"
+msgstr "当前耗材配置不可用"
+
+msgid "The 3MF file cannot be read."
+msgstr "无法读取此 3MF 文件。"
+
+msgid "The 3MF archive cannot be opened."
+msgstr "无法打开此 3MF 文件包。"
+
+msgid "This file is a sliced print job. Open it in G-code preview instead."
+msgstr "此文件是已切片的打印任务，请使用 G-code 预览打开。"
+
+msgid "The 3MF contains a missing or invalid model reference: %1"
+msgstr "3MF 中的模型引用缺失或无效：%1"
+
+msgid "This 3MF feature cannot be fully restored: %1"
+msgstr "无法完整恢复此 3MF 扩展功能：%1"
+
+msgid "This 3MF contains geometry without complete printer and process settings. Choose Import models instead."
+msgstr "此 3MF 仅含模型几何，没有完整的打印机和工艺配置。请选择“导入模型”。"
+
+msgid "This Prusa project can be imported as models with object settings. Choose Import models instead."
+msgstr "此 Prusa 工程可作为模型导入并保留对象参数。请选择“导入模型”。"
+
+msgid "Retired project setting: %1"
+msgstr "已废弃的工程设置：%1"
+
+msgid "Unsupported project setting: %1"
+msgstr "不支持的工程设置：%1"
+
+msgid "Omitted unsupported project setting: %1"
+msgstr "已忽略不支持的工程设置：%1"
+
+msgid "Project settings were converted using Orca compatibility rules."
+msgstr "已按 Orca 兼容规则转换工程设置。"
+
+msgid "Only FFF printer settings can be opened as a project."
+msgstr "目前仅支持打开使用 FFF 打印机的工程。"
+
+msgid "Confirm the import options to continue."
+msgstr "请确认导入选项后继续。"
+
+msgid "The incompatible legacy infill rotation setting was cleared."
+msgstr "已清除不兼容的旧版填充旋转设置。"
+
+msgid "The legacy prime tower settings were converted."
+msgstr "已转换旧版擦料塔设置。"
+
+msgid "Restored a missing printer setting: %1"
+msgstr "已补全缺失的打印机设置：%1"
+
+msgid "The legacy print plate layout was converted."
+msgstr "已转换旧版打印盘布局。"
+
+msgid "Imported model geometry and material assignments; source process settings were not applied."
+msgstr "已导入模型几何和材料归属，未应用源工艺参数。"
+
+msgid "The project contains an invalid setting: %1"
+msgstr "工程中的设置值无效：%1"
+
+msgid "The 3MF could not be read. Check that the file is complete and supported."
+msgstr "无法读取此 3MF，请检查文件是否完整，以及当前版本是否支持该文件。"
+
+msgid "The 3MF could not be prepared. The current project was kept."
+msgstr "3MF 读取准备失败，已保留当前工程。"
+
+msgid "The 3MF could not be added. The current project was kept."
+msgstr "无法导入此 3MF，已保留当前工程。"
+
+msgid "The import failed and the previous configuration could not be restored. Reopen the project before continuing."
+msgstr "导入失败，且无法恢复此前的配置。请重新打开工程后再继续。"
+
+msgid "The project was loaded, but some views could not be refreshed."
+msgstr "工程已加载，但部分视图未能刷新。"
+
+msgid "3MF diagnostic: %1"
+msgstr "3MF 诊断：%1"
+
+msgid "%1 unsupported settings were omitted. Review the project before printing."
+msgstr "已忽略 %1 项不支持的设置，请在打印前检查工程。"
+
+msgid "%1 additional diagnostics were recorded."
+msgstr "另有 %1 条诊断信息已记录。"
+
+msgid "Import models from this 3MF?"
+msgstr "导入此 3MF 中的模型？"
+
+msgid "This file cannot restore a complete project. You can import its models into the current project while keeping your printer and process settings."
+msgstr "此文件无法恢复完整工程。您可以将其中的模型导入当前工程，并保留现有打印机和工艺参数。"
+
+msgid "filePath is required"
+msgstr "请选择要导入的文件"
+
+msgid "Only local files can be imported"
+msgstr "只能导入本地文件"
+
+msgid "File not found: %1"
+msgstr "找不到文件：%1"
+
+msgid "Not a readable file: %1"
+msgstr "无法读取文件：%1"
+
+msgid "intent must be geometry or project"
+msgstr "请选择导入模型或打开工程"
+
+msgid "No active slicing configuration"
+msgstr "当前没有可用的切片配置"
+
+msgid "Toolpath Types"
+msgstr "刀路类型"
+
+msgid "Color by"
+msgstr "着色依据"
+
+msgid "Playback"
+msgstr "播放"
+
+msgid "Purpose: %1"
+msgstr "用途：%1"
+
+msgid "Expected: %1"
+msgstr "预期：%1"
+
+msgid "Data: %1 lines · %2 records · %3 ms\n%4"
+msgstr "数据：%1 行 · %2 条记录 · %3 毫秒\n%4"
+
+msgid "Import options"
+msgstr "导入选项"
+
+msgid "Yes"
+msgstr "是"
+
+msgid "No"
+msgstr "否"
+
+msgid "Clear the legacy OrcaSlicer 2.3.1-alpha infill rotation template?"
+msgstr "是否清除旧版 OrcaSlicer 2.3.1-alpha 的填充旋转模板？"
+
+msgid "The object may be in meters. Scale to millimetres?"
+msgstr "模型可能以米为单位，是否缩放为毫米？"
+
+msgid "The object may be in inches. Scale to millimetres?"
+msgstr "模型可能以英寸为单位，是否缩放为毫米？"
+
+msgid "Load objects positioned at multiple heights as one object with multiple parts?"
+msgstr "文件中的对象位于不同高度，是否作为一个含多个部件的对象加载？"
+
+msgid "Scale the oversized object down to fit the print bed?"
+msgstr "模型过大，是否缩小以适应打印盘？"
+
+msgid "This 3MF can only be imported as model geometry; its project settings were not applied."
+msgstr "此 3MF 只能导入模型几何，未应用其中的工程设置。"
+
+msgid "This 3MF was created with a newer version. Some features may not be fully compatible. Version: %1"
+msgstr "此 3MF 由更新版本创建，部分功能可能不完全兼容。文件版本：%1"
+
+msgid "This 3MF was created by Bambu Studio. Some settings or features may differ from OrcaSlicer. Version: %1"
+msgstr "此 3MF 由 Bambu Studio 创建，部分设置或功能可能与 OrcaSlicer 不同。文件版本：%1"
+
+msgid "Embedded presets were converted using Orca compatibility rules."
+msgstr "已按 Orca 兼容规则转换文件内嵌的预设。"
+
+msgid "This 3MF contains modified G-code or customized printer/filament presets. Review them before printing."
+msgstr "此 3MF 含有修改过的 G-code 或自定义打印机／耗材预设，请在打印前检查。"
+
+msgid "Objects with zero volume were removed: %1"
+msgstr "已移除体积为零的对象：%1"
+
+msgid "An oversized model was scaled down to avoid coordinate overflow: %1"
+msgstr "为避免坐标溢出，已缩小过大的模型：%1"
+
+msgid "The print plate G-code has no drawable preview. Plate: %1"
+msgstr "此打印盘的 G-code 没有可绘制的预览。打印盘：%1"
+
+msgid "The model references an invalid or unavailable filament slot: %1"
+msgstr "模型引用了无效或不可用的耗材槽：%1"
+
+msgid "An empty model volume was skipped: %1"
+msgstr "已跳过空模型部件：%1"
+
+msgid "The model material assignments could not be restored."
+msgstr "无法恢复模型的材料归属。"

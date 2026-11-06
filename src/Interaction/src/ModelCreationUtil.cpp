@@ -6,7 +6,10 @@
 #include <ModelObjectDB.hpp>
 #include <ModelPositionUtil.hpp>
 #include <PrintBedDB.hpp>
+#include <PrintBedPlacementUtil.hpp>
 #include <TransactionManager.hpp>
+#include <SlicingConfigDB.hpp>
+#include <algorithm>
 #include <QColor>
 
 #include <cmath>
@@ -15,8 +18,8 @@
 namespace {
 Vector3 calculatePosition(
     const Vector3& modelSize, const std::shared_ptr<PrintBedDB>& bed) {
-    const Vector3 center = bed->getCenter();
-    Vector3 position(center.x, center.y, bed->getOrigin().z);
+    const Vector3 center = PrintBedPlacementUtil::plateToScene(*bed, bed->getCenter());
+    Vector3 position(center.x, center.y, PrintBedPlacementUtil::plateToScene(*bed, bed->getOrigin()).z);
     if (modelSize.x > bed->getWidth() || modelSize.y > bed->getHeight())
         return position;
 
@@ -36,7 +39,7 @@ Vector3 calculatePosition(
         modelSize, existing,
         ModelPositionUtil::PlacementArea{bed->getWidth(), bed->getHeight(), center},
         10.0f);
-    position.z = bed->getOrigin().z;
+    position.z = PrintBedPlacementUtil::plateToScene(*bed, bed->getOrigin()).z;
     return position;
 }
 
@@ -54,9 +57,19 @@ std::shared_ptr<PrintBedDB> ModelCreationUtil::resolvePrintBed(const QVariant& r
     };
     if (requestedId.isValid()) {
         auto bed = document->getDB<PrintBedDB>(DBInstanceID(requestedId.toULongLong()));
-        if (usable(bed)) return bed;
+        return usable(bed) ? bed : nullptr;
     }
-    for (const auto& object : document->getDBInstancesByType(TypeID::PRINT_BED_DB)) {
+    const auto config = document->getDB<GPlatform::SlicingConfigDB>(activeSlicingConfigId());
+    if (config && config->getActivePrintBedDBId().isValid()) {
+        const auto bed = document->getDB<PrintBedDB>(config->getActivePrintBedDBId());
+        if (usable(bed)) return bed;
+        return {};
+    }
+    auto beds = document->getDBInstancesByType(TypeID::PRINT_BED_DB);
+    std::sort(beds.begin(), beds.end(), [](const auto& a, const auto& b) {
+        return a->getDBInstanceID().getValue() < b->getDBInstanceID().getValue();
+    });
+    for (const auto& object : beds) {
         auto bed = std::dynamic_pointer_cast<PrintBedDB>(object);
         if (usable(bed)) return bed;
     }

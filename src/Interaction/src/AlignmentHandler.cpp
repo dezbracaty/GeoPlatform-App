@@ -1,3 +1,4 @@
+#include <PrintBedPlacementUtil.hpp>
 #include "AlignmentHandler.hpp"
 #include <QScopeGuard>
 #include "InteractionRegistration.hpp"
@@ -703,9 +704,9 @@ AlignmentHandler::BedDimensions AlignmentHandler::getBedDimensions(
 
     bed.width = printBed->getWidth();
     bed.height = printBed->getHeight();
-    bed.centerX = printBed->getCenter().x;
-    bed.centerY = printBed->getCenter().y;
-    bed.baseZ = printBed->getOrigin().z;
+    bed.centerX = PrintBedPlacementUtil::plateToScene(*printBed, printBed->getCenter()).x;
+    bed.centerY = PrintBedPlacementUtil::plateToScene(*printBed, printBed->getCenter()).y;
+    bed.baseZ = PrintBedPlacementUtil::plateToScene(*printBed, printBed->getOrigin()).z;
     return bed;
 }
 
@@ -756,9 +757,10 @@ bool AlignmentHandler::canApplyTransforms(
             return false;
         }
 
-        const auto currentBounds = actor->worldBounds();
-        const auto candidateBounds = actor->worldBoundsAt(
-            transforms[i].getMatrix());
+        const auto currentBounds = PrintBedCollisionDetector::worldBounds(
+            *actor, actor->getTransform());
+        const auto candidateBounds = PrintBedCollisionDetector::worldBounds(
+            *actor, transforms[i]);
         if (!currentBounds.valid || !candidateBounds.valid) {
             error = QString("Model %1 has no valid bounds").arg(modelIds[i].getValue());
             return false;

@@ -53,6 +53,11 @@ void ModelPartDB::setPropertyImpl(
 }
 
 void ModelPartDB::initializeProperties() {
+    setProjectSemantics({});
+    setSurfaceAnnotations({});
+    setAnnotationsTopologyFingerprint({});
+    setAnnotationsSourceTriangleCount(0);
+
     Transform identity;
     identity.identity();
     setLocalTransform(identity);
@@ -131,13 +136,18 @@ bool ModelPartDB::isValid() const {
         getFilamentBindingMode() >=
             static_cast<int>(ModelFilamentBindingMode::InheritProjectDefault) &&
         getFilamentBindingMode() <=
-            static_cast<int>(ModelFilamentBindingMode::ExplicitSlot) &&
+            static_cast<int>(ModelFilamentBindingMode::InheritObject) &&
         role >= static_cast<int>(ModelPartRole::Model) &&
-        role <= static_cast<int>(ModelPartRole::SupportBlocker);
+        role <= static_cast<int>(ModelPartRole::ParameterModifier);
 }
 
 std::shared_ptr<AutoRegisterDB> ModelPartDB::clone() const {
     auto copy = trans::TransDB::create<ModelPartDB>();
+    copy->setProjectSemantics(getProjectSemantics());
+    copy->setSurfaceAnnotations(getSurfaceAnnotations());
+    copy->setAnnotationsTopologyFingerprint(getAnnotationsTopologyFingerprint());
+    copy->setAnnotationsSourceTriangleCount(getAnnotationsSourceTriangleCount());
+
     copy->setDisplayName(getDisplayName());
     copy->setLocalTransform(getLocalTransform());
     copy->setRole(getRole());

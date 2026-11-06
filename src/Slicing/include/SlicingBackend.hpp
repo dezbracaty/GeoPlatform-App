@@ -34,6 +34,20 @@ struct SlicingConfigPatchResult {
 // project its configuration state; job handlers execute through this service.
 class SlicingBackend final {
 public:
+    class ProjectCommitLease final {
+    public:
+        ProjectCommitLease();
+        ProjectCommitLease(ProjectCommitLease&&) noexcept;
+        ProjectCommitLease& operator=(ProjectCommitLease&&) noexcept;
+        ~ProjectCommitLease();
+        explicit operator bool() const noexcept;
+        libslicer::ConfigurationInstallResult install(const libslicer::ConfigurationState&);
+        void release() noexcept;
+    private:
+        class State;
+        std::unique_ptr<State> m_state;
+        friend class SlicingBackend;
+    };
     static SlicingBackend& instance();
 
     ~SlicingBackend();
@@ -51,6 +65,7 @@ public:
     libslicer::SettingsResult setConfigValue(std::string_view key, std::string_view value);
     libslicer::SettingsResult resetConfigValue(std::string_view key);
     std::optional<libslicer::ActiveConfigView> activeConfigView() const;
+    std::uint64_t configurationRevision() const;
     libslicer::ConfigActivationResult setFilamentPreset(
         std::size_t slotIndex, std::string_view presetId);
     libslicer::ConfigActivationResult resizeFilamentSlots(std::size_t slotCount);
@@ -77,6 +92,11 @@ public:
     libslicer::ProjectImportResult importProject(
         const libslicer::ProjectImportRequest& request,
         const libslicer::SliceCallbacks& callbacks = {}) const;
+    libslicer::ProjectReadResult readProject(const libslicer::ProjectReadRequest&,
+        const libslicer::SliceCallbacks& = {},
+        const libslicer::ProjectDecisionCallback& = {}) const;
+    std::optional<libslicer::ProjectMachine> activeProjectMachine() const;
+    ProjectCommitLease beginProjectCommit(std::uint64_t expectedRevision);
 
     SlicingBackend(const SlicingBackend&) = delete;
     SlicingBackend& operator=(const SlicingBackend&) = delete;

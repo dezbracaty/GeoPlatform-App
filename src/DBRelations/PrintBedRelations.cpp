@@ -6,6 +6,7 @@
 #include <ModelInstanceDB.hpp>
 #include <PrintBedCollisionDetector.hpp>
 #include <PrintBedDB.hpp>
+#include <SlicingConfigDB.hpp>
 #include <PrintBedTemplateDB.hpp>
 #include "DBRelationMacros.hpp"
 #include <cstdint>
@@ -52,7 +53,8 @@ void observeOwnedModelPlacement(DocumentManager* document) {
                       change.propertyName == "Height" ||
                       change.propertyName == "PrintHeight" ||
                       change.propertyName == "Origin" ||
-                      change.propertyName == "TemplateDBId"));
+                      change.propertyName == "TemplateDBId" ||
+                      change.propertyName == "Transform"));
                 if (relevantBedChange) {
                     auto* current = DocumentManager::instance();
                     updateCollisionMask(current
@@ -130,6 +132,24 @@ void registerRelations() {
         invalidateBedProjection,
         initializeBedProjection);
 
+    registry.registerDependency(
+        TypeID::PRINT_BED_DB, TypeID::SLICING_CONFIG_DB,
+        "project.activePrintBed", "active-print-bed-reference", {},
+        [](DBRelationUpdateContext&) {},
+        [](DBRelationAttachContext& context) {
+            const auto config = context.targetAs<GPlatform::SlicingConfigDB>();
+            if (config && !config->getActivePrintBedDBId().isValid())
+                config->setActivePrintBedDBId(context.sourceId);
+        },
+        [](DBRelationDetachContext& context) {
+            const auto config = context.targetAs<GPlatform::SlicingConfigDB>();
+            if (config && context.reason == DBRelationDetachReason::SourceDeleted &&
+                config->getActivePrintBedDBId() == context.sourceId)
+                config->setActivePrintBedDBId(DBInstanceID{});
+        });
+    registry.registerDependencyReference(
+        TypeID::SLICING_CONFIG_DB, "ActivePrintBedDBId",
+        TypeID::PRINT_BED_DB, "project.activePrintBed");
     observeOwnedModelPlacement(document);
 }
 

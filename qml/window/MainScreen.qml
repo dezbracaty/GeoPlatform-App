@@ -144,6 +144,10 @@ Item {
             Global.starter.chooseModel({})
             return
         }
+        if (actionCode === "project.open.choose") {
+            Global.starter.chooseProject({})
+            return
+        }
         if (actionCode === "model.import.choose_stl") {
             Global.starter.chooseStl({})
             return
@@ -271,6 +275,7 @@ Item {
                     if (title === "Help") return qsTr("Help")
                     if (title === "View") return qsTr("View")
                     if (title === "Calibration") return qsTr("Calibration")
+                    if (title === "Playback") return qsTr("Playback")
                     return title
                 }
             }

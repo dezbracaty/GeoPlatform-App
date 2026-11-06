@@ -1,6 +1,8 @@
 """Failure-oriented tests of asset contracts, collected artifacts and final gates."""
 import hashlib
+import base64
 import json
+import math
 import os
 from pathlib import Path
 import sys
@@ -9,7 +11,8 @@ import unittest
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
-from acceptance import digest, final_status, read_json, run_case, write_json
+from acceptance import digest, final_status, read_json, run_case, write_json, materialize_journal
+from acceptance_checks import verify_project_gcode, project_arc_points
 
 
 def load_journal(path):
@@ -20,7 +23,7 @@ def print_files(directory):
     lines = ['G90', 'M83', '; external perimeters extrusion width = 0.42mm']
     for layer in range(1, 10):
         tool = (layer - 1) // 3 + 1
-        lines += [f'T{tool}', 'M109 S210', f';Z:{layer*.2:.1f}', ';TYPE:Outer wall',
+        lines += [f'T{tool}', 'M109 S210', f';Z:{layer*.2:.1f}', f'G1 Z{layer*.2:.1f}', ';TYPE:Outer wall',
                   'G1 X.21 Y.21', 'G1 X9.79 E.1', 'G1 Y9.79 E.1', 'G1 X.21 E.1', 'G1 Y.21 E.1']
     raw = ('\n'.join(lines) + '\n').encode()
     config = dict(printer_settings_id='P3 0.4 nozzle', single_extruder_multi_material=0,
@@ -139,8 +142,8 @@ class AcceptanceCheck(unittest.TestCase):
         for p in self.exports.iterdir():
             os.utime(p, ns=(1_000_000_000, 1_000_000_000))
         result = self.run_job(SessionFixture())
-        self.assertEqual(result['status'], 'failed')
-        self.assertIn('Stale artifact', result['error'])
+        self.assertEqual(result['status'], 'blocked')
+        self.assertIn('destination already exists', result['error'])
 
     def test_missing_artifacts_fail_after_successful_replay(self):
         result = self.run_job(SessionFixture())
@@ -388,6 +391,208 @@ class AcceptanceCheck(unittest.TestCase):
         (self.root/'result').mkdir()
         with self.assertRaises(FileExistsError):
             self.run_job(SessionFixture())
+
+    def test_file_browser_location_binding_keeps_filename_separate(self):
+        journal = self.scenario / 'events/Journal.json'
+        write_json(journal, dict(formatVersion=2, entries=[dict(atMs=n, kind='input.key', payload=dict(
+            event='press', key=0, target=target, text=text)) for n, (target, text) in enumerate([
+                ('fileBrowserLocation', '${exports}'), ('fileBrowserFileName', 'snapshot.json')])]))
+        self.metadata['artifacts'] = dict(snapshot=dict(location='exports', fileName='snapshot.json'))
+        self.metadata.pop('checks'); self.metadata.pop('expected'); self.save_metadata()
+        result = self.run_job(SessionFixture(lambda: write_json(self.exports / 'snapshot.json', {})))
+        self.assertEqual(result['status'], 'not_verified')
+        entries = read_json(self.root / 'result/inputs/executed-Journal.json')['entries']
+        self.assertEqual(entries[0]['payload']['text'], str(self.exports.resolve()))
+        self.assertEqual(entries[1]['payload']['text'], 'snapshot.json')
+
+    def test_picker_and_qt_drop_only_bind_declared_input_files(self):
+        journal = self.scenario / 'events/Journal.json'
+        encoded = base64.b64encode(b'${inputUri:fixture}\r\n').decode()
+        write_json(journal, dict(formatVersion=2, entries=[
+            dict(atMs=0, kind='input.key', payload=dict(target='fileBrowserLocation', text='${inputDirectory:fixture}')),
+            dict(atMs=1, kind='input.dragDrop', payload=dict(event='drop', mime={'text/uri-list': encoded}))]))
+        model = self.root / 'Folder with spaces/模型.3mf'
+        case = dict(journal=journal, metadata=dict(artifacts={}), modelPaths={'fixture': model})
+        runtime, _ = materialize_journal(case, self.root / 'binding-result', self.exports)
+        entries = read_json(runtime)['entries']
+        self.assertEqual(entries[0]['payload']['text'], str(model.parent))
+        self.assertEqual(base64.b64decode(entries[1]['payload']['mime']['text/uri-list']).decode(), model.as_uri() + '\r\n')
+        case['modelPaths'] = {}
+        with self.assertRaisesRegex(ValueError, 'Undeclared picker'):
+            materialize_journal(case, self.root / 'bad-binding-result', self.exports)
+
+    def test_materialized_picker_keeps_source_baseline_and_session_setup(self):
+        journal = self.scenario / 'events/Journal.json'
+        reference = self.assets / 'baselines/screenshots/imported.png'
+        reference.parent.mkdir(parents=True)
+        reference.write_bytes(b'independently-reviewed-reference')
+        write_json(journal, dict(formatVersion=2, entries=[
+            dict(atMs=0, kind='input.key', payload=dict(target='fileBrowserLocation',
+                 text='${inputDirectory:fixture}')),
+            dict(atMs=1, kind='verify.screenshot', payload=dict(
+                 baseline='../../../baselines/screenshots/imported.png', tolerance=1.0))]))
+        metadata = dict(artifacts={}, applicationEnvironment={'GP_LOG_CONSOLE': '1'},
+                        preconditions={'devicePixelRatio': 1, 'mainWindowLogicalSize': [1382, 954]})
+        original = journal.read_bytes()
+        case = dict(journal=journal, metadata=metadata, modelPaths={'fixture': self.root / 'fixture.3mf'})
+        runtime, _ = materialize_journal(case, self.root / 'display-binding-result', self.exports)
+        resolved = Path(read_json(runtime)['entries'][1]['payload']['baseline'])
+        self.assertEqual(resolved, reference.resolve())
+        self.assertEqual(resolved.read_bytes(), b'independently-reviewed-reference')
+        self.assertEqual(read_json(runtime.parent.parent / 'metadata.json'), metadata)
+        self.assertEqual(journal.read_bytes(), original)
+
+    def test_project_gcode_checks_model_bounds_and_packaged_bytes(self):
+        self.writer()
+        expected = dict(requiredMarkers=[';TYPE:Outer wall'], modelBoundsXYZ=[0, 0, 0, 10, 10, 1.8], minimumLayerCount=9,
+                        configurationValues={'printer_settings_id': 'P3 0.4 nozzle'})
+        self.assertTrue(verify_project_gcode(self.exports/'job.gcode', self.exports/'job.gcode.3mf', expected)['verified'])
+        with self.assertRaisesRegex(ValueError, 'outside plate-local'):
+            verify_project_gcode(self.exports/'job.gcode', self.exports/'job.gcode.3mf', dict(expected, modelBoundsXYZ=[200, 0, 0, 210, 10, 1.8]))
+        with self.assertRaisesRegex(ValueError, 'Missing source-plate'):
+            verify_project_gcode(self.exports/'job.gcode', self.exports/'job.gcode.3mf', dict(expected, requiredMarkers=[';OTHER_PLATE']))
+        self.exports.joinpath('job.gcode').write_text(self.exports.joinpath('job.gcode').read_text()+'\n;different\n')
+        with self.assertRaisesRegex(ValueError, 'Packaged and standalone'):
+            verify_project_gcode(self.exports/'job.gcode', self.exports/'job.gcode.3mf', expected)
+
+    def test_arc_bounds_include_interior_extrema_direction_full_circle_and_helix(self):
+        start, end = dict(X=1., Y=0., Z=.2), dict(X=0., Y=1., Z=.4)
+        ccw = project_arc_points(start, end, dict(I=-1., J=0.), False)
+        cw = project_arc_points(start, end, dict(I=-1., J=0.), True)
+        self.assertGreaterEqual(min(p[0] for p in ccw), -1e-12)
+        self.assertEqual(min(p[0] for p in cw), -1.)
+        self.assertEqual(min(p[1] for p in cw), -1.)
+        self.assertTrue(any(abs(p[2] - (.2 + .2 / 3)) < 1e-12 for p in cw))
+        circle = project_arc_points(start, start, dict(I=-1.), False)
+        self.assertEqual(min(p[0] for p in circle), -1.)
+        self.assertEqual(min(p[1] for p in circle), -1.)
+        near = lambda angle: dict(X=math.cos(math.radians(angle)), Y=math.sin(math.radians(angle)), Z=.2)
+        for first, last, clockwise in [(350,10,False),(10,350,True)]:
+            a,b=near(first),near(last)
+            arc=project_arc_points(a,b,dict(I=-a['X'],J=-a['Y']),clockwise)
+            self.assertEqual(max(p[0] for p in arc),1.)
+            self.assertGreater(min(p[0] for p in arc),.98)
+        with self.assertRaisesRegex(ValueError, 'center encoding'):
+            project_arc_points(start, end, dict(R=1.), False)
+        with self.assertRaisesRegex(ValueError, 'radius'):
+            project_arc_points(start, dict(end, Y=4.), dict(I=-1.), False)
+
+    def test_project_feature_tags_distinguish_model_from_support_and_custom_paths(self):
+        expected = dict(requiredMarkers=[], modelBoundsXYZ=[0,0,0,10,10,.2], minimumLayerCount=1,
+                        layerPolicy=dict(initialLayerHeightMm=.2, layerHeightMm=.16))
+        for tag in [';TYPE:Outer wall', '; FEATURE: Outer wall', '; FEATURE: Support', '; FEATURE: Custom']:
+            raw = ('G90\nM83\nG0 X0 Y0 Z.2\n' + tag +
+                   '\nG1 X10 Y0 E1\nG1 X10 Y10 E1\nG1 X0 Y10 E1\n').encode()
+            gcode, package = self.exports/'job.gcode', self.exports/'job.gcode.3mf'
+            gcode.write_bytes(raw)
+            with zipfile.ZipFile(package, 'w') as archive:
+                archive.writestr('Metadata/plate_1.gcode', raw)
+                archive.writestr('Metadata/plate_1.gcode.md5', hashlib.md5(raw).hexdigest())
+                archive.writestr('Metadata/project_settings.config',
+                                 json.dumps(dict(initial_layer_print_height='0.2', layer_height='0.16')))
+            with self.subTest(tag=tag):
+                if 'Outer wall' in tag:
+                    self.assertTrue(verify_project_gcode(gcode, package, expected)['verified'])
+                else:
+                    with self.assertRaisesRegex(ValueError, 'No actual model'):
+                        verify_project_gcode(gcode, package, expected)
+
+    def test_native_project_package_requires_its_matching_checksum(self):
+        for replacement in [None, '0' * 32]:
+            self.writer()
+            package=self.exports/'job.gcode.3mf'
+            with zipfile.ZipFile(package) as archive:
+                members={name:archive.read(name) for name in archive.namelist() if not name.endswith('.md5')}
+            if replacement is not None:
+                members['Metadata/plate_1.gcode.md5']=replacement.encode()
+            with zipfile.ZipFile(package,'w') as archive:
+                for name,raw in members.items(): archive.writestr(name,raw)
+            with self.assertRaisesRegex(ValueError,'checksum'):
+                verify_project_gcode(self.exports/'job.gcode',package,dict(requiredMarkers=[],
+                    modelBoundsXYZ=[0,0,0,10,10,1.8],minimumLayerCount=9))
+
+    def test_thin_and_multilayer_outputs_use_independent_source_layer_policy(self):
+        def verify(zs, height=.2, first=.2, *, extra='', markers=None):
+            raw = ('G90\nM83\nG0 Z0\n;TYPE:Outer wall\n' + ''.join(
+                f'G0 X0 Y0 Z{z}\nG1 X10 Y0 E1\nG1 X10 Y10 E1\nG1 X0 Y10 E1\n' for z in zs) + extra).encode()
+            self.exports.mkdir(exist_ok=True)
+            gcode, package = self.exports/'thin.gcode', self.exports/'thin.gcode.3mf'
+            gcode.write_bytes(raw)
+            with zipfile.ZipFile(package, 'w') as archive:
+                archive.writestr('Metadata/plate_1.gcode', raw)
+                archive.writestr('Metadata/plate_1.gcode.md5', hashlib.md5(raw).hexdigest())
+                archive.writestr('Metadata/project_settings.config', json.dumps(dict(initial_layer_print_height=str(first), layer_height='0.16')))
+            count = 1 + max(0, math.ceil((height - first) / .16 - .5 - 1e-6))
+            return verify_project_gcode(gcode, package, dict(requiredMarkers=markers or [], modelBoundsXYZ=[0,0,0,10,10,height],
+                minimumLayerCount=count, layerPolicy=dict(initialLayerHeightMm=first, layerHeightMm=.16)))
+        result = verify([.2])
+        self.assertEqual(result['layerCount'], 1)
+        self.assertEqual(result['customGcodeStatus'], 'not-evaluated-no-source-markers')
+        self.assertTrue(verify([.25], first=.25)['verified'])
+        self.assertTrue(verify([.2,.36,.52,.68,.84], height=.85)['verified'])
+        self.assertTrue(verify([.2],height=.28)['verified'])
+        self.assertTrue(verify([.2,.36],height=.2802)['verified'])
+        self.assertTrue(verify([.2,.36],height=.3)['verified'])
+        for height in [.2802,.3]:
+            with self.assertRaisesRegex(ValueError,'layer generation'):
+                verify([.2],height=height)
+        for zs, height, first in [([.2], .2, .25), ([.4], .2, .25), ([.2], .85, .2), ([.2,.36,.52,.68,1.2], .85, .2)]:
+            with self.assertRaises(ValueError): verify(zs, height, first)
+        with self.assertRaisesRegex(ValueError, 'exactly one'):
+            verify([.2,.25])
+        with self.assertRaisesRegex(ValueError, 'outside plate-local'):
+            verify([.2], extra='G1 X50 Y50 E1\n')
+        with self.assertRaisesRegex(ValueError, 'No actual model'):
+            verify([])
+        with self.assertRaisesRegex(ValueError, 'nonplanar'):
+            verify([.2], extra='G1 X0 Y0 Z.25 E1\n')
+        with self.assertRaisesRegex(ValueError,'uniform layer spacing'):
+            verify([.2,.32,.44,.56,.68,.8],height=.85)
+        with self.assertRaisesRegex(ValueError, 'Missing source-plate'):
+            verify([.2], markers=[';SOURCE_CUSTOM'])
+        verify([.2])
+        package=self.exports/'thin.gcode.3mf'
+        with zipfile.ZipFile(package) as archive:
+            raw=archive.read('Metadata/plate_1.gcode')
+        with zipfile.ZipFile(package,'w') as archive:
+            archive.writestr('Metadata/plate_1.gcode',raw)
+            archive.writestr('Metadata/plate_1.gcode.md5', hashlib.md5(raw).hexdigest())
+            archive.writestr('Metadata/project_settings.config','{"initial_layer_print_height":"0.25","layer_height":"0.16"}')
+        with self.assertRaisesRegex(ValueError,'Packaged layer height'):
+            verify_project_gcode(self.exports/'thin.gcode',package,dict(requiredMarkers=[],modelBoundsXYZ=[0,0,0,10,10,.2],
+                minimumLayerCount=1,layerPolicy=dict(initialLayerHeightMm=.2,layerHeightMm=.16)))
+
+    def test_extruding_arc_cannot_hide_outside_source_bounds_at_its_endpoints(self):
+        self.exports.mkdir(exist_ok=True)
+        raw = b'G90\nM83\nG0 X1 Y0 Z.2\n;TYPE:Outer wall\nG2 X0 Y1 I-1 J0 E1\n'
+        gcode, package = self.exports/'arc.gcode', self.exports/'arc.gcode.3mf'
+        gcode.write_bytes(raw)
+        with zipfile.ZipFile(package, 'w') as archive:
+            archive.writestr('Metadata/plate_1.gcode', raw)
+            archive.writestr('Metadata/plate_1.gcode.md5', hashlib.md5(raw).hexdigest())
+            archive.writestr('Metadata/project_settings.config', '{"initial_layer_print_height":"0.2","layer_height":"0.16"}')
+        expected = dict(requiredMarkers=[],modelBoundsXYZ=[0,0,0,1,1,.2],minimumLayerCount=1,
+                        layerPolicy=dict(initialLayerHeightMm=.2,layerHeightMm=.16))
+        with self.assertRaisesRegex(ValueError, 'outside plate-local'):
+            verify_project_gcode(gcode,package,expected)
+        expected['modelBoundsXYZ']=[-1,-1,0,1,1,.2]
+        self.assertTrue(verify_project_gcode(gcode,package,expected)['verified'])
+        def replace_raw(changed):
+            gcode.write_bytes(changed)
+            with zipfile.ZipFile(package,'w') as archive:
+                archive.writestr('Metadata/plate_1.gcode',changed)
+                archive.writestr('Metadata/plate_1.gcode.md5', hashlib.md5(changed).hexdigest())
+                archive.writestr('Metadata/project_settings.config','{"initial_layer_print_height":"0.2","layer_height":"0.16"}')
+        replace_raw(raw.replace(b'G2 X0 Y1',b'G2 X1 Y0'))
+        self.assertTrue(verify_project_gcode(gcode,package,expected)['verified'])
+        with self.assertRaisesRegex(ValueError,'outside plate-local'):
+            verify_project_gcode(gcode,package,dict(expected,modelBoundsXYZ=[0,0,0,1,1,.2]))
+        for changed in [raw.replace(b'G2 ',b'G90.1\nG2 '),raw.replace(b'G2 ',b'G18\nG2 '),
+                        raw.replace(b'G2 ',b'G19\nG2 '),raw.replace(b'I-1 J0',b'R1'),
+                        raw.replace(b'I-1 J0',b'I-1 J0 P2'),raw.replace(b'I-1 J0',b'I-1 J0 K0')]:
+            replace_raw(changed)
+            with self.assertRaisesRegex(ValueError,'Unsupported project arc'):
+                verify_project_gcode(gcode,package,expected)
 
 
 if __name__ == '__main__':

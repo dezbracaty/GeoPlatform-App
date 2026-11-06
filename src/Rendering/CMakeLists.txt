@@ -30,7 +30,7 @@ target_include_directories(AppRendering
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE Common Vtk ${VTK_INCLUDE_DIRS})
 target_link_libraries(AppRendering PRIVATE
-    BaseTypes BaseRender AppDB Document Foundation Utils FacetPaintingCore
+    BaseTypes BaseRender AppDB Document Foundation Utils FacetPaintingCore ModelSlicingPolicy
     GPlatformRendererBackendSDK RendererBackendVtk Qt6::OpenGL Qt6::Concurrent ${VTK_LIBRARIES})
 if(GPLATFORM_ENABLE_FILAMENT)
     target_sources(AppRendering PRIVATE

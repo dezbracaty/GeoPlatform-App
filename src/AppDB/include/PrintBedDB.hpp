@@ -51,6 +51,9 @@ public:
     void setHeated(bool value);
     void notifyTemplateChanged(const std::string& propertyName);
 
+    // Imported project semantics; each field has one document owner.
+    FIELD_VALUE(PrintBedDB, std::string, ProjectSemantics)
+
     // Per-instance presentation.
     FIELD_GEOMETRY_VALUE_SIMPLE(PrintBedDB, bool, ShowGrid)
     FIELD_GEOMETRY_VALUE_SIMPLE(PrintBedDB, float, GridSpacing)

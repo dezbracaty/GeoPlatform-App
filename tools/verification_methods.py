@@ -11,7 +11,7 @@ VALIDATORS = {
 
 # Preserve the existing P3 file check as a separate specialized check. It does
 # not prove a scenario's DB or screenshot result and cannot satisfy either mode.
-SUPPLEMENTAL_VALIDATORS = {'gcode-job': dict(source='artifacts')}
+SUPPLEMENTAL_VALIDATORS = {'gcode-job': dict(source='artifacts'), 'project-gcode': dict(source='artifacts')}
 
 
 def verification_plan(metadata, document):

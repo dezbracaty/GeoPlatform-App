@@ -46,6 +46,9 @@ public:
     // One-based slot used when a model part has no explicit filament binding.
     FIELD_VALUE_SIMPLE(SlicingConfigDB, int, DefaultFilamentSlot)
 
+    // Imported project semantics; each field has one document owner.
+    FIELD_VALUE_SIMPLE(SlicingConfigDB, DBInstanceID, ActivePrintBedDBId)
+
     // ==================== 基础参数 ====================
     FIELD_VALUE_SIMPLE(SlicingConfigDB, float, LayerHeight)           // 层高 (mm)
     FIELD_VALUE_SIMPLE(SlicingConfigDB, float, FirstLayerHeight)      // 首层层高 (mm)
@@ -87,6 +90,8 @@ public:
     /** Renderer-independent projection of the active filament colors. */
     std::vector<Color> filamentColors() const;
 
+    std::vector<DBRelationRef> reportRelations() const override;
+    bool replaceRelations(const std::vector<DBRelationReplacement>& replacements) override;
     PropertyMap serialize() const override;
     bool deserialize(const PropertyMap& properties) override;
 
