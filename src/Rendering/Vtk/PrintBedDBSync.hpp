@@ -74,6 +74,7 @@ protected:
      * @brief 响应材质变化的钩子
      */
     void onMaterialChanged( const std::string& prop) override;
+    void onTransformChanged(const std::string& prop) override;
 
     /**
      * @brief 响应渲染上下文变化的钩子
@@ -159,6 +160,7 @@ private:
     void updateBedTextureGeometry(const PrintBedDB& printBedDB);
     void rebuildBedDecorations(const PrintBedDB& printBedDB);
     void clearBedDecorations();
+    void syncAuxiliaryTransforms();
     void configureGridActor(vtkActor* actor, bool major) const;
 
     /**

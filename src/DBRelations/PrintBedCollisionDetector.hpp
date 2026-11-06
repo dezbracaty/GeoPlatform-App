@@ -18,6 +18,8 @@ public:
     };
 
     static BuildVolume buildVolume(const PrintBedDB& bed);
+    static ActorDB::BoundingBox worldBounds(
+        const ActorDB& actor, const Transform& transform);
     static std::uint32_t detect(
         const ActorDB::BoundingBox& worldBounds,
         const BuildVolume& volume);

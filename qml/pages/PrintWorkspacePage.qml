@@ -138,7 +138,7 @@ Item {
                 property string dragFileType: ""  // "model" or "gcode"
 
                 // 支持的文件扩展名
-                property var modelExtensions: ["stl"]
+                property var modelExtensions: ["stl", "3mf"]
                 property var gcodeExtensions: ["gcode"]
 
                 // 检查文件类型

@@ -121,7 +121,10 @@ std::shared_ptr<ModelPartDB> primaryPart(
     const std::shared_ptr<ModelInstanceDB>& model) {
     if (!model) return {};
     const auto parts = model->parts();
-    return parts.empty() ? std::shared_ptr<ModelPartDB>{} : parts.front();
+    const auto found = std::find_if(parts.begin(), parts.end(), [](const auto& part) {
+        return part && part->getRole() == static_cast<int>(ModelPartRole::Model) && part->hasValidMesh();
+    });
+    return found == parts.end() ? std::shared_ptr<ModelPartDB>{} : *found;
 }
 
 std::vector<GeomTriangle> partTriangles(
@@ -398,7 +401,8 @@ bool ModelColorPaintHandler::startSession() {
 
     ensureStateDB(false);
     const auto targetPart = document->getDB<ModelPartDB>(m_targetPartId);
-    if (!targetPart || !targetPart->geometry()) return false;
+    if (!targetPart || targetPart->getRole() != static_cast<int>(ModelPartRole::Model) ||
+        !targetPart->geometry()) return false;
     const Transform::Matrix4 currentTransform = m_targetMesh->getTransformMatrix() *
         targetPart->getLocalTransform().getMatrix();
     const bool reuseTopology = m_hasLoadedTopology &&
@@ -442,8 +446,8 @@ bool ModelColorPaintHandler::loadTargetMesh(
     const auto part = document
         ? document->getDB<ModelPartDB>(m_targetPartId)
         : nullptr;
-    if (!part || part->object() != mesh->object() ||
-        !part->geometry()) return false;
+    if (!part || part->getRole() != static_cast<int>(ModelPartRole::Model) ||
+        part->object() != mesh->object() || !part->geometry()) return false;
     const auto source = partTriangles(part);
     if (source.empty()) return false;
     const std::string sourceFingerprint = ModelSurfaceColorCodec::topologyFingerprint(source);

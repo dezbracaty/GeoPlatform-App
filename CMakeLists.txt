@@ -87,6 +87,7 @@ set(QML_FILES
     qml/pages/generate3d/RightPart.qml
     qml/dialogs/VerificationFailureDialog.qml
     qml/dialogs/SliceConfigurationErrorDialog.qml
+    qml/dialogs/ThreeMfImportDialog.qml
     qml/dialogs/ImportUnitDialog.qml
     qml/dialogs/ZoomableImageViewer.qml
     qml/dialogs/ModelDetailPopup.qml
@@ -768,6 +769,10 @@ if(COMMAND gplatform_deploy_sdk_runtime)
 endif()
 
 option(GPLATFORM_BUILD_SDK_CHECKS "Verify application extensions against the binary SDK" OFF)
+if(GPLATFORM_BUILD_TESTS OR GPLATFORM_BUILD_SDK_CHECKS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
 if(GPLATFORM_BUILD_SDK_CHECKS)
     enable_testing()
     add_executable(FileImportFormatCheck tests/FileImportFormatCheck.cpp)

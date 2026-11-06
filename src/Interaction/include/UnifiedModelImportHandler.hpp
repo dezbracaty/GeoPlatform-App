@@ -77,22 +77,15 @@ private:
     // 加载结果 - 直接使用ModelLoaderUtil的LoadResult类型
     ModelLoaderUtil::LoadResult m_loadResult;
     GlbImportResult m_glbLoadResult;
-    libslicer::ProjectImportResult m_projectLoadResult;
-    bool m_isProjectImport{false};
     bool m_isGlbImport{false};
 
     // 创建的对象ID
     QString m_createdObjectId;
     QStringList m_createdObjectIds;
-    std::unique_ptr<QFutureWatcher<std::shared_ptr<libslicer::ProjectImportResult>>>
-        m_projectImportWatcher;
     std::shared_ptr<std::atomic_bool> m_cancelRequested;
 
     // 后台加载模型
     void loadModelInBackground();
-    void loadProjectInBackground();
-    void onProjectImportFinished();
 
     void createModelFromResult();
-    void createModelsFromProject();
 };

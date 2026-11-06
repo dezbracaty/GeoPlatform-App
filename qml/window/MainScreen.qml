@@ -144,6 +144,10 @@ Item {
             Global.starter.chooseModel({})
             return
         }
+        if (actionCode === "project.open.choose") {
+            Global.starter.chooseProject({})
+            return
+        }
         if (actionCode === "model.import.choose_stl") {
             Global.starter.chooseStl({})
             return

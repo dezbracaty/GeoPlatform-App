@@ -48,6 +48,10 @@ public:
     std::shared_ptr<const GlbAssetSnapshot>
     acquireGlbSourceAssetSnapshot() const noexcept;
 
+    // Imported project semantics; each field has one document owner.
+    FIELD_VALUE(ModelObjectDB, std::string, ProjectSemantics)
+    FIELD_VALUE_SIMPLE(ModelObjectDB, int, DefaultFilamentSlot)
+
     TypeID getTypeID() const override { return TypeID::MODEL_OBJECT_DB; }
     bool needsVTKSync() const override { return false; }
     bool isValid() const override;

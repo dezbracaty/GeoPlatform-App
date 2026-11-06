@@ -13,7 +13,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from acceptance_checks import validate_expectations, verify_job
+from acceptance_checks import validate_expectations, verify_job, validate_project_gcode_expectations, verify_project_gcode
 from verification_methods import SUPPLEMENTAL_VALIDATORS, journal_checks, method_results, verification_plan
 
 
@@ -106,6 +106,7 @@ def load_case(root, name, journal_loader):
             require(any(e['kind'] == 'action' and e['payload'].get('code') == item['action'] and
                         e['payload'].get('params', {}) == item['params'] for e in document['entries']),
                     f'Generated input does not match Journal: {item["action"]}')
+    model_paths = {item['modelId']: models[item['modelId']]['absolutePath'] for item in inputs if 'modelId' in item}
     imports = set()
     for entry in document['entries']:
         payload = entry['payload']
@@ -115,6 +116,16 @@ def load_case(root, name, journal_loader):
             path = (journal.parent / relative).resolve()
             require(path.is_relative_to(root), f'Journal import escapes asset repository: {relative}')
             imports.add(path)
+        elif entry['kind'] == 'input.key' and isinstance(payload.get('text'), str):
+            binding = re.fullmatch(r'\$\{inputDirectory:([^}]+)\}', payload['text'])
+            if binding:
+                require(payload.get('target') == 'fileBrowserLocation' and binding[1] in model_paths, 'Undeclared picker input binding')
+                imports.add(model_paths[binding[1]])
+        elif entry['kind'] == 'input.dragDrop' and 'text/uri-list' in payload.get('mime', {}):
+            value = base64.b64decode(payload['mime']['text/uri-list'], validate=True).decode('utf8')
+            binding = re.fullmatch(r'\$\{inputUri:([^}]+)\}\r\n', value)
+            require(binding is not None and binding[1] in model_paths, 'Undeclared drop input binding')
+            imports.add(model_paths[binding[1]])
     require(imports == declared_paths, 'Journal imports and declared model inputs differ')
     artifacts = metadata.get('artifacts', {})
     filenames = set()
@@ -132,11 +143,7 @@ def load_case(root, name, journal_loader):
         require(isinstance(check.get('id'), str) and check['id'] and check['id'] not in identifiers, 'Missing/duplicate check ID')
         identifiers.add(check['id'])
         require(type(check.get('required')) is bool, 'Check required must be boolean')
-        require(check.get('validator') in SUPPLEMENTAL_VALIDATORS,
-                f'Unknown validator: {check.get("validator")}')
-        require(check.get('artifacts') == ['gcode', 'package'] and all(k in artifacts for k in check['artifacts']), 'gcode-job requires gcode/package artifacts')
-        require(isinstance(metadata.get('expected'), dict), 'gcode-job requires independent expectations')
-        validate_expectations(metadata['expected'])
+        validate_check(check, artifacts, metadata.get('expected'))
     plan = verification_plan(metadata, document)
     baselines = {}
     for reference in metadata.get('dbBaselines', []):
@@ -161,11 +168,24 @@ def load_case(root, name, journal_loader):
                 require(not stream.read(100).startswith(b'version https://git-lfs.github.com/spec/'),
                         'Standard screenshot is an unmaterialized LFS pointer; run git lfs pull')
             baselines[baseline.relative_to(root).as_posix()] = digest(baseline)
-    return dict(id=name, metadata=metadata, journal=journal, document=document, verificationPlan=plan,
+    return dict(id=name, metadata=metadata, journal=journal, document=document, verificationPlan=plan, modelPaths=model_paths,
                 hashes=dict(catalog=digest(root / 'catalog.json'), metadata=digest(metadata_path),
                             journal=digest(journal), models=input_hashes, baselines=baselines,
                             modelCatalogs={item['path']: digest(inside(root, item['path']))
                                            for item in read_json(root / 'catalog.json')['modelCatalogs']}))
+
+
+def validate_check(check, artifacts, expected):
+    validator = check.get('validator')
+    require(validator in SUPPLEMENTAL_VALIDATORS, f'Unknown validator: {validator}')
+    require(isinstance(expected, dict), f'{validator} requires independent expectations')
+    if validator == 'gcode-job':
+        require(check.get('artifacts') == ['gcode', 'package'] and all(k in artifacts for k in check['artifacts']), 'gcode-job requires gcode/package artifacts')
+        validate_expectations(expected)
+    elif validator == 'project-gcode':
+        require(isinstance(check.get('artifacts'), list) and len(check['artifacts']) == 2 and all(k in artifacts for k in check['artifacts']), 'project-gcode requires G-code and package artifacts')
+        require(check['id'] in expected.get('gcodeJobs', {}), 'project-gcode requires its independent per-job expectations')
+        validate_project_gcode_expectations(expected['gcodeJobs'][check['id']])
 
 
 def git_identity(directory):
@@ -175,6 +195,28 @@ def git_identity(directory):
         return dict(commit=revision, dirty=bool(status.strip()))
     except (OSError, subprocess.CalledProcessError):
         return dict(commit=None, dirty=None)
+
+
+def application_dependencies(application):
+    """Record the deployed code and manifests actually accompanying this binary."""
+    application = Path(application)
+    directories = [application.parent]
+    bundle = next((p for p in application.parents if p.suffix == '.app'), None)
+    if bundle:
+        directories += [bundle / 'Contents/Frameworks', bundle / 'Contents/Resources']
+    records = []
+    for directory in directories:
+        if not directory.is_dir():
+            continue
+        for path in directory.rglob('*'):
+            if not path.is_file():
+                continue
+            name = path.name.lower()
+            # Runtime libraries and delivery manifests carry the App/SDK/resource identity.
+            relevant = ('slicer' in name and path.suffix.lower() in {'.dll', '.dylib', '.so', '.json'}) or name in {'manifest.json', 'source-manifest.json', 'sdk-manifest.json', 'runtime-manifest.json'}
+            if relevant:
+                records.append(dict(path=str(path.resolve()), sha256=digest(path), bytes=path.stat().st_size))
+    return records
 
 
 def final_status(execution, checks, methods):
@@ -222,6 +264,63 @@ def write_summary(output, summary):
             html.escape(summary['status']), html.escape(summary.get('error', '') or summary.get('cleanupError', '')), rows), encoding='utf8')
 
 
+def materialize_journal(case, output, export_root):
+    """Bind declared portable output names; playback remains the formal Session.
+
+    Preserve the authored document and separately hash the exact runtime JSON.
+    Resolve declared input/output bindings through the shared Journal entries.
+    """
+    # The formal loader decorates in-memory entries with wire sequence and source
+    # identity. Those fields must never be written back into a v2 Journal file.
+    document = read_json(case['journal'])
+    changed = False
+    declared = {a['fileName'] for a in case['metadata'].get('artifacts', {}).values()}
+    for entry in document['entries']:
+        if entry['kind'] != 'action':
+            if entry['kind'] == 'input.key':
+                value = entry['payload'].get('text')
+                binding = re.fullmatch(r'\$\{inputDirectory:([^}]+)\}', value or '')
+                if binding:
+                    require(entry['payload'].get('target') == 'fileBrowserLocation' and binding[1] in case.get('modelPaths', {}), 'Undeclared picker input binding')
+                    entry['payload']['text'] = str(case['modelPaths'][binding[1]].parent)
+                    changed = True
+                elif value == '${exports}':
+                    require(export_root is not None and entry['payload'].get('target') == 'fileBrowserLocation',
+                            'Export-directory binding requires a real file-browser location input')
+                    entry['payload']['text'] = str(export_root)
+                    changed = True
+                elif value in declared and entry['payload'].get('target') != 'fileBrowserFileName':
+                    require(export_root is not None, 'Declared output input needs --exports')
+                    entry['payload']['text'] = str(export_root / value)
+                    changed = True
+            elif entry['kind'] == 'input.dragDrop' and 'text/uri-list' in entry['payload'].get('mime', {}):
+                value = base64.b64decode(entry['payload']['mime']['text/uri-list'], validate=True).decode('utf8')
+                binding = re.fullmatch(r'\$\{inputUri:([^}]+)\}\r\n', value)
+                require(binding is not None and binding[1] in case.get('modelPaths', {}), 'Undeclared drop input binding')
+                entry['payload']['mime']['text/uri-list'] = base64.b64encode((case['modelPaths'][binding[1]].as_uri() + '\r\n').encode()).decode()
+                changed = True
+            continue
+    if not changed:
+        return case['journal'], digest(case['journal'])
+    # Relative imports refer to the authored source, not the materialized location.
+    for entry in document['entries']:
+        if entry['kind'] == 'action' and entry['payload'].get('code') == 'file.import':
+            params = entry['payload'].get('params', {})
+            if params.get('filePath') and not Path(params['filePath']).is_absolute():
+                params['filePath'] = str((case['journal'].parent / params['filePath']).resolve())
+        elif entry['kind'] == 'verify.screenshot':
+            baseline = entry['payload']['baseline']
+            if not Path(baseline).is_absolute():
+                entry['payload']['baseline'] = str((case['journal'].parent / baseline).resolve())
+    path = output.parent / '.declarations' / output.name / 'events/Journal.json'
+    path.parent.mkdir(parents=True, exist_ok=False)
+    write_json(path, document)
+    # The shared Session reads process/display setup beside the runtime Journal.
+    # Materializing picker/export bindings must retain that same setup.
+    write_json(path.parent.parent / 'metadata.json', case['metadata'])
+    return path, digest(path)
+
+
 def run_case(root, name, application, output, exports, session, journal_loader):
     """Run one fresh session; preserve its report and evaluate declared business checks."""
     root, output, application = Path(root).resolve(), Path(output).resolve(), Path(application).resolve()
@@ -244,13 +343,25 @@ def run_case(root, name, application, output, exports, session, journal_loader):
                                     journalSessionSha256=digest(inspect.getfile(type(session))),
                                     journalLoaderSha256=digest(inspect.getfile(journal_loader)),
                                     appSource=git_identity(Path(__file__).resolve().parents[1]))
+        app_root = Path(__file__).resolve().parents[1]
+        result['provenance']['slicerSource'] = git_identity(app_root / 'ThirdParty/OrcaSlicer')
+        result['provenance']['sdkSource'] = git_identity(app_root / 'ThirdParty/libs/GPlatformSDK')
+        if (app_root.parent / 'Core').is_dir():
+            result['provenance']['hostSource'] = git_identity(app_root.parent)
         require(application.is_file(), f'Missing application: {application}')
         result['provenance']['applicationSha256'] = digest(application)
+        result['provenance']['deployedDependencies'] = application_dependencies(application)
         library = application.parent / 'libslicer.dll'
         if library.is_file():
             result['provenance']['deployedLibrary'] = dict(path=str(library), sha256=digest(library))
         require(not metadata.get('artifacts') or exports is not None, 'Declared exports require --exports pointing to the App save directory')
         export_root = Path(exports).resolve() if exports is not None else None
+        # A new case must never adopt a valid artifact left by a previous run.
+        existing = [export_root / a['fileName'] for a in metadata.get('artifacts', {}).values()
+                    if (export_root / a['fileName']).exists()]
+        require(not existing, f'Export destination already exists: {existing}')
+        runtime_journal, runtime_hash = materialize_journal(case, output, export_root)
+        result['provenance']['runtimeJournal'] = dict(path=str(runtime_journal), sha256=runtime_hash)
     except Exception as exc:
         output.mkdir(parents=True)
         result['error'] = str(exc)
@@ -258,7 +369,7 @@ def run_case(root, name, application, output, exports, session, journal_loader):
         return result
     started = time.time_ns()
     try:
-        execution = session.run(case['journal'], application=application, output_dir=output, startup_timeout=120)
+        execution = session.run(runtime_journal, application=application, output_dir=output, startup_timeout=120)
         result['executionResultPath'] = 'execution_result.json'
         result['journalAcceptance'] = execution.get('acceptance')
         result['completedEntries'] = execution.get('completedEntries', 0)
@@ -271,8 +382,17 @@ def run_case(root, name, application, output, exports, session, journal_loader):
             result['failedStep'] = {key: failed_step.get(key) for key in ['index', 'kind', 'message']}
         require(execution.get('success'), reason)
         require(execution.get('completedEntries') == len(case['document']['entries']), 'Journal did not complete every step')
-        require(execution.get('journalSha256') == case['hashes']['journal'], 'Journal changed after preflight')
+        require(execution.get('journalSha256') == runtime_hash and digest(runtime_journal) == runtime_hash, 'Journal changed after preflight')
         require(load_case(root, name, journal_loader)['hashes'] == case['hashes'], 'Assets or expectations changed during execution')
+        inputs = output / 'inputs'
+        inputs.mkdir()
+        for source, filename, expected_hash in [
+                (case['journal'], 'authored-Journal.json', case['hashes']['journal']),
+                (runtime_journal, 'executed-Journal.json', runtime_hash),
+                (case['journal'].parent.parent / 'metadata.json', 'metadata.json', case['hashes']['metadata'])]:
+            target = inputs / filename
+            shutil.copy2(source, target)
+            require(digest(target) == expected_hash == digest(source), 'Scenario declaration changed during evidence collection')
         archived = {}
         for identifier, artifact in metadata.get('artifacts', {}).items():
             source = export_root / artifact['fileName']
@@ -292,11 +412,15 @@ def run_case(root, name, application, output, exports, session, journal_loader):
                         methods=[], supplemental=True)
             try:
                 # A fixed registry of maintained validators; no code/commands from metadata.
-                report = verify_job(archived['gcode'], archived['package'], metadata['expected'])
-                evidence = output / 'reports' / (str(len(checks) + 1) + '-gcode-job.json')
+                if check['validator'] == 'gcode-job':
+                    report = verify_job(archived['gcode'], archived['package'], metadata['expected'])
+                elif check['validator'] == 'project-gcode':
+                    identifiers = check['artifacts']
+                    report = verify_project_gcode(archived[identifiers[0]], archived[identifiers[1]], metadata['expected']['gcodeJobs'][check['id']])
+                evidence = output / 'reports' / (str(len(checks) + 1) + '-' + check['validator'] + '.json')
                 evidence.parent.mkdir(exist_ok=True)
                 write_json(evidence, report)
-                item.update(status='passed', message='Exported print job matches independent expectations',
+                item.update(status='passed', message='Exported artifacts match independent expectations',
                             evidence=[evidence.relative_to(output).as_posix()])
             except Exception as exc:
                 item['message'] = str(exc)

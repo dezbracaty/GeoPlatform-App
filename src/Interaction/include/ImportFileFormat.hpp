@@ -2,7 +2,7 @@
 
 #include <QFileInfo>
 
-enum class ImportFileFormat { Unsupported, Stl, GCode };
+enum class ImportFileFormat { Unsupported, Stl, GCode, ThreeMf };
 
 // Product import policy only; callers validate local paths and readability.
 inline ImportFileFormat classifyImportFile(const QString& path) {
@@ -11,5 +11,7 @@ inline ImportFileFormat classifyImportFile(const QString& path) {
         return ImportFileFormat::Stl;
     if (suffix.compare(QStringLiteral("gcode"), Qt::CaseInsensitive) == 0)
         return ImportFileFormat::GCode;
+    if (suffix.compare(QStringLiteral("3mf"), Qt::CaseInsensitive) == 0)
+        return ImportFileFormat::ThreeMf;
     return ImportFileFormat::Unsupported;
 }

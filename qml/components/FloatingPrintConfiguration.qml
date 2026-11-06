@@ -231,6 +231,9 @@ PanelSurface {
                 }
                 model: root.machineChoices
                 textRole: "name"
+                displayText: root.machine.projectLocal
+                    ? qsTr("Project printer · %1").arg(root.machine.printerModel || qsTr("Unnamed printer"))
+                    : currentText
                 enabled: root.editingEnabled
                 currentIndex: {
                     const selected = SliceSettingsBridge.selectedMachineVariantId;

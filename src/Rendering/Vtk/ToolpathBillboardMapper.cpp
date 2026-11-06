@@ -398,7 +398,10 @@ void ToolpathBillboardMapper::renderSegments(vtkRenderer* renderer, vtkActor* ac
     vtkMatrix4x4* wcdc = nullptr;  // world -> clip
     camera->GetKeyMatrices(renderer, wcvc, normMat, vcdc, wcdc);
     vtkNew<vtkMatrix4x4> modelView;
-    vtkMatrix4x4::Multiply4x4(wcvc, actor->GetMatrix(), modelView);
+    // GetKeyMatrices already transposes the camera matrices for OpenGL.
+    // Upload (view * model)^T, as vtkOpenGLPolyDataMapper does.
+    vtkMatrix4x4::Transpose(actor->GetMatrix(), modelView);
+    vtkMatrix4x4::Multiply4x4(modelView, wcvc, modelView);
     m_program->SetUniformMatrix("view_matrix", modelView);
     m_program->SetUniformMatrix("projection_matrix", vcdc);
     m_program->SetUniformi("annotation_pass", annotation ? 1 : 0);

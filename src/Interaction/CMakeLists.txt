@@ -38,6 +38,7 @@ set(INTERACTION_SOURCES
     src/ViewportInputRouter.cpp
     src/ModelCreationUtil.cpp
     src/UnifiedModelImportHandler.cpp
+    src/ProjectImportHandler.cpp
     src/FileImportHandler.cpp
     src/GCodeImportHandler.cpp
     src/ToolpathPreviewPreparation.cpp
@@ -96,6 +97,7 @@ set(INTERACTION_HEADERS
     include/ViewportInputRouter.hpp
     include/ModelCreationUtil.hpp
     include/UnifiedModelImportHandler.hpp
+    include/ProjectImportHandler.hpp
     include/FileImportHandler.hpp
     include/GCodeImportHandler.hpp
     include/ToolpathPreviewPreparation.hpp

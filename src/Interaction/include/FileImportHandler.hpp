@@ -13,4 +13,6 @@ public:
     // Dispatching must not replace the concrete importer's exclusive slot.
     HandlerType getHandlerType() const override { return HandlerType::Middleware; }
     void onEnter(std::shared_ptr<ActionContext> context) override;
+protected:
+    const QHash<QString, QVariantMap>& aiDescriptorTable() const override;
 };

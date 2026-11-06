@@ -12,6 +12,8 @@
 #include <ModelGeometryDB.hpp>
 #include "ModelFilamentSlotResolver.hpp"
 #include <ModelPartDB.hpp>
+#include <ModelObjectDB.hpp>
+#include <PrintBedPlacementUtil.hpp>
 #include <SlicingConfigDB.hpp>
 #include <vtkCell.h>
 #include <vtkPolyData.h>
@@ -46,6 +48,11 @@ public:
         libslicer::SliceVolumeRole role{
             libslicer::SliceVolumeRole::ModelPart};
         std::optional<SurfaceColors> surfaceColors;
+        std::string projectSemantics;
+        std::string surfaceAnnotations;
+        std::string annotationsFingerprint;
+        int annotationsTriangleCount{0};
+        bool inheritObjectFilament{false};
     };
 
     struct Model {
@@ -53,6 +60,8 @@ public:
         std::array<double, 16> transform{};
         std::uint64_t modelId{0};
         std::uint64_t meshRevision{0};
+        std::string projectSemantics;
+        int defaultFilamentSlot{0};
         std::vector<Volume> volumes;
         std::vector<libslicer::SliceFiberMaskInput> fiberMasks;
         std::vector<std::string> supportEnforcerPaths;
@@ -60,6 +69,9 @@ public:
 
     GPlatform::SlicingProfileSnapshot profile;
     std::vector<Model> models;
+    std::string plateSemantics;
+    int defaultFilamentSlot{1};
+    DBInstanceID printBedId;
     bool generateGcode3mf{true};
     bool beltSupportDebugOnly{false};
     std::string beltSupportDebugOutputPath;
@@ -140,13 +152,7 @@ bool appendGeometry(const SliceSessionBuilder::CapturedRequest::Volume& volume,
         static_cast<std::size_t>(pointCount));
     GPlatform::SliceVertexWelder weldedVertices(
         static_cast<std::size_t>(pointCount));
-    Eigen::Matrix4d local = Eigen::Matrix4d::Identity();
-    for (int row = 0; row < 4; ++row) {
-        for (int column = 0; column < 4; ++column) {
-            local(row, column) = volume.localTransform[
-                static_cast<std::size_t>(row * 4 + column)];
-        }
-    }
+    output->local_transform = volume.localTransform;
 
     // Imported triangle data may store three independent VTK points per face.
     // The libslicer in-memory API accepts an indexed TriangleMesh and
@@ -160,12 +166,12 @@ bool appendGeometry(const SliceSessionBuilder::CapturedRequest::Volume& volume,
         }
         double point[3];
         polyData->GetPoint(pointId, point);
-        const Eigen::Vector4d transformed = local * Eigen::Vector4d(
-            point[0], point[1], point[2], 1.0);
+        // Keep the mesh and its facet trees in their original local frame.
+        // Native ModelVolume applies the part transform, including mirroring.
         const libslicer::SliceVertex vertex{
-            static_cast<float>(transformed.x()),
-            static_cast<float>(transformed.y()),
-            static_cast<float>(transformed.z())};
+            static_cast<float>(point[0]),
+            static_cast<float>(point[1]),
+            static_cast<float>(point[2])};
         if (!std::isfinite(vertex.x) || !std::isfinite(vertex.y) ||
             !std::isfinite(vertex.z)) {
             *error = "Slice input contains a non-finite vertex";
@@ -251,7 +257,30 @@ SliceSessionBuilder::CaptureResult SliceSessionBuilder::capture(const Request& r
         CapturedRequest::Model model;
         model.name = db->getDisplayName();
         model.modelId = modelId.getValue();
-        const auto matrix = instance->getTransform().getMatrix();
+        const auto bed = document->getDB<PrintBedDB>(instance->getParentPrintBedDBId());
+        if (!bed || (captured->printBedId.isValid() &&
+                     captured->printBedId != bed->getDBInstanceID())) {
+            result.error = "Slice session requires instances from one assigned print bed";
+            return result;
+        }
+        captured->printBedId = bed->getDBInstanceID();
+        captured->plateSemantics = bed->getProjectSemantics();
+        captured->defaultFilamentSlot = slicingConfig ? slicingConfig->getDefaultFilamentSlot() : 1;
+        const auto owner = instance->object();
+        if (!owner) {
+            result.error = "Slice model has no owning object";
+            return result;
+        }
+        model.projectSemantics = owner->getProjectSemantics();
+        model.defaultFilamentSlot = owner->getDefaultFilamentSlot();
+        if (model.defaultFilamentSlot < 0 ||
+            static_cast<std::size_t>(model.defaultFilamentSlot) > filamentCount) {
+            result.error = "Object default references a missing filament slot";
+            return result;
+        }
+        Transform::Matrix4 matrix;
+        try { matrix = PrintBedPlacementUtil::instancePlateMatrix(*instance); }
+        catch (const std::exception& error) { result.error = error.what(); return result; }
         for (int row = 0; row < 4; ++row) {
             for (int column = 0; column < 4; ++column) {
                 model.transform[static_cast<std::size_t>(row * 4 + column)] =
@@ -302,27 +331,42 @@ SliceSessionBuilder::CaptureResult SliceSessionBuilder::capture(const Request& r
             const auto& part = instanceParts[partIndex];
             if (!part || !part->hasValidMesh()) continue;
             const auto role = static_cast<ModelPartRole>(part->getRole());
-            const auto sliceRole = role == ModelPartRole::SupportEnforcer
-                ? libslicer::SliceVolumeRole::SupportEnforcer
-                : role == ModelPartRole::SupportBlocker
-                    ? libslicer::SliceVolumeRole::SupportBlocker
-                    : libslicer::SliceVolumeRole::ModelPart;
+            libslicer::SliceVolumeRole sliceRole;
+            switch (role) {
+            case ModelPartRole::Model: sliceRole = libslicer::SliceVolumeRole::ModelPart; break;
+            case ModelPartRole::SupportEnforcer: sliceRole = libslicer::SliceVolumeRole::SupportEnforcer; break;
+            case ModelPartRole::SupportBlocker: sliceRole = libslicer::SliceVolumeRole::SupportBlocker; break;
+            case ModelPartRole::NegativeVolume: sliceRole = libslicer::SliceVolumeRole::NegativeVolume; break;
+            case ModelPartRole::ParameterModifier: sliceRole = libslicer::SliceVolumeRole::ParameterModifier; break;
+            default: result.error = "Unknown model part role"; return result;
+            }
             std::optional<CapturedRequest::SurfaceColors> colors;
             if (auto state = surfaceColorsFor(
                     *document, part->getDBInstanceID())) {
-                colors = CapturedRequest::SurfaceColors{
+                if (!state->getSurfaceColorData().empty()) colors = CapturedRequest::SurfaceColors{
                     state->getSurfaceColorData(),
                     state->getTopologyFingerprint(),
                     state->getSourceTriangleCount(), state->getRevision()};
             }
             const auto filament = GPlatform::Slicing::resolveModelFilamentSlot(
                 *part, slicingConfig.get(), filamentCount);
+            if (!filament.requestedSlotValid) {
+                result.error = "Model part references a missing filament slot";
+                return result;
+            }
             if (!appendVolume(part->geometry().get(), part->getLocalTransform(),
                               filament.effectiveSlot, sliceRole,
                               std::move(colors))) {
                 result.error = "Model part has no valid indexed mesh snapshot";
                 return result;
             }
+            auto& volume = model.volumes.back();
+            volume.projectSemantics = part->getProjectSemantics();
+            volume.surfaceAnnotations = part->getSurfaceAnnotations();
+            volume.annotationsFingerprint = part->getAnnotationsTopologyFingerprint();
+            volume.annotationsTriangleCount = part->getAnnotationsSourceTriangleCount();
+            volume.inheritObjectFilament = part->getFilamentBindingMode() ==
+                static_cast<int>(ModelFilamentBindingMode::InheritObject);
         }
         if (model.volumes.empty()) {
             result.error = "Model instance has no printable part";
@@ -407,6 +451,8 @@ SliceSessionBuilder::Result SliceSessionBuilder::build(
         std::to_string(++g_sessionSequence);
     session->profileRevision = captured.profile.revision;
     session->request.config = captured.profile.config;
+    session->request.project_semantics = captured.plateSemantics;
+    session->request.default_filament_slot = captured.defaultFilamentSlot;
     session->request.generate_gcode_3mf = captured.generateGcode3mf;
     session->request.belt_support_debug_only = captured.beltSupportDebugOnly;
     session->request.belt_support_debug_output_path =
@@ -424,6 +470,8 @@ SliceSessionBuilder::Result SliceSessionBuilder::build(
         }
         libslicer::SliceObjectInput object;
         object.name = model.name;
+        object.project_semantics = model.projectSemantics;
+        object.default_filament_slot = model.defaultFilamentSlot;
         object.transform = model.transform;
         object.support_enforcer_paths = model.supportEnforcerPaths;
         object.fiber_masks = model.fiberMasks;
@@ -447,7 +495,19 @@ SliceSessionBuilder::Result SliceSessionBuilder::build(
                     return result;
                 }
             }
+            if (!capturedVolume.surfaceAnnotations.empty()) {
+                const auto fingerprint = localTopologyFingerprint(capturedVolume.geometry, &result.error);
+                if (!fingerprint || *fingerprint != capturedVolume.annotationsFingerprint ||
+                    capturedVolume.annotationsTriangleCount != static_cast<int>(
+                        const_cast<vtkPolyData&>(capturedVolume.geometry.polyData()).GetNumberOfCells())) {
+                    result.error = "Surface annotations do not match the model topology";
+                    return result;
+                }
+            }
             libslicer::SliceVolumeInput volume;
+            volume.project_semantics = capturedVolume.projectSemantics;
+            volume.surface_annotations = capturedVolume.surfaceAnnotations;
+            volume.inherit_object_filament = capturedVolume.inheritObjectFilament;
             volume.default_filament_slot = capturedVolume.defaultFilamentSlot;
             volume.role = capturedVolume.role;
             if (!appendGeometry(capturedVolume, &volume, isCancelled,

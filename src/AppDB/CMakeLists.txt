@@ -38,6 +38,7 @@ set(APPDB_HEADERS
     include/GlbAssetData.hpp
     include/GlbDB.hpp
     include/GlbDBImporter.hpp
+    include/PrintBedPlacementUtil.hpp
     include/PrintBedDB.hpp
     include/PrintBedTemplateDB.hpp
     include/WidgetDB.hpp

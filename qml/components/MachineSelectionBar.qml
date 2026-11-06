@@ -344,6 +344,8 @@ Button {
                 Layout.fillWidth: true
                 text: {
                     var modelName = root.selectedMachine.printerModel || qsTr("Select Printer")
+                    if (root.selectedMachine.projectLocal)
+                        modelName = qsTr("Project printer · %1").arg(modelName)
                     if (root.compact) {
                         if (modelName.indexOf("Flashforge ") === 0)
                             modelName = modelName.substring(11)

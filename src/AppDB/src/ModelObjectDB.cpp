@@ -124,6 +124,9 @@ ModelObjectDB::acquireGlbSourceAssetSnapshot() const noexcept {
 }
 
 void ModelObjectDB::initializeProperties() {
+    setProjectSemantics({});
+    setDefaultFilamentSlot(0);
+
     setSourceFile({});
     setFileFormat({});
     setPrintableDefault(true);
@@ -190,6 +193,9 @@ bool ModelObjectDB::isValid() const {
 
 std::shared_ptr<AutoRegisterDB> ModelObjectDB::clone() const {
     auto copy = trans::TransDB::create<ModelObjectDB>();
+    copy->setProjectSemantics(getProjectSemantics());
+    copy->setDefaultFilamentSlot(getDefaultFilamentSlot());
+
     copy->setDisplayName(getDisplayName());
     copy->setSourceFile(getSourceFile());
     copy->setFileFormat(getFileFormat());

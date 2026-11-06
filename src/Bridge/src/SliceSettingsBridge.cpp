@@ -258,7 +258,7 @@ namespace {
         return bridgeActivationResult(std::move(activated.view));
     }
 
-    std::vector<GPlatform::SlicingConfigDB::Filament> documentFilaments(
+    std::vector<GPlatform::SlicingConfigDB::Filament> convertDocumentFilaments(
         const std::vector<libslicer::FilamentSlotInfo>& filamentSlots) {
         std::vector<GPlatform::SlicingConfigDB::Filament> result;
         result.reserve(filamentSlots.size());
@@ -302,10 +302,179 @@ namespace {
         const auto config = activeSlicingConfigDB();
         if (!config) return;
 
-        config->setFilaments(documentFilaments(filamentSlots));
+        config->setFilaments(convertDocumentFilaments(filamentSlots));
         config->setActiveRevision(revision);
     }
 } // namespace
+
+namespace {
+struct SchemaProjection { QVariantList settings, pages; QHash<QString, QVariantMap> byKey; };
+QVariant displaySettingValue(const libslicer::SettingItem& item,
+                                                 const std::string& serialized) {
+    QString value = QString::fromStdString(serialized);
+    switch (item.type) {
+        case libslicer::SettingType::Boolean:
+            return value == QStringLiteral("1") || value.compare(QStringLiteral("true"), Qt::CaseInsensitive) == 0;
+        case libslicer::SettingType::Integer:
+            return value.toInt();
+        case libslicer::SettingType::Float:
+            return value.toDouble();
+        case libslicer::SettingType::Percent:
+            value.remove(QLatin1Char('%'));
+            return value.toDouble();
+        default:
+            return value;
+    }
+}
+
+SchemaProjection prepareSchema(const std::vector<libslicer::SettingItem>& items) {
+    SchemaProjection projection;
+    projection.settings.clear();
+    projection.pages.clear();
+    projection.byKey.clear();
+    QHash<QString, QVariantMap> pages;
+    int rowOrder = 0;
+    for (const auto& itemDefinition : items) {
+        if (!itemDefinition.visible || itemDefinition.read_only)
+            continue;
+        const QString key = QString::fromStdString(itemDefinition.key);
+        const QString tab = groupTab(itemDefinition.group);
+        const QString category = itemDefinition.category.empty()
+                                     ? QStringLiteral("Other")
+                                     : QString::fromStdString(itemDefinition.category);
+        const QString page = pageId(category);
+        const QString mode = modeName(itemDefinition.level);
+        QVariantMap item{
+            {QStringLiteral("key"), key},
+            {QStringLiteral("label"), itemDefinition.label.empty() ? key : QString::fromStdString(itemDefinition.label)},
+            {QStringLiteral("description"), QString::fromStdString(itemDefinition.description)},
+            {QStringLiteral("tab"), tab},
+            {QStringLiteral("page"), page},
+            {QStringLiteral("pageTitle"), category},
+            {QStringLiteral("pageOrder"), categoryOrder(tab, category)},
+            {QStringLiteral("section"), page},
+            {QStringLiteral("sectionTitle"), category},
+            {QStringLiteral("sectionOrder"), 0},
+            {QStringLiteral("mode"), mode},
+            {QStringLiteral("type"), typeName(itemDefinition.type)},
+            {QStringLiteral("elementType"), typeName(itemDefinition.element_type)},
+            {QStringLiteral("control"), controlName(itemDefinition)},
+            {QStringLiteral("unit"), QString::fromStdString(itemDefinition.unit)},
+            {QStringLiteral("decimals"), itemDefinition.precision.value_or(
+                                             itemDefinition.type == libslicer::SettingType::Integer ? 0 : 3)},
+            {QStringLiteral("visible"), itemDefinition.visible},
+            {QStringLiteral("enabled"), itemDefinition.enabled},
+            {QStringLiteral("internal"), false},
+            {QStringLiteral("default"), displaySettingValue(itemDefinition, itemDefinition.default_value)},
+            {QStringLiteral("autoInit"), true},
+            {QStringLiteral("rowOrder"), rowOrder++}
+        };
+        if (itemDefinition.minimum)
+            item.insert(QStringLiteral("min"), *itemDefinition.minimum);
+        if (itemDefinition.maximum)
+            item.insert(QStringLiteral("max"), *itemDefinition.maximum);
+        if (itemDefinition.fixed_size)
+            item.insert(QStringLiteral("fixedSize"),
+                        static_cast<qulonglong>(*itemDefinition.fixed_size));
+        if (itemDefinition.step)
+            item.insert(QStringLiteral("step"), *itemDefinition.step);
+        QVariantList options;
+        for (const auto& enumItem : itemDefinition.enum_items) {
+            options.push_back(QVariantMap{{QStringLiteral("value"), QString::fromStdString(enumItem.value)},
+                                          {QStringLiteral("label"), QString::fromStdString(enumItem.label)}});
+        }
+        item.insert(QStringLiteral("options"), options);
+        projection.settings.push_back(item);
+        projection.byKey.insert(key, item);
+
+        const QString pageKey = tab + QStringLiteral("::") + page;
+        if (!pages.contains(pageKey)) {
+            pages.insert(pageKey, QVariantMap{
+                                      {QStringLiteral("tab"), tab},
+                                      {QStringLiteral("page"), page},
+                                      {QStringLiteral("title"), category},
+                                      {QStringLiteral("mode"), mode},
+                                      {QStringLiteral("order"), categoryOrder(tab, category)}
+            });
+        } else if (mode == QStringLiteral("basic")) {
+            auto existing = pages.value(pageKey);
+            existing.insert(QStringLiteral("mode"), QStringLiteral("basic"));
+            pages.insert(pageKey, existing);
+        }
+    }
+    for (const auto& page : pages)
+        projection.pages.push_back(page);
+    return projection;
+}
+}
+
+
+std::vector<GPlatform::SlicingConfigDB::Filament> SliceSettingsBridge::documentFilaments(
+    const std::vector<libslicer::FilamentSlotInfo>& filamentSlots) { return convertDocumentFilaments(filamentSlots); }
+
+SliceSettingsBridge::PreparedConfiguration SliceSettingsBridge::prepareConfiguration(
+    libslicer::ActiveConfigView view, const std::optional<libslicer::ProjectMachine>& machine) {
+    PreparedConfiguration prepared;
+    prepared.view = std::move(view);
+    for (std::size_t index = 0; index < prepared.view.settings.size(); ++index) {
+        const auto& item = prepared.view.settings[index];
+        prepared.itemIndex.emplace(item.key, index);
+        if (item.group == libslicer::SettingGroup::Process)
+            prepared.processBaseline.emplace(item.key, item.value);
+    }
+    prepared.filamentSlots = filamentSlotItems(prepared.view.filament_slots, prepared.view.settings);
+    auto schema = prepareSchema(prepared.view.settings);
+    prepared.schemaSettings = std::move(schema.settings);
+    prepared.schemaPages = std::move(schema.pages);
+    prepared.schemaByKey = std::move(schema.byKey);
+    if (machine) {
+        const auto& model = machine->model;
+        const auto& variant = machine->variant;
+        const auto origin = printableAreaOrigin(variant);
+        prepared.projectLocal = machine->project_local;
+        prepared.machine = {
+            {"modelId", QString::fromStdString(model.id)}, {"variantId", QString::fromStdString(variant.id)},
+            {"printerModel", QString::fromStdString(model.name)}, {"bedVendor", QString::fromStdString(model.vendor_id)},
+            {"width", variant.printable_width}, {"height", variant.printable_depth},
+            {"printHeight", variant.printable_height}, {"nozzleDiameter", variant.nozzle_diameter},
+            {"x", origin.first}, {"y", origin.second}, {"printableArea", printableAreaVariant(variant)},
+            {"physicalToolCount", QVariant::fromValue<qulonglong>(variant.physical_tool_count)},
+            {"variableFilamentSlots", variant.variable_filament_slots},
+            {"filamentSlotsBoundToPhysicalTools", variant.filament_slots_bound_to_physical_tools},
+            {"maxFilamentSlots", QVariant::fromValue<qulonglong>(variant.max_filament_slots)},
+            {"toolMaterialCapacities", toolCapacityVariant(variant)},
+            {"bedModelPath", QString::fromStdString(model.bed_model_path)},
+            {"bedTexturePath", QString::fromStdString(model.bed_texture_path)}, {"projectLocal", machine->project_local}
+        };
+    }
+    return prepared;
+}
+
+void SliceSettingsBridge::installCommittedConfiguration(PreparedConfiguration&& prepared) noexcept {
+    QWriteLocker locker(&m_lock);
+    using std::swap;
+    swap(m_selection, prepared.view.selection);
+    m_compatibleProcesses.swap(prepared.view.compatible_processes);
+    m_compatibleFilaments.swap(prepared.view.compatible_filaments);
+    m_items.swap(prepared.view.settings);
+    m_processBaseline.swap(prepared.processBaseline);
+    m_itemIndex.swap(prepared.itemIndex);
+    m_schemaSettings.swap(prepared.schemaSettings);
+    m_schemaPages.swap(prepared.schemaPages);
+    m_schemaByKey.swap(prepared.schemaByKey);
+    m_filamentSlots.swap(prepared.filamentSlots);
+    m_projectMachine.swap(prepared.machine);
+    m_schemaLoaded = !m_schemaSettings.isEmpty();
+    ++m_schemaRevision;
+    m_hasPendingReslice = true;
+    m_configurationError.clear();
+}
+
+void SliceSettingsBridge::publishCommittedConfiguration() {
+    emit settingsChanged(); emit schemaChanged(); emit machineSelectionChanged();
+    emit presetSelectionChanged(); emit filamentSlotsChanged(); emit hasPendingResliceChanged();
+    emit configurationErrorChanged();
+}
 
 namespace {
 std::optional<GPlatform::SlicingConfigActivationResult> startupConfiguration;
@@ -936,6 +1105,10 @@ QString SliceSettingsBridge::selectedMachineVariantId() const {
 }
 
 QVariantMap SliceSettingsBridge::selectedMachine() const {
+    {
+        QReadLocker locker(&m_lock);
+        if (!m_projectMachine.isEmpty()) return m_projectMachine;
+    }
     std::string modelId;
     std::string variantId;
     {
@@ -1086,64 +1259,33 @@ QString SliceSettingsBridge::presetName(
         : QString::fromStdString(selected->name);
 }
 
-bool SliceSettingsBridge::replaceConfig(GPlatform::SlicingConfigActivationResult&& result,
-                                        bool markPending) {
+bool SliceSettingsBridge::replaceConfig(GPlatform::SlicingConfigActivationResult&& result, bool markPending) {
     if (!result) {
-        const std::string message = result.diagnostics.empty()
-            ? std::string("unknown preset selection error")
+        const auto message = result.diagnostics.empty() ? std::string("unknown preset selection error")
             : result.diagnostics.front().key + ": " + result.diagnostics.front().message;
-        LOG_ERROR("SliceSettingsBridge: unable to create preset-backed config: {}", message);
         setConfigurationError(QString::fromStdString(message));
         return false;
     }
-
-    const std::uint64_t activeRevision = result.revision;
-    const auto activeFilamentSlots = result.filamentSlots;
-    bool pendingChanged = false;
-    bool machineChanged = false;
-    libslicer::ResolvedSelection appliedSelection;
+    libslicer::ActiveConfigView view;
+    view.revision = result.revision;
+    view.selection = std::move(result.selection);
+    view.compatible_processes = std::move(result.compatibleProcesses);
+    view.compatible_filaments = std::move(result.compatibleFilaments);
+    view.settings = std::move(result.settings);
+    view.filament_slots = std::move(result.filamentSlots);
+    auto prepared = prepareConfiguration(std::move(view), GPlatform::SlicingBackend::instance().activeProjectMachine());
     {
-        QWriteLocker locker(&m_lock);
-        machineChanged = m_selection.machine_model_id != result.selection.machine_model_id ||
-                         m_selection.machine_variant_id != result.selection.machine_variant_id;
-        const bool newProcess = machineChanged || m_processBaseline.empty() ||
-                                m_selection.process_preset_id != result.selection.process_preset_id;
-        m_selection = std::move(result.selection);
-        appliedSelection = m_selection;
-        m_compatibleProcesses = std::move(result.compatibleProcesses);
-        m_compatibleFilaments = std::move(result.compatibleFilaments);
-        m_items = std::move(result.settings);
-        if (newProcess) {
-            m_processBaseline.clear();
-            for (const auto& item : m_items)
-                if (item.group == libslicer::SettingGroup::Process)
-                    m_processBaseline.emplace(item.key, item.value);
-        }
-        m_filamentSlots = filamentSlotItems(result.filamentSlots, m_items);
-        m_itemIndex.clear();
-        for (std::size_t index = 0; index < m_items.size(); ++index) {
-            m_itemIndex.emplace(m_items[index].key, index);
-        }
-        buildSchemaLocked();
-        if (markPending)
-            setPendingLocked(&pendingChanged);
+        QReadLocker locker(&m_lock);
+        if (m_selection.machine_model_id == prepared.view.selection.machine_model_id &&
+            m_selection.machine_variant_id == prepared.view.selection.machine_variant_id &&
+            m_selection.process_preset_id == prepared.view.selection.process_preset_id && !m_processBaseline.empty())
+            prepared.processBaseline = m_processBaseline;
     }
-
-    setConfigurationError({});
-    publishActiveSlicingConfig(activeRevision, activeFilamentSlots);
-    persistSelection(appliedSelection);
-    LOG_INFO("SliceSettingsBridge: selected machine '{} / {}', process '{}', filament '{}'",
-             appliedSelection.machine_model_id, appliedSelection.machine_variant_id,
-             appliedSelection.process_preset_id,
-             appliedSelection.filament_preset_ids.empty() ? std::string{} : appliedSelection.filament_preset_ids.front());
-    emit settingsChanged();
-    emit schemaChanged();
-    if (machineChanged)
-        emit machineSelectionChanged();
-    emit presetSelectionChanged();
-    emit filamentSlotsChanged();
-    if (pendingChanged)
-        emit hasPendingResliceChanged();
+    publishActiveSlicingConfig(prepared.view.revision, prepared.view.filament_slots);
+    if (!prepared.projectLocal) persistSelection(prepared.view.selection);
+    installCommittedConfiguration(std::move(prepared));
+    if (!markPending) { QWriteLocker locker(&m_lock); m_hasPendingReslice = false; }
+    publishCommittedConfiguration();
     return true;
 }
 
@@ -1159,85 +1301,12 @@ void SliceSettingsBridge::setConfigurationError(const QString& message) {
 }
 
 void SliceSettingsBridge::buildSchemaLocked() {
-    m_schemaSettings.clear();
-    m_schemaPages.clear();
-    m_schemaByKey.clear();
-    QHash<QString, QVariantMap> pages;
-    int rowOrder = 0;
-    for (const auto& itemDefinition : m_items) {
-        if (!itemDefinition.visible || itemDefinition.read_only)
-            continue;
-        const QString key = QString::fromStdString(itemDefinition.key);
-        const QString tab = groupTab(itemDefinition.group);
-        const QString category = itemDefinition.category.empty()
-                                     ? QStringLiteral("Other")
-                                     : QString::fromStdString(itemDefinition.category);
-        const QString page = pageId(category);
-        const QString mode = modeName(itemDefinition.level);
-        QVariantMap item{
-            {QStringLiteral("key"), key},
-            {QStringLiteral("label"), itemDefinition.label.empty() ? key : QString::fromStdString(itemDefinition.label)},
-            {QStringLiteral("description"), QString::fromStdString(itemDefinition.description)},
-            {QStringLiteral("tab"), tab},
-            {QStringLiteral("page"), page},
-            {QStringLiteral("pageTitle"), category},
-            {QStringLiteral("pageOrder"), categoryOrder(tab, category)},
-            {QStringLiteral("section"), page},
-            {QStringLiteral("sectionTitle"), category},
-            {QStringLiteral("sectionOrder"), 0},
-            {QStringLiteral("mode"), mode},
-            {QStringLiteral("type"), typeName(itemDefinition.type)},
-            {QStringLiteral("elementType"), typeName(itemDefinition.element_type)},
-            {QStringLiteral("control"), controlName(itemDefinition)},
-            {QStringLiteral("unit"), QString::fromStdString(itemDefinition.unit)},
-            {QStringLiteral("decimals"), itemDefinition.precision.value_or(
-                                             itemDefinition.type == libslicer::SettingType::Integer ? 0 : 3)},
-            {QStringLiteral("visible"), itemDefinition.visible},
-            {QStringLiteral("enabled"), itemDefinition.enabled},
-            {QStringLiteral("internal"), false},
-            {QStringLiteral("default"), displayValueLocked(itemDefinition, itemDefinition.default_value)},
-            {QStringLiteral("autoInit"), true},
-            {QStringLiteral("rowOrder"), rowOrder++}
-        };
-        if (itemDefinition.minimum)
-            item.insert(QStringLiteral("min"), *itemDefinition.minimum);
-        if (itemDefinition.maximum)
-            item.insert(QStringLiteral("max"), *itemDefinition.maximum);
-        if (itemDefinition.fixed_size)
-            item.insert(QStringLiteral("fixedSize"),
-                        static_cast<qulonglong>(*itemDefinition.fixed_size));
-        if (itemDefinition.step)
-            item.insert(QStringLiteral("step"), *itemDefinition.step);
-        QVariantList options;
-        for (const auto& enumItem : itemDefinition.enum_items) {
-            options.push_back(QVariantMap{{QStringLiteral("value"), QString::fromStdString(enumItem.value)},
-                                          {QStringLiteral("label"), QString::fromStdString(enumItem.label)}});
-        }
-        item.insert(QStringLiteral("options"), options);
-        m_schemaSettings.push_back(item);
-        m_schemaByKey.insert(key, item);
-
-        const QString pageKey = tab + QStringLiteral("::") + page;
-        if (!pages.contains(pageKey)) {
-            pages.insert(pageKey, QVariantMap{
-                                      {QStringLiteral("tab"), tab},
-                                      {QStringLiteral("page"), page},
-                                      {QStringLiteral("title"), category},
-                                      {QStringLiteral("mode"), mode},
-                                      {QStringLiteral("order"), categoryOrder(tab, category)}
-            });
-        } else if (mode == QStringLiteral("basic")) {
-            auto existing = pages.value(pageKey);
-            existing.insert(QStringLiteral("mode"), QStringLiteral("basic"));
-            pages.insert(pageKey, existing);
-        }
-    }
-    for (const auto& page : pages)
-        m_schemaPages.push_back(page);
+    auto schema = prepareSchema(m_items);
+    m_schemaSettings.swap(schema.settings);
+    m_schemaPages.swap(schema.pages);
+    m_schemaByKey.swap(schema.byKey);
     m_schemaLoaded = !m_schemaSettings.isEmpty();
     ++m_schemaRevision;
-    LOG_INFO("SliceSettingsBridge: loaded {} libslicer definitions across {} pages",
-             m_schemaSettings.size(), m_schemaPages.size());
 }
 
 const libslicer::SettingItem* SliceSettingsBridge::findItemLocked(std::string_view key) const {
@@ -1271,22 +1340,7 @@ bool SliceSettingsBridge::applyChangedItemsLocked(
 }
 
 QVariant SliceSettingsBridge::displayValueLocked(const libslicer::SettingItem& item,
-                                                 const std::string& serialized) const {
-    QString value = QString::fromStdString(serialized);
-    switch (item.type) {
-        case libslicer::SettingType::Boolean:
-            return value == QStringLiteral("1") || value.compare(QStringLiteral("true"), Qt::CaseInsensitive) == 0;
-        case libslicer::SettingType::Integer:
-            return value.toInt();
-        case libslicer::SettingType::Float:
-            return value.toDouble();
-        case libslicer::SettingType::Percent:
-            value.remove(QLatin1Char('%'));
-            return value.toDouble();
-        default:
-            return value;
-    }
-}
+    const std::string& serialized) const { return displaySettingValue(item, serialized); }
 
 std::string SliceSettingsBridge::serializeValueLocked(const libslicer::SettingItem& item,
                                                       const QVariant& value) const {

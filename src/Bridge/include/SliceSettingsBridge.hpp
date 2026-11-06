@@ -5,6 +5,7 @@
 
 #include <BridgeBase.hpp>
 #include "SlicingBackend.hpp"
+#include "SlicingConfigDB.hpp"
 
 #include <libslicer/Library.hpp>
 
@@ -41,6 +42,21 @@ class SliceSettingsBridge final : public bridge::BridgeBase {
     QML_SINGLETON
 
 public:
+    struct PreparedConfiguration {
+        libslicer::ActiveConfigView view;
+        QVariantMap machine;
+        std::unordered_map<std::string, std::string> processBaseline;
+        std::unordered_map<std::string, std::size_t> itemIndex;
+        QVariantList schemaSettings, schemaPages, filamentSlots;
+        QHash<QString, QVariantMap> schemaByKey;
+        bool projectLocal{false};
+    };
+    static PreparedConfiguration prepareConfiguration(libslicer::ActiveConfigView,
+        const std::optional<libslicer::ProjectMachine>& = {});
+    static std::vector<GPlatform::SlicingConfigDB::Filament> documentFilaments(
+        const std::vector<libslicer::FilamentSlotInfo>&);
+    void installCommittedConfiguration(PreparedConfiguration&&) noexcept;
+    void publishCommittedConfiguration();
     // Capture persisted selection on the GUI thread, load only backend data in
     // a worker, then supply the result before module registration constructs us.
     static QFuture<GPlatform::SlicingConfigActivationResult> prepareStartupConfiguration();
@@ -147,4 +163,5 @@ private:
     bool m_schemaLoaded{false};
     int m_schemaRevision{0};
     bool m_hasPendingReslice{false};
+    QVariantMap m_projectMachine;
 };

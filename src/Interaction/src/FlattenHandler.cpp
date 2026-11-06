@@ -1,3 +1,4 @@
+#include <PrintBedPlacementUtil.hpp>
 #include "FlattenHandler.hpp"
 #include "InteractionRegistration.hpp"
 
@@ -536,7 +537,7 @@ bool FlattenHandler::flattenGroup(int groupIndex) {
     const Vector3 current = finalTransform.getPosition();
     const Vector3 beforeCenter = beforeBounds.getCenter();
     const Vector3 afterCenter = afterBounds.getCenter();
-    const float groundZ = bed->getOrigin().z;
+    const float groundZ = PrintBedPlacementUtil::plateToScene(*bed, bed->getOrigin()).z;
     finalTransform.setPosition(Vector3(
         current.x + beforeCenter.x - afterCenter.x,
         current.y + beforeCenter.y - afterCenter.y,

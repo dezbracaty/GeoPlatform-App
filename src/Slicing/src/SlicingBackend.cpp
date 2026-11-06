@@ -72,6 +72,7 @@ public:
     std::unique_ptr<libslicer::Library> library;
     std::atomic_bool shutdownRequested{false};
     std::atomic_uint activeLongJobs{0};
+    std::atomic_bool projectCommitActive{false};
     std::mutex configurationAdmissionMutex;
 
 private:
@@ -175,7 +176,8 @@ bool SlicingBackend::available() const noexcept
 bool SlicingBackend::configurationChangesAllowed() const noexcept
 {
     return m_available &&
-        m_impl->activeLongJobs.load(std::memory_order_acquire) == 0;
+        m_impl->activeLongJobs.load(std::memory_order_acquire) == 0 &&
+        !m_impl->projectCommitActive.load(std::memory_order_acquire);
 }
 
 const std::vector<libslicer::MachineModelOption>& SlicingBackend::machineModels() const noexcept
@@ -299,6 +301,12 @@ std::optional<libslicer::ActiveConfigView> SlicingBackend::activeConfigView() co
     return m_impl->invoke([this]() {
         return m_impl->library->active_config();
     });
+}
+
+std::uint64_t SlicingBackend::configurationRevision() const
+{
+    if (!m_available) return 0;
+    return m_impl->invoke([this] { return m_impl->library->configuration_revision(); });
 }
 
 libslicer::ConfigActivationResult SlicingBackend::setFilamentPreset(
@@ -555,6 +563,68 @@ libslicer::ProjectImportResult SlicingBackend::importProject(
     return m_impl->invoke([this, requested, serializedCallbacks]() {
         return m_impl->library->import_project(requested, serializedCallbacks);
     });
+}
+
+class SlicingBackend::ProjectCommitLease::State final {
+public:
+    State(SlicingBackend::Impl& owner, std::unique_lock<std::mutex> acquired, std::uint64_t revision)
+        : backend(owner), lock(std::move(acquired)), revision(revision) {
+        backend.projectCommitActive.store(true, std::memory_order_release);
+    }
+    ~State() { backend.projectCommitActive.store(false, std::memory_order_release); }
+    SlicingBackend::Impl& backend;
+    std::unique_lock<std::mutex> lock;
+    std::uint64_t revision;
+};
+
+SlicingBackend::ProjectCommitLease::ProjectCommitLease() = default;
+SlicingBackend::ProjectCommitLease::ProjectCommitLease(ProjectCommitLease&&) noexcept = default;
+SlicingBackend::ProjectCommitLease& SlicingBackend::ProjectCommitLease::operator=(ProjectCommitLease&&) noexcept = default;
+SlicingBackend::ProjectCommitLease::~ProjectCommitLease() = default;
+SlicingBackend::ProjectCommitLease::operator bool() const noexcept { return bool(m_state); }
+void SlicingBackend::ProjectCommitLease::release() noexcept { m_state.reset(); }
+
+libslicer::ConfigurationInstallResult SlicingBackend::ProjectCommitLease::install(
+    const libslicer::ConfigurationState& configuration) {
+    if (!m_state) return {};
+    auto result = m_state->backend.invoke([this, &configuration] {
+        return m_state->backend.library->install_configuration(configuration, m_state->revision);
+    });
+    if (result) m_state->revision = result.revision;
+    return result;
+}
+
+SlicingBackend::ProjectCommitLease SlicingBackend::beginProjectCommit(std::uint64_t expectedRevision) {
+    ProjectCommitLease lease;
+    if (!m_available || m_impl->shutdownRequested.load(std::memory_order_acquire)) return lease;
+    std::unique_lock<std::mutex> lock(m_impl->configurationAdmissionMutex, std::try_to_lock);
+    if (!lock.owns_lock() || m_impl->activeLongJobs.load(std::memory_order_acquire) != 0) return lease;
+    const auto revision = m_impl->invoke([this] { return m_impl->library->configuration_revision(); });
+    if (revision != expectedRevision) return lease;
+    lease.m_state = std::make_unique<ProjectCommitLease::State>(*m_impl, std::move(lock), expectedRevision);
+    return lease;
+}
+
+libslicer::ProjectReadResult SlicingBackend::readProject(const libslicer::ProjectReadRequest& request,
+    const libslicer::SliceCallbacks& callbacks, const libslicer::ProjectDecisionCallback& decisions) const {
+    if (!m_available) return {};
+    auto wrapped = callbacks;
+    wrapped.is_cancelled = [impl = m_impl.get(), cancelled = callbacks.is_cancelled] {
+        return impl->shutdownRequested.load(std::memory_order_acquire) || (cancelled && cancelled());
+    };
+    {
+        std::lock_guard<std::mutex> lock(m_impl->configurationAdmissionMutex);
+        m_impl->activeLongJobs.fetch_add(1, std::memory_order_release);
+    }
+    LongJobCompletionGuard completion(m_impl->activeLongJobs);
+    return m_impl->invoke([this, request, wrapped, decisions] {
+        return m_impl->library->read_project(request, wrapped, decisions);
+    });
+}
+
+std::optional<libslicer::ProjectMachine> SlicingBackend::activeProjectMachine() const {
+    if (!m_available) return std::nullopt;
+    return m_impl->invoke([this] { return m_impl->library->active_project_machine(); });
 }
 
 } // namespace GPlatform

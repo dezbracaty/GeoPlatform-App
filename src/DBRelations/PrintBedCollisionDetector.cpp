@@ -1,9 +1,11 @@
 #include "PrintBedCollisionDetector.hpp"
+#include <ModelInstanceDB.hpp>
+#include <PrintBedPlacementUtil.hpp>
 
 PrintBedCollisionDetector::BuildVolume
 PrintBedCollisionDetector::buildVolume(const PrintBedDB& bed) {
-    const Vector3 center = bed.getCenter();
-    const float minZ = bed.getOrigin().z;
+    const Vector3 center = PrintBedPlacementUtil::plateToScene(bed, bed.getCenter());
+    const float minZ = PrintBedPlacementUtil::plateToScene(bed, bed.getOrigin()).z;
     return {
         center.x - bed.getWidth() * 0.5f,
         center.x + bed.getWidth() * 0.5f,
@@ -34,9 +36,19 @@ std::uint32_t PrintBedCollisionDetector::detect(
     return mask;
 }
 
+ActorDB::BoundingBox PrintBedCollisionDetector::worldBounds(
+    const ActorDB& actor, const Transform& transform) {
+    const auto* instance = dynamic_cast<const ModelInstanceDB*>(&actor);
+    if (!instance) return actor.worldBoundsAt(transform.getMatrix());
+
+    // Orca's build-volume check uses model parts. Modifiers and support
+    // regions may extend outside the bed without producing printed geometry.
+    return instance->modelPartBoundsAt(transform.getMatrix());
+}
+
 std::uint32_t PrintBedCollisionDetector::detect(
     const ActorDB& actor,
     const Transform& transform,
     const BuildVolume& volume) {
-    return detect(actor.worldBoundsAt(transform.getMatrix()), volume);
+    return detect(worldBounds(actor, transform), volume);
 }

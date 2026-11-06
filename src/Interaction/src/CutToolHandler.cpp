@@ -1,3 +1,4 @@
+#include <PrintBedPlacementUtil.hpp>
 #include "CutToolHandler.hpp"
 
 #include "InteractionRegistration.hpp"
@@ -179,6 +180,9 @@ std::shared_ptr<ModelInstanceDB> createCutPiece(
             source->getPrintable(), source->getArrangeOrder(),
             source->getSlicingConfigDBId()});
     if (!graph || !graph.instance || graph.parts.empty()) return {};
+    graph.object->setDefaultFilamentSlot(object->getDefaultFilamentSlot());
+    graph.object->setProjectSemantics(object->getProjectSemantics());
+    graph.parts.front()->setProjectSemantics(sourceParts.front()->getProjectSemantics());
     graph.instance->setVisible(source->getVisible());
     graph.instance->setPickable(source->getPickable());
     graph.instance->setDragable(source->getDragable());
@@ -769,7 +773,7 @@ void CutToolHandler::performCut() {
         if (source->getParentPrintBedDBId().isValid()) {
             const auto bed = std::dynamic_pointer_cast<PrintBedDB>(
                 document->getDBInstance(source->getParentPrintBedDBId()));
-            if (bed) groundZ = bed->getOrigin().z;
+            if (bed) groundZ = PrintBedPlacementUtil::plateToScene(*bed, bed->getOrigin()).z;
         }
 
         TransactionGuard transaction("Cut Model");

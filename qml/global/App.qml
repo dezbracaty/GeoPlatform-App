@@ -17,6 +17,7 @@ Starter {
     }
 
     function chooseModel(params) { return chooseModelFile("file.import", params) }
+    function chooseProject(params) { return chooseModelFile("project.open", params) }
     function chooseStl(params) { return chooseModelFile("import_stl", params) }
 
     function chooseModelFile(actionCode, params) {
@@ -35,10 +36,11 @@ Starter {
         }
         var filters = actionCode === "import_stl"
                 ? [qsTr("STL Files (*.stl)")]
-                : [qsTr("Supported Files (*.stl *.gcode)"),
-                   qsTr("STL Files (*.stl)"), qsTr("GCode Files (*.gcode)")]
+                : actionCode === "project.open" ? [qsTr("3MF Projects (*.3mf)")]
+                : [qsTr("Supported Files (*.stl *.3mf *.gcode)"),
+                   qsTr("STL Files (*.stl)"), qsTr("3MF Files (*.3mf)"), qsTr("GCode Files (*.gcode)")]
         var requestId = FilePicker.openFile(Object.assign(SettingsHelper.getImportFileDialogState(), {
-            title: actionCode === "import_stl" ? qsTr("Import STL") : qsTr("Import File"),
+            title: actionCode === "import_stl" ? qsTr("Import STL") : actionCode === "project.open" ? qsTr("Open Project") : qsTr("Import File"),
             nameFilters: filters, parentWindow: parentWindow
         }))
         if (requestId <= 0) return false

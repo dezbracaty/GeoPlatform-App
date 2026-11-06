@@ -1,4 +1,5 @@
 #include "ModelRenderAppearanceResolver.hpp"
+#include <ModelFilamentSlotResolver.hpp>
 
 #include <MaterialDB.hpp>
 #include <ModelObjectDB.hpp>
@@ -16,13 +17,15 @@ Vector3 resolveModelDisplayColor(
     const Vector3 authoredColor = material
         ? material->getDiffuseColor()
         : Vector3(0.8f, 0.8f, 0.8f);
-    if (part.getFilamentBindingMode() !=
-            static_cast<int>(ModelFilamentBindingMode::ExplicitSlot) ||
+    if (part.getFilamentBindingMode() ==
+            static_cast<int>(ModelFilamentBindingMode::InheritProjectDefault) ||
         !slicingConfig) {
         return authoredColor;
     }
 
-    const int requestedSlot = part.getDefaultFilamentSlot();
+    const auto binding = GPlatform::Slicing::resolveModelFilamentSlot(part, slicingConfig);
+    if (!binding.requestedSlotValid) return authoredColor;
+    const int requestedSlot = binding.effectiveSlot;
     if (requestedSlot < 1) return authoredColor;
     const auto& filaments = slicingConfig->getFilaments();
     const std::size_t index = static_cast<std::size_t>(requestedSlot - 1);

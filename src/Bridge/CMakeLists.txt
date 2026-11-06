@@ -83,6 +83,7 @@ target_link_libraries(Bridge
         Utils     # Shared camera navigation operations
         Slicing   # Slicer configuration/catalog application service
     PRIVATE
+        GPlatform::ModelSlicingPolicy
         DBRelations
         GPlatformServices # Local model library application service
 )

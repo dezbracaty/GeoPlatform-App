@@ -26,6 +26,13 @@ metadata v3 的 `verification.requiredMethods` 只允许单项 `db` 或 `screens
 
 DB 检查点沿用 `verify.db`，格式为 `transdb.cereal-portable-binary.v1`。
 当前接口按实际 DBInstanceID 获取单个对象的完整属性存储，不代表整个文档关系图。
+现有 `app.db.serialize` 按 ID 返回该 DB 的原始属性字节；App 不另行定义一份工程字段投影。
+多个 DB 使用多个检查点。该接口不自动遍历文档，也不代表已覆盖 VTK 网格等属性存储之外的数据。
+有准确标准时才使用 `verify.db`；只有 `capture.db` 的场景仍缺少 DB 验收，不能判为通过。
+
+异步动作被接收不代表业务完成；结果通过已有 DB 或截图比较检查，缺少标准时保持未验证。
+`file.import` 的分派成功不代表具体 `project.import` 任务已完成；终态断言也不能替代 DB 门禁。
+
 标准 DB 保存在资产仓库 `baselines/db/<case>/`；`dbBaselines` 将文件绑定到 Journal 内的 expectedSerialized。
 入口校验两者相同，并记录文件哈希。对象 ID、初始化配置及关联对象必须随场景说明，禁止把未识别对象当目标。
 

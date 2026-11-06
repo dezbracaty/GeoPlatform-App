@@ -39,6 +39,8 @@ SlicingConfigDB::SlicingConfigDB()
 }
 
 void SlicingConfigDB::initializeProperties() {
+    setActivePrintBedDBId(DBInstanceID{});
+
     // 设置默认值
     // 这个函数在 AutoRegisterDB::onCreated() 中被调用
 
@@ -91,6 +93,19 @@ std::vector<Color> SlicingConfigDB::filamentColors() const {
             filament.color.blueF(), filament.color.alphaF());
     }
     return result;
+}
+
+std::vector<DBRelationRef> SlicingConfigDB::reportRelations() const {
+    if (!getActivePrintBedDBId().isValid()) return {};
+    return {{"project.activePrintBed", getActivePrintBedDBId()}};
+}
+
+bool SlicingConfigDB::replaceRelations(const std::vector<DBRelationReplacement>& replacements) {
+    for (const auto& replacement : replacements) {
+        if (replacement.relationName != "project.activePrintBed") return false;
+        setActivePrintBedDBId(replacement.newTargetId);
+    }
+    return true;
 }
 
 PropertyMap SlicingConfigDB::serialize() const {

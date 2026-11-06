@@ -195,6 +195,147 @@ def verify_job(gcode, package, expected):
     return result
 
 
+def validate_project_gcode_expectations(expected):
+    supported = {'requiredMarkers', 'forbiddenMarkers', 'modelBoundsXYZ', 'minimumLayerCount', 'configurationValues', 'layerPolicy'}
+    require(isinstance(expected, dict) and not set(expected) - supported, 'Unsupported project G-code expectation')
+    bounds = expected.get('modelBoundsXYZ')
+    require(isinstance(bounds, list) and len(bounds) == 6 and all(type(v) in {int, float} and math.isfinite(v) for v in bounds) and
+            all(bounds[i + 3] > bounds[i] for i in range(3)), 'Invalid project model deposition bounds')
+    require(type(expected.get('minimumLayerCount')) is int and expected['minimumLayerCount'] > 0, 'Invalid minimum project layer count')
+    require(isinstance(expected.get('requiredMarkers'), list) and all(isinstance(v, str) and v for v in expected['requiredMarkers']), 'Missing required project G-code markers')
+    require(isinstance(expected.get('forbiddenMarkers', []), list), 'Invalid forbidden G-code markers')
+    require(isinstance(expected.get('configurationValues', {}), dict), 'Invalid project G-code configuration expectations')
+    if 'layerPolicy' in expected:
+        policy = expected['layerPolicy']
+        require(isinstance(policy, dict) and set(policy) == {'initialLayerHeightMm', 'layerHeightMm'} and
+                all(type(v) in {int, float} and math.isfinite(v) and v > 0 for v in policy.values()) and
+                abs(bounds[2]) <= 1e-4, 'Layer policy requires positive independent heights and source base Z=0')
+        first, normal = policy['initialLayerHeightMm'], policy['layerHeightMm']
+        require(all(abs(v * 1000 - round(v * 1000)) <= 1e-8 for v in [first, normal]),
+                'Uniform layer policy requires native three-decimal representable heights')
+        # Native slicing samples each subsequent layer at its midpoint.
+        count = 1 + max(0, math.ceil((bounds[5] - first) / normal - .5 - 1e-6))
+        require(expected['minimumLayerCount'] == count, 'Minimum layer count differs from independent source height policy')
+
+
+
+def project_arc_points(start, end, values, clockwise):
+    """Extrema of native XY arcs with relative I/J, including full circles and helical Z."""
+    require(not {'R', 'P', 'K'} & set(values) and ('I' in values or 'J' in values), 'Unsupported project arc center encoding')
+    center = [start['X'] + values.get('I', 0.), start['Y'] + values.get('J', 0.)]
+    radius = math.hypot(start['X'] - center[0], start['Y'] - center[1])
+    end_radius = math.hypot(end['X'] - center[0], end['Y'] - center[1])
+    # Native G-code rounds coordinates and I/J to three decimals. This checks
+    # circular consistency of that encoding; source bounds retain their own tolerance.
+    require(radius > 1e-7 and abs(radius - end_radius) <= .003, 'Invalid project arc radius')
+    first = math.atan2(start['Y'] - center[1], start['X'] - center[0])
+    last = math.atan2(end['Y'] - center[1], end['X'] - center[0])
+    direction = -1 if clockwise else 1
+    sweep = ((last - first) * direction) % math.tau
+    if math.hypot(start['X'] - end['X'], start['Y'] - end['Y']) <= 1e-7:
+        sweep = math.tau
+    require(sweep > 1e-12, 'Empty project arc sweep')
+    points = [list(start.values()), list(end.values())]
+    for angle in [0., math.pi / 2, math.pi, 3 * math.pi / 2]:
+        distance = ((angle - first) * direction) % math.tau
+        if distance <= sweep + 1e-12:
+            fraction = distance / sweep
+            points.append([center[0] + radius * math.cos(angle), center[1] + radius * math.sin(angle),
+                           start['Z'] + (end['Z'] - start['Z']) * fraction])
+    return points
+
+
+def verify_project_gcode(gcode, package, expected):
+    """Verify per-plate software output; this is not a firmware/physical-print check."""
+    validate_project_gcode_expectations(expected)
+    raw = Path(gcode).read_bytes()
+    text = raw.decode('utf8')
+    for marker in expected['requiredMarkers']:
+        require(marker in text, f'Missing source-plate custom G-code marker: {marker}')
+    for marker in expected.get('forbiddenMarkers', []):
+        require(marker not in text, f'Other plate leaked into this G-code: {marker}')
+    xyz, previous_e, relative_e, relative_xyz, role = dict(X=0., Y=0., Z=0.), 0., False, False, ''
+    plane, relative_center = 'G17', True
+    deposited, deposition_layers = [], set()
+    for line in text.splitlines():
+        if line.startswith(';TYPE:'):
+            role = line[6:].strip()
+        elif line.startswith('; FEATURE: '):
+            role = line[len('; FEATURE: '):].strip()
+        code = line.split(';', 1)[0].strip()
+        if not code:
+            continue
+        opcode = code.split()[0]
+        values = {key: float(value) for key, value in re.findall(r'([XYZEIJRPKF])(-?\d*\.?\d+(?:[eE][+-]?\d+)?)', code)}
+        if opcode == 'G90': relative_xyz = False
+        if opcode == 'G91': relative_xyz = True
+        if opcode == 'M82': relative_e = False
+        if opcode == 'M83': relative_e = True
+        if opcode in {'G17', 'G18', 'G19'}: plane = opcode
+        if opcode == 'G90.1': relative_center = False
+        if opcode == 'G91.1': relative_center = True
+        require(opcode != 'G20', 'Inch G-code requires a separate verifier')
+        if opcode == 'G92':
+            previous_e = values.get('E', previous_e)
+            xyz.update({k: v for k, v in values.items() if k in xyz})
+        if opcode not in {'G0', 'G1', 'G2', 'G3'}:
+            continue
+        start = xyz.copy()
+        xyz = {k: (start[k] + values[k] if relative_xyz else values[k]) if k in values else start[k] for k in xyz}
+        delta = (values['E'] if relative_e else values['E'] - previous_e) if 'E' in values else 0.
+        if 'E' in values:
+            previous_e = previous_e + values['E'] if relative_e else values['E']
+        if delta > 1e-7 and role in MODEL_ROLES:
+            require(abs(start['Z'] - xyz['Z']) <= 1e-7, 'Project layer counting does not support nonplanar deposition')
+            if opcode in {'G2', 'G3'}:
+                require(plane == 'G17' and relative_center, 'Unsupported project arc plane or absolute center')
+                deposited += project_arc_points(start, xyz, values, opcode == 'G2')
+                deposition_layers.update([round(start['Z'], 5), round(xyz['Z'], 5)])
+            elif math.dist(tuple(start.values()), tuple(xyz.values())) > 1e-7:
+                deposited += [list(start.values()), list(xyz.values())]
+                deposition_layers.update([round(start['Z'], 5), round(xyz['Z'], 5)])
+    require(deposited, 'No actual model deposition in project G-code')
+    low = [min(p[i] for p in deposited) for i in range(3)]
+    high = [max(p[i] for p in deposited) for i in range(3)]
+    bounds = expected['modelBoundsXYZ']
+    policy = expected.get('layerPolicy')
+    require(all(low[i] >= bounds[i] - .05 and high[i] <= bounds[i + 3] + .05 for i in range(2 if policy else 3)),
+            f'Deposition is outside plate-local source geometry bounds: {low + high}')
+    require(all(high[i] - low[i] >= .5 * (bounds[i + 3] - bounds[i]) for i in range(2 if policy else 3)), 'Printed geometry is unexpectedly small or incomplete')
+    layers = deposition_layers
+    require(len(layers) >= expected['minimumLayerCount'], 'Project layer generation is incomplete')
+    if policy:
+        first, normal = policy['initialLayerHeightMm'], policy['layerHeightMm']
+        require(abs(low[2] - first) <= 1e-4 and high[2] >= max(first, bounds[5] - normal) - 1e-4 and
+                high[2] <= max(first, bounds[5] + normal) + 1e-4, 'Deposition Z differs from independent layer quantization policy')
+        if bounds[5] <= first + 1e-4:
+            require(len(layers) == 1 and abs(high[2] - first) <= 1e-4, 'Thin source must produce exactly one initial layer')
+        ordered = sorted(layers)
+        require(all(abs(z - (first + index * normal)) <= 1e-4 for index, z in enumerate(ordered)),
+                'Actual depositing layers differ from declared uniform layer spacing')
+    with zipfile.ZipFile(package) as archive:
+        members = [name for name in archive.namelist() if name.lower().endswith('.gcode')]
+        require(archive.testzip() is None and len(members) == 1 and archive.read(members[0]) == raw, 'Packaged and standalone project G-code differ')
+        checksum = members[0] + '.md5'
+        require(checksum in archive.namelist() and archive.read(checksum).decode().strip().lower() == hashlib.md5(raw).hexdigest(),
+                'Packaged project G-code checksum is missing or differs')
+        config = json.loads(archive.read('Metadata/project_settings.config'))
+        if policy:
+            for key, target in [('initial_layer_print_height', first), ('layer_height', normal)]:
+                try:
+                    actual = float(config.get(key, ''))
+                except (ValueError, TypeError):
+                    actual = math.nan
+                require(math.isfinite(actual) and abs(actual - target) <= 1e-8,
+                        f'Packaged layer height differs from independent policy: {key}')
+        for key, value in expected.get('configurationValues', {}).items():
+            require(config.get(key) == value, f'Project G-code config differs: {key}')
+    return dict(verified=True, scope='Per-plate deposition, declared source markers and exported package consistency; no physical print or complete Orca toolpath equivalence',
+                layerCount=len(layers), modelDepositionBoundsXYZ=low + high,
+                customGcodeStatus='verified-declared-markers' if expected['requiredMarkers'] else 'not-evaluated-no-source-markers',
+                files={Path(p).name: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in [gcode, package]})
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--gcode', required=True, type=Path)

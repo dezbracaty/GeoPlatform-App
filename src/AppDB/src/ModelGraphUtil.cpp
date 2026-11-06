@@ -14,6 +14,7 @@
 #include <set>
 
 #include <vtkCellArray.h>
+#include <vtkCell.h>
 #include <vtkPoints.h>
 #include <vtkPolyData.h>
 #include <vtkSmartPointer.h>
@@ -28,6 +29,27 @@ std::unique_ptr<TransactionGuard> transactionIfNeeded(
     return TransactionManager::instance().isInTransaction()
         ? nullptr
         : std::make_unique<TransactionGuard>(description);
+}
+
+bool sameTriangleGeometry(const ModelGeometryDB::ReadHandle& previous,
+                          const ModelGeometryDB::ReadHandle& current) {
+    if (!previous || !current) return false;
+    auto& left = const_cast<vtkPolyData&>(previous.polyData());
+    auto& right = const_cast<vtkPolyData&>(current.polyData());
+    if (left.GetNumberOfCells() != right.GetNumberOfCells()) return false;
+    // Facet labels identify ordered triangles and their corner positions,
+    // independently of how the mesh shares or numbers its points.
+    for (vtkIdType id = 0; id < left.GetNumberOfCells(); ++id) {
+        auto* a = left.GetCell(id);
+        auto* b = right.GetCell(id);
+        for (int corner = 0; corner < 3; ++corner) {
+            double p[3], q[3];
+            left.GetPoint(a->GetPointId(corner), p);
+            right.GetPoint(b->GetPointId(corner), q);
+            if (!std::equal(p, p + 3, q)) return false;
+        }
+    }
+    return true;
 }
 
 vtkSmartPointer<vtkPolyData> polyDataFromTriangles(
@@ -530,13 +552,25 @@ bool ModelGraphUtil::replacePartGeometry(
         return false;
     }
     auto transaction = transactionIfNeeded("Replace Model Part Mesh");
+    const auto previous = geometryDB->read();
     if (!geometryDB->replacePolyData(geometry, {}, error)) {
         if (transaction) transaction->rollback();
         return false;
     }
-    if (const auto object = document->getDB<ModelObjectDB>(
-            document->getOwner(partId))) {
-        object->setUseSourceAppearance(false);
+    if (!sameTriangleGeometry(previous, geometryDB->read())) {
+        part->setSurfaceAnnotations({});
+        part->setAnnotationsTopologyFingerprint({});
+        part->setAnnotationsSourceTriangleCount(0);
+        if (const auto colors = part->surfaceColors(); colors &&
+            (!colors->getSurfaceColorData().empty() || !colors->getTopologyFingerprint().empty() ||
+             colors->getSourceTriangleCount() != 0)) {
+            colors->setSurfaceColorData({});
+            colors->setTopologyFingerprint({});
+            colors->setSourceTriangleCount(0);
+            colors->setRevision(colors->getRevision() + 1);
+        }
+        if (const auto object = document->getDB<ModelObjectDB>(document->getOwner(partId)))
+            object->setUseSourceAppearance(false);
     }
     if (transaction) transaction->commit();
     return true;

@@ -10,6 +10,8 @@
 #include <ModelObjectDB.hpp>
 #include <ModelPartDB.hpp>
 #include <ModelGraphUtil.hpp>
+#include <ModelFilamentSlotResolver.hpp>
+#include <SlicingConfigDB.hpp>
 #include <TransactionManager.hpp>
 #include "Foundation/Log.h"
 
@@ -378,10 +380,14 @@ void ModelPropertyBridge::updateFilamentBinding(
     if (instance) {
         for (const auto& part : instance->parts()) {
             if (!part) continue;
-            const int value = part->getFilamentBindingMode() ==
-                    static_cast<int>(ModelFilamentBindingMode::ExplicitSlot)
-                ? part->getDefaultFilamentSlot()
-                : 0;
+            const int mode = part->getFilamentBindingMode();
+            int value = 0;
+            if (mode == static_cast<int>(ModelFilamentBindingMode::ExplicitSlot))
+                value = part->getDefaultFilamentSlot();
+            else if (mode == static_cast<int>(ModelFilamentBindingMode::InheritObject)) {
+                const auto config = DocumentManager::instance()->getDB<GPlatform::SlicingConfigDB>(instance->getSlicingConfigDBId());
+                value = GPlatform::Slicing::resolveModelFilamentSlot(*part,config.get()).effectiveSlot;
+            }
             if (!initialized) {
                 projected = value;
                 initialized = true;

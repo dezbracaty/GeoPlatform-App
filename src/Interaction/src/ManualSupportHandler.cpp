@@ -1,3 +1,4 @@
+#include <PrintBedPlacementUtil.hpp>
 #include "ManualSupportHandler.hpp"
 #include "InteractionRegistration.hpp"
 
@@ -2068,15 +2069,9 @@ float ManualSupportHandler::resolvePrintBedTopZ() const {
         return 0.0f;
     }
 
-    const auto printBeds = docManager->getDBInstancesByType(TypeID::PRINT_BED_DB);
-    for (const auto& instance : printBeds) {
-        auto printBed = std::dynamic_pointer_cast<PrintBedDB>(instance);
-        if (!printBed) {
-            continue;
-        }
-        const Vector3 center = printBed->getCenter();
-        return center.z + printBed->getThickness() * 0.5f;
-    }
+    const auto target = docManager->getDB<ModelInstanceDB>(m_targetModelId);
+    const auto printBed = target ? docManager->getDB<PrintBedDB>(target->getParentPrintBedDBId()) : nullptr;
+    if (printBed) return PrintBedPlacementUtil::plateToScene(*printBed, printBed->getOrigin()).z;
 
     return 0.0f;
 }
@@ -3064,6 +3059,8 @@ bool ManualSupportHandler::appendPointFromPickResult(
     }
 
     if (auto* docManager = DocumentManager::instance()) {
+        const auto part = docManager->getDB<ModelPartDB>(*pick.partId);
+        if (!part || part->getRole() != static_cast<int>(ModelPartRole::Model)) return false;
         auto dbObject = docManager->getDBInstance(pick.objectId);
         if (!dbObject || !std::dynamic_pointer_cast<ModelInstanceDB>(dbObject)) {
             LOG_DEBUG("ManualSupportHandler::appendPointFromPick rejected: picked dbId={} is not ModelInstanceDB",

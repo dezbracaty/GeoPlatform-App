@@ -153,9 +153,21 @@ ActorDB::BoundingBox ModelInstanceDB::worldBounds() const {
 
 ActorDB::BoundingBox ModelInstanceDB::worldBoundsAt(
     const Transform::Matrix4& instanceMatrix) const {
+    return boundsAt(instanceMatrix, false);
+}
+
+ActorDB::BoundingBox ModelInstanceDB::modelPartBoundsAt(
+    const Transform::Matrix4& instanceMatrix) const {
+    return boundsAt(instanceMatrix, true);
+}
+
+ActorDB::BoundingBox ModelInstanceDB::boundsAt(
+    const Transform::Matrix4& instanceMatrix, bool modelPartsOnly) const {
     BoundingBox result;
     for (const auto& part : parts()) {
         if (!part || !part->hasValidMesh()) continue;
+        if (modelPartsOnly &&
+            part->getRole() != static_cast<int>(ModelPartRole::Model)) continue;
         const auto geometry = part->geometry();
         if (!geometry) continue;
         const Transform::Matrix4 combined =
