@@ -8,7 +8,7 @@
  * @brief 模型缩放控制器数据库类 - 在模型周围显示缩放手柄
  *
  * 功能：
- * - 在模型局部包围盒上显示 Orca 风格的 10 个缩放控制点
+ * - 在模型世界包围盒上显示 Orca 风格的 10 个缩放控制点
  * - 支持交互式缩放控制
  * - 自动适应模型大小
  *
@@ -116,6 +116,9 @@ public:
      * @brief 设置关联的Actor并自动更新
      */
     void setLinkedActor(const DBInstanceID& actorId);
+
+    // Shared by presentation and interaction; returns the grabber in world mm.
+    Vector3 grabberWorldPosition(int partId) const;
 
 protected:
     /**

@@ -47,6 +47,7 @@ protected:
     bool onMousePressEvent(QMouseEvent* event) override;
     bool onMouseMoveEvent(QMouseEvent* event) override;
     bool onMouseReleaseEvent(QMouseEvent* event) override;
+    bool onKeyPressEvent(QKeyEvent* event) override;
 
 private:
     bool executeAIRotate(std::shared_ptr<ActionContext> context);
@@ -113,7 +114,7 @@ private:
     /**
      * @brief 结束拖拽
      */
-    void endDrag();
+    void endDrag(bool commit = true);
 
     /**
      * @brief 执行贴地操作

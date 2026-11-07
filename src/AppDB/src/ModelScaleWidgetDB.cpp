@@ -221,3 +221,24 @@ void ModelScaleWidgetDB::setLinkedActor(const DBInstanceID& actorId) {
         updateFromLinkedActor();
     }
 }
+
+Vector3 ModelScaleWidgetDB::grabberWorldPosition(int partId) const {
+    const Vector3 min = getModelBoundsMin();
+    const Vector3 max = getModelBoundsMax();
+    const Vector3 center = (min + max) * 0.5f;
+    Vector3 point = center;
+    switch (partId) {
+        case 0: point = {min.x, center.y, min.z}; break;
+        case 1: point = {max.x, center.y, min.z}; break;
+        case 2: point = {center.x, min.y, min.z}; break;
+        case 3: point = {center.x, max.y, min.z}; break;
+        case 4: point = {center.x, center.y, min.z}; break;
+        case 5: point = {center.x, center.y, max.z}; break;
+        case 6: point = {min.x, min.y, min.z}; break;
+        case 7: point = {max.x, min.y, min.z}; break;
+        case 8: point = {max.x, max.y, min.z}; break;
+        case 9: point = {min.x, max.y, min.z}; break;
+        default: break;
+    }
+    return point;
+}

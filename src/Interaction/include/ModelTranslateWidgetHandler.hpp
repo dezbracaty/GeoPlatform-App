@@ -49,6 +49,7 @@ protected:
     bool onMousePressEvent(QMouseEvent* event) override;
     bool onMouseMoveEvent(QMouseEvent* event) override;
     bool onMouseReleaseEvent(QMouseEvent* event) override;
+    bool onKeyPressEvent(QKeyEvent* event) override;
 
 private:
     bool executeAITranslation(std::shared_ptr<ActionContext> context);
@@ -110,12 +111,12 @@ private:
     /**
      * @brief 更新拖拽（计算并应用位移）
      */
-    void updateDrag(const QPoint& currentPos);
+    void updateDrag(const QPoint& currentPos, Qt::KeyboardModifiers modifiers);
 
     /**
      * @brief 结束拖拽
      */
-    void endDrag();
+    void endDrag(bool commit = true);
 
     /**
      * @brief 当前 Pick 是否命中本 translate widget 的 cone grabber

@@ -84,26 +84,6 @@ void setComponent(Vector3& v, int axis, float value) {
     else v.z = value;
 }
 
-Vector3 axisVector(int axis) {
-    if (axis == 0) return Vector3(1.0f, 0.0f, 0.0f);
-    if (axis == 1) return Vector3(0.0f, 1.0f, 0.0f);
-    return Vector3(0.0f, 0.0f, 1.0f);
-}
-
-Vector3 transformPoint(const Transform& transform, const Vector3& point) {
-    const auto& matrix = transform.getMatrix();
-    Eigen::Vector4f p(point.x, point.y, point.z, 1.0f);
-    Eigen::Vector4f result = matrix * p;
-    return Vector3(result.x(), result.y(), result.z());
-}
-
-Vector3 transformVector(const Transform& transform, const Vector3& vector) {
-    const auto& matrix = transform.getMatrix();
-    Eigen::Vector4f v(vector.x, vector.y, vector.z, 0.0f);
-    Eigen::Vector4f result = matrix * v;
-    return Vector3(result.x(), result.y(), result.z());
-}
-
 Vector3 rayPlaneIntersection(const Vector3& rayOrigin,
                              const Vector3& rayDirection,
                              const Vector3& planePoint,
@@ -119,15 +99,15 @@ Vector3 rayPlaneIntersection(const Vector3& rayOrigin,
     return rayOrigin + rayDirection * t;
 }
 
-ActorDB::BoundingBox transformBounds(const ActorDB::BoundingBox& localBounds,
+ActorDB::BoundingBox transformBounds(const ActorDB::BoundingBox& bounds,
                                      const Transform::Matrix4& matrix) {
     ActorDB::BoundingBox result;
-    if (!localBounds.valid || !matrix.allFinite()) {
+    if (!bounds.valid || !matrix.allFinite()) {
         return result;
     }
 
-    const Vector3& min = localBounds.min;
-    const Vector3& max = localBounds.max;
+    const Vector3& min = bounds.min;
+    const Vector3& max = bounds.max;
     const Vector3 corners[8] = {
         {min.x, min.y, min.z}, {max.x, min.y, min.z},
         {min.x, max.y, min.z}, {max.x, max.y, min.z},
@@ -146,57 +126,6 @@ ActorDB::BoundingBox transformBounds(const ActorDB::BoundingBox& localBounds,
         }
 
         const Vector3 point(transformed.x(), transformed.y(), transformed.z());
-        if (!initialized) {
-            worldMin = point;
-            worldMax = point;
-            initialized = true;
-            continue;
-        }
-        worldMin.x = std::min(worldMin.x, point.x);
-        worldMin.y = std::min(worldMin.y, point.y);
-        worldMin.z = std::min(worldMin.z, point.z);
-        worldMax.x = std::max(worldMax.x, point.x);
-        worldMax.y = std::max(worldMax.y, point.y);
-        worldMax.z = std::max(worldMax.z, point.z);
-    }
-
-    result.min = worldMin;
-    result.max = worldMax;
-    result.valid = initialized;
-    return result;
-}
-
-ActorDB::BoundingBox transformedWorldBoundsFromInitial(
-    const ActorDB::BoundingBox& initialWorldBounds,
-    const Vector3& initialPosition,
-    const Vector3& currentPosition,
-    float scaleFactor) {
-    ActorDB::BoundingBox result;
-    if (!initialWorldBounds.valid || scaleFactor <= 0.0f ||
-        !std::isfinite(scaleFactor)) {
-        return result;
-    }
-
-    const Vector3& min = initialWorldBounds.min;
-    const Vector3& max = initialWorldBounds.max;
-    const Vector3 corners[8] = {
-        {min.x, min.y, min.z}, {max.x, min.y, min.z},
-        {min.x, max.y, min.z}, {max.x, max.y, min.z},
-        {min.x, min.y, max.z}, {max.x, min.y, max.z},
-        {min.x, max.y, max.z}, {max.x, max.y, max.z}
-    };
-
-    Vector3 worldMin;
-    Vector3 worldMax;
-    bool initialized = false;
-    for (const Vector3& corner : corners) {
-        const Vector3 point = currentPosition +
-            (corner - initialPosition) * scaleFactor;
-        if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
-            !std::isfinite(point.z)) {
-            return ActorDB::BoundingBox{};
-        }
-
         if (!initialized) {
             worldMin = point;
             worldMax = point;
@@ -269,7 +198,7 @@ void ModelScaleWidgetHandler::onEnter(std::shared_ptr<ActionContext> context) {
 
         const QPoint mousePos(params.value("mouseX", 0).toInt(),
                               params.value("mouseY", 0).toInt());
-        if (!startDrag(m_widgetId, handleId, mousePos)) {
+        if (!startDrag(m_widgetId, handleId, mousePos, QGuiApplication::keyboardModifiers())) {
             onExit();
         }
         return;
@@ -493,6 +422,8 @@ void ModelScaleWidgetHandler::onExit() {
 }
 
 bool ModelScaleWidgetHandler::createOrGetWidget() {
+    TransientUpdateGuard widgetUpdate;
+    ImmediateNotifyGuard widgetNotifications;
     auto docManager = DocumentManager::instance();
     if (!docManager) {
         LOG_ERROR("ModelScaleWidgetHandler::createOrGetWidget - DocumentManager not available");
@@ -540,7 +471,6 @@ bool ModelScaleWidgetHandler::createOrGetWidget() {
              worldBounds.min.x, worldBounds.min.y, worldBounds.min.z,
              worldBounds.max.x, worldBounds.max.y, worldBounds.max.z);
 
-    TransactionGuard guard("Create ModelScaleWidget");
     auto widget = trans::TransDB::create<ModelScaleWidgetDB>(
         m_activeModelId, worldBounds.min, worldBounds.max);
     if (!widget) {
@@ -549,8 +479,6 @@ bool ModelScaleWidgetHandler::createOrGetWidget() {
     }
 
     m_widgetId = widget->getDBInstanceID();
-    guard.commit();
-
     // 🔧 修复：通知SelectionBridge更新Scale按钮状态
     auto selectionBridge = SelectionBridge::instance();
     if (selectionBridge) {
@@ -561,28 +489,16 @@ bool ModelScaleWidgetHandler::createOrGetWidget() {
 }
 
 void ModelScaleWidgetHandler::deleteModelScaleWidget() {
+    TransientUpdateGuard widgetUpdate;
+    ImmediateNotifyGuard widgetNotifications;
     auto docManager = DocumentManager::instance();
     if (!docManager) {
         return;
     }
 
-    // 查找并删除所有的 ModelScaleWidget
-    auto instanceIds = docManager->getAllDBInstanceIds(TypeID::MODEL_SCALE_WIDGET_DB);
-    if (instanceIds.empty()) {
-        m_widgetId = DBInstanceID();
-        m_activeModelId = DBInstanceID();
-        return;
+    for (const auto& id : docManager->getAllDBInstanceIds(TypeID::MODEL_SCALE_WIDGET_DB)) {
+        if (docManager->getDB<ModelScaleWidgetDB>(id)) docManager->unregisterDBInstance(id);
     }
-
-    TransactionGuard guard("Delete ModelScaleWidget");
-    for (const auto& id : instanceIds) {
-        auto instance = docManager->getDBInstance(id);
-        if (auto widget = std::dynamic_pointer_cast<ModelScaleWidgetDB>(instance)) {
-            // 删除所有的Scale Widget，不管关联的是哪个Actor
-            docManager->unregisterDBInstance(id);
-        }
-    }
-    guard.commit();
 
     m_widgetId = DBInstanceID();
     m_activeModelId = DBInstanceID();
@@ -632,7 +548,7 @@ bool ModelScaleWidgetHandler::onMousePressEvent(QMouseEvent* event) {
                  axisForScalePart(partId) == 2 ? "Z轴" :
                  isUniformScalePart(partId) ? "统一缩放" : "未知手柄");
 
-        return startDrag(m_widgetId, partId, event->pos());
+        return startDrag(m_widgetId, partId, event->pos(), event->modifiers());
     }
 
     return false;
@@ -644,7 +560,7 @@ bool ModelScaleWidgetHandler::onMouseMoveEvent(QMouseEvent* event) {
 
     if (m_dragState.isDragging) {
         QPoint currentPos(event->position().x(), event->position().y());
-        updateDrag(currentPos);
+        updateDrag(currentPos, event->modifiers());
         return true;  // 消费事件
     }
 
@@ -663,8 +579,10 @@ bool ModelScaleWidgetHandler::onMouseReleaseEvent(QMouseEvent* event) {
     return false;
 }
 
-bool ModelScaleWidgetHandler::startDrag(const DBInstanceID& widgetId, int handleId, const QPoint& mousePos) {
+bool ModelScaleWidgetHandler::startDrag(const DBInstanceID& widgetId, int handleId, const QPoint& mousePos,
+                                      Qt::KeyboardModifiers modifiers) {
     m_dragState = DragState();
+    m_dragState.ctrlDown = modifiers.testFlag(Qt::ControlModifier);
     if (handleId < HANDLE_X_MIN || handleId > HANDLE_UNIFORM_XMIN_YMAX ||
         handleId == HANDLE_Z_MIN) {
         LOG_WARN("ModelScaleWidgetHandler::startDrag - Invalid handle {}", handleId);
@@ -706,21 +624,19 @@ bool ModelScaleWidgetHandler::startDrag(const DBInstanceID& widgetId, int handle
     m_dragState.widgetId = widgetId;
     m_dragState.linkedActorId = linkedActorId;
     m_dragState.draggedHandle = handleId;
-    m_dragState.initialScale = actor->getScale();
-    m_dragState.initialPosition = actor->getPosition();
+    m_dragState.initialTransform = actor->getTransform();
+    const auto& matrix = m_dragState.initialTransform.getMatrix();
+    m_dragState.initialScale = {matrix.block<1,3>(0,0).norm(),
+                                matrix.block<1,3>(1,0).norm(),
+                                matrix.block<1,3>(2,0).norm()};
 
     const auto initialBounds = actor->worldBounds();
-    const auto initialLocalBounds = actor->localBounds();
-    if (!initialLocalBounds.valid || !initialBounds.valid) {
-        LOG_ERROR("ModelScaleWidgetHandler::startDrag - Invalid initial bounds, local={}, world={}",
-                  initialLocalBounds.valid ? "true" : "false",
-                  initialBounds.valid ? "true" : "false");
+    if (!initialBounds.valid || !matrix.allFinite()) {
+        LOG_ERROR("ModelScaleWidgetHandler::startDrag - Invalid initial bounds or transform");
         m_dragState = DragState();
         return false;
     }
-    m_dragState.initialLocalBounds = initialLocalBounds;
     m_dragState.initialWorldBounds = initialBounds;
-    m_dragState.initialBottomZ = initialBounds.min.z;
     if (!initializeOrcaStartingData(handleId)) {
         m_dragState = DragState();
         return false;
@@ -755,7 +671,7 @@ bool ModelScaleWidgetHandler::startDrag(const DBInstanceID& widgetId, int handle
     return true;
 }
 
-void ModelScaleWidgetHandler::updateDrag(const QPoint& currentPos) {
+void ModelScaleWidgetHandler::updateDrag(const QPoint& currentPos, Qt::KeyboardModifiers modifiers) {
     if (!m_dragState.isDragging) {
         return;
     }
@@ -764,73 +680,56 @@ void ModelScaleWidgetHandler::updateDrag(const QPoint& currentPos) {
     // 这样可以实现实时视觉反馈，而不是等到事务结束
     ImmediateNotifyGuard immediateGuard;
 
-    const float ratio = calculateOrcaScaleRatio(currentPos);
+    const float ratio = calculateOrcaScaleRatio(currentPos, modifiers);
     if (ratio <= 0.0f || std::abs(ratio - m_dragState.currentRatio) < 0.0001f) {
         return;
     }
 
-    Vector3 newScale = m_dragState.initialScale;
-    Vector3 offset(0.0f, 0.0f, 0.0f);
+    Vector3 factors(1.0f, 1.0f, 1.0f);
+    Vector3 pivot = m_dragState.planeCenter;
     const int axis = axisForScalePart(m_dragState.draggedHandle);
 
     if (axis >= 0) {
-        const float scaled = componentAt(m_dragState.initialScale, axis) * ratio;
-        setComponent(newScale, axis, scaled);
-        if (m_dragState.ctrlDown && std::abs(ratio - 1.0f) > 0.001f) {
-            float localOffset = 0.5f * (scaled - componentAt(m_dragState.initialScale, axis)) *
-                                componentAt(m_dragState.boxSize, axis);
-            if (m_dragState.draggedHandle == 2 * axis) {
-                localOffset *= -1.0f;
-            }
-            offset = m_dragState.referenceAxes[axis] * localOffset;
-        }
+        setComponent(factors, axis, ratio);
+        if (m_dragState.ctrlDown) pivot = m_dragState.constraintPosition;
     } else if (isUniformScalePart(m_dragState.draggedHandle)) {
-        newScale = m_dragState.initialScale * ratio;
-        if (m_dragState.ctrlDown && std::abs(ratio - 1.0f) > 0.001f) {
-            newScale.z = m_dragState.initialScale.z;
-            const float localOffsetX = 0.5f * (newScale.x - m_dragState.initialScale.x) * m_dragState.boxSize.x;
-            const float localOffsetY = 0.5f * (newScale.y - m_dragState.initialScale.y) * m_dragState.boxSize.y;
-            switch (m_dragState.draggedHandle) {
-                case HANDLE_UNIFORM_XMIN_YMIN:
-                    offset = m_dragState.referenceAxes[0] * -localOffsetX + m_dragState.referenceAxes[1] * -localOffsetY;
-                    break;
-                case HANDLE_UNIFORM_XMAX_YMIN:
-                    offset = m_dragState.referenceAxes[0] * localOffsetX + m_dragState.referenceAxes[1] * -localOffsetY;
-                    break;
-                case HANDLE_UNIFORM_XMAX_YMAX:
-                    offset = m_dragState.referenceAxes[0] * localOffsetX + m_dragState.referenceAxes[1] * localOffsetY;
-                    break;
-                case HANDLE_UNIFORM_XMIN_YMAX:
-                    offset = m_dragState.referenceAxes[0] * -localOffsetX + m_dragState.referenceAxes[1] * localOffsetY;
-                    break;
-                default: break;
-            }
+        factors = {ratio, ratio, ratio};
+        if (m_dragState.ctrlDown) {
+            factors.z = 1.0f;
+            pivot = m_dragState.constraintPosition;
         }
     } else {
         LOG_WARN("❌ [UpdateDrag] Unknown handle ID: {}", m_dragState.draggedHandle);
         return;
     }
 
-    // 应用缩放约束
-    Vector3 constrainedScale = newScale;
-    constrainedScale.x = std::clamp(newScale.x, 0.001f, 1000.0f);
-    constrainedScale.y = std::clamp(newScale.y, 0.001f, 1000.0f);
-    constrainedScale.z = std::clamp(newScale.z, 0.001f, 1000.0f);
+    // Limit absolute world-axis magnitudes, without decomposing the affine pose.
+    for (int i = 0; i < 3; ++i) {
+        const float initial = componentAt(m_dragState.initialScale, i);
+        if (initial <= 1e-6f) return;
+        setComponent(factors, i, std::clamp(initial * componentAt(factors, i),
+                                           0.001f, 1000.0f) / initial);
+    }
 
-    if (applyScaleToLinkedActor(constrainedScale, offset)) {
+    if (applyScaleToLinkedActor(factors, pivot)) {
         m_dragState.currentRatio = ratio;
-        updateWidgetAfterScale(constrainedScale);
+        updateWidgetAfterScale();
     }
 }
 
-void ModelScaleWidgetHandler::endDrag() {
+bool ModelScaleWidgetHandler::onKeyPressEvent(QKeyEvent* event) {
+    if (event && event->key() == Qt::Key_Escape && isActive()) endDrag(false);
+    return StandardActionHandler::onKeyPressEvent(event);
+}
+
+void ModelScaleWidgetHandler::endDrag(bool commit) {
     if (!m_dragState.isDragging) {
         return;
     }
 
     const DBInstanceID widgetId = m_dragState.widgetId;
     // 缩放和 transform-only 贴底属于同一次用户操作，应在同一事务中提交。
-    const bool success = performSnapToGround();
+    const bool success = commit && performSnapToGround();
 
     auto* docManager = DocumentManager::instance();
     auto widget = docManager
@@ -855,8 +754,8 @@ void ModelScaleWidgetHandler::endDrag() {
     m_dragState = DragState();
 }
 
-float ModelScaleWidgetHandler::calculateOrcaScaleRatio(const QPoint& currentPos) const {
-    Vector3 pivot = (m_dragState.ctrlDown && m_dragState.draggedHandle < 6)
+float ModelScaleWidgetHandler::calculateOrcaScaleRatio(const QPoint& currentPos, Qt::KeyboardModifiers modifiers) const {
+    Vector3 pivot = m_dragState.ctrlDown
         ? m_dragState.constraintPosition
         : m_dragState.planeCenter;
     const Vector3 startingVec = m_dragState.dragPosition - pivot;
@@ -916,7 +815,7 @@ float ModelScaleWidgetHandler::calculateOrcaScaleRatio(const QPoint& currentPos)
     const float proj = dotProduct(intersVec, normalized(startingVec));
 
     float ratio = (lenStartingVec + proj) / lenStartingVec;
-    if (QGuiApplication::keyboardModifiers() & Qt::ShiftModifier) {
+    if (modifiers.testFlag(Qt::ShiftModifier)) {
         ratio = kOrcaScaleSnapStep * std::round(ratio / kOrcaScaleSnapStep);
     }
     return ratio;
@@ -934,52 +833,24 @@ bool ModelScaleWidgetHandler::initializeOrcaStartingData(int handleId) {
         return false;
     }
 
-    const Vector3 min = widget->getModelLocalBoundsMin();
-    const Vector3 max = widget->getModelLocalBoundsMax();
+    const Vector3 min = widget->getModelBoundsMin();
+    const Vector3 max = widget->getModelBoundsMax();
     const Vector3 center = (min + max) * 0.5f;
-    const Vector3 half = (max - min) * 0.5f;
-    const Transform referenceTransform = widget->getModelReferenceTransform();
 
-    m_dragState.boxSize = max - min;
-    if (m_dragState.boxSize.x <= 1e-6f || m_dragState.boxSize.y <= 1e-6f ||
-        m_dragState.boxSize.z <= 1e-6f) {
+    const Vector3 boxSize = max - min;
+    if (boxSize.x <= 1e-6f || boxSize.y <= 1e-6f || boxSize.z <= 1e-6f) {
         LOG_ERROR("ModelScaleWidgetHandler::initializeOrcaStartingData - Degenerate bounds");
         return false;
     }
-    const Vector3 localGrabbers[10] = {
-        Vector3(center.x - half.x, center.y, min.z),
-        Vector3(center.x + half.x, center.y, min.z),
-        Vector3(center.x, center.y - half.y, min.z),
-        Vector3(center.x, center.y + half.y, min.z),
-        Vector3(center.x, center.y, min.z),
-        Vector3(center.x, center.y, max.z),
-        Vector3(min.x, min.y, min.z),
-        Vector3(max.x, min.y, min.z),
-        Vector3(max.x, max.y, min.z),
-        Vector3(min.x, max.y, min.z)
-    };
-
     for (int i = 0; i < 10; ++i) {
-        m_dragState.grabbers[i] = transformPoint(referenceTransform, localGrabbers[i]);
+        m_dragState.grabbers[i] = widget->grabberWorldPosition(i);
     }
-    m_dragState.referenceAxes[0] = normalized(transformVector(referenceTransform, axisVector(0)));
-    m_dragState.referenceAxes[1] = normalized(transformVector(referenceTransform, axisVector(1)));
-    m_dragState.referenceAxes[2] = normalized(transformVector(referenceTransform, axisVector(2)));
 
     const int constraint = constraintId(handleId);
-    const Vector3 worldCenter = transformPoint(referenceTransform, center);
-    m_dragState.dragPosition = handleId >= 0 && handleId < 10 ? m_dragState.grabbers[handleId] : worldCenter;
-    m_dragState.constraintPosition = constraint >= 0 ? m_dragState.grabbers[constraint] : worldCenter;
+    m_dragState.dragPosition = m_dragState.grabbers[handleId];
+    m_dragState.constraintPosition = constraint >= 0 ? m_dragState.grabbers[constraint] : center;
     m_dragState.planeCenter = m_dragState.grabbers[4];
-    m_dragState.planeNormal = normalized(m_dragState.grabbers[5] - m_dragState.grabbers[4]);
-    m_dragState.ctrlDown = QGuiApplication::keyboardModifiers() & Qt::ControlModifier;
-    if (vectorLength(m_dragState.planeNormal) <= 1e-6f ||
-        vectorLength(m_dragState.referenceAxes[0]) <= 1e-6f ||
-        vectorLength(m_dragState.referenceAxes[1]) <= 1e-6f ||
-        vectorLength(m_dragState.referenceAxes[2]) <= 1e-6f) {
-        LOG_ERROR("ModelScaleWidgetHandler::initializeOrcaStartingData - Invalid reference frame");
-        return false;
-    }
+    m_dragState.planeNormal = {0,0,1};
 
     LOG_DEBUG("[InitOrcaScale] part={} drag=({:.3f},{:.3f},{:.3f}) planeCenter=({:.3f},{:.3f},{:.3f}) planeNormal=({:.3f},{:.3f},{:.3f}) ctrl={}",
               handleId,
@@ -990,7 +861,7 @@ bool ModelScaleWidgetHandler::initializeOrcaStartingData(int handleId) {
     return true;
 }
 
-bool ModelScaleWidgetHandler::applyScaleToLinkedActor(const Vector3& scale, const Vector3& offset) {
+bool ModelScaleWidgetHandler::applyScaleToLinkedActor(const Vector3& factors, const Vector3& pivot) {
     auto* docManager = DocumentManager::instance();
     if (!docManager) {
         return false;
@@ -1002,30 +873,24 @@ bool ModelScaleWidgetHandler::applyScaleToLinkedActor(const Vector3& scale, cons
         return false;
     }
 
-    actor->setScale(scale);
-    Vector3 position = m_dragState.initialPosition + offset;
-    actor->setPosition(position);
-
-    if (std::abs(scale.z - m_dragState.initialScale.z) > 1e-6f) {
-        const auto worldBounds = actor->worldBounds();
-        if (worldBounds.valid) {
-            const float bottomCorrection = m_dragState.initialBottomZ - worldBounds.min.z;
-            if (std::abs(bottomCorrection) > 1e-5f) {
-                position.z += bottomCorrection;
-                actor->setPosition(position);
-                LOG_DEBUG("[ScaleDragGroundAnchor] handle={} scaleZ={:.6f} bottom={:.6f} target={:.6f} correction={:.6f}",
-                          m_dragState.draggedHandle,
-                          scale.z,
-                          worldBounds.min.z,
-                          m_dragState.initialBottomZ,
-                          bottomCorrection);
-            }
-        }
+    // T(pivot) * Dworld * T(-pivot) * initial; no rotation/scale decomposition.
+    Transform::Matrix4 delta = Transform::Matrix4::Identity();
+    for (int i = 0; i < 3; ++i) {
+        const float factor = componentAt(factors, i);
+        if (!std::isfinite(factor) || factor <= 0.0f) return false;
+        delta(i,i) = factor;
+        delta(i,3) = (1.0f-factor) * componentAt(pivot, i);
     }
+    Transform result;
+    result.setMatrix(delta * m_dragState.initialTransform.getMatrix());
+    if (!result.getMatrix().allFinite()) return false;
+    actor->setTransform(result);
+    m_dragState.worldScaleDelta = delta;
     return true;
 }
 
-void ModelScaleWidgetHandler::updateWidgetAfterScale(const Vector3& newScale) {
+void ModelScaleWidgetHandler::updateWidgetAfterScale() {
+    TransientUpdateGuard widgetUpdate;
     if (!m_dragState.isDragging || m_dragState.widgetId.getValue() == 0) {
             return;
     }
@@ -1051,9 +916,13 @@ void ModelScaleWidgetHandler::updateWidgetAfterScale(const Vector3& newScale) {
         return;
     }
 
-    // 拖动时局部包围盒不会变化，只同步当前变换即可让 10 个 grabber 跟随。
-    // 完整 bounds 刷新留到鼠标释放，避免每个鼠标事件重复刷新 DB 属性。
-    (void)newScale;
+    // Positive world-axis scaling maps the initial world AABB exactly. Avoid a
+    // mesh traversal on every mouse event while keeping rendering in this frame.
+    ActorDB::BoundingBox bounds;
+    if (!calculateScaleDragCandidateBounds(actor, &bounds)) return;
+    widget->setModelBoundsMin(bounds.min);
+    widget->setModelBoundsMax(bounds.max);
+    widget->setModelCenter((bounds.min + bounds.max) * 0.5f);
     widget->setModelReferenceTransform(actor->getTransform());
 }
 
@@ -1061,59 +930,17 @@ bool ModelScaleWidgetHandler::calculateScaleDragCandidateBounds(
     const std::shared_ptr<ActorDB>& actor,
     ActorDB::BoundingBox* worldBounds) const {
     if (!actor || !worldBounds ||
-        !m_dragState.initialLocalBounds.valid ||
         !m_dragState.initialWorldBounds.valid) {
         return false;
     }
 
-    const Vector3 currentScale = actor->getScale();
-    const auto scaleRatio = [](float current, float initial, float* ratio) {
-        if (!ratio || std::abs(initial) <= 1e-6f) {
-            return false;
-        }
-        const float value = current / initial;
-        if (value <= 0.0f || !std::isfinite(value)) {
-            return false;
-        }
-        *ratio = value;
-        return true;
-    };
-
-    float ratioX = 1.0f;
-    float ratioY = 1.0f;
-    float ratioZ = 1.0f;
-    if (!scaleRatio(currentScale.x, m_dragState.initialScale.x, &ratioX) ||
-        !scaleRatio(currentScale.y, m_dragState.initialScale.y, &ratioY) ||
-        !scaleRatio(currentScale.z, m_dragState.initialScale.z, &ratioZ)) {
-        LOG_ERROR("ModelScaleWidgetHandler::calculateScaleDragCandidateBounds - Invalid scale ratio");
-        return false;
-    }
-
-    constexpr float kRatioEpsilon = 1e-4f;
-    const bool uniformScale = std::abs(ratioX - ratioY) <= kRatioEpsilon &&
-                              std::abs(ratioX - ratioZ) <= kRatioEpsilon;
-    if (uniformScale) {
-        *worldBounds = transformedWorldBoundsFromInitial(
-            m_dragState.initialWorldBounds,
-            m_dragState.initialPosition,
-            actor->getPosition(),
-            ratioX);
-    } else {
-        *worldBounds = transformBounds(m_dragState.initialLocalBounds,
-                                       actor->getTransformMatrix());
-    }
+    *worldBounds = transformBounds(m_dragState.initialWorldBounds, m_dragState.worldScaleDelta);
 
     if (!worldBounds->valid) {
         LOG_ERROR("ModelScaleWidgetHandler::calculateScaleDragCandidateBounds - Invalid candidate bounds");
         return false;
     }
 
-    LOG_DEBUG("Scale finalization uses transform-only bounds: actor={}, uniform={}, ratios=({:.6f},{:.6f},{:.6f})",
-              actor->getDBInstanceID().getValue(),
-              uniformScale ? "true" : "false",
-              ratioX,
-              ratioY,
-              ratioZ);
     return true;
 }
 

@@ -56,14 +56,6 @@ void configureActor(vtkActor* actor, const Color& color, double opacity) {
     property->SetSpecular(0.0);
 }
 
-Vector3 transformPoint(const Transform& transform, const Vector3& point)
-{
-    const auto& matrix = transform.getMatrix();
-    Eigen::Vector4f p(point.x, point.y, point.z, 1.0f);
-    Eigen::Vector4f result = matrix * p;
-    return Vector3(result.x(), result.y(), result.z());
-}
-
 } // namespace
 
 void ModelScaleWidgetDBSync::createWidget()
@@ -328,26 +320,7 @@ int ModelScaleWidgetDBSync::axisForPart(int partId)
 
 Vector3 ModelScaleWidgetDBSync::grabberPosition(int partId, const ModelScaleWidgetDB& widgetDB)
 {
-    const Vector3 min = widgetDB.getModelLocalBoundsMin();
-    const Vector3 max = widgetDB.getModelLocalBoundsMax();
-    const Vector3 center = (min + max) * 0.5f;
-    const Transform transform = widgetDB.getModelReferenceTransform();
-
-    Vector3 local = center;
-    switch (partId) {
-        case GRABBER_X_MIN: local = Vector3(min.x, center.y, min.z); break;
-        case GRABBER_X_MAX: local = Vector3(max.x, center.y, min.z); break;
-        case GRABBER_Y_MIN: local = Vector3(center.x, min.y, min.z); break;
-        case GRABBER_Y_MAX: local = Vector3(center.x, max.y, min.z); break;
-        case GRABBER_Z_MIN: local = Vector3(center.x, center.y, min.z); break;
-        case GRABBER_Z_MAX: local = Vector3(center.x, center.y, max.z); break;
-        case GRABBER_UNIFORM_XMIN_YMIN: local = Vector3(min.x, min.y, min.z); break;
-        case GRABBER_UNIFORM_XMAX_YMIN: local = Vector3(max.x, min.y, min.z); break;
-        case GRABBER_UNIFORM_XMAX_YMAX: local = Vector3(max.x, max.y, min.z); break;
-        case GRABBER_UNIFORM_XMIN_YMAX: local = Vector3(min.x, max.y, min.z); break;
-        default: break;
-    }
-    return transformPoint(transform, local);
+    return widgetDB.grabberWorldPosition(partId);
 }
 
 Color ModelScaleWidgetDBSync::colorForPart(int partId, const ModelScaleWidgetDB& widgetDB, bool active)

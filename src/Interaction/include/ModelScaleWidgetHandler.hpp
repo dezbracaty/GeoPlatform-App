@@ -44,6 +44,7 @@ protected:
     bool onMousePressEvent(QMouseEvent* event) override;
     bool onMouseMoveEvent(QMouseEvent* event) override;
     bool onMouseReleaseEvent(QMouseEvent* event) override;
+    bool onKeyPressEvent(QKeyEvent* event) override;
 
 private:
     bool executeAIScale(std::shared_ptr<ActionContext> context);
@@ -69,10 +70,9 @@ private:
         DBInstanceID widgetId;                // 被拖拽的Widget ID
         DBInstanceID linkedActorId;           // 关联的Actor ID
         int draggedHandle = NONE;             // 被拖拽的手柄ID
-        Vector3 initialScale;                 // 拖拽开始时的缩放值
-        Vector3 initialPosition;              // 拖拽开始时的位置
-        float initialBottomZ = 0.0f;          // Z 缩放过程中保持底面贴住起始高度
-        ActorDB::BoundingBox initialLocalBounds;
+        Transform initialTransform;          // 保留旋转、镜像及已有仿射变换
+        Vector3 initialScale;                 // 世界轴行向量长度，用于缩放范围约束
+        Transform::Matrix4 worldScaleDelta = Transform::Matrix4::Identity();
         ActorDB::BoundingBox initialWorldBounds;
 
         // Orca GLGizmoScale::StartingData equivalent.
@@ -80,9 +80,7 @@ private:
         Vector3 constraintPosition;
         Vector3 planeCenter;
         Vector3 planeNormal;
-        Vector3 boxSize;
         Vector3 grabbers[10];
-        Vector3 referenceAxes[3];
         bool ctrlDown = false;
         float currentRatio = 1.0f;
 
@@ -110,32 +108,32 @@ private:
     /**
      * @brief 开始拖拽操作
      */
-    bool startDrag(const DBInstanceID& widgetId, int handleId, const QPoint& mousePos);
+    bool startDrag(const DBInstanceID& widgetId, int handleId, const QPoint& mousePos,
+                   Qt::KeyboardModifiers modifiers);
 
     /**
      * @brief 更新拖拽（计算并应用缩放）
      */
-    void updateDrag(const QPoint& currentPos);
+    void updateDrag(const QPoint& currentPos, Qt::KeyboardModifiers modifiers);
 
     /**
      * @brief 结束拖拽
      */
-    void endDrag();
+    void endDrag(bool commit = true);
 
-    float calculateOrcaScaleRatio(const QPoint& currentPos) const;
+    float calculateOrcaScaleRatio(const QPoint& currentPos, Qt::KeyboardModifiers modifiers) const;
 
     bool initializeOrcaStartingData(int handleId);
 
     /**
      * @brief 应用缩放到关联的Actor
      */
-    bool applyScaleToLinkedActor(const Vector3& scale, const Vector3& offset);
+    bool applyScaleToLinkedActor(const Vector3& factors, const Vector3& pivot);
 
     /**
      * @brief 模型缩放后更新Widget显示（包围盒和球体位置）
-     * @param newScale 新的缩放值
      */
-    void updateWidgetAfterScale(const Vector3& newScale);
+    void updateWidgetAfterScale();
 
     bool calculateScaleDragCandidateBounds(
         const std::shared_ptr<ActorDB>& actor,

@@ -146,18 +146,18 @@ public:
     }
 
     /**
-     * @brief 在局部坐标系下旋转（类似 VTK 的 RotateWXYZ）
+     * @brief 绕世界轴旋转线性变换，保持实例原点位置
      * @param angle 旋转角度（度）
-     * @param axis 世界坐标系下的旋转轴
+     * @param worldAxis 世界坐标系下的旋转轴
      */
     void rotateWXYZ(float angle, const Vector3& worldAxis) {
-        // 将世界坐标系的轴变换到局部坐标系
         Vector3f eigenAxis(worldAxis.x, worldAxis.y, worldAxis.z);
-        Vector3f localAxis = getRotationMatrix().transpose() * eigenAxis;
-        localAxis.normalize();
-
-        // 在局部坐标系下旋转
-        rotate(angle, Vector3(localAxis.x(), localAxis.y(), localAxis.z()));
+        eigenAxis.normalize();
+        // World rotation premultiplies the complete linear transform. Converting
+        // only the rotation axis and postmultiplying is not equivalent when the
+        // existing transform contains non-uniform scale (it introduces shear).
+        const Matrix3 rotation = AngleAxisf(angle * M_PI / 180.0f, eigenAxis).toRotationMatrix();
+        m_matrix.block<3, 3>(0, 0) = (rotation * m_matrix.block<3, 3>(0, 0)).eval();
     }
 
     /**

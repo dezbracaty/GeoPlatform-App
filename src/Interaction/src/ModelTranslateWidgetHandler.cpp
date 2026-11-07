@@ -380,7 +380,7 @@ bool ModelTranslateWidgetHandler::onMouseMoveEvent(QMouseEvent* event) {
         return false;
     }
 
-    updateDrag(event->pos());
+    updateDrag(event->pos(), event->modifiers());
     return true;
 }
 
@@ -397,6 +397,8 @@ bool ModelTranslateWidgetHandler::onMouseReleaseEvent(QMouseEvent* event) {
 }
 
 bool ModelTranslateWidgetHandler::createOrGetWidget() {
+    TransientUpdateGuard widgetUpdate;
+    ImmediateNotifyGuard widgetNotifications;
     if (m_activeModelId.getValue() == 0) {
         LOG_ERROR("❌ ModelTranslateWidgetHandler::createOrGetWidget - No active model");
         return false;
@@ -439,7 +441,6 @@ bool ModelTranslateWidgetHandler::createOrGetWidget() {
         m_widgetId = DBInstanceID();
     }
 
-    TransactionGuard guard("Create ModelTranslateWidget");
     auto widget = trans::TransDB::create<ModelTranslateWidgetDB>(m_activeModelId, actorPosition);
     if (!widget) {
         LOG_ERROR("❌ ModelTranslateWidgetHandler::createOrGetWidget - Failed to create widget");
@@ -459,17 +460,16 @@ bool ModelTranslateWidgetHandler::createOrGetWidget() {
 }
 
 void ModelTranslateWidgetHandler::deleteModelTranslateWidget() {
+    TransientUpdateGuard widgetUpdate;
+    ImmediateNotifyGuard widgetNotifications;
     if (m_widgetId.getValue() == 0) {
         return;
     }
 
     LOG_INFO("🗑️ ModelTranslateWidgetHandler::deleteModelTranslateWidget - Deleting widget ID: {}", m_widgetId.getValue());
 
-    auto* docManager = DocumentManager::instance();
-    if (docManager) {
-        // 使用事务删除Widget
-        TransactionGuard guard("Delete ModelTranslateWidget");
-        docManager->unregisterDBInstance(m_widgetId);
+    if (auto* document = DocumentManager::instance()) {
+        document->unregisterDBInstance(m_widgetId);
     }
 
     m_widgetId = DBInstanceID();
@@ -562,7 +562,7 @@ bool ModelTranslateWidgetHandler::startDrag(const DBInstanceID& widgetId, int pa
     return true;
 }
 
-void ModelTranslateWidgetHandler::updateDrag(const QPoint& currentPos) {
+void ModelTranslateWidgetHandler::updateDrag(const QPoint& currentPos, Qt::KeyboardModifiers modifiers) {
     if (!m_dragState.isDragging) {
         return;
     }
@@ -577,7 +577,7 @@ void ModelTranslateWidgetHandler::updateDrag(const QPoint& currentPos) {
     }
 
     float projection = *currentProjection - m_dragState.startProjection;
-    if (QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier)) {
+    if (modifiers.testFlag(Qt::ShiftModifier)) {
         constexpr float kSnapStep = 1.0f;
         projection = kSnapStep * std::round(projection / kSnapStep);
     }
@@ -595,7 +595,12 @@ void ModelTranslateWidgetHandler::updateDrag(const QPoint& currentPos) {
              newPosition.x, newPosition.y, newPosition.z);
 }
 
-void ModelTranslateWidgetHandler::endDrag() {
+bool ModelTranslateWidgetHandler::onKeyPressEvent(QKeyEvent* event) {
+    if (event && event->key() == Qt::Key_Escape && isActive()) endDrag(false);
+    return StandardActionHandler::onKeyPressEvent(event);
+}
+
+void ModelTranslateWidgetHandler::endDrag(bool commit) {
     if (!m_dragState.isDragging) {
         return;
     }
@@ -608,8 +613,15 @@ void ModelTranslateWidgetHandler::endDrag() {
         ? std::dynamic_pointer_cast<ModelTranslateWidgetDB>(
               docManager->getDBInstance(m_dragState.widgetId))
         : nullptr;
+    if (!commit) {
+        if (m_dragState.hasActiveTransaction) TransactionManager::instance().rollbackTransaction();
+        m_dragState = DragState();
+        if (widget) widget->updateFromLinkedActor();
+        return;
+    }
     if (widget) {
         // 🔧 关键修复：更新Widget的当前位置为最终位置
+        TransientUpdateGuard widgetUpdate;
         Vector3 finalPosition = m_dragState.startingBoxCenter + m_dragState.currentDisplacement;
         widget->setWidgetCenter(finalPosition);
         widget->setModelBoundsMin(m_dragState.initialBoundsMin + m_dragState.currentDisplacement);
@@ -736,6 +748,7 @@ void ModelTranslateWidgetHandler::applyTranslationToLinkedActor(const Vector3& n
 }
 
 void ModelTranslateWidgetHandler::updateWidgetAfterTranslation(const Vector3& newPosition) {
+    TransientUpdateGuard widgetUpdate;
     auto* docManager = DocumentManager::instance();
     if (!docManager) {
         return;

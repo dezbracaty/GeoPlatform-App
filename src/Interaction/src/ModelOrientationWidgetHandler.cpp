@@ -356,6 +356,8 @@ void ModelOrientationWidgetHandler::onExit() {
 }
 
 void ModelOrientationWidgetHandler::deleteModelOrientationWidget() {
+    TransientUpdateGuard widgetUpdate;
+    ImmediateNotifyGuard widgetNotifications;
     auto* docManager = DocumentManager::instance();
     if (!docManager) {
         m_widgetId = DBInstanceID();
@@ -363,15 +365,8 @@ void ModelOrientationWidgetHandler::deleteModelOrientationWidget() {
         return;
     }
 
-    // 查找并删除所有的 ModelOrientationWidget
-    auto modelOrientationWidgets = docManager->getDBInstancesByType(TypeID::MODEL_ORIENTATION_WIDGET_DB);
-
-    if (!modelOrientationWidgets.empty()) {
-        for (auto widget : modelOrientationWidgets) {
-            if (widget) {
-                docManager->unregisterDBInstance(widget->getDBInstanceID());
-            }
-        }
+    for (const auto& widget : docManager->getDBInstancesByType(TypeID::MODEL_ORIENTATION_WIDGET_DB)) {
+        if (widget) docManager->unregisterDBInstance(widget->getDBInstanceID());
     }
 
     m_widgetId = DBInstanceID(0);
@@ -384,6 +379,8 @@ void ModelOrientationWidgetHandler::deleteModelOrientationWidget() {
 }
 
 bool ModelOrientationWidgetHandler::createOrGetWidget() {
+    TransientUpdateGuard widgetUpdate;
+    ImmediateNotifyGuard widgetNotifications;
     auto* docManager = DocumentManager::instance();
     if (!docManager || !m_activeModelId.isValid()) {
         return false;
@@ -431,7 +428,6 @@ bool ModelOrientationWidgetHandler::createOrGetWidget() {
     size.z *= std::abs(scale.z);
     float diagonal = std::sqrt(size.x * size.x + size.y * size.y + size.z * size.z);
 
-    TransactionGuard guard("Create ModelOrientationWidget");
     auto widget = trans::TransDB::create<ModelOrientationWidgetDB>(
         m_activeModelId, modelCenter, diagonal
     );
@@ -646,7 +642,12 @@ bool ModelOrientationWidgetHandler::performSnapToGround() {
     return true;
 }
 
-void ModelOrientationWidgetHandler::endDrag() {
+bool ModelOrientationWidgetHandler::onKeyPressEvent(QKeyEvent* event) {
+    if (event && event->key() == Qt::Key_Escape && isActive()) endDrag(false);
+    return StandardActionHandler::onKeyPressEvent(event);
+}
+
+void ModelOrientationWidgetHandler::endDrag(bool commit) {
     if (!m_dragState.isDragging) {
         return;
     }
@@ -654,7 +655,7 @@ void ModelOrientationWidgetHandler::endDrag() {
     const DBInstanceID widgetId = m_dragState.widgetId;
     // 旋转会改变模型的世界包围盒；鼠标释放时必须主动重新贴底。
     // 贴底发生在同一个事务提交前，因此一次撤销可同时恢复旋转和位移。
-    const bool success = performSnapToGround();
+    const bool success = commit && performSnapToGround();
 
     auto* docManager = DocumentManager::instance();
     auto widget = docManager
@@ -788,6 +789,7 @@ bool ModelOrientationWidgetHandler::applyRotationToLinkedActor(float angleDeg) {
 }
 
 void ModelOrientationWidgetHandler::updateWidgetAfterRotation(float angleDeg) {
+    TransientUpdateGuard widgetUpdate;
     auto* docManager = DocumentManager::instance();
     auto widget = docManager
         ? std::dynamic_pointer_cast<ModelOrientationWidgetDB>(
