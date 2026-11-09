@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run versioned App acceptance assets through JournalSystem and business checks."""
 import argparse
+import configparser
 import json
 import os
 from pathlib import Path
@@ -29,6 +30,25 @@ def update_run_summary(summary):
     statuses = [case['status'] for case in cases]
     summary['status'] = ('failed' if 'failed' in statuses else 'blocked' if 'blocked' in statuses else
                          'not_verified' if not summary['runComplete'] or 'not_verified' in statuses else 'passed')
+
+
+def prepare_theme(settings, theme):
+    """Use the same persisted preference as SettingsHelper before launching the App."""
+    if theme is None:
+        return
+    if theme not in ('light', 'dark'):
+        raise ValueError('Scenario theme must be light or dark')
+    if settings is None:
+        raise ValueError('Scenario theme requires --settings-file on this platform')
+    config = configparser.ConfigParser(interpolation=None)
+    config.optionxform = str
+    config.read(settings, encoding='utf-8')
+    if not config.has_section('General'):
+        config.add_section('General')
+    config.set('General', 'darkMode', '0' if theme == 'light' else '1')
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    with settings.open('w', encoding='utf-8') as stream:
+        config.write(stream)
 
 
 
@@ -101,6 +121,8 @@ def main(argv=None, *, session=None, progress=None):
     settings = args.settings_file
     if settings is None and os.name == 'nt':
         settings = Path(os.environ['LOCALAPPDATA']) / 'GPlatform/GPlatform' / (args.application.stem + '.ini')
+    elif settings is None and sys.platform == 'darwin':
+        settings = Path.home() / 'Library/Application Support/GPlatform/GPlatform' / (args.application.stem + '.ini')
     backup = settings.read_bytes() if settings is not None and settings.is_file() else None
     def restore_settings():
         if settings is not None:
@@ -116,6 +138,8 @@ def main(argv=None, *, session=None, progress=None):
             if progress:
                 progress(dict(case=name, index=case_index, total=len(selected), phase='begin'))
             restore_settings()
+            metadata = json.loads((args.assets / 'scenarios' / name / 'metadata.json').read_text(encoding='utf-8'))
+            prepare_theme(settings, metadata.get('preconditions', {}).get('theme'))
             print('BEGIN ' + name, flush=True)
             case_exports = args.exports
             if args.exports is not None and len(selected) > 1:

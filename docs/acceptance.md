@@ -170,6 +170,10 @@ python App/tools/run_acceptance.py --cases <comma-separated-ids> --application <
 Journal 录制和回放统一使用 1382×954 逻辑窗口，保留系统原生 DPR；DPR 2 的整窗截图为
 2764×1908 像素。会话结束恢复原窗口大小、限制及显示状态；窗口放不下时明确失败。
 不再强制 DPR=1，也不通过缩放补偿重启程序。既有基线的 DPR 不作为启动时强制设置。
+批次入口在每个场景启动前按 `preconditions.theme`（`light`／`dark`）准备现有 App INI 的
+`darkMode` 配置；结束、失败或取消后按原始字节恢复，原先不存在的 INI 会删除。
+Windows/macOS 自动定位该 INI，其他平台使用 `--settings-file`。这是 App 验收侧的环境准备，
+不增加 Journal 主题协议，也不修改系统主题。
 正式截图验收仍比较原始图像，尺寸不同会失败；对照窗口的派生图可跨已知 DPR 展示，
 但不会代替自动验证。更新标准仍需核对独立预期、保留原始证据，并在目标环境的新进程中复跑。
 
