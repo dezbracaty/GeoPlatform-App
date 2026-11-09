@@ -2,7 +2,7 @@
 
 本仓库只有一个 `Build App` workflow，同时构建 Windows x64 和 macOS Universal。入口为 Actions → Build App → Run workflow；主仓库的 Run Build App 也调用同一入口并等待真实结果。
 
-仅手动或被主仓库显式调用，不监听源码 push，不更新 SDK，不创建 Release。
+仅手动或被主仓库显式调用，不监听源码 push，不更新 SDK；默认在全部启用的检查成功后发布 App 预发布版。
 
 ## 输入和版本
 
@@ -11,6 +11,7 @@
 | `source_ref` | `feature/gplatform-ui` | App 已有分支或完整提交 SHA |
 | `test_assets_ref` | `macmini` | TestAssets 仓库已有分支或完整提交 SHA，仅用于 macOS 回归 |
 | `run_journal` | `true` | 是否执行 macOS Journal 回归；设为 `false` 仅编译、检查、部署和打包 |
+| `publish_release` | `true` | 全部构建及启用的检查成功后，是否发布到本 App 仓库的 Releases；设为 `false` 只保留 Actions 附件 |
 | `request_id` | 空 | 主仓库内部关联 ID；独立手动运行可留空 |
 
 准备任务固定 App SHA，读取其中 `ThirdParty/libs/GPlatformSDK` 的 gitlink。两平台消费同一个 App SHA 和 SDK SHA，不提供“最新 SDK”或单独切换源码依赖的选项。
@@ -40,8 +41,9 @@ App 消费 SDK 格式 3 / UI package 1，产品构建依赖 SDK 与 Orca 两个�
 | --- | --- |
 | `GPLATFORM_SOURCE_TOKEN` | App、SDK、TestAssets、私有源码子模块的 Contents 读 |
 | `GPLATFORM_WORKFLOW_TOKEN` | 供 hosted prepare 查询本仓库 runner 的 Administration 读 |
+| `GPLATFORM_RELEASE_TOKEN` | 本 App 仓库的 Contents 写；开发提交的 workflow 与默认分支不同时还需 Workflows 写。仅 `publish_release=true` 必需 |
 
-平台编译 job 仅注入 SOURCE，不注入独立发布 Secret；SOURCE 应配置为只读。实际权限由配置的 Token 决定，Secret 命名不会降低权限；经明确授权采用更广权限时，验收记录必须注明，不能宣称仍满足只读隔离。queue_guard 用本仓库 `GITHUB_TOKEN` 的 Actions 写权限，只取消本次运行。凭据配置由获授权的管理身份完成。
+平台编译 job 仅注入 SOURCE，不注入独立发布 Secret；SOURCE 应配置为只读。实际权限由配置的 Token 决定，Secret 命名不会降低权限；经明确授权采用更广权限时，验收记录必须注明，不能宣称仍满足只读隔离。queue_guard 用本仓库 `GITHUB_TOKEN` 的 Actions 写权限，只取消本次运行。发布使用独立的 hosted `publish` job，仅该任务注入 RELEASE；不扩大 SOURCE 的权限。发布开启但未配置 RELEASE 时，准备阶段立即失败。发布 job 的内置 `GITHUB_TOKEN` 只用于读取本轮 Actions 附件。凭据配置由获授权的管理身份完成。
 
 runner 需要 Git/LFS、Python 3.12、CMake/Ninja 和相容 Qt。Windows 需要 PowerShell 7、MSVC C++/Windows SDK、Inno Setup 7；Mac 需要激活的 Xcode 和可运行 x86_64 检查的 Rosetta。固定的 Node 24 Actions 要求 runner 至少 2.327.1。
 
@@ -74,10 +76,34 @@ DMG 帮助函数使用自己的暂存副本，不能修改被测 App。Journal �
 附件名称含平台、run ID、attempt，保留 7 天。安装包附件包含 EXE/DMG、对应 SHA-256 文件和
 `build-result.json`；Mac 另含 `mac-stages.json` 及 DMG 日志，并单独上传回归目录，包括固定输入、
 执行日志、逐场景自动结果和截图证据。回归失败时仍上传已生成的安装包及失败证据。
-使用标准 upload-artifact；不补上传、不提供 Release/resume 框架。Mac 回归通过只证明所选场景
+使用标准 upload-artifact；不补上传，不自动续传失败的发布。Mac 回归通过只证明所选场景
 覆盖的行为，不代表已完成安装器安装、所有 UI 或全部算法验收，当前 Mac 签名不等同已公证发行。
 
 生产和消费源码子模块统一使用 `core.autocrlf=false` / `core.eol=lf`，仓库 `.gitattributes` 优先；不改写来源清单。旧 SDK 若记录不同检出字节，需要按标准 SDK 更新入口重建匹配版本，不能绕过校验。
+
+## 自动发布到 Releases
+
+`publish_release` 默认 `true`。Windows、macOS 及启用的 Journal 回归、附件上传和队列看护汇总
+全部成功后，独立发布任务只下载本轮 run ID / attempt 的两个安装包附件。关闭此开关会跳过
+发布任务，不要求 RELEASE Secret，不改变安装包构建、检查与 Actions 附件上传。
+
+发布前核对两平台的 App/SDK SHA、架构、SDK 消费检查、macOS 回归终态及安装包 SHA-256。
+标签为 `build-<run_id>-<attempt>`，明确指向本次固定的 App SHA，不默认使用 `main` 或 workflow
+控制提交。先创建预发布草稿，上传 EXE、DMG、各自的 SHA-256 文件和
+`build-result-windows.json` / `build-result-macos.json`。同名构建信息分别命名，避免相互覆盖；
+Mac 日志与逐场景回归证据继续保留在 Actions 附件中。
+远端附件名称、大小、摘要全部核对成功后才公开为 Pre-release；不会自动设置为正式版 Latest。
+发布或校验失败会使 workflow 失败，已创建的草稿保留供检查，不公开不完整的下载集合。
+全量重跑使用新的 attempt 标签，不覆盖之前发布或已验收的安装包。
+
+这个开关只控制是否发布，不控制预发布/正式版。自动发布的每一条都先是预发布版；
+验收通过后，在 GitHub Releases 编辑该条记录，取消 Pre-release，可按需要标记为 Latest。
+此过程沿用同一标签和同一批已验收附件，无需重编；其他构建记录仍保持预发布状态。
+关闭 Journal 时，Release 说明和 Mac 构建信息明确标记 `skipped`，不会声称回归通过。
+
+创建非默认分支提交的标签时，GitHub 可能要求发布凭据具有 Workflows 写权限；
+请为 `GPLATFORM_RELEASE_TOKEN` 配置仅限本 App 仓库的发布身份，不复用只读 SOURCE。
+权限依据见 [创建 Release](https://docs.github.com/en/rest/releases/releases#create-a-release)。
 
 ## 失败、重跑和清理
 

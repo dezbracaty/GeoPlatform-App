@@ -15,6 +15,10 @@ on:
         description: Run macOS Journal regression alongside packaging
         type: boolean
         default: true
+      publish_release:
+        description: Publish a prerelease after all enabled checks succeed
+        type: boolean
+        default: true
       request_id:
         description: Optional caller correlation ID
         type: string
@@ -38,6 +42,7 @@ jobs:
         env:
           HAS_SOURCE: ${{ secrets.GPLATFORM_SOURCE_TOKEN != '' }}
           HAS_WORKFLOW: ${{ secrets.GPLATFORM_WORKFLOW_TOKEN != '' }}
+          HAS_RELEASE: ${{ !inputs.publish_release || secrets.GPLATFORM_RELEASE_TOKEN != '' }}
         run: |
           python3 - <<'PY'
           import os
@@ -296,3 +301,34 @@ jobs:
               core.setFailed('Partial reruns are rejected before scheduling builds; choose Re-run all jobs or start a new workflow.');
             if (Object.values(results).some(job => job.result !== 'success'))
               core.setFailed('Both platform builds, packaging, enabled macOS regression and uploads must pass.');
+  publish:
+    needs: [prepare, result]
+    if: inputs.publish_release && needs.prepare.outputs.attempt == github.run_attempt
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: control
+          persist-credentials: false
+      - name: Download Windows installer from this attempt
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+        with:
+          name: app-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: installers/windows
+      - name: Download macOS installer from this attempt
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+        with:
+          name: app-macos-${{ github.run_id }}-${{ github.run_attempt }}
+          path: installers/macos
+      - name: Validate installers and publish prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GPLATFORM_RELEASE_TOKEN }}
+          APP_SHA: ${{ needs.prepare.outputs.app_sha }}
+          SDK_SHA: ${{ needs.prepare.outputs.sdk_sha }}
+          RUN_JOURNAL: ${{ inputs.run_journal }}
+        run: python3 control/scripts/ci/publish_release.py --artifacts installers
