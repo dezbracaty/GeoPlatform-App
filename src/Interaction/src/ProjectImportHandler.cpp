@@ -290,7 +290,9 @@ bool ProjectImportHandler::onInitialize() {
         m_context->setError(ActionErrorCode::TargetNotFound,tr("The project file is not readable.")); return false;
     }
     m_parameters = getParams();
-    m_intent = getActionCode() == "project.open" ? "project" : m_parameters.value("intent").toString();
+    m_intent = m_parameters.value("intent").toString();
+    // project.open remains an explicit API shortcut; interactive UI uses project.import.
+    if (m_intent.isEmpty() && getActionCode() == "project.open") m_intent = "project";
     if (!m_intent.isEmpty() && m_intent != "project" && m_intent != "geometry") {
         m_context->setError(ActionErrorCode::InvalidParams,tr("intent must be geometry or project")); return false;
     }
@@ -309,7 +311,6 @@ bool ProjectImportHandler::onInitialize() {
     return true;
 }
 void ProjectImportHandler::onBackgroundStarted() {
-    if (m_intent.isEmpty() && m_path.endsWith(".gcode.3mf",Qt::CaseInsensitive)) m_intent = "geometry";
     if (m_intent.isEmpty()) {
         if (!showDecision("mode")) {
             finish("rejected","project.decision_required",tr("Choose whether to open this 3MF as a project or import its models."));
