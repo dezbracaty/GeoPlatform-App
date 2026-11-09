@@ -34,18 +34,18 @@ CORE_SCENARIOS = {
 
 class ProjectDbAssetsTests(unittest.TestCase):
     def test_retained_3mf_scenarios_match_the_metadata_schema(self):
-        schema = json.loads((ASSETS / 'schemas/scenario.schema.json').read_text())
+        schema = json.loads((ASSETS / 'schemas/scenario.schema.json').read_text(encoding="utf-8"))
         Draft202012Validator.check_schema(schema)
         validator = Draft202012Validator(schema)
         for name in sorted(CORE_SCENARIOS):
             with self.subTest(case=name):
-                metadata = json.loads((ASSETS / 'scenarios' / name / 'metadata.json').read_text())
+                metadata = json.loads((ASSETS / 'scenarios' / name / 'metadata.json').read_text(encoding="utf-8"))
                 validator.validate(metadata)
 
     def test_supplemental_artifact_contract_rejects_missing_duplicate_and_obsolete_inputs(self):
-        schema = json.loads((ASSETS / 'schemas/scenario.schema.json').read_text())
+        schema = json.loads((ASSETS / 'schemas/scenario.schema.json').read_text(encoding="utf-8"))
         validator = Draft202012Validator(schema)
-        metadata = json.loads((ASSETS / 'scenarios/three_mf_complete_workflow/metadata.json').read_text())
+        metadata = json.loads((ASSETS / 'scenarios/three_mf_complete_workflow/metadata.json').read_text(encoding="utf-8"))
         for artifacts in (['snapshot'], ['gcode1'], ['gcode1', 'gcode1'],
                           ['gcode1', 'package1', 'extra']):
             with self.subTest(artifacts=artifacts):
@@ -62,7 +62,7 @@ class ProjectDbAssetsTests(unittest.TestCase):
 
     def test_archived_inputs_match_declared_original_bytes(self):
         root = ASSETS / 'models/three_mf_official'
-        fixtures = json.loads((root / 'manifest.json').read_text())['fixtures']
+        fixtures = json.loads((root / 'manifest.json').read_text(encoding="utf-8"))['fixtures']
         self.assertEqual(len(fixtures), 56)
         for fixture in fixtures:
             with self.subTest(path=fixture['path']):
@@ -81,8 +81,8 @@ class ProjectDbAssetsTests(unittest.TestCase):
         for name in sorted(CORE_SCENARIOS):
             with self.subTest(case=name):
                 case = scenarios / name
-                metadata = json.loads((case / 'metadata.json').read_text())
-                document = json.loads((case / 'events/Journal.json').read_text())
+                metadata = json.loads((case / 'metadata.json').read_text(encoding="utf-8"))
+                document = json.loads((case / 'events/Journal.json').read_text(encoding="utf-8"))
                 self.assertEqual(metadata['id'], name)
                 self.assertTrue(document['entries'])
                 plan = verification_plan(metadata, document)
@@ -91,16 +91,16 @@ class ProjectDbAssetsTests(unittest.TestCase):
                 self.assertEqual(plan['readiness'], 'ready')
 
     def test_3mf_baseline_index_matches_formal_checkpoints_and_bytes(self):
-        index = json.loads((ASSETS / 'baselines/manifest.json').read_text())
+        index = json.loads((ASSETS / 'baselines/manifest.json').read_text(encoding="utf-8"))
         registered = {row['case']: row for row in index['cases']
                       if row['case'].startswith(('three_mf_', 'ui_3mf_'))}
         self.assertEqual(set(registered), CORE_SCENARIOS)
         for name, row in registered.items():
             with self.subTest(case=name):
                 metadata_path = ASSETS / 'scenarios' / name / 'metadata.json'
-                metadata = json.loads(metadata_path.read_text())
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
                 journal = metadata_path.parent / 'events/Journal.json'
-                entries = json.loads(journal.read_text())['entries']
+                entries = json.loads(journal.read_text(encoding="utf-8"))['entries']
                 method, = metadata['verification']['requiredMethods']
                 assertions = [e for e in entries if e['kind'] == 'verify.' + method]
                 self.assertEqual(row['metadata'], metadata_path.relative_to(ASSETS).as_posix())

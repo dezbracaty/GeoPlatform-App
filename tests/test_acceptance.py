@@ -171,7 +171,7 @@ class AcceptanceCheck(unittest.TestCase):
             self.assertEqual(config['General']['locale'], 'zh_CN')
             self.assertEqual(config['importFile']['sortKey'], 'name')
             settings.write_bytes(b'changed by application')
-        tools = Path(__file__).resolve().parents[2] / 'ThirdParty/JournalSystem/tools'
+        tools = Path(__file__).resolve().parents[1] / 'tools/journal'
         with patch('builtins.print'):
             code = run_acceptance.main(['--assets', str(self.assets), '--journal-tools', str(tools),
                 '--application', str(self.application), '--cases', 'all',
@@ -190,7 +190,7 @@ class AcceptanceCheck(unittest.TestCase):
         def writer():
             self.assertIn('darkMode = 0', settings.read_text())
             raise RuntimeError('application startup failed')
-        tools = Path(__file__).resolve().parents[2] / 'ThirdParty/JournalSystem/tools'
+        tools = Path(__file__).resolve().parents[1] / 'tools/journal'
         with patch('builtins.print'):
             code = run_acceptance.main(['--assets', str(self.assets), '--journal-tools', str(tools),
                 '--application', str(self.application), '--cases', 'job',
