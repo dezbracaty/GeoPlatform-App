@@ -44,13 +44,15 @@ PanelSurface {
     readonly property var machineChoices: {
         const choices = [];
         const models = SliceSettingsBridge.machineModels();
+        if (!root.machine) return choices;
         for (let i = 0; i < models.length; ++i) {
             for (let j = 0; j < models[i].variants.length; ++j) {
                 const variant = models[i].variants[j];
                 choices.push({
                     modelId: models[i].id,
                     variantId: variant.id,
-                    name: models[i].name + " · " + variant.nozzleDiameter + " mm"
+                    presetId: variant.printerPresetId,
+                    name: variant.userPreset ? variant.name : models[i].name + " · " + variant.nozzleDiameter + " mm"
                 });
             }
         }
@@ -305,14 +307,14 @@ PanelSurface {
                     const selected = SliceSettingsBridge.selectedMachineVariantId;
                     const modelId = SliceSettingsBridge.selectedMachineModelId;
                     return root.machineChoices.findIndex(function (item) {
-                        return item.variantId === selected && item.modelId === modelId;
+                        return item.variantId === selected && item.modelId === modelId && item.presetId === root.machine.printerPresetId;
                     });
                 }
                 onActivated: function (index) {
                     const choice = root.machineChoices[index];
                     Qt.callLater(function () {
                         if (root.editingEnabled)
-                            SliceSettingsBridge.selectMachine(choice.modelId, choice.variantId);
+                            SliceSettingsBridge.selectMachine(choice.modelId, choice.variantId, "", choice.presetId);
                     });
                 }
             }

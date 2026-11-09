@@ -45,6 +45,11 @@ public:
     bool configurationChangesAllowed() const noexcept;
     const std::vector<libslicer::MachineModelOption>& machineModels() const noexcept;
     const std::vector<libslicer::BuildPlateOption>& buildPlateOptions() const noexcept;
+    std::vector<libslicer::PresetOption> printerPresets(const std::string& model, const std::string& variant) const;
+    libslicer::PrinterSwitchReview reviewPrinterSwitch(const libslicer::ConfigSelection&);
+    libslicer::PrinterSwitchResult preparePrinterSwitch(const libslicer::ConfigSelection&,
+        std::uint64_t revision, const std::vector<libslicer::PrinterSwitchDecision>&,
+        const std::vector<std::pair<std::string, std::string>>& remembered);
     SlicingConfigActivationResult activateConfig(
         const libslicer::ConfigSelection& selection,
         const std::vector<std::pair<std::string, std::string>>& patch = {});

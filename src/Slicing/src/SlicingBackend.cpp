@@ -5,6 +5,7 @@
 #ifdef _WIN32
 #include <QCoreApplication>
 #endif
+#include <QStandardPaths>
 
 #include <atomic>
 #include <condition_variable>
@@ -144,8 +145,11 @@ SlicingBackend::SlicingBackend()
     : m_impl(std::make_unique<Impl>())
 {
     std::vector<libslicer::ConfigDiagnostic> diagnostics;
-    m_available = m_impl->invoke([this, &diagnostics]() {
+    const auto presetDirectory = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+        QStringLiteral("/slicer-presets");
+    m_available = m_impl->invoke([this, &diagnostics, presetDirectory]() {
         libslicer::LibraryOptions options;
+        options.user_preset_directory = presetDirectory.toStdString();
 #ifdef _WIN32
         options.resource_directory =
             (QCoreApplication::applicationDirPath() + "/resources/libslicer").toStdString();
@@ -188,6 +192,39 @@ const std::vector<libslicer::MachineModelOption>& SlicingBackend::machineModels(
 const std::vector<libslicer::BuildPlateOption>& SlicingBackend::buildPlateOptions() const noexcept
 {
     return m_buildPlateOptions;
+}
+
+std::vector<libslicer::PresetOption> SlicingBackend::printerPresets(
+    const std::string& model, const std::string& variant) const
+{
+    if (!m_available) return {};
+    return m_impl->invoke([this, model, variant] { return m_impl->library->printer_presets(model, variant); });
+}
+
+libslicer::PrinterSwitchReview SlicingBackend::reviewPrinterSwitch(const libslicer::ConfigSelection& selection)
+{
+    if (!configurationChangesAllowed()) {
+        libslicer::PrinterSwitchReview result;
+        result.diagnostics = busySettingsResult().diagnostics;
+        return result;
+    }
+    return m_impl->invoke([this, selection] { return m_impl->library->review_printer_switch(selection); });
+}
+
+libslicer::PrinterSwitchResult SlicingBackend::preparePrinterSwitch(
+    const libslicer::ConfigSelection& selection, std::uint64_t revision,
+    const std::vector<libslicer::PrinterSwitchDecision>& decisions,
+    const std::vector<std::pair<std::string, std::string>>& remembered)
+{
+    std::unique_lock<std::mutex> admissionLock(m_impl->configurationAdmissionMutex);
+    if (!configurationChangesAllowed()) {
+        libslicer::PrinterSwitchResult result;
+        result.diagnostics = busySettingsResult().diagnostics;
+        return result;
+    }
+    return m_impl->invoke([this, selection, revision, decisions, remembered] {
+        return m_impl->library->prepare_printer_switch(selection, revision, decisions, remembered);
+    });
 }
 
 SlicingConfigActivationResult SlicingBackend::activateConfig(

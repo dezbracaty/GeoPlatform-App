@@ -54,7 +54,8 @@ Button {
         var variant = currentDraftVariant()
         return machine !== null && variant !== null
                 && (machine.id !== SliceSettingsBridge.selectedMachineModelId
-                    || variant.id !== SliceSettingsBridge.selectedMachineVariantId)
+                    || variant.id !== SliceSettingsBridge.selectedMachineVariantId
+                    || variant.printerPresetId !== root.selectedMachine.printerPresetId)
     }
     readonly property bool draftBedTypeChanged: {
         var plate = currentDraftPlate()
@@ -168,8 +169,8 @@ Button {
         draftMachineIndex = indexByValue(machineOptions, "id", SliceSettingsBridge.selectedMachineModelId)
         var machine = currentDraftMachine()
         draftNozzleIndex = machine !== null
-                           ? indexByValue(machine.variants || [], "id",
-                                          SliceSettingsBridge.selectedMachineVariantId)
+                           ? indexByValue(machine.variants || [], "printerPresetId",
+                                          root.selectedMachine.printerPresetId)
                            : -1
         var activeBedType = SliceSettingsBridge.getSetting("curr_bed_type")
         currentBedType = activeBedType === undefined || activeBedType === null
@@ -201,7 +202,8 @@ Button {
         var machineChanged = draftMachineChanged
         var requestedBedType = plate.value
         if (machineChanged
-                && !SliceSettingsBridge.selectMachine(machine.id, variant.id, requestedBedType)) {
+                && !SliceSettingsBridge.selectMachine(machine.id, variant.id,
+                    draftBedTypeChanged ? requestedBedType : "", variant.printerPresetId)) {
             applyError = qsTr("Failed to apply machine configuration. Check the application log.")
             return false
         }

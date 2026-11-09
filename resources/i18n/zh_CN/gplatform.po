@@ -4283,3 +4283,39 @@ msgstr "%1 引用了耗材槽 %2，当前只有 %3 个槽位。"
 
 msgid "%1 / %2 requests material slot %3, but only %4 slots are available."
 msgstr "%1 / %2 引用了耗材槽 %3，当前只有 %4 个槽位。"
+
+msgid "Save user preset"
+msgstr "保存用户预设"
+
+msgid "Transfer or discard changes"
+msgstr "转移或丢弃改动"
+
+msgid "You have unsaved changes in preset “%1”."
+msgstr "预设“%1”有未保存的改动。"
+
+msgid "Preset name"
+msgstr "预设名称"
+
+msgid "Changes tied to a different extruder configuration will be skipped during transfer."
+msgstr "转移时会跳过与不同喷头配置关联的改动。"
+
+msgid "Discard"
+msgstr "丢弃"
+
+msgid "Transfer"
+msgstr "转移"
+
+msgid "Could not switch printer"
+msgstr "无法切换打印机"
+
+msgid "Preset saved. Printer switch failed. %1"
+msgstr "预设已保存。打印机切换失败。%1"
+
+msgid "Preset saved. Printer switch failed. The configuration has changed."
+msgstr "预设已保存。打印机切换失败，当前配置已变化。"
+
+msgid "The configuration has changed. Choose the printer again."
+msgstr "当前配置已变化，请重新选择打印机。"
+
+msgid "Copy"
+msgstr "副本"
