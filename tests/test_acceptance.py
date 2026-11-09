@@ -150,6 +150,55 @@ class AcceptanceCheck(unittest.TestCase):
         manifest = read_json(output / 'screenshot_review.json')
         self.assertEqual([c['status'] for c in manifest['cases']], ['passed', 'not_run'])
 
+    def test_batch_prepares_each_theme_and_restores_original_settings(self):
+        import configparser
+        import run_acceptance
+        import shutil
+        from unittest.mock import patch
+        self.metadata.update(artifacts={}, checks=[], preconditions={'theme': 'light'})
+        self.save_metadata()
+        clone = self.assets / 'scenarios/job2'
+        shutil.copytree(self.scenario, clone)
+        write_json(clone / 'metadata.json', dict(self.metadata, id='job2', preconditions={'theme': 'dark'}))
+        settings = self.root / 'GPlatform.ini'
+        original = b'; preserve exact original bytes\r\n[General]\r\ndarkMode=2\r\nlocale=zh_CN\r\n[importFile]\r\nsortKey=name\r\n'
+        settings.write_bytes(original)
+        observed = []
+        def writer():
+            config = configparser.ConfigParser()
+            config.read(settings)
+            observed.append(config['General']['darkMode'])
+            self.assertEqual(config['General']['locale'], 'zh_CN')
+            self.assertEqual(config['importFile']['sortKey'], 'name')
+            settings.write_bytes(b'changed by application')
+        tools = Path(__file__).resolve().parents[2] / 'ThirdParty/JournalSystem/tools'
+        with patch('builtins.print'):
+            code = run_acceptance.main(['--assets', str(self.assets), '--journal-tools', str(tools),
+                '--application', str(self.application), '--cases', 'all',
+                '--settings-file', str(settings), '--output', str(self.root / 'themed-batch')],
+                session=SessionFixture(writer))
+        self.assertEqual(code, 0)
+        self.assertEqual(observed, ['0', '1'])
+        self.assertEqual(settings.read_bytes(), original)
+
+    def test_failed_replay_removes_settings_created_only_for_the_test(self):
+        import run_acceptance
+        from unittest.mock import patch
+        self.metadata.update(artifacts={}, checks=[], preconditions={'theme': 'light'})
+        self.save_metadata()
+        settings = self.root / 'new-profile/GPlatform.ini'
+        def writer():
+            self.assertIn('darkMode = 0', settings.read_text())
+            raise RuntimeError('application startup failed')
+        tools = Path(__file__).resolve().parents[2] / 'ThirdParty/JournalSystem/tools'
+        with patch('builtins.print'):
+            code = run_acceptance.main(['--assets', str(self.assets), '--journal-tools', str(tools),
+                '--application', str(self.application), '--cases', 'job',
+                '--settings-file', str(settings), '--output', str(self.root / 'failed-theme')],
+                session=SessionFixture(writer))
+        self.assertEqual(code, 1)
+        self.assertFalse(settings.exists())
+
     def test_pass_archives_real_files_and_preserves_original_acceptance(self):
         result = self.run_job(SessionFixture(self.writer))
         self.assertEqual(result['status'], 'passed')

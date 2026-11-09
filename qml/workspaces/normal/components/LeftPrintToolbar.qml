@@ -69,11 +69,11 @@ ToolbarSurface {
                     {
                         targetName: "print.toolbar.file.openProject",
                         icon: FluentIcons.graph_FolderOpen,
-                        text: qsTr("Open Project"),
-                        tooltip: qsTr("Open existing project"),
+                        text: qsTr("Open 3MF"),
+                        tooltip: qsTr("Open 3MF"),
                         enabled: true,
                         action: function() {
-                            Global.starter.chooseProject({});
+                            Global.starter.chooseThreeMf({});
                         }
                     }
                 ]

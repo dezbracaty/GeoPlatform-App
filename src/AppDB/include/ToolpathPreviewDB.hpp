@@ -15,6 +15,8 @@ struct ToolpathTemporaryArtifactLease;
 
 class ToolpathPreviewDB : public ActorDB {
 public:
+    static constexpr const char* kSourceModelsRelation = "toolpath.sources";
+
     ToolpathPreviewDB();
     ~ToolpathPreviewDB() override;
 
@@ -28,6 +30,7 @@ public:
     FIELD_VALUE(ToolpathPreviewDB, std::string, PrintGCode3mfPath)
     FIELD_VALUE_SIMPLE(ToolpathPreviewDB, ToolpathPreviewSourceScope, SourceScope)
     FIELD_VALUE_SIMPLE(ToolpathPreviewDB, DBInstanceID, SourceModelDBId)
+    FIELD_VALUE(ToolpathPreviewDB, std::vector<DBInstanceID>, SourceModelDBIds)
     TRANSIENT_FIELD_VALUE_SIMPLE(ToolpathPreviewDB, ToolpathPreviewColorMode, ColorMode)
     TRANSIENT_FIELD_VALUE_SIMPLE(ToolpathPreviewDB, bool, ShowTravel)
     TRANSIENT_FIELD_VALUE_SIMPLE(ToolpathPreviewDB, bool, ShowFiberProcess)
@@ -111,6 +114,8 @@ public:
 
     BoundingBox localBounds() const override;
     std::shared_ptr<AutoRegisterDB> clone() const override;
+    std::vector<DBRelationRef> reportRelations() const override;
+    bool replaceRelations(const std::vector<DBRelationReplacement>& replacements) override;
 
 protected:
     void initializeSubActorProperties() override;

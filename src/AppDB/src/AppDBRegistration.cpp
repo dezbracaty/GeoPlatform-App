@@ -170,6 +170,7 @@ REGISTER_APPDB_FIELD_VALUE_CODEC("gplatform.color", Color)
 REGISTER_APPDB_FIELD_VALUE_CODEC("gplatform.polygon2", Polygon2)
 REGISTER_APPDB_FIELD_VALUE_CODEC("gplatform.transform", Transform)
 REGISTER_APPDB_FIELD_VALUE_CODEC("gplatform.db-instance-id", DBInstanceID)
+REGISTER_APPDB_FIELD_VALUE_CODEC("gplatform.db-instance-ids", std::vector<DBInstanceID>)
 REGISTER_APPDB_FIELD_VALUE_CODEC(
     "gplatform.toolpath-preview.color-mode",
     GPlatform::ToolpathPreviewColorMode)

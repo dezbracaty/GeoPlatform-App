@@ -5,6 +5,7 @@
 #include <PrintBedPlacementUtil.hpp>
 #include <ToolpathPreviewRelations.hpp>
 #include <TransactionManager.hpp>
+#include <ImmediateNotifyGuard.hpp>
 #include <stdexcept>
 
 namespace GPlatform {
@@ -15,6 +16,12 @@ ToolpathPublicationResult publishToolpathResult(std::shared_ptr<SliceOutputRecor
     auto* bridge = SlicingPreviewBridge::instance();
     if (!output || prepared.cancelled || !bridge->acceptsPublication(epoch)) {
         result.error = QStringLiteral("Task cancelled or superseded"); return result;
+    }
+    const bool modelSlice = output->sourceScope == ToolpathPreviewSourceScope::SingleModel ||
+        output->sourceScope == ToolpathPreviewSourceScope::Plate;
+    if (modelSlice && !ToolpathPreviewRelations::sourceModelsAvailable(output->sourceModelIds, output->printBedId)) {
+        result.error = QStringLiteral("Slice source models are missing or no longer belong to the print bed");
+        return result;
     }
     if (!output->validate(&result.error)) return result;
     output->previewError = prepared.error;
@@ -76,6 +83,12 @@ ToolpathPublicationResult publishToolpathResult(std::shared_ptr<SliceOutputRecor
                     output->displayModelId = static_cast<int>(preview->getDBInstanceID().getValue());
             }
             mayDegrade = false;
+            if (modelSlice && candidate) {
+                ImmediateNotifyGuard immediate;
+                candidate->setSourceModelDBIds(output->sourceModelIds);
+                if (!ToolpathPreviewRelations::sourceEdgesMatch(candidate->getDBInstanceID(), output->sourceModelIds))
+                    throw std::runtime_error("Failed to bind all slice source models");
+            }
             publication = bridge->prepareOutputPublication(output, candidate, epoch, &result.error);
             if (!publication) throw std::runtime_error(result.error.toStdString());
             before(PreviewPublicationStage::RemovePrevious);
@@ -90,6 +103,9 @@ ToolpathPublicationResult publishToolpathResult(std::shared_ptr<SliceOutputRecor
             }
             if (!bridge->acceptsPublication(epoch)) throw std::runtime_error("Task cancelled or superseded");
             if (!output->validate(&result.error)) throw std::runtime_error(result.error.toStdString());
+            if (modelSlice && (!ToolpathPreviewRelations::sourceModelsAvailable(output->sourceModelIds, output->printBedId) ||
+                (candidate && !ToolpathPreviewRelations::sourceEdgesMatch(candidate->getDBInstanceID(), output->sourceModelIds))))
+                throw std::runtime_error("Slice source models or dependencies changed before publication");
             if (transaction) transaction->commit();
         } catch (const std::bad_alloc&) {
             if (transaction) { transaction->rollback(); document->flushPendingChanges(); }

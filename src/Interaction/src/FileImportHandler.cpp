@@ -91,8 +91,6 @@ void FileImportHandler::onEnter(std::shared_ptr<ActionContext> context) {
     }
     const QString importer = isGCode ? "load_gcode_file" :
         format == ImportFileFormat::ThreeMf ? "project.import" : "import_mesh";
-    if (context->getActionCode() != "file.import" && format == ImportFileFormat::ThreeMf)
-        params.insert("intent", "geometry");
     if (isGCode && !params.contains("confirm")) {
         params.insert("confirm", true);
     }

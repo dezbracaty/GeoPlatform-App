@@ -145,7 +145,7 @@ Item {
             return
         }
         if (actionCode === "project.open.choose") {
-            Global.starter.chooseProject({})
+            Global.starter.chooseThreeMf({})
             return
         }
         if (actionCode === "model.import.choose_stl") {

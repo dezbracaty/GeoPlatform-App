@@ -199,6 +199,7 @@ void ToolpathPreviewDB::initializeSubActorProperties() {
     setPrintGCode3mfPath("");
     setSourceScope(ToolpathPreviewSourceScope::ImportedGCode);
     setSourceModelDBId(INVALID_DB_ID);
+    setSourceModelDBIds({});
     setColorMode(ToolpathPreviewColorMode::PreviewColor);
     setShowTravel(false);
     setShowFiberProcess(true);
@@ -520,7 +521,9 @@ std::shared_ptr<AutoRegisterDB> ToolpathPreviewDB::clone() const {
     cloned->setVisible(isVisible());
     cloned->setSourceModelName(getSourceModelName());
     cloned->setSourceScope(getSourceScope());
-    cloned->setSourceModelDBId(getSourceModelDBId());
+    // References are reconstructed by DBCopyService after all nodes are cloned.
+    cloned->setSourceModelDBId(INVALID_DB_ID);
+    cloned->setSourceModelDBIds({});
     cloned->setColorMode(getColorMode());
     cloned->setShowTravel(getShowTravel());
     cloned->setShowFiberProcess(getShowFiberProcess());
@@ -535,6 +538,28 @@ std::shared_ptr<AutoRegisterDB> ToolpathPreviewDB::clone() const {
     return cloned;
 }
 
+
+std::vector<DBRelationRef> ToolpathPreviewDB::reportRelations() const {
+    std::vector<DBRelationRef> result;
+    for (const auto id : getSourceModelDBIds())
+        if (id.isValid()) result.push_back({kSourceModelsRelation, id});
+    return result;
+}
+
+bool ToolpathPreviewDB::replaceRelations(
+    const std::vector<DBRelationReplacement>& replacements) {
+    std::vector<DBInstanceID> sources;
+    for (const auto& replacement : replacements) {
+        if (replacement.relationName != kSourceModelsRelation ||
+            !replacement.newTargetId.isValid()) return false;
+        sources.push_back(replacement.newTargetId);
+    }
+    sources = normalizedIds(std::move(sources));
+    setSourceModelDBIds(sources);
+    setSourceModelDBId(getSourceScope() == ToolpathPreviewSourceScope::SingleModel && sources.size() == 1
+        ? sources.front() : DBInstanceID{});
+    return true;
+}
 
 void ToolpathPreviewDB::publishInspectionGeometry() {
     SnapGeometry geometry;

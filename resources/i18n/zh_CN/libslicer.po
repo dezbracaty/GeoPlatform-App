@@ -16866,3 +16866,15 @@ msgstr "换头避让抬升不能与自定义耗材开始、结束或换料指令
 
 msgid "Tool change clearance lift must be finite and non-negative."
 msgstr "换头避让抬升必须是有限的非负数。"
+
+msgid "Wipe tower position"
+msgstr "擦嘴塔位置"
+
+msgid "Choose automatic placement or fixed X and Y coordinates for each plate."
+msgstr "为每个打印盘选择自动摆放或固定 X、Y 坐标。"
+
+msgid "Choose an automatic or manual tower position"
+msgstr "请选择自动或手动摆放擦嘴塔"
+
+msgid "Enter a tower coordinate"
+msgstr "请输入擦嘴塔坐标"

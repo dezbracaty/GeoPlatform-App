@@ -10,12 +10,16 @@
 | --- | --- | --- |
 | `source_ref` | `feature/gplatform-ui` | App 已有分支或完整提交 SHA |
 | `test_assets_ref` | `macmini` | TestAssets 仓库已有分支或完整提交 SHA，仅用于 macOS 回归 |
+| `run_journal` | `true` | 是否执行 macOS Journal 回归；设为 `false` 仅编译、检查、部署和打包 |
 | `request_id` | 空 | 主仓库内部关联 ID；独立手动运行可留空 |
 
 准备任务固定 App SHA，读取其中 `ThirdParty/libs/GPlatformSDK` 的 gitlink。两平台消费同一个 App SHA 和 SDK SHA，不提供“最新 SDK”或单独切换源码依赖的选项。
 测试资产版本从该 App 声明的 TestAssets 仓库独立解析为固定 SHA，并记录到本次输入。
 `macmini` 是测试资产分支，不要求宿主或 App 创建同名分支。选择的远端引用必须存在，否则准备失败；
 本地分支不会自动发布，也不会自动成为 CI 输入。
+`run_journal=false` 时不解析或下载 TestAssets，不需要 Journal 工具、Pillow 或图形桌面会话；
+SDK 校验、`SDKConsumerExtensionCheck`、Universal 部署审计和安装包生成仍执行。
+此选项不会修改基线，也不会将未执行的 Journal 记成通过。
 
 App 消费 SDK 格式 3 / UI package 1，产品构建依赖 SDK 与 Orca 两个引用。`tests/TestAssets` 声明 `update=none`，产品编译仍跳过它；macOS 回归阶段显式初始化该仓库，再检出准备阶段选定的测试 SHA 并获取 LFS 实体，不改 App gitlink。详见 [验收架构](acceptance.md)。SmoothUI、SmoothUIDock 及其 KDDockWidgets 实现由生产者编成 SDK，App 不克隆这些实现仓库；构建前验证完整 SDK manifest、UI 资源合同及 Orca 受管内容/版本，不改写来源清单。
 
@@ -63,6 +67,9 @@ Mac 合并、部署及审计 Universal App 完成后，在同一个受机器锁�
 DMG 帮助函数使用自己的暂存副本，不能修改被测 App。Journal 场景仍串行运行，不需要第二个 runner。
 两项分别保存终态，一项失败仍等待另一项保存证据；任一失败导致 Mac job 失败。
 两平台独立完成，任何检查、编译、打包、必需回归或附件上传失败均导致整体失败。
+关闭 `run_journal` 时，Mac 直接从已部署并审计的 Universal App 生成 DMG，不启动回归任务，
+也不创建回归结果附件；安装包附件中的 `mac-stages.json` 和 `build-result.json` 明确记录
+`regression.status=skipped`、`reason=run_journal=false`。
 
 附件名称含平台、run ID、attempt，保留 7 天。安装包附件包含 EXE/DMG、对应 SHA-256 文件和
 `build-result.json`；Mac 另含 `mac-stages.json` 及 DMG 日志，并单独上传回归目录，包括固定输入、

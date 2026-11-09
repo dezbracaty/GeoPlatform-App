@@ -25,6 +25,7 @@
 #include "ToolpathResultPublication.hpp"
 #include "AppInfo.h"
 #include "SettingsHelper.h"
+#include "LocalModelLibraryService.h"
 
 #include <QDir>
 #include <QFile>
@@ -75,7 +76,8 @@ DBInstanceID configurationActivePlate() {
     require(configs.size()==1,"Expected one live slicing configuration");
     return configs.front()->getActivePrintBedDBId();
 }
-QString importAndWait(const QString& filename, const QString& intent) {
+QString importAndWait(const QString& filename, const QString& intent,
+                      const QString& action = "file.import") {
     const auto path = QStringLiteral(THREE_MF_FIXTURES) + '/' + filename;
     const auto source = bytes(path);
     auto* actions = ActionManager::getInstance();
@@ -92,14 +94,25 @@ QString importAndWait(const QString& filename, const QString& intent) {
             if (action=="ProjectImportHandler") ++completions;
         });
     const auto disconnect=qScopeGuard([&]{QObject::disconnect(connection);});
-    const auto receipt=actions->invokeActionWithReceipt("file.import", {
-        {"filePath",path},{"intent",intent},{"confirmReplace",true},
-        {"requestId",QUuid::createUuid().toString(QUuid::WithoutBraces)}});
+    QVariantMap params{{"filePath",path},{"confirmReplace",true},
+        {"requestId",QUuid::createUuid().toString(QUuid::WithoutBraces)}};
+    if (!intent.isEmpty()) params.insert("intent",intent);
+    auto* library = LocalModelLibraryService::instance();
+    const auto libraryId = action == "model.library.import" ? library->registerSessionModel(path) : QString{};
+    const auto unregister = qScopeGuard([&] { if (!libraryId.isEmpty()) library->unregisterSessionModel(libraryId); });
+    if (action == "model.library.import") {
+        require(!libraryId.isEmpty(), "Cannot register the controlled library model");
+        params.remove("filePath");
+        params.insert("libraryItemId",libraryId);
+    }
+    const auto receipt=actions->invokeActionWithReceipt(action, params);
     require(receipt.value("accepted").toBool() && receipt.value("success").toBool(),
             "Common file.import rejected controlled 3MF input");
-    const auto routed=receipt.value("result").toMap();
-    require(routed.value("importAction").toString()=="project.import" && routed.value("importAccepted").toBool(),
-            "3MF did not route to the real ProjectImportHandler");
+    if (!action.startsWith("project.")) {
+        const auto routed=receipt.value("result").toMap();
+        require(routed.value("importAction").toString()=="project.import" && routed.value("importAccepted").toBool(),
+                "3MF did not route to the real ProjectImportHandler");
+    }
     require(QTest::qWaitFor([&]{return completions==1 && !TaskStateNotifier::instance()->isBusy();},20000),
             "Concrete 3MF task did not complete exactly once and release its busy state");
     require(source == bytes(path), "Application import modified its controlled input");
@@ -549,12 +562,24 @@ int main(int argc,char** argv) {
         auto definition=trans::TransDB::create<PrintBedTemplateDB>();
         auto bed=trans::TransDB::create<PrintBedDB>();
         bed->setTemplateDBId(definition->getDBInstanceID());
-        importAndWait("shared-instances.3mf","geometry"); checkForeignInstances();
+        // With no UI host, an omitted intent must request a decision and leave
+        // the document intact; aliases must never silently append geometry.
+        const auto initialRevision = GPlatform::SlicingBackend::instance().configurationRevision();
+        for (const auto* action : {"file.import", "import_model", "model.library.import"}) {
+            const auto warnings = importAndWait("shared-instances.3mf",{},action);
+            require(warnings.contains("Confirm the import options to continue."),
+                    "An interactive 3MF alias silently chose an import mode");
+            require(objects<ModelObjectDB>(TypeID::MODEL_OBJECT_DB).empty() &&
+                    objects<PrintBedDB>(TypeID::PRINT_BED_DB).size()==1 &&
+                    GPlatform::SlicingBackend::instance().configurationRevision()==initialRevision,
+                    "An undecided import modified the document or configuration");
+        }
+        importAndWait("shared-instances.3mf","geometry","model.library.import"); checkForeignInstances();
         require(ActionManager::getInstance()->triggerAction("edit.undo"),"Cannot undo shared 3MF append");
         require(objects<ModelInstanceDB>(TypeID::MODEL_INSTANCE_DB).empty() && objects<ModelObjectDB>(TypeID::MODEL_OBJECT_DB).empty(),
                 "Undo left an imported shared model graph");
         require(ActionManager::getInstance()->triggerAction("edit.redo"),"Cannot redo shared 3MF append"); checkForeignInstances();
-        importAndWait("complete-project.3mf","project"); checkProject(false);
+        importAndWait("complete-project.3mf","project","model.library.import"); checkProject(false);
         checkGeometryAnnotationLifetime();
         configuration->setSetting("layer_height",0.16);
         const auto edited=GPlatform::SlicingBackend::instance().configSnapshot();
@@ -574,6 +599,11 @@ int main(int argc,char** argv) {
                 !warnings.contains("project.preset_gcode_warning"),
                 "Unknown-setting summary hid the custom preset warning or showed a protocol code");
         checkPlateMaterialSynchronization();
+        importAndWait("complete-project.3mf",{},"project.open"); checkProject(false);
+        const auto beforeAppend = objects<ModelInstanceDB>(TypeID::MODEL_INSTANCE_DB).size();
+        importAndWait("shared-instances.3mf","geometry","project.open");
+        require(objects<ModelInstanceDB>(TypeID::MODEL_INSTANCE_DB).size()==beforeAppend+2,
+                "Explicit geometry intent on project.open replaced the document");
     } catch (const std::exception& error) {std::cerr<<error.what()<<'\n'; status=1;}
     ActionManager::getInstance()->cleanupBeforeShutdown();
     ActionHandlerRegistry::instance().clearCache();

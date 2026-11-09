@@ -7,6 +7,10 @@
 #include "ToolpathPreviewDB.hpp"
 #include "ToolpathPreviewUtils.hpp"
 #include <TransactionManager.hpp>
+#include <ToolpathPreviewRelations.hpp>
+#include <ImmediateNotifyGuard.hpp>
+#include <QPointer>
+#include <QThread>
 #include "Foundation/Log.h"
 #include <QColor>
 #include <QDir>
@@ -32,10 +36,21 @@ SlicingPreviewBridge::SlicingPreviewBridge(QObject* parent)
         m_gcodeLines->setPreview(currentToolpathPreview());
         navigateGCode(true);
     });
+    const QPointer<SlicingPreviewBridge> self(this);
+    m_documentListenerId = DocumentManager::instance()->addChangeListener([self](const auto& change) {
+        if (!self || change.changeType != ChangeType::OBJECT_DELETED ||
+            (change.dbType != TypeID::TOOLPATH_PREVIEW_DB &&
+             change.dbType != TypeID::MODEL_INSTANCE_DB && change.dbType != TypeID::PRINT_BED_DB)) return;
+        QMetaObject::invokeMethod(self.data(), [self, change] {
+            if (self && !self->m_shuttingDown.load()) self->checkDocumentDeletion(change);
+        }, Qt::QueuedConnection);
+    });
     LOG_INFO("SlicingPreviewBridge created");
 }
 
-SlicingPreviewBridge::~SlicingPreviewBridge() = default;
+SlicingPreviewBridge::~SlicingPreviewBridge() {
+    if (m_documentListenerId) DocumentManager::instance()->removeChangeListener(m_documentListenerId);
+}
 
 SlicingPreviewBridge* SlicingPreviewBridge::instance() {
     static SlicingPreviewBridge* s_instance = nullptr;
@@ -73,6 +88,10 @@ QString SlicingPreviewBridge::previewStatusMessage() const {
 }
 void SlicingPreviewBridge::beginShutdown() {
     m_shuttingDown.store(true);
+    if (m_documentListenerId) {
+        DocumentManager::instance()->removeChangeListener(m_documentListenerId);
+        m_documentListenerId = 0;
+    }
     ++m_publicationEpoch;
 }
 void SlicingPreviewBridge::notifyCalibrationOutputInvalidated() {
@@ -110,6 +129,12 @@ std::optional<SlicingPreviewBridge::PreparedOutputPublication> SlicingPreviewBri
     if (!output->validate(error)) return std::nullopt;
     if (output->sourceScope == GPlatform::ToolpathPreviewSourceScope::ImportedGCode && !preview) {
         if (error) *error = QStringLiteral("G-code has no compatible preview");
+        return std::nullopt;
+    }
+    if ((output->sourceScope == GPlatform::ToolpathPreviewSourceScope::SingleModel ||
+         output->sourceScope == GPlatform::ToolpathPreviewSourceScope::Plate) &&
+        !ToolpathPreviewRelations::sourceModelsAvailable(output->sourceModelIds, output->printBedId)) {
+        if (error) *error = QStringLiteral("Slice source models are missing or no longer belong to the print bed");
         return std::nullopt;
     }
     return makeOutputPublication(std::move(output), std::move(preview));
@@ -1368,9 +1393,21 @@ bool SlicingPreviewBridge::replaceLegacyToolpathPreview(int modelId, const QStri
         }
     }
     output->sourceModelId = preview->getSourceModelDBId();
+    output->sourceModelIds = preview->getSourceModelDBIds();
+    const bool modelSlice = output->sourceScope == GPlatform::ToolpathPreviewSourceScope::SingleModel ||
+        output->sourceScope == GPlatform::ToolpathPreviewSourceScope::Plate;
+    if (output->sourceScope == GPlatform::ToolpathPreviewSourceScope::SingleModel &&
+        output->sourceModelIds.empty() && output->sourceModelId.isValid())
+        output->sourceModelIds.push_back(output->sourceModelId);
+    output->sourceModelId = output->sourceScope == GPlatform::ToolpathPreviewSourceScope::SingleModel &&
+        output->sourceModelIds.size() == 1 ? output->sourceModelIds.front() : DBInstanceID{};
     output->printBedId = document->getOwner(preview->getDBInstanceID());
     output->displayModelId = modelId;
     output->stats = preview->getStats();
+    if (modelSlice && !ToolpathPreviewRelations::sourceModelsAvailable(output->sourceModelIds, output->printBedId)) {
+        if (error) *error = QStringLiteral("Legacy slice preview has no valid source models");
+        return false;
+    }
     const bool readable = GPlatform::SliceOutputRecord::readable(output->gcode.path);
     auto prepared = readable ? prepareOutputPublication(output, preview, epoch, error)
                              : std::optional<PreparedOutputPublication>(makeOutputPublication(output, preview));
@@ -1379,11 +1416,21 @@ bool SlicingPreviewBridge::replaceLegacyToolpathPreview(int modelId, const QStri
     {
         TransactionGuard transaction("Replace legacy toolpath preview");
         try {
+            if (modelSlice) {
+                ImmediateNotifyGuard immediate;
+                preview->setSourceModelDBIds(output->sourceModelIds);
+                preview->setSourceModelDBId(output->sourceModelId);
+                if (!ToolpathPreviewRelations::sourceEdgesMatch(preview->getDBInstanceID(), output->sourceModelIds))
+                    throw std::runtime_error("Failed to bind legacy slice source models");
+            }
             if (previousPreview && previousPreview != preview && document->getDBInstance(previousPreview->getDBInstanceID()) &&
                 !document->unregisterDBInstance(previousPreview->getDBInstanceID()))
                 throw std::runtime_error("Failed to remove previous toolpath preview");
             if (!acceptsPublication(epoch)) throw std::runtime_error("Task cancelled or superseded");
             if (readable && !output->validate(error)) throw std::runtime_error(error ? error->toStdString() : "Print output unavailable");
+            if (modelSlice && (!ToolpathPreviewRelations::sourceModelsAvailable(output->sourceModelIds, output->printBedId) ||
+                !ToolpathPreviewRelations::sourceEdgesMatch(preview->getDBInstanceID(), output->sourceModelIds)))
+                throw std::runtime_error("Legacy slice source models or dependencies changed before publication");
             transaction.commit();
         } catch (...) {
             transaction.rollback();
@@ -1405,23 +1452,49 @@ bool SlicingPreviewBridge::replaceLegacyToolpathPreview(int modelId, const QStri
 void SlicingPreviewBridge::removeToolpathPreview(int modelId) {
     if (modelId == m_currentModelId) clearAllToolpathPreviews();
 }
+void SlicingPreviewBridge::forgetCurrentOutput() {
+    stop();
+    setPreviewPanelVisible(false);
+    m_activePreview.reset();
+    m_currentOutput.reset();
+    m_activePreviewName.clear();
+    m_currentModelId = -1;
+    m_previewArtifactPath.clear();
+}
+
+void SlicingPreviewBridge::checkDocumentDeletion(const DocumentManager::ChangeNotification& change) {
+    Q_ASSERT(QThread::currentThread() == thread());
+    Q_ASSERT(!TransactionManager::instance().isInTransaction());
+    auto* document = DocumentManager::instance();
+    const bool removedPreview = m_activePreview && change.id == m_activePreview->getDBInstanceID() &&
+        !document->getDBInstance(change.id);
+    // File-only slice results have no DB target. Reuse the same source predicate,
+    // only for this branch; normal previews are retired by their dependency rule.
+    const bool removedOutputOnlySource = !m_activePreview && m_currentOutput &&
+        (m_currentOutput->sourceScope == GPlatform::ToolpathPreviewSourceScope::SingleModel ||
+         m_currentOutput->sourceScope == GPlatform::ToolpathPreviewSourceScope::Plate) &&
+        !ToolpathPreviewRelations::sourceModelsAvailable(m_currentOutput->sourceModelIds, m_currentOutput->printBedId);
+    if (removedPreview || removedOutputOnlySource) {
+        forgetCurrentOutput();
+        notifyCurrentOutput();
+    }
+}
+
 void SlicingPreviewBridge::clearAllToolpathPreviewsInternal(int preservedModelId) {
     ++m_publicationEpoch;
     const bool preserve = preservedModelId >= 0 && m_currentOutput &&
         m_currentOutput->sourceScope == GPlatform::ToolpathPreviewSourceScope::SingleModel &&
         m_currentOutput->sourceModelId == DBInstanceID(std::uint64_t(preservedModelId));
     if (!preserve) {
-        stop();
-        setPreviewPanelVisible(false);
-        if (m_activePreview) {
-            m_activePreview->releasePrintOutputArtifacts();
-            m_activePreview->removeMaterial();
-            DocumentManager::instance()->unregisterDBInstance(m_activePreview->getDBInstanceID());
+        const auto preview = m_activePreview;
+        const auto output = m_currentOutput;
+        const auto material = preview ? preview->getMaterial() : nullptr;
+        forgetCurrentOutput();
+        if (preview) {
+            preview->releasePrintOutputArtifacts();
+            preview->removeMaterial();
+            DocumentManager::instance()->unregisterDBInstance(preview->getDBInstanceID());
         }
-        m_activePreview.reset();
-        m_currentOutput.reset();
-        m_activePreviewName.clear(); m_currentModelId = -1;
-        m_previewArtifactPath.clear();
     }
     notifyCurrentOutput();
 }

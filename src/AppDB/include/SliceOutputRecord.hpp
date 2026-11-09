@@ -4,6 +4,7 @@
 #include <QStringList>
 #include <memory>
 #include <atomic>
+#include <vector>
 
 namespace GPlatform {
 // Only this lease deletes an App-generated file. Records and in-flight imports
@@ -27,6 +28,8 @@ struct SliceOutputRecord {
     QString name;
     ToolpathPreviewSourceScope sourceScope = ToolpathPreviewSourceScope::ImportedGCode;
     DBInstanceID printBedId{INVALID_DB_ID}, sourceModelId{INVALID_DB_ID};
+    // Immutable provenance from the exact slice request, not the current bed contents.
+    std::vector<DBInstanceID> sourceModelIds;
     int displayModelId = -1;
     ToolpathPreviewStats stats;
     bool geometryAvailable = false;

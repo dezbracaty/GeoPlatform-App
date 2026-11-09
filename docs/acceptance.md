@@ -131,8 +131,14 @@ hover 展开标准图和差异提示图，点击后在同一窗口下方显示�
 
 ## 3MF 的业务验收与样本回归
 
-3MF 保留 18 个业务场景，复用同一 catalog、metadata v3、正式 Journal 和共享执行入口。
+普通界面的文件选择、拖放和模型库 3MF 导入均由 `ProjectImportHandler` 决定导入方式；
+未指定 `intent` 时先显示统一的“打开工程／导入模型／取消”弹窗，`.gcode.3mf` 也不预选方式。
+“打开 3MF”按钮只筛选文件，不预选工程模式。脚本显式 `intent` 原样传递；
+`project.open` 保留为显式打开工程的 API 别名，调用者提供 `intent` 时以该值为准。
+
+3MF 保留 16 个业务场景，复用同一 catalog、metadata v3、正式 Journal 和共享执行入口。
 文件选择器、中文路径、拖放、工程替换、原生确认、取消重试、耗材槽、实例、撤销重做和视觉恢复按独立行为组织，
+统一导入场景 `three_mf_unified_import_workflow` 在同一进程连续验证取消、拖放追加和文件选择器打开工程，逐阶段比较 DB；
 不为每个输入文件生成一套 GUI 场景。覆盖矩阵见资产仓库 `docs/3mf-scenarios.md`。
 
 56 个官方原件（22,248,071 字节，51 种内容）位于 `models/three_mf_official/`，原始字节与重复来源路径均保留。
@@ -147,7 +153,7 @@ manifest 固定上游提交、下载链接、大小和 SHA-256，许可来源另
 历史或完整 Backend 配置；这些范围必须由实际对应对象的比较或原生专项分别证明。
 尚缺断言的场景保持 `not_verified`，不能因操作完成或输出文件检查通过而升级。
 
-App 的注册 CTest `Model3MFIntegrationCheck` 经实际 `file.import` 和导入 Handler
+App 的注册 CTest `Model3MFIntegrationCheck` 经实际 `file.import`、`import_model`、模型库和导入 Handler
 核对属性序列化之外的所有权、共享关系、VTK 网格及部件局部矩阵，并检查工程替换、
 追加图的撤销重做、有效切片输入和 Backend 层高编辑／重开恢复。
 这是 App 原生集成补充，不替代 Journal 门禁、真实输入或视口检查。
@@ -168,6 +174,10 @@ python App/tools/run_acceptance.py --cases <comma-separated-ids> --application <
 Journal 默认录制和回放使用 1382×954 逻辑窗口，保留系统原生 DPR；DPR 2 的整窗截图为
 2764×1908 像素。会话结束恢复原窗口大小、限制及显示状态；窗口放不下时明确失败。
 默认不强制 DPR=1，也不通过缩放补偿重启程序。既有基线的 DPR 不作为启动时强制设置。
+批次入口在每个场景启动前按 `preconditions.theme`（`light`／`dark`）准备现有 App INI 的
+`darkMode` 配置；结束、失败或取消后按原始字节恢复，原先不存在的 INI 会删除。
+Windows/macOS 自动定位该 INI，其他平台使用 `--settings-file`。这是 App 验收侧的环境准备，
+不增加 Journal 主题协议，也不修改系统主题。
 正式截图验收仍比较原始图像，尺寸不同会失败；对照窗口的派生图可跨已知 DPR 展示，
 但不会代替自动验证。更新标准仍需核对独立预期、保留原始证据，并在目标环境的新进程中复跑。
 
