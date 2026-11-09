@@ -517,6 +517,10 @@ private:
     DBInstanceID findDependencyReferenceSource(TypeID sourceType,
                                                const DBInstanceID& targetId,
                                                const std::string& relationName) const;
+    std::vector<DBInstanceID> findDependencyReferenceSources(TypeID sourceType,
+        const DBInstanceID& targetId, const std::string& relationName) const;
+    std::vector<DBInstanceID> relationReferenceValues(AutoRegisterDB* object,
+        const std::string& fieldName) const;
     void reconcileRelationReference(AutoRegisterDB* childObject,
                                     const std::string& fieldName,
                                     bool recordTransaction);

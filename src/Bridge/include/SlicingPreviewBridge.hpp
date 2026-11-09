@@ -1,6 +1,7 @@
 #pragma once
 
 #include "BridgeBase.hpp"
+#include <DocumentManager.hpp>
 #include "GCodeLineModel.hpp"
 #include <SliceOutputRecord.hpp>
 #include <atomic>
@@ -239,6 +240,9 @@ private:
     QString resolveCurrentPrintOutputPath() const;
     QString resolveCurrentPrintOutputPath(const QString& formatId) const;
     void clearAllToolpathPreviewsInternal(int preservedModelId);
+    void forgetCurrentOutput();
+    void checkDocumentDeletion(const DocumentManager::ChangeNotification& change);
+    DocumentManager::ListenerID m_documentListenerId{0};
     PreparedOutputPublication makeOutputPublication(
         std::shared_ptr<GPlatform::SliceOutputRecord> output,
         std::shared_ptr<GPlatform::ToolpathPreviewDB> preview) const;

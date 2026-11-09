@@ -819,6 +819,8 @@ void SlicingHandler::performSlice() {
     m_pendingOutput->name = m_modelName;
     m_pendingOutput->sourceScope = m_sliceSourceScope;
     m_pendingOutput->sourceModelId = m_sliceSourceModelId;
+    for (const auto& source : session->sources)
+        m_pendingOutput->sourceModelIds.emplace_back(source.modelId);
     m_pendingOutput->printBedId = m_slicePrintBedId;
     m_pendingOutput->displayModelId = m_sliceSourceScope == GPlatform::ToolpathPreviewSourceScope::SingleModel
         ? int(m_sliceSourceModelId.getValue()) : int(DBInstanceID(m_modelId).getValue());

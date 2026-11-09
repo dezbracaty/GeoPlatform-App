@@ -730,6 +730,35 @@ DBInstanceID DocumentManager::relationReferenceValue(
     return DBInstanceID{};
 }
 
+std::vector<DBInstanceID> DocumentManager::findDependencyReferenceSources(
+    TypeID sourceType, const DBInstanceID& targetId, const std::string& relationName) const {
+    std::vector<DBInstanceID> result;
+    std::shared_lock<std::shared_mutex> lock(m_dependencyRelationMutex);
+    for (const auto& [sourceId, edges] : m_dependencyRelationsBySource) {
+        if (getDBInstanceType(sourceId) != sourceType) continue;
+        for (const auto& edge : edges)
+            if (edge.targetId == targetId && edge.relationName == relationName)
+                result.push_back(sourceId);
+    }
+    return result;
+}
+
+std::vector<DBInstanceID> DocumentManager::relationReferenceValues(
+    AutoRegisterDB* object, const std::string& fieldName) const {
+    if (!object) return {};
+    const auto value = object->getPropertyByName(fieldName);
+    if (const auto* ids = std::any_cast<std::vector<DBInstanceID>>(&value)) {
+        auto result = *ids;
+        result.erase(std::remove_if(result.begin(), result.end(),
+            [](auto id) { return !id.isValid(); }), result.end());
+        std::sort(result.begin(), result.end());
+        result.erase(std::unique(result.begin(), result.end()), result.end());
+        return result;
+    }
+    const auto id = relationReferenceValue(object, fieldName);
+    return id.isValid() ? std::vector<DBInstanceID>{id} : std::vector<DBInstanceID>{};
+}
+
 void DocumentManager::reconcileRelationReference(
     AutoRegisterDB* childObject, const std::string& fieldName,
     bool recordTransaction) {
@@ -739,6 +768,18 @@ void DocumentManager::reconcileRelationReference(
     if (!rule) return;
 
     const DBInstanceID childId = childObject->getDBInstanceID();
+    if (!rule->ownsChild) {
+        const auto desired = relationReferenceValues(childObject, fieldName);
+        const auto current = findDependencyReferenceSources(rule->parentType, childId, rule->relationName);
+        for (const auto id : current)
+            if (std::find(desired.begin(), desired.end(), id) == desired.end())
+                detachDependencyRelationInternal(id, childId, rule->relationName,
+                    recordTransaction, DBRelationDetachReason::ExplicitDetach);
+        for (const auto id : desired)
+            if (getDBInstanceType(id) == rule->parentType)
+                attachDependencyRelationInternal(id, childId, rule->relationName, recordTransaction);
+        return;
+    }
     const DBInstanceID desiredParentId =
         relationReferenceValue(childObject, fieldName);
     const DBInstanceID currentParentId = rule->ownsChild
