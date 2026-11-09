@@ -52,6 +52,26 @@ class MacRegressionTests(unittest.TestCase):
             self.assertIn('screenshot',result['regression']['error'])
             self.assertTrue((root/'App.dmg').is_file())
 
+    def test_disabled_regression_packages_and_records_explicit_skip(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            def package():
+                (root / 'App.dmg').write_bytes(b'installer')
+                return dict(package='App.dmg')
+            result = package_and_regress(package, None, root / 'stages.json')
+            self.assertEqual(result['installer']['status'], 'passed')
+            self.assertEqual(result['regression'], dict(status='skipped', reason='run_journal=false'))
+            self.assertEqual(json.loads((root / 'stages.json').read_text()), result)
+            self.assertEqual((root / 'App.dmg').read_bytes(), b'installer')
+
+    def test_disabled_regression_does_not_hide_installer_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            def package():
+                raise RuntimeError('installer failed')
+            result = package_and_regress(package, None, Path(temporary) / 'stages.json')
+            self.assertEqual(result['installer']['status'], 'failed')
+            self.assertEqual(result['regression']['status'], 'skipped')
+
     def test_regression_uses_native_delivery_app_and_all_pinned_assets(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);source=root/'source';source.mkdir()

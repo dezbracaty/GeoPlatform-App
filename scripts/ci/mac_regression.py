@@ -80,10 +80,15 @@ def regression(source, bundle, output, env, test_assets_sha=None):
 
 
 def package_and_regress(package, verify, result_path):
-    """Both children start after deployment; a failure never skips the other child's evidence."""
+    """Package after deployment, optionally running regression alongside it."""
     results = {}
+    operations = [('installer', package)]
+    if verify is None:
+        results['regression'] = dict(status='skipped', reason='run_journal=false')
+    else:
+        operations.append(('regression', verify))
     with ThreadPoolExecutor(max_workers=2) as pool:
-        pending = {name: pool.submit(operation) for name, operation in [('installer', package), ('regression', verify)]}
+        pending = {name: pool.submit(operation) for name, operation in operations}
         for name, future in pending.items():
             try:
                 value = future.result()

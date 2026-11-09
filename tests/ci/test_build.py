@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts/ci"))
-from build import cache_value, validate_sdk, validate_source_inputs, windows_entry
+from build import cache_value, main, validate_sdk, validate_source_inputs, windows_entry
 from common import digest
 from fs_fixture import directory_link
 
@@ -217,6 +217,26 @@ class WindowsEntryChecks(unittest.TestCase):
                         windows_entry(source, 'target with spaces', ['-DNAME=value with spaces'], environment)
                 else:
                     windows_entry(source, 'target with spaces', ['-DNAME=value with spaces'], environment)
+
+
+class JournalSelectionChecks(unittest.TestCase):
+    def test_packaging_only_does_not_require_test_assets(self):
+        arguments = ['build.py', '--source-dir', 'source', '--platform', 'macos',
+                     '--app-sha', 'a' * 40, '--sdk-sha', 'b' * 40, '--no-run-journal']
+        with patch('sys.argv', arguments), patch('build.build') as execute:
+            main()
+        execute.assert_called_once_with(Path('source'), 'macos', 'a' * 40, 'b' * 40, None, run_journal=False)
+
+    def test_default_still_requires_assets_for_macos_regression(self):
+        import contextlib
+        import io
+        arguments = ['build.py', '--source-dir', 'source', '--platform', 'macos',
+                     '--app-sha', 'a' * 40, '--sdk-sha', 'b' * 40]
+        with patch('sys.argv', arguments), patch('build.build') as execute, contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as error:
+                main()
+        self.assertEqual(error.exception.code, 2)
+        execute.assert_not_called()
 
 
 if __name__ == "__main__":
