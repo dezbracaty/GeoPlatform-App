@@ -333,7 +333,8 @@ def materialize_journal(case, output, export_root):
     return path, digest(path)
 
 
-def run_case(root, name, application, output, exports, session, journal_loader, *, review_screenshots=False):
+def run_case(root, name, application, output, exports, session, journal_loader, *, review_screenshots=False,
+             environment_overrides=None):
     """Run one fresh session; preserve its report and evaluate declared business checks."""
     root, output, application = Path(root).resolve(), Path(output).resolve(), Path(application).resolve()
     if output.exists():
@@ -360,6 +361,8 @@ def run_case(root, name, application, output, exports, session, journal_loader, 
                                     journalSessionSha256=digest(inspect.getfile(type(session))),
                                     journalLoaderSha256=digest(inspect.getfile(journal_loader)),
                                     appSource=git_identity(Path(__file__).resolve().parents[1]))
+        if environment_overrides is not None:
+            result['provenance']['environmentOverrides'] = dict(environment_overrides)
         app_root = Path(__file__).resolve().parents[1]
         if review_screenshots:
             result['provenance']['screenshotComparisonSha256'] = digest(Path(__file__).with_name('screenshot_comparison.py'))
@@ -402,7 +405,8 @@ def run_case(root, name, application, output, exports, session, journal_loader, 
         return result
     started = time.time_ns()
     try:
-        execution = session.run(runtime_journal, application=application, output_dir=output, startup_timeout=120)
+        setup = dict(environment_overrides=environment_overrides) if environment_overrides is not None else {}
+        execution = session.run(runtime_journal, application=application, output_dir=output, startup_timeout=120, **setup)
         result['executionResultPath'] = 'execution_result.json'
         result['journalAcceptance'] = execution.get('acceptance')
         result['completedEntries'] = execution.get('completedEntries', 0)

@@ -4,10 +4,19 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
-from run_acceptance import select_cases, update_run_summary
+from run_acceptance import select_cases, update_run_summary, regression_environment
 
 
 class SelectionTests(unittest.TestCase):
+    def test_windows_regression_policy_is_owned_by_app_and_other_platforms_keep_defaults(self):
+        from unittest.mock import patch
+        with patch('run_acceptance.sys.platform', 'win32'):
+            self.assertEqual(regression_environment(), dict(
+                QT_ENABLE_HIGHDPI_SCALING='0', QT_SCALE_FACTOR='1', QT_FONT_DPI='96'))
+        for platform in ('darwin', 'linux'):
+            with self.subTest(platform=platform), patch('run_acceptance.sys.platform', platform):
+                self.assertIsNone(regression_environment())
+
     def test_explicit_all_runs_every_mode(self):
         names = ['first-geometry', 'first-project', 'second-geometry', 'second-project']
         self.assertEqual(select_cases(names, 'all'), names)

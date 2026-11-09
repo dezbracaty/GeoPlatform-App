@@ -38,9 +38,11 @@ def print_files(directory):
 class SessionFixture:
     def __init__(self, writer=None, overrides=None):
         self.writer, self.overrides, self.calls = writer, overrides or {}, 0
+        self.environments = []
 
-    def run(self, journal, *, application, output_dir, startup_timeout):
+    def run(self, journal, *, application, output_dir, startup_timeout, environment_overrides=None):
         self.calls += 1
+        self.environments.append(environment_overrides)
         output_dir.mkdir(parents=True)
         if self.writer:
             self.writer()
@@ -112,6 +114,7 @@ class AcceptanceCheck(unittest.TestCase):
                 '--settings-file', str(settings)], session=session)
         self.assertEqual(code, 0)
         self.assertEqual(session.calls, 1)
+        self.assertEqual(session.environments, [run_acceptance.regression_environment()])
         self.assertEqual(settings.read_bytes(), b'original settings')
         self.assertEqual(read_json(output / 'job/case_result.json')['status'], 'passed')
         self.assertTrue(read_json(output / 'summary.json')['settingsRestored'])

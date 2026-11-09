@@ -12,6 +12,13 @@ from verification_methods import METHODS, SUPPLEMENTAL_VALIDATORS, VALIDATORS
 from screenshot_review import checkpoint_declarations
 
 
+def regression_environment():
+    """App owns its Windows regression policy; other platforms keep native defaults."""
+    if sys.platform == 'win32':
+        return dict(QT_ENABLE_HIGHDPI_SCALING='0', QT_SCALE_FACTOR='1', QT_FONT_DPI='96')
+    return None
+
+
 def select_cases(names, cases=None, *, exclude=''):
     """Keep explicit filters effective and distinguish them from the full manifest."""
     requested = cases if cases is not None else 'p3_height_color_export'
@@ -90,6 +97,9 @@ def main(argv=None, *, session=None, progress=None):
     summary = dict(schemaVersion=1, status='not_verified', plannedCases=selected, cases=[],
                    applicationPath=str(args.application.resolve()), assetsRoot=str(args.assets.resolve()),
                    selectionScope='all' if args.cases == 'all' and selected == names else 'explicit')
+    environment = regression_environment()
+    if environment is not None:
+        summary['environmentOverrides'] = environment
     update_run_summary(summary)
     summary['screenshotCheckpoints'] = {}
     for name in selected:
@@ -122,7 +132,8 @@ def main(argv=None, *, session=None, progress=None):
                 case_exports = args.exports / output.name / name
                 case_exports.mkdir(parents=True, exist_ok=False)
             result = run_case(args.assets, name, args.application, output / name, case_exports,
-                              session if session is not None else JournalExecutionSession(), load_journal, review_screenshots=True)
+                              session if session is not None else JournalExecutionSession(), load_journal,
+                              review_screenshots=True, environment_overrides=environment)
             summary['cases'].append(dict(id=name, status=result['status'], result=f'{name}/case_result.json'))
             update_run_summary(summary)
             write_summary(output, summary)

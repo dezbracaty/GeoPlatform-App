@@ -161,11 +161,24 @@ python App/tools/run_acceptance.py --cases <comma-separated-ids> --application <
 
 文件选择和拖放通过正式 Qt 输入回放。`${inputDirectory:MODEL_ID}` 和 `${inputUri:MODEL_ID}`
 仅绑定已声明且哈希正确的仓库样本；`${exports}` 绑定保存窗口的位置字段。中断时分别报告计划、完成和未运行项。
-Journal 录制和回放统一使用 1382×954 逻辑窗口，保留系统原生 DPR；DPR 2 的整窗截图为
+Journal 默认录制和回放使用 1382×954 逻辑窗口，保留系统原生 DPR；DPR 2 的整窗截图为
 2764×1908 像素。会话结束恢复原窗口大小、限制及显示状态；窗口放不下时明确失败。
-不再强制 DPR=1，也不通过缩放补偿重启程序。既有基线的 DPR 不作为启动时强制设置。
+默认不强制 DPR=1，也不通过缩放补偿重启程序。既有基线的 DPR 不作为启动时强制设置。
 正式截图验收仍比较原始图像，尺寸不同会失败；对照窗口的派生图可跨已知 DPR 展示，
 但不会代替自动验证。更新标准仍需核对独立预期、保留原始证据，并在目标环境的新进程中复跑。
+
+App `tools/run_acceptance.py` 拥有 Windows 场景测试的启动环境策略：CLI 和 GUI 场景
+测试均通过此入口，对新测试实例显式传入 `QT_ENABLE_HIGHDPI_SCALING=0`、
+`QT_SCALE_FACTOR=1`、`QT_FONT_DPI=96`，用于建立 DPR 1 的 Windows 标准。
+候选采集也走同一入口。桌面缩放、注册表和用户环境变量不变。
+macOS/Linux 不传覆盖参数，保持原来的原生 DPR 行为；macmini 资产和基准不变。
+
+JournalSystem 的 `environment_overrides` 是通用子进程环境参数，不包含 Windows
+或 DPR 专属策略。优先级为：继承环境、既有场景环境、默认缩放清理、显式覆盖；
+未传此参数时与原实现一致。覆盖仅适用于由 Session 启动的新实例，不能修改已有 App。
+批次 summary、case provenance 和原始 execution result 记录本次显式覆盖值。
+实际窗口信息仍由既有 Journal 接口读取；DPR 和原始 PNG 尺寸应与新标准一致，
+不对原始图像做缩放补偿，也不把截图采集成功当作业务验收通过。
 
 ### G-code 与文件包补充检查
 
