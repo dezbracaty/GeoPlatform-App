@@ -65,7 +65,8 @@ def collect_screenshots(checkpoints, execution, output):
             row['executionStatus'] = step['status']
             row['automaticStatus'] = step['status']
             evidence = step.get('evidence', [])
-            actual = evidence[1] if standard and len(evidence) >= 2 else evidence[0] if not standard and evidence else None
+            compared = standard and step.get('kind') == 'verify.screenshot'
+            actual = evidence[1] if compared and len(evidence) >= 2 else evidence[0] if not compared and evidence else None
             if actual and step['status'] in {'passed', 'failed'}:
                 try:
                     source = (output / actual).resolve()

@@ -11,6 +11,8 @@
 | `source_ref` | `feature/gplatform-ui` | App 已有分支或完整提交 SHA |
 | `test_assets_ref` | `macmini` | TestAssets 仓库已有分支或完整提交 SHA，仅用于 macOS 回归 |
 | `run_journal` | `true` | 是否执行 macOS Journal 回归；设为 `false` 仅编译、检查、部署和打包 |
+| `windows_test_assets_ref` | `windows` | Windows TestAssets 分支或完整 SHA，独立于 macmini |
+| `run_windows_journal` | `true` | 是否执行 Windows Journal 回归 |
 | `publish_release` | `true` | 全部构建及启用的检查成功后，是否发布到本 App 仓库的 Releases；设为 `false` 只保留 Actions 附件 |
 | `request_id` | 空 | 主仓库内部关联 ID；独立手动运行可留空 |
 
@@ -18,11 +20,11 @@
 测试资产版本从该 App 声明的 TestAssets 仓库独立解析为固定 SHA，并记录到本次输入。
 `macmini` 是测试资产分支，不要求宿主或 App 创建同名分支。选择的远端引用必须存在，否则准备失败；
 本地分支不会自动发布，也不会自动成为 CI 输入。
-`run_journal=false` 时不解析或下载 TestAssets，不需要 Journal 工具、Pillow 或图形桌面会话；
+两个平台的回归开关均为 `false` 时不解析或下载 TestAssets，不需要 Journal 工具、Pillow 或图形桌面会话；
 SDK 校验、`SDKConsumerExtensionCheck`、Universal 部署审计和安装包生成仍执行。
 此选项不会修改基线，也不会将未执行的 Journal 记成通过。
 
-App 消费 SDK 格式 3 / UI package 1，产品构建依赖 SDK 与 Orca 两个引用。`tests/TestAssets` 声明 `update=none`，产品编译仍跳过它；macOS 回归阶段显式初始化该仓库，再检出准备阶段选定的测试 SHA 并获取 LFS 实体，不改 App gitlink。详见 [验收架构](acceptance.md)。SmoothUI、SmoothUIDock 及其 KDDockWidgets 实现由生产者编成 SDK，App 不克隆这些实现仓库；构建前验证完整 SDK manifest、UI 资源合同及 Orca 受管内容/版本，不改写来源清单。
+App 消费 SDK 格式 3 / UI package 1，产品构建依赖 SDK 与 Orca 两个引用。`tests/TestAssets` 声明 `update=none`，产品编译仍跳过它；各平台回归阶段显式初始化该仓库，再检出准备阶段选定的测试 SHA 并获取 LFS 实体，不改 App gitlink。详见 [验收架构](acceptance.md)。SmoothUI、SmoothUIDock 及其 KDDockWidgets 实现由生产者编成 SDK，App 不克隆这些实现仓库；构建前验证完整 SDK manifest、UI 资源合同及 Orca 受管内容/版本，不改写来源清单。
 
 控制 workflow/CI 脚本来自本次 workflow 提交，产品代码来自固定的 App 提交；两者分别记录。App 仓库自己的 `.github/`、`scripts/ci/`、`tests/ci/`、`docs/ci.md` 由本仓库维护，主仓库同步产品源码时保留。
 
@@ -69,6 +71,11 @@ Mac 合并、部署及审计 Universal App 完成后，在同一个受机器锁�
 DMG 帮助函数使用自己的暂存副本，不能修改被测 App。Journal 场景仍串行运行，不需要第二个 runner。
 两项分别保存终态，一项失败仍等待另一项保存证据；任一失败导致 Mac job 失败。
 两平台独立完成，任何检查、编译、打包、必需回归或附件上传失败均导致整体失败。
+Windows 在现有 installer 目标完成后，串行调用同一个 `tools/run_acceptance.py --cases all`，
+对 `build-Release/GPlatform.exe` 回归。安装目标可能更新部署产物，因此不与回放并发。
+Windows 固定独立的资产 SHA，核对实际 DPR=1、窗口及截图 1382×954；runner 必须处于
+已登录且解锁的桌面会话，Session 0 服务会话直接失败。App 显式配置专用测试子进程，系统桌面缩放不变。
+Windows 同样单独上传回归证据，失败仍上传；`build-result.json` 明确记录该平台的回归终态。
 关闭 `run_journal` 时，Mac 直接从已部署并审计的 Universal App 生成 DMG，不启动回归任务，
 也不创建回归结果附件；安装包附件中的 `mac-stages.json` 和 `build-result.json` 明确记录
 `regression.status=skipped`、`reason=run_journal=false`。
@@ -87,7 +94,7 @@ DMG 帮助函数使用自己的暂存副本，不能修改被测 App。Journal �
 全部成功后，独立发布任务只下载本轮 run ID / attempt 的两个安装包附件。关闭此开关会跳过
 发布任务，不要求 RELEASE Secret，不改变安装包构建、检查与 Actions 附件上传。
 
-发布前核对两平台的 App/SDK SHA、架构、SDK 消费检查、macOS 回归终态及安装包 SHA-256。
+发布前核对两平台的 App/SDK SHA、架构、SDK 消费检查、各自启用的回归终态及安装包 SHA-256。
 标签为 `build-<run_id>-<attempt>`，明确指向本次固定的 App SHA，不默认使用 `main` 或 workflow
 控制提交。先创建预发布草稿，上传 EXE、DMG、各自的 SHA-256 文件和
 `build-result-windows.json` / `build-result-macos.json`。同名构建信息分别命名，避免相互覆盖；
@@ -119,3 +126,21 @@ actionlint .github/workflows/build-app.yml
 ```
 
 真实双平台验收仍要通过本 workflow 运行；本地 fixture 与语法检查不代替 Windows/Mac 实际结果。
+
+## Windows 标准准备
+
+Windows 资产位于 TestAssets 的 `windows` 分支。App 沿用开发分支，默认资产 gitlink 不改为平台专属分支。
+业务场景采用当前 App 集成版本，保留 macmini 的输入修正；Windows 标准单独采集、审核。
+包含部署资源绝对路径的完整 DB 标准必须在 `preconditions.applicationDirectory` 声明实际应用目录。
+部署目录不同，场景可以用 `deploymentResources` 显式声明资源相对路径及审核过的 SHA256。
+现有 Journal 物化阶段先核对当前部署文件哈希，再仅替换标准 DB 中对应的完整 UTF-8 路径字符串及长度。
+原始标准与实际 DB 不改写，正式比较仍覆盖全部字节；资源变化、缺失或标准内路径不明确均拒绝运行。
+没有该声明的旧场景仍要求原部署目录。此绑定不证明独立 App 已通过，仍须执行 CI 正式回放。
+
+候选采集使用同一个入口增加 `--capture-candidates`：在相同 entryIndex 将 verify.db/verify.screenshot
+物化为已有 capture.db/screenshot.capture，保留原始 Journal、业务输入、时间点与标准。
+运行目录记录原始和执行 JSON 的哈希、实际窗口、DB 原始字节及截图。
+候选完成返回 not_verified（退出码 2），不会写入资产或通过 CI。逐检查点审核后才更新 Windows 标准，
+随后在新目录运行不带该选项的完整回归。CI 拒绝待审核标准、候选采集和不完整的场景清单。
+
+Windows 开关独立于现有 macOS 开关；关闭任意平台的回归仅记录该平台 skipped，发布阶段分别检查两平台终态。

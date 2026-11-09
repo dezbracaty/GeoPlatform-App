@@ -208,3 +208,18 @@ P/K/R、其他平面、绝对圆心和非平面沉积明确拒绝。均匀层的
 
 截图只覆盖 Journal 声明的目标区域。诊断截图、原生对照及输出检查分别报告，不据此宣称
 选择状态、全视口外观、完整刀路等价、设备行为或实物打印已经验收。
+
+## Windows 基准采集
+
+复用本入口增加 `--capture-candidates`，在原有 DB、截图检查点采集候选。原场景和标准保持不变，
+运行目录 `.declarations/` 保存物化后的执行 Journal；输入、时间点和 entryIndex 不变。
+DB 使用已有 capture.db，截图使用已有 screenshot.capture，并进入同一截图复核报告。
+执行失败仍报 failed，候选完成报 not_verified，不会自动更新标准。
+
+逐检查点核对业务目标后，仅将审核通过的原始文件写入 TestAssets/windows，记录来源、哈希和审核依据，
+再用原有 verify.db/verify.screenshot 完整回放。候选目录不能作为通过结果，CI 拒绝 candidateCollection。
+
+包含部署资源路径的 DB 场景可声明 `deploymentResources`（`resources/...` 相对路径到 SHA256 的映射），
+并在 `preconditions.applicationDirectory` 保留采集目录。物化时先验证当前应用资源哈希，再绑定标准中
+唯一对应的 `string.utf8` 路径及长度；其他字节保持原样，实际 DB 始终完整比较。原始标准及运行 JSON
+分别保留哈希。资源缺失、内容变化、未引用或重复路径都报错；未声明此字段的场景行为不变。

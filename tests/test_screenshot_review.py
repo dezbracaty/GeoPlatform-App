@@ -17,7 +17,7 @@ except ImportError:
 
 
 def load_document(path):
-    return json.loads(Path(path).read_text())
+    return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 class CaptureSession:
@@ -135,7 +135,7 @@ class ScreenshotReviewCheck(unittest.TestCase):
         with patch('acceptance.write_batch_report', side_effect=RuntimeError('<missing image>')):
             write_summary(output, summary)
         self.assertEqual(load_document(output / 'summary.json')['status'], 'passed')
-        report = (output / 'report.html').read_text()
+        report = (output / 'report.html').read_text(encoding="utf-8")
         self.assertIn('visual/case_report.html', report)
         self.assertIn('&lt;missing image&gt;', report)
         self.assertNotIn('<missing image>', report)
@@ -173,7 +173,7 @@ class ScreenshotReviewCheck(unittest.TestCase):
                        cases=[dict(id='visual', status=result['status'])],
                        screenshotCheckpoints={'unstarted': checkpoint_declarations(self.document)})
         write_summary(self.root / 'run', summary)
-        report = (self.root / 'run/report.html').read_text()
+        report = (self.root / 'run/report.html').read_text(encoding="utf-8")
         self.assertIn('&lt;script&gt;unsafe&lt;/script&gt;', report)
         self.assertNotIn('<script>unsafe</script>', report)
         self.assertEqual(report.count('class="checkpoint"'), 4)

@@ -36,7 +36,7 @@ class ReleaseChecks(unittest.TestCase):
             if platform == 'macos':
                 metadata.update(installer=dict(installer, status='passed'), regression=dict(status='passed'))
             else:
-                metadata.update(installer)
+                metadata.update(installer, regression=dict(status='passed'))
             (directory / 'build-result.json').write_text(json.dumps(metadata))
 
     def update_metadata(self, platform, **values):
@@ -122,6 +122,18 @@ class ReleaseChecks(unittest.TestCase):
         with patch.object(publish_release, 'run', side_effect=record):
             publish_release.publish(self.root, **self.inputs)
         self.assertIn('**skipped**', notes[0])
+
+    def test_windows_regression_failure_or_missing_evidence_blocks_publication(self):
+        for status in ['failed', 'not_verified', 'skipped', None]:
+            self.update_metadata('windows', regression=dict(status=status))
+            with self.assertRaisesRegex(RuntimeError, 'Windows.*Journal regression'):
+                self.publish()
+        self.assertEqual(self.calls, [])
+
+    def test_explicit_windows_skip_can_publish_without_claiming_a_pass(self):
+        self.inputs['run_windows_journal'] = False
+        self.update_metadata('windows', regression=dict(status='skipped', reason='run_journal=false'))
+        self.assertTrue(self.publish())
 
     def test_upload_failure_never_publishes_the_draft(self):
         original = self.execute

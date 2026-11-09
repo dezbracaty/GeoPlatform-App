@@ -15,6 +15,14 @@ on:
         description: Run macOS Journal regression alongside packaging
         type: boolean
         default: true
+      windows_test_assets_ref:
+        description: TestAssets branch or complete SHA for Windows regression
+        type: string
+        default: windows
+      run_windows_journal:
+        description: Run Windows Journal regression on the logged-in desktop
+        type: boolean
+        default: true
       publish_release:
         description: Publish a prerelease after all enabled checks succeed
         type: boolean
@@ -33,6 +41,7 @@ jobs:
       app_sha: ${{ steps.source.outputs.app_sha }}
       sdk_sha: ${{ steps.source.outputs.sdk_sha }}
       test_assets_sha: ${{ steps.source.outputs.test_assets_sha }}
+      windows_test_assets_sha: ${{ steps.source.outputs.windows_test_assets_sha }}
       windows_labels: ${{ steps.windows.outputs.labels }}
       macos_labels: ${{ steps.macos.outputs.labels }}
       prepared_at: ${{ steps.ready.outputs.prepared_at }}
@@ -60,6 +69,8 @@ jobs:
         env:
           SOURCE_REF: ${{ inputs.source_ref }}
           TEST_ASSETS_REF: ${{ inputs.test_assets_ref }}
+          WINDOWS_TEST_ASSETS_REF: ${{ inputs.windows_test_assets_ref }}
+          RUN_WINDOWS_JOURNAL: ${{ inputs.run_windows_journal }}
           RUN_JOURNAL: ${{ inputs.run_journal }}
         with:
           github-token: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
@@ -77,28 +88,32 @@ jobs:
             const {data:sdk} = await github.rest.repos.getContent({...context.repo, path:'ThirdParty/libs/GPlatformSDK', ref:sha});
             if (!sdk.submodule_git_url || !/^[0-9a-f]{40}$/.test(sdk.sha))
               throw new Error('App commit does not contain the SDK submodule');
-            let testSha = '';
-            if (process.env.RUN_JOURNAL === 'true') {
+            let testSha = '', windowsTestSha = '';
+            if (process.env.RUN_JOURNAL === 'true' || process.env.RUN_WINDOWS_JOURNAL === 'true') {
               const {data:assets} = await github.rest.repos.getContent({...context.repo, path:'tests/TestAssets', ref:sha});
               const repository = /^(?:https:\/\/github\.com\/|git@github\.com:)([^/]+)\/([^/]+?)(?:\.git)?$/.exec(assets.submodule_git_url || '');
               if (!repository) throw new Error('App does not declare the TestAssets GitHub repository');
               const testRepository = {owner:repository[1], repo:repository[2]};
-              const requestedTests = process.env.TEST_ASSETS_REF;
-              if (/^[0-9a-f]{40}$/.test(requestedTests)) {
-                const {data} = await github.rest.repos.getCommit({...testRepository, ref:requestedTests});
-                if (data.sha !== requestedTests) throw new Error('TestAssets SHA did not resolve exactly');
-                testSha = data.sha;
-              } else {
-                const {data} = await github.rest.repos.getBranch({...testRepository, branch:requestedTests});
-                testSha = data.commit.sha;
+              async function resolveTests(requestedTests) {
+                if (/^[0-9a-f]{40}$/.test(requestedTests)) {
+                  const {data} = await github.rest.repos.getCommit({...testRepository, ref:requestedTests});
+                  if (data.sha !== requestedTests) throw new Error('TestAssets SHA did not resolve exactly');
+                  return data.sha;
+                } else {
+                  const {data} = await github.rest.repos.getBranch({...testRepository, branch:requestedTests});
+                  return data.commit.sha;
+                }
               }
+              if (process.env.RUN_JOURNAL === 'true') testSha = await resolveTests(process.env.TEST_ASSETS_REF);
+              if (process.env.RUN_WINDOWS_JOURNAL === 'true') windowsTestSha = await resolveTests(process.env.WINDOWS_TEST_ASSETS_REF);
             }
+            core.setOutput('windows_test_assets_sha', windowsTestSha);
             core.setOutput('test_assets_sha', testSha);
             core.setOutput('app_sha', sha);
             core.setOutput('sdk_sha', sdk.sha);
             await core.summary.addHeading('Fixed build inputs').addTable([
               [{data:'App SHA',header:true}, {data:'SDK SHA',header:true}, {data:'TestAssets SHA',header:true}],
-              [sha, sdk.sha, testSha || 'skipped (run_journal=false)']
+              [sha, sdk.sha, 'macOS: ' + (testSha || 'skipped') + '; Windows: ' + (windowsTestSha || 'skipped')]
             ]).write();
       - id: windows
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
@@ -172,7 +187,7 @@ jobs:
         run: |
           import subprocess, sys
           subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'control/tests/ci'], check=True)
-      - name: Build and package App with optional macOS Journal regression
+      - name: Build and package App with platform Journal regression
         id: package
         shell: python
         env:
@@ -180,7 +195,8 @@ jobs:
           APP_SHA: ${{ needs.prepare.outputs.app_sha }}
           SDK_SHA: ${{ needs.prepare.outputs.sdk_sha }}
           TEST_ASSETS_SHA: ${{ needs.prepare.outputs.test_assets_sha }}
-          RUN_JOURNAL: ${{ inputs.run_journal }}
+          WINDOWS_TEST_ASSETS_SHA: ${{ needs.prepare.outputs.windows_test_assets_sha }}
+          RUN_JOURNAL: ${{ matrix.platform == 'windows' && inputs.run_windows_journal || matrix.platform == 'macos' && inputs.run_journal }}
           PLATFORM: ${{ matrix.platform }}
         run: |
           import os, subprocess, sys
@@ -189,8 +205,9 @@ jobs:
                      '--sdk-sha', os.environ['SDK_SHA']]
           if os.environ['RUN_JOURNAL'] == 'false':
               command.append('--no-run-journal')
-          if os.environ['TEST_ASSETS_SHA']:
-              command += ['--test-assets-sha', os.environ['TEST_ASSETS_SHA']]
+          tests = os.environ['WINDOWS_TEST_ASSETS_SHA' if os.environ['PLATFORM'] == 'windows' else 'TEST_ASSETS_SHA']
+          if tests:
+              command += ['--test-assets-sha', tests]
           subprocess.run(command, check=True)
       - name: Upload required installer and checksums
         if: always() && steps.package.outputs.deliverables != ''
@@ -201,11 +218,11 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
-      - name: Upload macOS regression evidence
-        if: always() && matrix.platform == 'macos' && steps.package.outputs.regression_results != ''
+      - name: Upload platform regression evidence
+        if: always() && steps.package.outputs.regression_results != ''
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
-          name: app-macos-regression-${{ github.run_id }}-${{ github.run_attempt }}
+          name: app-${{ matrix.platform }}-regression-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.package.outputs.regression_results }}
           if-no-files-found: error
           retention-days: 7
@@ -300,7 +317,7 @@ jobs:
             if (results.prepare.result === 'success' && results.prepare.outputs.attempt !== process.env.CURRENT_ATTEMPT)
               core.setFailed('Partial reruns are rejected before scheduling builds; choose Re-run all jobs or start a new workflow.');
             if (Object.values(results).some(job => job.result !== 'success'))
-              core.setFailed('Both platform builds, packaging, enabled macOS regression and uploads must pass.');
+              core.setFailed('Both platform builds, packaging, enabled platform regressions and uploads must pass.');
   publish:
     needs: [prepare, result]
     if: inputs.publish_release && needs.prepare.outputs.attempt == github.run_attempt
@@ -331,4 +348,5 @@ jobs:
           APP_SHA: ${{ needs.prepare.outputs.app_sha }}
           SDK_SHA: ${{ needs.prepare.outputs.sdk_sha }}
           RUN_JOURNAL: ${{ inputs.run_journal }}
+          RUN_WINDOWS_JOURNAL: ${{ inputs.run_windows_journal }}
         run: python3 control/scripts/ci/publish_release.py --artifacts installers

@@ -10,6 +10,7 @@ import sys
 import tempfile
 
 from mac_regression import regression, package_and_regress
+from windows_regression import regression as windows_regression
 from common import digest, git_env, init_source_submodules, machine_lock, prepare_cached_source, run, text_git, write_json
 
 
@@ -169,7 +170,25 @@ def build(source, platform, app_sha, sdk_sha, test_assets_sha=None, *, run_journ
         (output / (destination.name + ".sha256")).write_text(f"{checksum}  {destination.name}\n")
         write_json(output / "build-result.json", dict(app_sha=app_sha, sdk_sha=sdk_sha,
                    platform=platform, architecture=architecture, sdk_consumer_check="passed",
-                   package=destination.name, sha256=checksum, installation_tested=False))
+                   package=destination.name, sha256=checksum, installation_tested=False,
+                   regression=dict(status='pending' if run_journal else 'skipped', reason='run_journal=false' if not run_journal else 'not_started')))
+        if run_journal:
+            regression_output = Path(tempfile.mkdtemp(prefix='app-regression-', dir=os.environ['RUNNER_TEMP']))
+            with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as stream:
+                stream.write(f'regression_results={regression_output}\n')
+            with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as stream:
+                stream.write(f'APP_REGRESSION_ROOT={regression_output}\n')
+            result_path = output / 'build-result.json'
+            result = json.loads(result_path.read_text(encoding='utf-8'))
+            try:
+                result['regression'] = windows_regression(source, source / 'build-Release/GPlatform.exe',
+                                                          regression_output, env, test_assets_sha)
+            except Exception as exc:
+                result['regression'] = dict(status='failed', error=str(exc))
+                raise
+            finally:
+                write_json(result_path, result)
+                write_json(regression_output / 'regression-result.json', result['regression'])
     print(f"Build and package checks passed: {destination.name}")
 
 
@@ -179,12 +198,12 @@ def main():
     p.add_argument("--platform", choices=("windows", "macos"), required=True)
     p.add_argument("--app-sha", required=True)
     p.add_argument("--sdk-sha", required=True)
-    p.add_argument('--test-assets-sha', help='Prepared TestAssets commit for macOS regression')
+    p.add_argument('--test-assets-sha', help='Prepared platform TestAssets commit for Journal regression')
     p.add_argument('--run-journal', action=argparse.BooleanOptionalAction, default=True,
-                   help='Run macOS Journal regression (default: enabled)')
+                   help='Run this platform Journal regression (default: enabled)')
     a = p.parse_args()
-    if a.platform == 'macos' and a.run_journal and not a.test_assets_sha:
-        p.error('--test-assets-sha is required for macOS regression')
+    if a.run_journal and not a.test_assets_sha:
+        p.error('--test-assets-sha is required for Journal regression')
     build(a.source_dir, a.platform, a.app_sha, a.sdk_sha, a.test_assets_sha, run_journal=a.run_journal)
 
 

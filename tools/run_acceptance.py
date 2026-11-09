@@ -71,6 +71,8 @@ def main(argv=None, *, session=None, progress=None):
     parser.add_argument('--application', type=Path)
     parser.add_argument('--cases', help='Comma-separated IDs, or all; defaults to all for --list, otherwise p3_height_color_export')
     parser.add_argument('--exclude', default='')
+    parser.add_argument('--capture-candidates', action='store_true',
+                        help='Capture DB/screenshots at existing checkpoints for review; never adopts standards or passes formal acceptance')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--exports', type=Path, help='Actual App export directory; files must be generated in this run')
     parser.add_argument('--settings-file', type=Path, help='App INI to restore between cases (Windows default is detected)')
@@ -118,6 +120,8 @@ def main(argv=None, *, session=None, progress=None):
     summary = dict(schemaVersion=1, status='not_verified', plannedCases=selected, cases=[],
                    applicationPath=str(args.application.resolve()), assetsRoot=str(args.assets.resolve()),
                    selectionScope='all' if args.cases == 'all' and selected == names else 'explicit')
+    if args.capture_candidates:
+        summary['candidateCollection'] = True
     environment = regression_environment()
     if environment is not None:
         summary['environmentOverrides'] = environment
@@ -158,7 +162,8 @@ def main(argv=None, *, session=None, progress=None):
                 case_exports.mkdir(parents=True, exist_ok=False)
             result = run_case(args.assets, name, args.application, output / name, case_exports,
                               session if session is not None else JournalExecutionSession(), load_journal,
-                              review_screenshots=True, environment_overrides=environment)
+                              review_screenshots=True, environment_overrides=environment,
+                              **(dict(capture_candidates=True) if args.capture_candidates else {}))
             summary['cases'].append(dict(id=name, status=result['status'], result=f'{name}/case_result.json'))
             update_run_summary(summary)
             write_summary(output, summary)

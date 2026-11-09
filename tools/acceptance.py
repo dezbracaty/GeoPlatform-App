@@ -9,6 +9,7 @@ import inspect
 import json
 import re
 import shutil
+import struct
 import subprocess
 import time
 from pathlib import Path
@@ -192,8 +193,12 @@ def validate_check(check, artifacts, expected):
 
 def git_identity(directory):
     try:
-        revision = subprocess.check_output(['git', '-C', str(directory), 'rev-parse', 'HEAD'], stderr=subprocess.DEVNULL, text=True).strip()
-        status = subprocess.check_output(['git', '-C', str(directory), 'status', '--porcelain'], stderr=subprocess.DEVNULL, text=True)
+        top = subprocess.check_output(['git', '-C', str(directory), 'rev-parse', '--show-toplevel'],
+                                      stderr=subprocess.DEVNULL, text=True, encoding='utf-8').strip()
+        if Path(top).resolve() != Path(directory).resolve():
+            return dict(commit=None, dirty=None)
+        revision = subprocess.check_output(['git', '-C', str(directory), 'rev-parse', 'HEAD'], stderr=subprocess.DEVNULL, text=True, encoding='utf-8').strip()
+        status = subprocess.check_output(['git', '-C', str(directory), 'status', '--porcelain'], stderr=subprocess.DEVNULL, text=True, encoding='utf-8')
         return dict(commit=revision, dirty=bool(status.strip()))
     except (OSError, subprocess.CalledProcessError):
         return dict(commit=None, dirty=None)
@@ -276,7 +281,56 @@ def write_summary(output, summary):
     write_json(output / 'summary.json', summary)
 
 
-def materialize_journal(case, output, export_root):
+def bind_deployment_resources(document, metadata, application):
+    """Relocate declared, hash-pinned resource strings in expected DB bytes only."""
+    resources = metadata.get('deploymentResources')
+    if resources is None:
+        return False
+    require(isinstance(resources, dict) and resources, 'deploymentResources must be a nonempty mapping')
+    captured = metadata.get('preconditions', {}).get('applicationDirectory')
+    require(application is not None and isinstance(captured, str) and Path(captured).is_absolute(),
+            'Deployment resources require an application and captured applicationDirectory')
+    directory = Path(application).resolve().parent
+    replacements = []
+    for relative, expected_hash in resources.items():
+        require(isinstance(relative, str) and relative.startswith('resources/')
+                and not any(part in ('', '.', '..') for part in relative.split('/'))
+                and not any(char in relative for char in '\\:'), 'Invalid deployment resource path')
+        require(isinstance(expected_hash, str) and re.fullmatch(r'[0-9a-f]{64}', expected_hash),
+                'Invalid deployment resource SHA256')
+        resource = (directory / relative).resolve()
+        require(resource.is_relative_to(directory) and resource.is_file(),
+                f'Missing deployment resource: {relative}')
+        require(digest(resource) == expected_hash, f'Deployment resource hash differs: {relative}')
+
+        def token(value):
+            encoded = str(value).encode('utf-8')
+            return struct.pack('<Q', 11) + b'string.utf8' + struct.pack('<Q', len(encoded)) + encoded
+
+        replacements.append((relative, token(Path(captured) / relative), token(directory / relative)))
+    seen, changed = set(), False
+    for entry in document['entries']:
+        if entry['kind'] != 'verify.db':
+            continue
+        payload = entry['payload']
+        raw = base64.b64decode(payload['expectedSerialized'], validate=True)
+        require(payload['serializationFormat'] == 'transdb.cereal-portable-binary.v1'
+                and raw[:5] == b'\x01SBDT', 'Deployment binding requires portable little-endian DB standards')
+        original = raw
+        for relative, before, after in replacements:
+            count = raw.count(before)
+            require(count <= 1, f'Ambiguous deployment resource in DB standard: {relative}')
+            if count:
+                seen.add(relative)
+                raw = raw.replace(before, after, 1)
+        if raw != original:
+            payload['expectedSerialized'] = base64.b64encode(raw).decode('ascii')
+            changed = True
+    require(seen == set(resources), f'Deployment resources missing from DB standards: {set(resources) - seen}')
+    return changed
+
+
+def materialize_journal(case, output, export_root, *, capture_candidates=False, application=None):
     """Bind declared portable output names; playback remains the formal Session.
 
     Preserve the authored document and separately hash the exact runtime JSON.
@@ -285,9 +339,18 @@ def materialize_journal(case, output, export_root):
     # The formal loader decorates in-memory entries with wire sequence and source
     # identity. Those fields must never be written back into a v2 Journal file.
     document = read_json(case['journal'])
-    changed = False
+    changed = bind_deployment_resources(document, case['metadata'], application)
     declared = {a['fileName'] for a in case['metadata'].get('artifacts', {}).values()}
-    for entry in document['entries']:
+    for index, entry in enumerate(document['entries'], 1):
+        if capture_candidates and entry['kind'] == 'verify.db':
+            entry.update(kind='capture.db', payload=dict(dbInstanceId=entry['payload']['dbInstanceId']))
+            changed = True
+        elif capture_candidates and entry['kind'] == 'verify.screenshot':
+            require(entry['payload'].get('window') in (None, {'objectName': 'gplatform.main'}),
+                    'Candidate screenshot capture supports the main application window only')
+            entry.update(kind='action', payload=dict(code='screenshot.capture', params=dict(
+                filepath=f'candidates/screenshot_{index:03d}.png', notify=False)))
+            changed = True
         if entry['kind'] != 'action':
             if entry['kind'] == 'input.key':
                 value = entry['payload'].get('text')
@@ -334,7 +397,7 @@ def materialize_journal(case, output, export_root):
 
 
 def run_case(root, name, application, output, exports, session, journal_loader, *, review_screenshots=False,
-             environment_overrides=None):
+             environment_overrides=None, capture_candidates=False):
     """Run one fresh session; preserve its report and evaluate declared business checks."""
     root, output, application = Path(root).resolve(), Path(output).resolve(), Path(application).resolve()
     if output.exists():
@@ -342,6 +405,8 @@ def run_case(root, name, application, output, exports, session, journal_loader, 
     result = dict(schemaVersion=3, id=name, status='blocked', scope='', executionResultPath=None,
                   provenance=dict(assets=git_identity(root), applicationPath=str(application)), unverifiedScopes=[],
                   verificationPlan=None, methodResults=[])
+    if capture_candidates:
+        result['candidateCollection'] = True
     checks = []
     checkpoints = []
     execution = {}
@@ -383,7 +448,9 @@ def run_case(root, name, application, output, exports, session, journal_loader, 
         existing = [export_root / a['fileName'] for a in metadata.get('artifacts', {}).values()
                     if (export_root / a['fileName']).exists()]
         require(not existing, f'Export destination already exists: {existing}')
-        runtime_journal, runtime_hash = materialize_journal(case, output, export_root)
+        runtime_journal, runtime_hash = materialize_journal(case, output, export_root,
+                                                         capture_candidates=capture_candidates,
+                                                         application=application)
         result['provenance']['runtimeJournal'] = dict(path=str(runtime_journal), sha256=runtime_hash)
     except Exception as exc:
         output.mkdir(parents=True)

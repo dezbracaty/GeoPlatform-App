@@ -11,7 +11,7 @@ import tempfile
 from common import digest, run
 
 
-def collect_assets(root, staging, app_sha, sdk_sha, run_journal):
+def collect_assets(root, staging, app_sha, sdk_sha, run_journal, run_windows_journal=True):
     assets = []
     regression = ''
     for platform, extension, architecture in [('windows', '.exe', 'x64'), ('macos', '.dmg', 'universal')]:
@@ -27,6 +27,10 @@ def collect_assets(root, staging, app_sha, sdk_sha, run_journal):
             regression = metadata.get('regression', {}).get('status')
             if installer.get('status') != 'passed' or regression != ('passed' if run_journal else 'skipped'):
                 raise RuntimeError('macOS installer or enabled Journal regression did not pass')
+        else:
+            windows_status = metadata.get('regression', {}).get('status')
+            if windows_status != ('passed' if run_windows_journal else 'skipped'):
+                raise RuntimeError('Windows enabled Journal regression did not pass or explicit skip is missing')
         name = installer.get('package', '')
         if (not name or Path(name).name != name or '\\' in name or '\n' in name
                 or '#' in name or Path(name).suffix.lower() != extension):
@@ -49,7 +53,7 @@ def collect_assets(root, staging, app_sha, sdk_sha, run_journal):
 
 
 def publish(root, *, repository, app_sha, sdk_sha, workflow_sha, run_id, attempt,
-            run_journal, server_url='https://github.com'):
+            run_journal, run_windows_journal=True, server_url='https://github.com'):
     if (not all(re.fullmatch('[0-9a-f]{40}', sha) for sha in [app_sha, sdk_sha, workflow_sha])
             or not re.fullmatch('[1-9][0-9]*', run_id) or not re.fullmatch('[1-9][0-9]*', attempt)):
         raise ValueError('Publishing requires fixed source SHAs and the current workflow identity')
@@ -57,7 +61,7 @@ def publish(root, *, repository, app_sha, sdk_sha, workflow_sha, run_id, attempt
     workflow_url = f'{server_url}/{repository}/actions/runs/{run_id}/attempts/{attempt}'
     with tempfile.TemporaryDirectory(prefix='app-release-') as temporary:
         staging = Path(temporary)
-        assets, regression = collect_assets(root, staging, app_sha, sdk_sha, run_journal)
+        assets, regression = collect_assets(root, staging, app_sha, sdk_sha, run_journal, run_windows_journal)
         expected = {path.name: (path.stat().st_size, 'sha256:' + digest(path)) for path in assets}
         notes = staging / 'notes.md'
         notes.write_text(f"""Development prerelease; manual acceptance is still required.
@@ -66,6 +70,7 @@ App SHA: `{app_sha}`
 SDK SHA: `{sdk_sha}`
 Workflow SHA: `{workflow_sha}`
 macOS Journal regression: **{regression}**
+Windows Journal regression: **{'passed' if run_windows_journal else 'skipped'}**
 
 [Build and check results]({workflow_url})
 
@@ -94,6 +99,7 @@ def main():
                   app_sha=os.environ['APP_SHA'], sdk_sha=os.environ['SDK_SHA'],
                   workflow_sha=os.environ['GITHUB_WORKFLOW_SHA'], run_id=os.environ['GITHUB_RUN_ID'],
                   attempt=os.environ['GITHUB_RUN_ATTEMPT'], run_journal=os.environ['RUN_JOURNAL'] == 'true',
+                  run_windows_journal=os.environ['RUN_WINDOWS_JOURNAL'] == 'true',
                   server_url=os.environ.get('GITHUB_SERVER_URL', 'https://github.com'))
     with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as stream:
         stream.write(f'## App prerelease\n\n[Download installers]({url})\n')
