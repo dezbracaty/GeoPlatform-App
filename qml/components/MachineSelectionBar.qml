@@ -201,12 +201,12 @@ Button {
         var machineChanged = draftMachineChanged
         var requestedBedType = plate.value
         if (machineChanged
-                && !SliceSettingsBridge.selectMachine(machine.id, variant.id)) {
+                && !SliceSettingsBridge.selectMachine(machine.id, variant.id, requestedBedType)) {
             applyError = qsTr("Failed to apply machine configuration. Check the application log.")
             return false
         }
 
-        if (machineChanged || requestedBedType !== currentBedType) {
+        if (!machineChanged && requestedBedType !== currentBedType) {
             SliceSettingsBridge.setSetting("curr_bed_type", requestedBedType)
             var appliedBedType = SliceSettingsBridge.getSetting("curr_bed_type")
             if (appliedBedType === undefined || appliedBedType === null

@@ -103,6 +103,7 @@ public:
     void setOpacity(float opacity);
     Q_INVOKABLE bool assignFilamentSlot(int slot);
     Q_INVOKABLE bool useProjectDefaultFilament();
+    Q_INVOKABLE QString assignPartFilamentSlot(const QString& modelId, const QString& partId, int slot);
 
     // Bindables
     QBindable<bool> bindableHasSelectedModel();

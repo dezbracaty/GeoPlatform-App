@@ -33,6 +33,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QColor>
 #include <QQmlEngine>
 #include <QScopeGuard>
 #include <QSettings>
@@ -456,17 +457,30 @@ void checkPreviewPlacement() {
     const auto beds = objects<PrintBedDB>(TypeID::PRINT_BED_DB);
     require(beds.size() == 2 && std::abs(beds[1]->getPosition().x - 216) < 1e-4,
             "Preview check requires the actual imported second plate");
+    const auto instances = objects<ModelInstanceDB>(TypeID::MODEL_INSTANCE_DB);
     auto* bridge = SlicingPreviewBridge::instance();
     for (const auto& bed : beds) {
+        const auto bedId = bed->getDBInstanceID();
+        std::vector<DBInstanceID> plateSources;
+        for (const auto& instance : instances)
+            if (instance->getParentPrintBedDBId() == bedId && instance->getPrintable())
+                plateSources.push_back(instance->getDBInstanceID());
+        require(!plateSources.empty(), "Preview fixture requires a printable source on each plate");
         for (const auto scope : {ToolpathPreviewSourceScope::Plate, ToolpathPreviewSourceScope::SingleModel,
                                 ToolpathPreviewSourceScope::ImportedGCode, ToolpathPreviewSourceScope::Calibration}) {
             auto output = std::make_shared<SliceOutputRecord>();
             output->setArtifacts(path, false, {}, false, bridge->currentOutput());
             output->name = "Plate preview"; output->sourceScope = scope;
-            output->printBedId = bed->getDBInstanceID();
+            output->printBedId = bedId;
+            if (scope == ToolpathPreviewSourceScope::Plate) {
+                output->sourceModelIds = plateSources;
+            } else if (scope == ToolpathPreviewSourceScope::SingleModel) {
+                output->sourceModelId = plateSources.front();
+                output->sourceModelIds = {output->sourceModelId};
+            }
             const auto result = publishToolpathResult(output, prepared, bridge->beginOutputTask());
-            require(result.accepted && result.preview &&
-                    result.preview->getTransformMatrix().isApprox(bed->getTransformMatrix(), 1e-5f),
+            if (!result.accepted) throw std::runtime_error("Preview publication failed: " + result.error.toStdString());
+            require(result.preview && result.preview->getTransformMatrix().isApprox(bed->getTransformMatrix(), 1e-5f),
                     "Plate-local toolpath preview does not have its print bed display transform");
             require(bytes(path) == source, "Preview display positioning changed the G-code coordinates");
             require(DocumentManager::instance()->getOwner(result.preview->getDBInstanceID()) == bed->getDBInstanceID(),
@@ -518,6 +532,47 @@ void checkPlateMaterialSynchronization() {
     require(bridge->selectProcessPreset(bridge->selectedProcessPresetId()), "Cannot refresh current process preset");
     require(beds.front()->getProjectSemantics() == illegalPayload,
             "Unchanged material domain silently repaired an explicit illegal plate mapping");
+    require(parts.size() >= 2 && parts.front()->object(), "Slot cleanup requires an object with parts");
+    const auto owner = parts.front()->object();
+    {
+        TransactionGuard edit("Set test material bindings");
+        owner->setDefaultFilamentSlot(6);
+        parts.front()->setDefaultFilamentSlot(6);
+        parts.front()->setFilamentBindingMode(int(ModelFilamentBindingMode::ExplicitSlot));
+        parts.back()->setDefaultFilamentSlot(1);
+        parts.back()->setFilamentBindingMode(int(ModelFilamentBindingMode::ExplicitSlot));
+        edit.commit();
+    }
+    auto& history = TransactionManager::instance();
+    const auto undoCount = history.getUndoStackSize();
+    require(bridge->setFilamentColor(0, QColor("#33aa55")), "Cannot set P3's remembered color");
+    auto sequencePlate = expected.front();
+    auto sequenceSettings = sequencePlate["settings"].toObject();
+    sequenceSettings["first_layer_print_sequence"] = "2,1,3,4,5,6";
+    sequencePlate["settings"] = sequenceSettings;
+    beds.front()->setProjectSemantics(QJsonDocument(sequencePlate).toJson(QJsonDocument::Compact).toStdString());
+
+    require(bridge->selectMachine("Flashforge AD5X", "0.4"), "Cannot return to ordinary machine");
+    require(owner->getDefaultFilamentSlot() == 1 &&
+            parts.front()->getFilamentBindingMode() == int(ModelFilamentBindingMode::InheritObject) &&
+            parts.back()->getFilamentBindingMode() == int(ModelFilamentBindingMode::ExplicitSlot) &&
+            parts.back()->getDefaultFilamentSlot() == 1, "Switch must clear only expired slot assignments");
+    require(history.getUndoStackSize() == undoCount, "Printer switch changed document undo history");
+    require(QJsonDocument::fromJson(QByteArray::fromStdString(beds.front()->getProjectSemantics())).object()
+            ["settings"].toObject()["first_layer_print_sequence"].toString() == "1",
+            "Printer switch did not remove expired slots from the first layer print order");
+    const auto ad5x = GPlatform::SlicingBackend::instance().activeConfigView();
+    const auto savedColor = QColor("#33aa55");
+    const auto isSavedColor = [&](const libslicer::FilamentSlotInfo& slot) {
+        return slot.color.red == savedColor.red() && slot.color.green == savedColor.green() &&
+            slot.color.blue == savedColor.blue();
+    };
+    require(ad5x && !ad5x->filament_slots.empty() && !isSavedColor(ad5x->filament_slots.front()),
+            "Switch copied P3's color onto the other printer");
+    require(bridge->selectMachine("P3", "0.4"), "Cannot restore remembered P3 configuration");
+    const auto p3 = GPlatform::SlicingBackend::instance().activeConfigView();
+    require(p3 && !p3->filament_slots.empty() && isSavedColor(p3->filament_slots.front()),
+            "Returning to P3 did not restore its color");
     require(bridge->selectMachine("Flashforge AD5X", "0.4"), "Cannot return to ordinary machine");
     for (const auto& bed : beds) {
         auto semantics = QJsonDocument::fromJson(QByteArray::fromStdString(bed->getProjectSemantics())).object();

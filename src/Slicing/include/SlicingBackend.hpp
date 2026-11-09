@@ -11,22 +11,12 @@
 
 namespace GPlatform {
 
-struct SlicingConfigActivationResult {
-    bool success{false};
-    std::uint64_t revision{0};
-    libslicer::ResolvedSelection selection;
-    std::vector<libslicer::PresetOption> compatibleProcesses;
-    std::vector<libslicer::PresetOption> compatibleFilaments;
-    std::vector<libslicer::ConfigDiagnostic> diagnostics;
-    std::vector<libslicer::SettingItem> settings;
-    std::vector<libslicer::FilamentSlotInfo> filamentSlots;
-
-    explicit operator bool() const noexcept { return success; }
-};
+using SlicingConfigActivationResult = libslicer::ConfigActivationResult;
 
 struct SlicingConfigPatchResult {
     libslicer::SettingsResult settings;
     std::uint64_t appliedRevision{0};
+    libslicer::ProcessPresetComparison processPresetComparison;
     explicit operator bool() const noexcept { return bool(settings); }
 };
 
@@ -58,12 +48,12 @@ public:
     SlicingConfigActivationResult activateConfig(
         const libslicer::ConfigSelection& selection,
         const std::vector<std::pair<std::string, std::string>>& patch = {});
-    libslicer::SettingsResult applyConfigPatch(
+    SlicingConfigPatchResult applyConfigPatch(
         const std::vector<std::pair<std::string, std::string>>& patch);
     SlicingConfigPatchResult applyConfigPatchIfRevision(std::uint64_t expectedRevision,
         const std::vector<std::pair<std::string, std::string>>& patch);
-    libslicer::SettingsResult setConfigValue(std::string_view key, std::string_view value);
-    libslicer::SettingsResult resetConfigValue(std::string_view key);
+    SlicingConfigPatchResult setConfigValue(std::string_view key, std::string_view value);
+    SlicingConfigPatchResult resetConfigValue(std::string_view key);
     std::optional<libslicer::ActiveConfigView> activeConfigView() const;
     std::uint64_t configurationRevision() const;
     libslicer::ConfigActivationResult setFilamentPreset(

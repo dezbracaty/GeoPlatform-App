@@ -473,6 +473,18 @@ bool ModelPropertyBridge::useProjectDefaultFilament() {
     return accepted;
 }
 
+QString ModelPropertyBridge::assignPartFilamentSlot(const QString& modelId, const QString& partId, int slot) {
+    if (modelId.isEmpty() || partId.isEmpty() || slot < 0) return {};
+    QVariantMap args{{QStringLiteral("modelId"), modelId}, {QStringLiteral("partId"), partId}};
+    if (slot == 0) args.insert(QStringLiteral("inheritObject"), true);
+    else args.insert(QStringLiteral("slot"), slot);
+    const auto outcome = ActionManager::getInstance()->invokeActionWithReceipt(
+        slot == 0 ? QStringLiteral("model.filament.use_default") : QStringLiteral("model.filament.assign"), args);
+    if (!outcome.value(QStringLiteral("success")).toBool()) return {};
+    const auto ids = outcome.value(QStringLiteral("result")).toMap().value(QStringLiteral("partIds")).toList();
+    return ids.isEmpty() ? QString{} : ids.front().toString();
+}
+
 void ModelPropertyBridge::setOpacity(float opacity) {
     if (qFuzzyCompare(m_opacity, opacity)) return;
 

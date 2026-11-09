@@ -15,6 +15,20 @@ PanelSurface {
     property bool collapsed: false
     property bool positioned: false
     property int page: 0
+    property string objectSettingsModelId: ""
+    property string objectSettingsPartId: ""
+    property string expandedModelId: ""
+    property string selectedPartId: ""
+    property string selectedPartModelId: ""
+    property string selectedPartName: ""
+    readonly property string highlightedPartId: visible && !collapsed && page === 1
+        && SelectionBridge.selectionCount === 1 && selectedPartModelId === String(SelectionBridge.selectedId)
+        ? selectedPartId : ""
+    onHighlightedPartIdChanged: sceneModels.highlightModelPart(selectedPartModelId, highlightedPartId)
+    readonly property bool editingObjectSettings: page === 1 && objectSettingsModelId.length > 0
+        && SelectionBridge.selectionCount === 1 && objectSettingsModelId === String(SelectionBridge.selectedId)
+    onPageChanged: if (page !== 1)
+        objectSettingsModelId = ""
     property int activeSlot: 0
     property Item boundsItem: parent
     property bool workspaceReady: false
@@ -49,6 +63,34 @@ PanelSurface {
 
     DBPropertyBridge {
         id: sceneModels
+    }
+    Connections {
+        target: SelectionBridge
+        function onSelectionChanged() {
+            const modelId = SelectionBridge.selectionCount === 1 ? String(SelectionBridge.selectedId) : "";
+            if (modelId !== root.selectedPartModelId)
+                root.selectedPartId = "";
+            if (modelId !== root.objectSettingsModelId)
+                root.objectSettingsModelId = "";
+        }
+        function onModelSelectionReaffirmed() {
+            if (root.selectedPartId.length) {
+                root.selectedPartId = "";
+                root.objectSettingsModelId = "";
+            }
+        }
+        function onParameterModifierPicked(modelId, partId) {
+            if (!root.workspaceReady || !root.editingEnabled || FiberMaskBridge.active || CutToolBridge.active)
+                return;
+            const models = sceneModels.models;
+            const modelIndex = root.indexOf(models, "id", modelId);
+            if (modelIndex < 0)
+                return;
+            const parts = models[modelIndex].parts;
+            const partIndex = root.indexOf(parts, "id", partId);
+            if (partIndex >= 0)
+                root.showPart(modelId, parts[partIndex], partIndex);
+        }
     }
     ColorDialog {
         id: modelColorDialog
@@ -90,6 +132,30 @@ PanelSurface {
     function showObjects() {
         open();
         page = 1;
+        objectSettingsModelId = "";
+    }
+    function selectModel(modelId) {
+        selectedPartId = "";
+        ActionManager.triggerAction("selection.pick", {modelId: modelId});
+    }
+    function partTitle(part, index) {
+        return (index + 1) + ". " + part.name;
+    }
+    function findPart(modelId, partId) {
+        const model = sceneModels.models.find(function(item) { return item.id === modelId; });
+        return model ? model.parts.find(function(part) { return part.id === partId; }) : undefined;
+    }
+    function showPart(modelId, part, index) {
+        open();
+        page = 1;
+        expandedModelId = modelId;
+        selectedPartModelId = modelId;
+        selectedPartName = partTitle(part, index);
+        selectedPartId = part.id;
+        if (part.modifier) {
+            objectSettingsPartId = part.id;
+            objectSettingsModelId = modelId;
+        }
     }
     function focusSetting(key) {
         open();
@@ -526,13 +592,56 @@ PanelSurface {
             showParamKeys: false
             fiberAvailable: root.fiberCapable
         }
+        RowLayout {
+            visible: root.editingObjectSettings
+            Layout.fillWidth: true
+            Layout.leftMargin: 16
+            Layout.rightMargin: 16
+            Button {
+                objectName: "print.configuration.objectSettingsBack"
+                text: qsTr("Back to models")
+                flat: true
+                onClicked: root.objectSettingsModelId = ""
+            }
+            Label {
+                Layout.fillWidth: true
+                text: root.objectSettingsPartId.length ? root.selectedPartName : ModelPropertyBridge.displayName
+                elide: Text.ElideRight
+                horizontalAlignment: Text.AlignRight
+            }
+        }
+        PartMaterialChoice {
+            visible: root.editingObjectSettings && root.objectSettingsPartId.length > 0
+            Layout.fillWidth: true
+            Layout.leftMargin: 16
+            Layout.rightMargin: 16
+            modelId: root.objectSettingsModelId
+            partId: root.objectSettingsPartId
+        }
+        Loader {
+            active: root.editingObjectSettings
+            visible: active
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.minimumHeight: 0
+            sourceComponent: SlicingSettingsContent {
+                compactPanel: true
+                embedded: true
+                showParamKeys: false
+                objectMode: true
+                objectModelId: root.objectSettingsModelId
+                objectPartId: root.objectSettingsPartId
+                automationNamespace: "print.configuration.object"
+                fiberAvailable: root.fiberCapable
+            }
+        }
         ScrollView {
             id: objectsScroll
             objectName: "print.configuration.objects"
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.minimumHeight: 0
-            visible: root.page === 1
+            visible: root.page === 1 && !root.editingObjectSettings
             leftPadding: 16
             rightPadding: 16
             clip: true
@@ -565,40 +674,102 @@ PanelSurface {
                 }
                 Repeater {
                     model: sceneModels.models
-                    Button {
-                        id: objectButton
+                    ColumnLayout {
+                        id: modelRow
                         required property var modelData
-                        objectName: "print.configuration.model." + modelData.id
                         Layout.fillWidth: true
-                        implicitHeight: 35
-                        font.pixelSize: 12
-                        text: modelData.name
-                        highlighted: String(SelectionBridge.selectedId) === modelData.id
-                        background: Rectangle {
-                            radius: 5
-                            color: objectButton.highlighted ? Qt.alpha(root.SmoothUI.theme.accentColor.defaultBrushFor(root.SmoothUI.dark), 0.09) : "transparent"
-                            border.width: 1
-                            border.color: objectButton.highlighted ? "#d8eafa" : root.lineColor
-                        }
-                        contentItem: RowLayout {
-                            spacing: 8
-                            Icon {
-                                Layout.preferredWidth: 15
-                                Layout.preferredHeight: 15
-                                source: FluentIcons.graph_Package
-                                color: root.secondaryText
-                            }
-                            Label {
+                        spacing: 3
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Button {
+                                id: objectButton
+                                objectName: "print.configuration.model." + modelRow.modelData.id
                                 Layout.fillWidth: true
-                                text: objectButton.modelData.name
-                                font: objectButton.font
-                                elide: Text.ElideRight
+                                implicitHeight: 35
+                                font.pixelSize: 12
+                                text: modelRow.modelData.name
+                                highlighted: String(SelectionBridge.selectedId) === modelRow.modelData.id
+                                    && !root.highlightedPartId.length
+                                background: Rectangle {
+                                    radius: 5
+                                    color: objectButton.highlighted ? Qt.alpha(root.SmoothUI.theme.accentColor.defaultBrushFor(root.SmoothUI.dark), 0.09) : "transparent"
+                                    border.width: 1
+                                    border.color: objectButton.highlighted ? "#d8eafa" : root.lineColor
+                                }
+                                contentItem: RowLayout {
+                                    spacing: 8
+                                    Icon {
+                                        Layout.preferredWidth: 15
+                                        Layout.preferredHeight: 15
+                                        source: FluentIcons.graph_Package
+                                        color: root.secondaryText
+                                    }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: objectButton.text
+                                        font: objectButton.font
+                                        elide: Text.ElideRight
+                                    }
+                                }
+                                enabled: root.editingEnabled && !FiberMaskBridge.active && !CutToolBridge.active
+                                onClicked: root.selectModel(modelRow.modelData.id)
+                            }
+                            Button {
+                                objectName: objectButton.objectName + ".expand"
+                                visible: modelRow.modelData.parts.length > 0
+                                flat: true
+                                implicitWidth: 28
+                                implicitHeight: 35
+                                icon.name: root.expandedModelId === modelRow.modelData.id
+                                    ? FluentIcons.graph_ChevronDownSmall : FluentIcons.graph_ChevronRightSmall
+                                Accessible.name: qsTr("Model parts")
+                                onClicked: root.expandedModelId = root.expandedModelId === modelRow.modelData.id
+                                    ? "" : modelRow.modelData.id
                             }
                         }
-                        enabled: root.editingEnabled && !FiberMaskBridge.active && !CutToolBridge.active
-                        onClicked: ActionManager.triggerAction("selection.pick", {
-                            modelId: modelData.id
-                        })
+                        Repeater {
+                            model: root.expandedModelId === modelRow.modelData.id ? modelRow.modelData.parts : []
+                            Button {
+                                id: partButton
+                                required property var modelData
+                                required property int index
+                                objectName: "print.configuration.part." + modelData.id
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 16
+                                implicitHeight: 30
+                                flat: true
+                                font.pixelSize: 11
+                                highlighted: root.highlightedPartId === modelData.id
+                                text: root.partTitle(modelData, index)
+                                Accessible.name: text + (modelData.modifier ? ", " + qsTr("Parameter modifier") : "")
+                                contentItem: RowLayout {
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: partButton.text
+                                        elide: Text.ElideRight
+                                        font: partButton.font
+                                    }
+                                    Label {
+                                        visible: partButton.modelData.modifier
+                                        text: qsTr("Modifier")
+                                        color: root.secondaryText
+                                        font: partButton.font
+                                    }
+                                    Label {
+                                        visible: partButton.modelData.slot > 0
+                                        text: qsTr("Slot %1").arg(partButton.modelData.slot)
+                                        color: root.secondaryText
+                                        font: partButton.font
+                                    }
+                                }
+                                enabled: objectButton.enabled
+                                onClicked: {
+                                    const modelId = modelRow.modelData.id;
+                                    ActionManager.triggerAction("selection.pick", {modelId: modelId});
+                                    root.showPart(modelId, modelData, index);
+                                }
+                            }
+                        }
                     }
                 }
                 Label {
@@ -614,6 +785,23 @@ PanelSurface {
                     visible: ModelPropertyBridge.hasSelectedModel && SelectionBridge.selectionCount === 1
                     enabled: root.editingEnabled && !FiberMaskBridge.active && !CutToolBridge.active
                     spacing: 10
+                    PartMaterialChoice {
+                        objectName: "print.configuration.selectedPartMaterial"
+                        visible: !root.editingObjectSettings && !!part && part.materialEditable
+                        Layout.fillWidth: true
+                        modelId: root.selectedPartModelId
+                        partId: root.selectedPartId
+                    }
+                    Button {
+                        objectName: "print.configuration.objectSettings"
+                        Layout.fillWidth: true
+                        text: qsTr("Model slicing parameters")
+                        onClicked: {
+                            root.selectedPartId = "";
+                            root.objectSettingsPartId = "";
+                            root.objectSettingsModelId = String(SelectionBridge.selectedId);
+                        }
+                    }
                     Label {
                         text: qsTr("Dimensions")
                         font.pixelSize: 11
@@ -776,6 +964,7 @@ PanelSurface {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 35
+            visible: root.page === 0
             color: root.SmoothUI.dark ? root.SmoothUI.theme.res.solidBackgroundFillColorSecondary : "#f8fafc"
             bottomLeftRadius: 8
             bottomRightRadius: 8
@@ -798,21 +987,56 @@ PanelSurface {
                 }
                 Label {
                     Layout.fillWidth: true
-                    text: SliceSettingsBridge.modifiedSettingKeys.length > 0 ? qsTr("%1 settings modified").arg(SliceSettingsBridge.modifiedSettingKeys.length) + (SliceSettingsBridge.hasPendingReslice ? qsTr(" · Reslicing required") : "") : qsTr("Process preset unchanged")
+                    text: qsTr("Project import records: %1").arg(SliceSettingsBridge.importedProcessDifferenceKeys.length)
+                          + (SliceSettingsBridge.modifiedSettingKeys.length > 0
+                             ? qsTr(" · Session edits: %1").arg(SliceSettingsBridge.modifiedSettingKeys.length)
+                               + (SliceSettingsBridge.hasPendingReslice ? qsTr(" · Reslicing required") : "") : "")
                     font.pixelSize: 10
                     color: root.secondaryText
                     elide: Text.ElideRight
+                    HoverHandler { id: processSummaryHover }
+                    ToolTip.visible: processSummaryHover.hovered
+                    ToolTip.text: SliceSettingsBridge.hasProcessComparisonParent
+                                  ? qsTr("Import records include compatibility conversions.")
+                                  : qsTr("Import records include compatibility conversions. No comparable parent preset.")
                 }
                 Button {
                     objectName: "print.configuration.reset"
                     visible: SliceSettingsBridge.modifiedSettingKeys.length > 0
-                    text: qsTr("Restore changes")
+                    text: qsTr("Undo session edits")
                     flat: true
                     font.pixelSize: 10
                     implicitHeight: 28
                     enabled: root.editingEnabled
                     onClicked: SliceSettingsBridge.restoreProcessSettings()
                 }
+            }
+        }
+    }
+
+    component PartMaterialChoice: ComboBox {
+        id: materialChoice
+        property string modelId: ""
+        property string partId: ""
+        readonly property var part: root.findPart(modelId, partId)
+        objectName: "print.configuration.partMaterial"
+        Accessible.name: qsTr("Part material")
+        enabled: root.editingEnabled && !!part && part.materialEditable
+        textRole: "name"
+        model: [{id: 0, name: qsTr("Follow model material")}].concat(root.slots.map(function(slot) {
+            return {id: slot.number, name: String(slot.number) + " · " + slot.presetName};
+        }))
+        currentIndex: !part ? -1 : part.inheritsObject ? 0 : part.slot > 0 ? root.indexOf(model, "id", part.slot) : -1
+        displayText: currentIndex >= 0 ? currentText : part && part.slot > 0
+            ? qsTr("Missing material slot %1").arg(part.slot) : qsTr("Use project default material")
+        onActivated: function(index) {
+            const changed = ModelPropertyBridge.assignPartFilamentSlot(modelId, partId, model[index].id);
+            if (changed.length > 0) {
+                root.selectedPartId = changed;
+                if (root.editingObjectSettings)
+                    root.objectSettingsPartId = changed;
+            } else {
+                currentIndex = part && part.inheritsObject ? 0 : part && part.slot > 0 ? root.indexOf(model, "id", part.slot) : -1;
             }
         }
     }

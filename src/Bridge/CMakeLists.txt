@@ -84,6 +84,7 @@ target_link_libraries(Bridge
         Slicing   # Slicer configuration/catalog application service
     PRIVATE
         GPlatform::ModelSlicingPolicy
+        FacetPaintingCore
         DBRelations
         GPlatformServices # Local model library application service
 )

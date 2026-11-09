@@ -179,6 +179,8 @@ signals:
     void hasSelectionChanged();
     void selectionCountChanged();
     void selectionChanged(const QVariantList& selectedIds);
+    void modelSelectionReaffirmed();
+    void parameterModifierPicked(const QString& modelId, const QString& partId);
     void hasOrientationWidgetChanged();
     void hasScaleWidgetChanged();
     void hasTranslateWidgetChanged();

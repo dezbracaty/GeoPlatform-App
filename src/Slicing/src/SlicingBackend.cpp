@@ -208,90 +208,74 @@ SlicingConfigActivationResult SlicingBackend::activateConfig(
     }
     const libslicer::ConfigSelection requested = selection;
     const auto requestedPatch = patch;
-    return m_impl->invoke([this, requested, requestedPatch]() mutable {
-        SlicingConfigActivationResult output;
-        auto activated = m_impl->library->activate_config(requested, requestedPatch);
-        output.success = activated.success;
-        output.diagnostics = std::move(activated.diagnostics);
-        if (!output.success) {
-            return output;
-        }
-        output.revision = activated.view.revision;
-        output.selection = std::move(activated.view.selection);
-        output.compatibleProcesses = std::move(activated.view.compatible_processes);
-        output.compatibleFilaments = std::move(activated.view.compatible_filaments);
-        output.settings = std::move(activated.view.settings);
-        output.filamentSlots = std::move(activated.view.filament_slots);
-        return output;
+    return m_impl->invoke([this, requested, requestedPatch]() {
+        return m_impl->library->activate_config(requested, requestedPatch);
     });
 }
 
-libslicer::SettingsResult SlicingBackend::applyConfigPatch(
+namespace {
+SlicingConfigPatchResult committedPatch(libslicer::Library& library, libslicer::SettingsResult settings)
+{
+    if (!settings) return {std::move(settings), 0, {}};
+    const auto state = library.capture_configuration();
+    return {std::move(settings), library.configuration_revision(), state.view().process_preset_comparison};
+}
+}
+
+SlicingConfigPatchResult SlicingBackend::applyConfigPatch(
     const std::vector<std::pair<std::string, std::string>>& patch)
 {
     if (!m_available) {
-        return unavailableSettingsResult("libslicer is not initialized");
+        return {unavailableSettingsResult("libslicer is not initialized"), 0, {}};
     }
     std::unique_lock<std::mutex> admissionLock(m_impl->configurationAdmissionMutex);
     if (m_impl->activeLongJobs.load(std::memory_order_acquire) != 0) {
-        return busySettingsResult();
+        return {busySettingsResult(), 0, {}};
     }
     const auto requested = patch;
     return m_impl->invoke([this, requested]() {
-        return m_impl->library->apply_active_config_patch(requested);
+        auto& library = *m_impl->library;
+        return committedPatch(library, library.apply_active_config_patch(requested));
     });
 }
 
 SlicingConfigPatchResult SlicingBackend::applyConfigPatchIfRevision(std::uint64_t expectedRevision,
     const std::vector<std::pair<std::string, std::string>>& patch)
 {
-    if (!m_available) return {unavailableSettingsResult("libslicer is not initialized"), 0};
+    if (!m_available) return {unavailableSettingsResult("libslicer is not initialized"), 0, {}};
     std::unique_lock<std::mutex> admissionLock(m_impl->configurationAdmissionMutex);
-    if (m_impl->activeLongJobs.load(std::memory_order_acquire) != 0) return {busySettingsResult(), 0};
+    if (m_impl->activeLongJobs.load(std::memory_order_acquire) != 0) return {busySettingsResult(), 0, {}};
     const auto requested = patch;
     return m_impl->invoke([this, expectedRevision, requested]() {
-        const auto active = m_impl->library->active_config();
-        if (!active || active->revision != expectedRevision) {
+        auto& library = *m_impl->library;
+        if (expectedRevision == 0 || library.configuration_revision() != expectedRevision) {
             SlicingConfigPatchResult rejected;
             rejected.settings.diagnostics.push_back({"revision", "Calibration configuration has changed"});
             return rejected;
         }
-        SlicingConfigPatchResult result;
-        result.settings = m_impl->library->apply_active_config_patch(requested);
-        if (result.settings) result.appliedRevision = m_impl->library->active_config()->revision;
-        return result;
+        return committedPatch(library, library.apply_active_config_patch(requested));
     });
 }
 
-libslicer::SettingsResult SlicingBackend::setConfigValue(
+SlicingConfigPatchResult SlicingBackend::setConfigValue(
     std::string_view key, std::string_view value)
 {
-    if (!m_available) {
-        return unavailableSettingsResult("libslicer is not initialized");
-    }
-    std::unique_lock<std::mutex> admissionLock(m_impl->configurationAdmissionMutex);
-    if (m_impl->activeLongJobs.load(std::memory_order_acquire) != 0) {
-        return busySettingsResult();
-    }
-    const std::string requestedKey(key);
-    const std::string requestedValue(value);
-    return m_impl->invoke([this, requestedKey, requestedValue]() {
-        return m_impl->library->set_active_config_value(requestedKey, requestedValue);
-    });
+    return applyConfigPatch({{std::string(key), std::string(value)}});
 }
 
-libslicer::SettingsResult SlicingBackend::resetConfigValue(std::string_view key)
+SlicingConfigPatchResult SlicingBackend::resetConfigValue(std::string_view key)
 {
     if (!m_available) {
-        return unavailableSettingsResult("libslicer is not initialized");
+        return {unavailableSettingsResult("libslicer is not initialized"), 0, {}};
     }
     std::unique_lock<std::mutex> admissionLock(m_impl->configurationAdmissionMutex);
     if (m_impl->activeLongJobs.load(std::memory_order_acquire) != 0) {
-        return busySettingsResult();
+        return {busySettingsResult(), 0, {}};
     }
     const std::string requestedKey(key);
     return m_impl->invoke([this, requestedKey]() {
-        return m_impl->library->reset_active_config_value(requestedKey);
+        auto& library = *m_impl->library;
+        return committedPatch(library, library.reset_active_config_value(requestedKey));
     });
 }
 
@@ -613,7 +597,7 @@ libslicer::ProjectReadResult SlicingBackend::readProject(const libslicer::Projec
         return impl->shutdownRequested.load(std::memory_order_acquire) || (cancelled && cancelled());
     };
     {
-        std::lock_guard<std::mutex> lock(m_impl->configurationAdmissionMutex);
+        std::lock_guard<std::mutex> admissionLock(m_impl->configurationAdmissionMutex);
         m_impl->activeLongJobs.fetch_add(1, std::memory_order_release);
     }
     LongJobCompletionGuard completion(m_impl->activeLongJobs);

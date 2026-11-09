@@ -7,6 +7,10 @@
 #include "Foundation/Log.h"
 #include <QPropertyBindingSourceLocation>
 #include <ModelInstanceDB.hpp>
+#include <ModelGeometryDB.hpp>
+#include <ModelPartDB.hpp>
+#include <TransactionManager.hpp>
+#include <TransientPolyDataActorDB.hpp>
 #include <algorithm>
 
 QVariantList DBPropertyBridge::models() const {
@@ -17,11 +21,74 @@ QVariantList DBPropertyBridge::models() const {
     QVariantList result;
     for (const auto& instance : instances) {
         const auto model = std::dynamic_pointer_cast<ModelInstanceDB>(instance);
-        if (model)
-            result.append(QVariantMap{{"id", QString::number(model->getDBInstanceID().getValue())},
-                                      {"name", QString::fromStdString(model->getDisplayName())}});
+        if (!model)
+            continue;
+        QVariantList children;
+        const auto parts = model->parts();
+        if (parts.size() > 1) {
+            for (const auto& part : parts) {
+                const auto role = static_cast<ModelPartRole>(part->getRole());
+                const auto binding = static_cast<ModelFilamentBindingMode>(part->getFilamentBindingMode());
+                children.append(QVariantMap{
+                    {"id", QString::number(part->getDBInstanceID().getValue())},
+                    {"name", QString::fromStdString(part->getDisplayName())},
+                    {"modifier", role == ModelPartRole::ParameterModifier},
+                    {"materialEditable", role == ModelPartRole::Model || role == ModelPartRole::ParameterModifier},
+                    {"inheritsObject", binding == ModelFilamentBindingMode::InheritObject},
+                    {"slot", binding == ModelFilamentBindingMode::ExplicitSlot ? part->getDefaultFilamentSlot() : 0}});
+            }
+        }
+        result.append(QVariantMap{{"id", QString::number(model->getDBInstanceID().getValue())},
+                                  {"name", QString::fromStdString(model->getDisplayName())},
+                                  {"parts", children}});
     }
     return result;
+}
+
+void DBPropertyBridge::highlightModelPart(const QString& modelId, const QString& partId) {
+    m_highlightModel = modelId.isEmpty() ? INVALID_DB_ID : DBInstanceID(modelId.toULongLong());
+    m_highlightPart = partId.isEmpty() ? INVALID_DB_ID : DBInstanceID(partId.toULongLong());
+    updatePartHighlight();
+}
+
+void DBPropertyBridge::updatePartHighlight() {
+    TransientUpdateGuard guard;
+    m_partHighlight.clear();
+    m_highlightGeometry = INVALID_DB_ID;
+    if (!m_highlightModel.isValid() || !m_highlightPart.isValid())
+        return;
+    const auto model = DocumentManager::instance()->getDB<ModelInstanceDB>(m_highlightModel);
+    if (!model || !model->isVisible())
+        return;
+    for (const auto& part : model->parts()) {
+        if (part->getDBInstanceID() != m_highlightPart)
+            continue;
+        const auto geometry = part->geometry();
+        if (!geometry || !part->hasValidMesh())
+            return;
+        m_highlightGeometry = geometry->getDBInstanceID();
+        const auto snapshot = geometry->read();
+        if (!snapshot)
+            return;
+        auto mesh = vtkSmartPointer<vtkPolyData>::New();
+        mesh->ShallowCopy(const_cast<vtkPolyData*>(&snapshot.polyData()));
+        const auto actor = m_partHighlight.create<TransientPolyDataActorDB>();
+        actor->setPickable(false);
+        actor->setDragable(false);
+        actor->setDrawOnTop(true);
+        actor->setGeometry(mesh);
+        Transform transform;
+        transform.setMatrix(model->getTransformMatrix() * part->getLocalTransform().getMatrix());
+        actor->setTransform(transform);
+        if (const auto material = actor->getMaterial()) {
+            const Vector3 color{1.0f, 0.65f, 0.08f};
+            material->setColor(color);
+            material->setDiffuseColor(color);
+            material->setOpacity(0.45f);
+            material->setLighting(false);
+        }
+        return;
+    }
 }
 
 DBPropertyBridge::DBPropertyBridge(QObject* parent) : ObservableBridgeBase(parent) {
@@ -69,6 +136,27 @@ void DBPropertyBridge::setupBindings() {
     // LOG_INFO("DBPropertyBridge bindings setup completed");
 }
 void DBPropertyBridge::handleDatabaseChange(const DocumentManager::ChangeNotification& notification) {
+    if (notification.dbType == TypeID::MODEL_INSTANCE_DB || notification.dbType == TypeID::MODEL_PART_DB ||
+        notification.dbType == TypeID::MODEL_GEOMETRY_DB) {
+        const auto id = notification.id;
+        const auto type = notification.dbType;
+        const bool partListChanged = type == TypeID::MODEL_PART_DB &&
+            (notification.changeType != ChangeType::PROPERTY_CHANGED ||
+             notification.propertyName == "displayName" || notification.propertyName == "Role" ||
+             notification.propertyName == "OrderIndex" || notification.propertyName == "FilamentBindingMode" ||
+             notification.propertyName == "DefaultFilamentSlot");
+        const bool highlightChanged = notification.changeType != ChangeType::PROPERTY_CHANGED ||
+            notification.propertyName == "Transform" || notification.propertyName == "Visible" ||
+            notification.propertyName == "LocalTransform" || notification.propertyName == "GeometryVersion";
+        if (partListChanged || highlightChanged)
+            QMetaObject::invokeMethod(this, [this, id, partListChanged, highlightChanged] {
+                if (partListChanged)
+                    emit modelsChanged();
+                if (highlightChanged &&
+                    (id == m_highlightModel || id == m_highlightPart || id == m_highlightGeometry))
+                    updatePartHighlight();
+            }, Qt::QueuedConnection);
+    }
     // 当文档发生变化时，Qt6 的绑定系统会自动重新计算
     // 我们只需要确保绑定表达式能够被重新求值
 

@@ -77,9 +77,16 @@ private:
         std::unique_ptr<TransactionGuard> transaction;
     };
 
-    struct BlankClickCandidate {
+    struct ClickCandidate {
         DBInstanceID viewId{INVALID_DB_ID};
         QPoint pressPosition;
+        int threshold{0};
+        DBInstanceID modelId{INVALID_DB_ID};
+        DBInstanceID partId{INVALID_DB_ID};
+
+        bool matches(DBInstanceID view, const QPoint& position) const {
+            return view == viewId && (position - pressPosition).manhattanLength() < threshold;
+        }
     };
 
     bool onMousePressEvent(QMouseEvent* event) override;
@@ -114,7 +121,7 @@ private:
     void finishDrag(bool commit);
 
     DragState m_drag;
-    std::optional<BlankClickCandidate> m_blankClick;
+    std::optional<ClickCandidate> m_click;
     std::unordered_map<DBInstanceID, DBInstanceID> m_selectionBoxes;
     bool m_selectionInputSuspended{false};
     QPointer<QObject> m_scopeOwner;

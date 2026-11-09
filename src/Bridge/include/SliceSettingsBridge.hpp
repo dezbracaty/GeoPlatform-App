@@ -25,6 +25,9 @@ class SliceSettingsBridge final : public bridge::BridgeBase {
     Q_PROPERTY(bool hasPendingReslice READ hasPendingReslice NOTIFY hasPendingResliceChanged)
     Q_PROPERTY(QVariantMap settings READ settings WRITE setSettings NOTIFY settingsChanged)
     Q_PROPERTY(QStringList modifiedSettingKeys READ modifiedSettingKeys NOTIFY settingsChanged)
+    Q_PROPERTY(QStringList importedProcessDifferenceKeys READ importedProcessDifferenceKeys NOTIFY settingsChanged)
+    Q_PROPERTY(QStringList highlightedProcessKeys READ highlightedProcessKeys NOTIFY settingsChanged)
+    Q_PROPERTY(bool hasProcessComparisonParent READ hasProcessComparisonParent NOTIFY settingsChanged)
     Q_PROPERTY(bool schemaLoaded READ schemaLoaded NOTIFY schemaChanged)
     Q_PROPERTY(int schemaRevision READ schemaRevision NOTIFY schemaChanged)
     Q_PROPERTY(QString selectedMachineModelId READ selectedMachineModelId NOTIFY machineSelectionChanged)
@@ -46,6 +49,8 @@ public:
         libslicer::ActiveConfigView view;
         QVariantMap machine;
         std::unordered_map<std::string, std::string> processBaseline;
+        QStringList importedProcessDifferenceKeys;
+        QStringList highlightedProcessKeys;
         std::unordered_map<std::string, std::size_t> itemIndex;
         QVariantList schemaSettings, schemaPages, filamentSlots;
         QHash<QString, QVariantMap> schemaByKey;
@@ -55,7 +60,7 @@ public:
         const std::optional<libslicer::ProjectMachine>& = {});
     static std::vector<GPlatform::SlicingConfigDB::Filament> documentFilaments(
         const std::vector<libslicer::FilamentSlotInfo>&);
-    void installCommittedConfiguration(PreparedConfiguration&&) noexcept;
+    void installCommittedConfiguration(PreparedConfiguration&&, bool preserveProcessBaseline = false) noexcept;
     void publishCommittedConfiguration();
     // Capture persisted selection on the GUI thread, load only backend data in
     // a worker, then supply the result before module registration constructs us.
@@ -66,6 +71,9 @@ public:
 
     QVariantMap settings() const;
     QStringList modifiedSettingKeys() const;
+    QStringList importedProcessDifferenceKeys() const;
+    QStringList highlightedProcessKeys() const;
+    bool hasProcessComparisonParent() const;
     void setSettings(const QVariantMap& settings);
 
     Q_INVOKABLE QVariant getSetting(const QString& key,
@@ -81,7 +89,7 @@ public:
     Q_INVOKABLE void markNeedsReslice();
     Q_INVOKABLE QVariantList machineModels() const;
     Q_INVOKABLE QVariantList buildPlateOptions() const;
-    Q_INVOKABLE bool selectMachine(const QString& modelId, const QString& variantId);
+    Q_INVOKABLE bool selectMachine(const QString& modelId, const QString& variantId, const QString& bedType = {});
     Q_INVOKABLE bool selectProcessPreset(const QString& presetId);
     Q_INVOKABLE bool selectFilamentPreset(const QString& presetId);
     Q_INVOKABLE bool selectFilamentPresetForSlot(int slotIndex, const QString& presetId);
@@ -92,6 +100,9 @@ public:
     bool refreshActiveConfig();
 
     Q_INVOKABLE QVariantMap getSettingSchema(const QString& key) const;
+    Q_INVOKABLE QVariantMap objectSettings(const QString& modelId, const QString& partId = {}) const;
+    Q_INVOKABLE QString editObjectSetting(const QString& modelId, const QString& key,
+                                          const QVariant& value, bool inherit, const QString& partId = {});
     Q_INVOKABLE QVariantList getTabPages(const QString& tab,
                                          bool showAdvancedMode = false) const;
     Q_INVOKABLE QVariantList getPageSchema(const QString& tab,
@@ -119,6 +130,7 @@ public:
 signals:
     void hasPendingResliceChanged();
     void settingsChanged();
+    void objectSettingsChanged();
     void settingChanged(const QString& key, const QVariant& value);
     void settingRejected(const QString& key, const QString& message);
     void schemaChanged();
@@ -129,6 +141,7 @@ signals:
 
 private:
     explicit SliceSettingsBridge(QObject* parent = nullptr);
+    ~SliceSettingsBridge() override;
 
     void buildSchemaLocked();
     const libslicer::SettingItem* findItemLocked(std::string_view key) const;
@@ -149,6 +162,7 @@ private:
     void setConfigurationError(const QString& message);
     bool replaceConfig(GPlatform::SlicingConfigActivationResult&& result, bool markPending,
                        bool synchronizePlateMaterials = false);
+    bool updateProcessComparisonLocked(const libslicer::ProcessPresetComparison& comparison);
 
     mutable QReadWriteLock m_lock;
     libslicer::ResolvedSelection m_selection;
@@ -156,6 +170,9 @@ private:
     std::vector<libslicer::PresetOption> m_compatibleFilaments;
     std::vector<libslicer::SettingItem> m_items;
     std::unordered_map<std::string, std::string> m_processBaseline;
+    QStringList m_importedProcessDifferenceKeys;
+    QStringList m_highlightedProcessKeys;
+    bool m_hasProcessComparisonParent{false};
     std::unordered_map<std::string, std::size_t> m_itemIndex;
     QVariantList m_schemaSettings;
     QVariantList m_schemaPages;
@@ -165,5 +182,6 @@ private:
     bool m_schemaLoaded{false};
     int m_schemaRevision{0};
     bool m_hasPendingReslice{false};
+    std::size_t m_documentListenerId{0};
     QVariantMap m_projectMachine;
 };
