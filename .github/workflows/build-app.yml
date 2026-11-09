@@ -169,7 +169,6 @@ jobs:
           SDK_SHA: ${{ needs.prepare.outputs.sdk_sha }}
           TEST_ASSETS_SHA: ${{ needs.prepare.outputs.test_assets_sha }}
           PLATFORM: ${{ matrix.platform }}
-          GPLATFORM_JOURNAL_TOOLS: ${{ vars.GPLATFORM_JOURNAL_TOOLS }}
         run: |
           import os, subprocess, sys
           subprocess.run([sys.executable, 'control/scripts/ci/build.py', '--source-dir', 'source',

@@ -44,7 +44,8 @@ def main(argv=None, *, session=None, progress=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, help='Complete host source (compatibility entry)')
     parser.add_argument('--assets', type=Path, default=app_root / 'tests/TestAssets')
-    parser.add_argument('--journal-tools', type=Path, default=app_root.parent / 'ThirdParty/JournalSystem/tools')
+    parser.add_argument('--journal-tools', type=Path, default=app_root / 'tools/journal',
+                        help='Override the bundled Journal tools directory for development')
     parser.add_argument('--list', action='store_true')
     parser.add_argument('--list-methods', action='store_true', help='Print the fixed method and adapter registry')
     parser.add_argument('--application', type=Path)
@@ -60,11 +61,11 @@ def main(argv=None, *, session=None, progress=None):
         return 0
     if args.source:
         args.assets = args.source / 'App/tests/TestAssets'
-        args.journal_tools = args.source / 'ThirdParty/JournalSystem/tools'
+        args.journal_tools = args.source / 'App/tools/journal'
     if not (args.assets / 'catalog.json').is_file():
         parser.error('Initialize pinned assets: git -C App submodule update --init --checkout tests/TestAssets')
     if not (args.journal_tools / 'journal_execution_session.py').is_file():
-        parser.error('Provide maintained JournalSystem tools with --journal-tools')
+        parser.error(f'Journal tools not found at {args.journal_tools}; use the bundled App tools/journal directory')
     sys.path.insert(0, str(args.journal_tools.resolve()))
     from journal_runner import load_journal
     from journal_execution_session import JournalExecutionSession

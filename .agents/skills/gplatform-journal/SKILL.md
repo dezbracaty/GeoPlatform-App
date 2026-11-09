@@ -5,7 +5,7 @@ description: 编写或执行 GPlatform 的真实应用 Journal 验收。先明�
 
 # Journal 应用验收
 
-本技能随 App 保存，正式 Python 工具当前位于完整宿主的 `ThirdParty/JournalSystem/tools/`。模型与场景由 `APP_ROOT/tests/TestAssets` 固定子模块维护，入口为 `scenarios/<id>/events/Journal.json`；通过 `tools/run_acceptance.py` 统一执行及业务验收，规则见 `docs/acceptance.md`。先确认实际工具、场景、被测可执行文件和验证资产；独立 App 通过 `--journal-tools` 提供正式工具，不能改用自造私有 RPC 冒充同一验收。
+本技能随 App 保存，正式 Python 工具唯一实现位于 `APP_ROOT/tools/journal/`，随 App 一起交付；相关测试位于 `APP_ROOT/tests/journal/`。模型与场景由 `APP_ROOT/tests/TestAssets` 固定子模块维护，入口为 `scenarios/<id>/events/Journal.json`；通过 `tools/run_acceptance.py` 统一执行及业务验收，规则见 `docs/acceptance.md`。先确认实际工具、场景、被测可执行文件和验证资产；独立 App 默认使用随仓库提供的工具，`--journal-tools` 仅用于显式开发覆盖，不能改用自造私有 RPC 冒充同一验收。
 
 ## 明确验收入口
 
@@ -36,10 +36,10 @@ description: 编写或执行 GPlatform 的真实应用 Journal 验收。先明�
 
 ## 正式 CLI 示例
 
-在完整宿主根目录，先将占位路径换成核实后的实际绝对或相对路径：
+在 App 根目录，先将占位路径换成核实后的实际绝对或相对路径：
 
 ```sh
-python3 ThirdParty/JournalSystem/tools/journal_runner.py \
+python3 tools/journal/journal_runner.py \
   --run <scenario>/events/Journal.json \
   --app <executable> \
   --output <new-result-directory>

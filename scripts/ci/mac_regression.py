@@ -44,10 +44,9 @@ def regression(source, bundle, output, env, test_assets_sha=None):
     console_user = subprocess.check_output(['/usr/bin/stat', '-f', '%Su', '/dev/console'], text=True).strip()
     if console_user != getpass.getuser():
         raise RuntimeError('Run the Mac mini runner in the logged-in GUI user session')
-    value = env.get('GPLATFORM_JOURNAL_TOOLS', '')
-    tools = Path(value).expanduser().resolve() if value else None
-    if tools is None or not (tools / 'journal_execution_session.py').is_file():
-        raise RuntimeError('Set GPLATFORM_JOURNAL_TOOLS to the maintained JournalSystem/tools directory')
+    tools = source / 'tools/journal'
+    if not (tools / 'journal_execution_session.py').is_file():
+        raise RuntimeError('The selected App commit is missing its bundled tools/journal')
     # Importing the comparator here checks required automatic-verification dependencies.
     run([sys.executable, '-c', 'import PIL'], env=env)
     assets_sha = prepare_assets(source, test_assets_sha)

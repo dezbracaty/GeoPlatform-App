@@ -29,7 +29,6 @@ App 消费 SDK 格式 3 / UI package 1，产品构建依赖 SDK 与 Orca 两个�
 | --- | --- | --- |
 | `GPLATFORM_WINDOWS_RUNNER_LABELS` | `["self-hosted","Windows","X64","gplatform-build"]` | Windows runner 标签 |
 | `GPLATFORM_MACOS_RUNNER_LABELS` | `["self-hosted","macOS","ARM64","gplatform-macos-build"]` | Mac runner 标签 |
-| `GPLATFORM_JOURNAL_TOOLS` | `<maintained-checkout>/ThirdParty/JournalSystem/tools` | Mac runner 上配套的正式 Journal Python 工具目录 |
 
 示例标签不代表已注册机器。prepare 实际查询本仓库 runner，输出 online/busy 信息；无匹配在线 runner 立即失败。busy 可排队，queue_guard 最多看护 30 分钟；超时请求取消本次运行，不能把请求已接受说成已经停止。
 
@@ -45,7 +44,9 @@ runner 需要 Git/LFS、Python 3.12、CMake/Ninja 和相容 Qt。Windows 需要 
 Mac GUI 回归要求 runner 运行在已登录且可用的图形用户会话中，屏幕可用逻辑区域至少容纳
 1382×954 窗口；不能用 offscreen 代替实际回放。执行器只激活它自己启动且身份核对一致的 App。
 runner Python 必须有 Pillow；辅助看图依赖见 `tools/requirements.txt`，OCR/辅助计算不决定通过。
-正式 Journal 工具和所选 SDK 中的 JournalSystem 必须配套支持固定逻辑窗口协议；
+Journal Python 工具固定使用所选 App 提交中的 `tools/journal/`，不再依赖 runner 的
+`GPLATFORM_JOURNAL_TOOLS` 外部目录；工具哈希继续记录到回归输入。
+这些工具和所选 SDK 中的 C++ JournalSystem 必须配套支持固定逻辑窗口协议；
 不通过替换部署库、自动升级 SDK 或放宽截图判定绕过不匹配。
 
 环境部署在 workflow 之外完成：安装 Python >= 3.12，并使 runner 服务的 PATH 能直接执行 python；Windows 的 PowerShell 脚本执行策略也由部署阶段配置。Mac 可将已安装 Homebrew Python 的 libexec/bin 加入 runner PATH。修改 runner 环境后，在空闲时重启对应服务并检查工具。workflow 不下载或安装工具，不改 PATH、不创建解释器别名、不设置执行策略；只读检查 Python，环境缺失直接失败。

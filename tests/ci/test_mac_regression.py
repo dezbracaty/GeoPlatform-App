@@ -56,15 +56,16 @@ class MacRegressionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);source=root/'source';source.mkdir()
             bundle=root/'GPlatform.app';exe=bundle/'Contents/MacOS/GPlatform';exe.parent.mkdir(parents=True);exe.write_bytes(b'program')
-            tools=root/'JournalSystem/tools';tools.mkdir(parents=True)
+            tools=source/'tools/journal';tools.mkdir(parents=True)
             for name in ['journal_execution_session.py','journal_runner.py','journal_display_profile.py']:(tools/name).write_text('# managed')
             output=root/'evidence'
-            env=dict(GPLATFORM_JOURNAL_TOOLS=str(tools),QT_QPA_PLATFORM='offscreen',QT_SCALE_FACTOR='.5')
+            env=dict(GPLATFORM_JOURNAL_TOOLS=str(root/'obsolete-tools'),QT_QPA_PLATFORM='offscreen',QT_SCALE_FACTOR='.5')
             def execute(args,**kwargs):
                 self.assertNotIn('QT_QPA_PLATFORM',kwargs['env'])
                 self.assertNotIn('QT_SCALE_FACTOR',kwargs['env'])
                 self.assertIn(str(exe),args)
                 self.assertEqual(args[args.index('--cases')+1],'all')
+                self.assertEqual(args[args.index('--journal-tools')+1],str(source/'tools/journal'))
                 run=Path(args[args.index('--output')+1]);run.mkdir()
                 (run/'summary.json').write_text(json.dumps(dict(status='passed',runComplete=True,completedCaseCount=101)))
                 return type('Result',(),{'returncode':0})()
@@ -78,7 +79,7 @@ class MacRegressionTests(unittest.TestCase):
 
     def test_incomplete_or_failed_regression_is_not_accepted(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root=Path(temporary);source=root/'source';source.mkdir();tools=root/'tools';tools.mkdir()
+            root=Path(temporary);source=root/'source';source.mkdir();tools=source/'tools/journal';tools.mkdir(parents=True)
             (tools/'journal_execution_session.py').write_text('# managed')
             bundle=root/'App.app';exe=bundle/'Contents/MacOS/GPlatform';exe.parent.mkdir(parents=True);exe.write_bytes(b'app')
             for name in ['journal_runner.py','journal_display_profile.py']:(tools/name).write_text('# managed')

@@ -101,10 +101,9 @@ class AcceptanceCheck(unittest.TestCase):
             self.writer()
             settings.write_bytes(b'changed by application')
         session = SessionFixture(writer)
-        # The integration can be run from a standalone checkout with explicit tools.
-        tools = Path(os.environ.get('JOURNAL_TOOLS', str(Path(__file__).resolve().parents[2] / 'ThirdParty/JournalSystem/tools')))
-        if not (tools / 'journal_execution_session.py').is_file():
-            self.skipTest('requires maintained Journal tools through JOURNAL_TOOLS')
+        # The same bundled tools must work in a standalone App checkout.
+        tools = Path(__file__).resolve().parents[1] / 'tools/journal'
+        self.assertTrue((tools / 'journal_execution_session.py').is_file())
         output = self.root / 'cli-result'
         with patch('builtins.print'):
             code = run_acceptance.main([
@@ -135,7 +134,7 @@ class AcceptanceCheck(unittest.TestCase):
         session = SessionFixture(writer=cancelled.set)
         session.cancel_event = cancelled
         output = self.root / 'cancelled-batch'
-        tools = Path(__file__).resolve().parents[2] / 'ThirdParty/JournalSystem/tools'
+        tools = Path(__file__).resolve().parents[1] / 'tools/journal'
         events = []
         with patch('builtins.print'):
             code = run_acceptance.main(['--assets', str(self.assets), '--journal-tools', str(tools),
@@ -185,7 +184,7 @@ class AcceptanceCheck(unittest.TestCase):
                 inner.writer = lambda: print_files(destination)
                 return super().run(journal, **kwargs)
 
-        tools = Path(__file__).resolve().parents[2] / 'ThirdParty/JournalSystem/tools'
+        tools = Path(__file__).resolve().parents[1] / 'tools/journal'
         output = self.root / 'batch-exports'
         with patch('builtins.print'):
             code = run_acceptance.main(['--assets', str(self.assets), '--journal-tools', str(tools),
@@ -209,7 +208,7 @@ class AcceptanceCheck(unittest.TestCase):
         clone = self.assets / 'scenarios/job2'
         shutil.copytree(self.scenario, clone)
         write_json(clone / 'metadata.json', dict(self.metadata, id='job2', name='Second case'))
-        tools = Path(__file__).resolve().parents[2] / 'ThirdParty/JournalSystem/tools'
+        tools = Path(__file__).resolve().parents[1] / 'tools/journal'
         output = self.root / 'filtered-batch'
         with patch('builtins.print'):
             code = run_acceptance.main(['--assets', str(self.assets), '--journal-tools', str(tools),

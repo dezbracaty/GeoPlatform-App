@@ -8,7 +8,9 @@ App 在 `tests/TestAssets` 以子模块固定提交；完整宿主使用 `App/te
 资产仓库只拥有模型、Journal、metadata、预期、基线、格式和确定性生成器。
 
 App `tools/acceptance.py` 拥有业务验收编排与最终结论；`tools/acceptance_checks.py` 拥有产物检查。
-正式 JournalSystem 拥有进程启动/握手、Qt 输入回放、原始 DB/截图检查、清理和执行报告。
+App `tools/journal/` 是 Python 客户端、GUI、启动/握手、输入回放、DB/截图比较、清理和
+执行报告的唯一实现，相关 Python 测试位于 `tests/journal/`，与 App 提交一起版本化。
+SDK 的 C++ JournalSystem 提供应用端服务、输入执行和原始数据接口；Python 工具不随 SDK 发布。
 主仓库 `scripts/run_journals.py` 只是共享入口的兼容转发，不再在内存中替换执行器源码。
 完整宿主私有 C++ 回归继续留在 `Core/tests`，只改为读取固定资产。
 原生切片回归的 catalog、模型、配置和三平台 G-code 基线由资产仓库 `slicing_regression/` 维护，
@@ -35,8 +37,10 @@ metadata v3 声明 `id/name/testPurpose/scope/inputs/unverifiedScopes/verificati
 
 ## 统一入口与处理顺序
 
-`tools/run_acceptance.py` 同时支持完整宿主和独立 App。独立 App 缺少正式执行器时，
-通过 `--journal-tools <JournalSystem/tools>` 提供；缺失即明确失败，不另建私有 RPC 执行器。
+`tools/run_acceptance.py` 同时支持完整宿主和独立 App，默认加载本 App 的 `tools/journal/`，
+不依赖完整宿主或另外配置工具目录。`--journal-tools` 仅用于显式选择开发中的另一份工具，
+实际工具来源仍写入报告。GUI 默认 App 根目录由自身位置确定；CLI、GUI 和候选采集共用实现。
+宿主旧 `ThirdParty/JournalSystem/tools` 仅保留命令行转发，不再维护一套模块。
 
 1. 校验场景格式、模型实体/哈希、输入对应关系、检查器和输出声明。
 2. 记录资产、App、Journal、metadata、模型、执行/验证代码与程序/已部署库的来源。

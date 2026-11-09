@@ -1,5 +1,12 @@
 find_package(Qt6 REQUIRED COMPONENTS Test)
 
+find_package(Python3 QUIET COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME JournalPythonClientCheck
+        COMMAND ${Python3_EXECUTABLE} -m unittest discover
+            -s ${CMAKE_CURRENT_SOURCE_DIR}/journal -p test_*.py -v)
+endif()
+
 add_executable(Model3MFIntegrationCheck
     Model3MFIntegrationCheck.cpp
     ${GENERATED_APPLICATION_MODULE_REGISTRATION})

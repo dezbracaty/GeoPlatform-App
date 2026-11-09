@@ -1,14 +1,14 @@
 # Journal 协议、执行与证据
 
-下面源码路径相对完整宿主 `HOST_ROOT`。共享场景在 `APP_ROOT/tests/TestAssets/scenarios`，但不能假定完整 Python 工具也已随 App 交付。
+下面源码路径相对 `APP_ROOT`。Python 工具随 App 交付，完整宿主和独立 App 使用同一份实现；共享场景在 `APP_ROOT/tests/TestAssets/scenarios`。
 
 ## 真实定义与场景
 
-- `ThirdParty/JournalSystem/tools/journal_runner.py`：`load_journal()`、允许的 entry kinds、回放、比较与 `finish_result()`。
-- `ThirdParty/JournalSystem/tools/journal_execution_session.py`：CLI/GUI 共用的启动、握手、环境、结果目录和清理。
-- `ThirdParty/JournalSystem/tools/journalsystem_gui.py`：GUI 使用同一个 session。
-- `App/docs/acceptance.md`：应用场景约定、受控模型与独立参考。
-- `App/tests/TestAssets/scenarios/machine_selector`：标准鼠标/键盘输入及 screenshot.capture 示例。
+- `tools/journal/journal_runner.py`：`load_journal()`、允许的 entry kinds、回放、比较与 `finish_result()`。
+- `tools/journal/journal_execution_session.py`：CLI/GUI 共用的启动、握手、环境、结果目录和清理。
+- `tools/journal/journalsystem_gui.py`：GUI 使用同一个 session。
+- `docs/acceptance.md`：应用场景约定、受控模型与独立参考。
+- `tests/TestAssets/scenarios/machine_selector`：标准鼠标/键盘输入及 screenshot.capture 示例。
 
 ## 先复用场景、资产和执行能力
 

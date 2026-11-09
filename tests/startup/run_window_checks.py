@@ -15,8 +15,9 @@ import zlib
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--application', type=Path, required=True)
-parser.add_argument('--journal-tools', type=Path, required=True,
-                    help='Directory containing the separately provided journalsystem Python client')
+parser.add_argument('--journal-tools', type=Path,
+                    default=Path(__file__).resolve().parents[2] / 'tools/journal',
+                    help='Override the bundled journalsystem Python client')
 parser.add_argument('--locale',choices=['en_US','zh_CN'])
 parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--cases',default='normal,minimize,failure,replay')
