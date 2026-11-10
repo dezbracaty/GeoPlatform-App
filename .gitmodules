@@ -10,5 +10,5 @@
 [submodule "tests/TestAssets"]
 	path = tests/TestAssets
 	url = https://github.com/dezbracaty/GeoPlatform-TestAssets.git
-	branch = main
+	branch = macmini
 	update = none
