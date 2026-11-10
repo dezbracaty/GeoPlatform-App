@@ -81,7 +81,10 @@ public:
     Q_INVOKABLE void markNeedsReslice();
     Q_INVOKABLE QVariantList machineModels() const;
     Q_INVOKABLE QVariantList buildPlateOptions() const;
-    Q_INVOKABLE bool selectMachine(const QString& modelId, const QString& variantId);
+    Q_INVOKABLE bool selectMachine(const QString& modelId, const QString& variantId, const QString& bedType = {},
+                                   const QString& printerPresetId = {});
+    Q_INVOKABLE void resolvePrinterSwitch(const QString& action, const QString& saveName = {});
+    Q_INVOKABLE QVariantMap printerSwitchPresetNameStatus(const QString& name);
     Q_INVOKABLE bool selectProcessPreset(const QString& presetId);
     Q_INVOKABLE bool selectFilamentPreset(const QString& presetId);
     Q_INVOKABLE bool selectFilamentPresetForSlot(int slotIndex, const QString& presetId);
@@ -126,6 +129,7 @@ signals:
     void presetSelectionChanged();
     void filamentSlotsChanged();
     void configurationErrorChanged();
+    void printerSwitchDecisionRequested(const QVariantMap& preset);
 
 private:
     explicit SliceSettingsBridge(QObject* parent = nullptr);
@@ -149,6 +153,16 @@ private:
     void setConfigurationError(const QString& message);
     bool replaceConfig(GPlatform::SlicingConfigActivationResult&& result, bool markPending,
                        bool synchronizePlateMaterials = false);
+    struct PendingPrinterSwitch {
+        libslicer::ConfigSelection target;
+        libslicer::PrinterSwitchReview review;
+        std::vector<libslicer::PrinterSwitchDecision> decisions;
+        std::vector<std::pair<std::string, std::string>> remembered;
+        bool presetSaved{false};
+    };
+    void showPrinterSwitchDecision();
+    bool applyPrinterSwitch(PendingPrinterSwitch&&);
+    std::optional<PendingPrinterSwitch> m_printerSwitch;
 
     mutable QReadWriteLock m_lock;
     libslicer::ResolvedSelection m_selection;

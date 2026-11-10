@@ -264,7 +264,8 @@ Item {
                 result.push({
                     "modelId": machine.id,
                     "variantId": variant.id,
-                    "name": qsTr("%1 · %2 mm").arg(machine.name).arg(variant.nozzleDiameter)
+                    "presetId": variant.printerPresetId,
+                    "name": variant.userPreset ? variant.name : qsTr("%1 · %2 mm").arg(machine.name).arg(variant.nozzleDiameter)
                 })
             }
         }
@@ -304,7 +305,8 @@ Item {
         for (var index = 0; index < machineVariantOptions.length; ++index) {
             var option = machineVariantOptions[index]
             if (option.modelId === SliceSettingsBridge.selectedMachineModelId
-                    && option.variantId === SliceSettingsBridge.selectedMachineVariantId)
+                    && option.variantId === SliceSettingsBridge.selectedMachineVariantId
+                    && option.presetId === SliceSettingsBridge.selectedMachine.printerPresetId)
                 return index
         }
         return -1
@@ -326,7 +328,7 @@ Item {
         if (index < 0 || index >= machineVariantOptions.length)
             return
         var option = machineVariantOptions[index]
-        SliceSettingsBridge.selectMachine(option.modelId, option.variantId)
+        SliceSettingsBridge.selectMachine(option.modelId, option.variantId, "", option.presetId)
         Qt.callLater(function() {
             root.syncPresetComboSelection()
         })

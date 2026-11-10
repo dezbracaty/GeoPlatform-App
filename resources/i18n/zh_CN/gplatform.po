@@ -948,9 +948,6 @@ msgstr "语言"
 msgid "Machine"
 msgstr "机型"
 
-msgid "Machine changed, but the build plate could not be applied. Check the application log."
-msgstr "机型已切换，但打印板应用失败，请检查程序日志"
-
 msgid "Machine settings cannot be changed while slicing"
 msgstr "切片任务运行期间不能修改机器配置"
 
@@ -4205,3 +4202,57 @@ msgstr "已跳过空模型部件：%1"
 
 msgid "The model material assignments could not be restored."
 msgstr "无法恢复模型的材料归属。"
+
+msgid "Save user preset"
+msgstr "保存用户预设"
+
+msgid "Transfer or discard changes"
+msgstr "转移或丢弃改动"
+
+msgid "You have unsaved changes in preset “%1”."
+msgstr "预设“%1”有未保存的改动。"
+
+msgid "Discard unsaved changes and use the target printer's preset."
+msgstr "放弃未保存的改动，使用目标机型的预设。"
+
+msgid "Apply transferable changes to the target printer."
+msgstr "将可转移的改动应用到目标机型。"
+
+msgid "Save changes to a user preset for the current printer, then continue switching."
+msgstr "将改动保存到当前机型的用户预设，然后继续切换。"
+
+msgid "Preset name"
+msgstr "预设名称"
+
+msgid "Invalid preset name"
+msgstr "预设名称无效"
+
+msgid "Overwriting a system profile is not allowed"
+msgstr "不能覆盖系统预设"
+
+msgid "Saving will overwrite this user preset."
+msgstr "保存后将覆盖这个用户预设。"
+
+msgid "Saving will overwrite this user preset, which is incompatible with the current printer."
+msgstr "保存后将覆盖这个与当前打印机不兼容的用户预设。"
+
+msgid "Changes tied to a different extruder configuration will be skipped during transfer."
+msgstr "转移时会跳过与不同喷头配置关联的改动。"
+
+msgid "Discard"
+msgstr "丢弃"
+
+msgid "Transfer"
+msgstr "转移"
+
+msgid "Could not switch printer"
+msgstr "无法切换打印机"
+
+msgid "Preset saved. Printer switch failed. %1"
+msgstr "预设已保存。打印机切换失败。%1"
+
+msgid "The configuration has changed. Choose the printer again."
+msgstr "当前配置已变化，请重新选择打印机。"
+
+msgid "Copy"
+msgstr "副本"

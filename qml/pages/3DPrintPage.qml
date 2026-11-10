@@ -126,6 +126,181 @@ ContentPage {
         openPrinterControl()
     }
 
+    Connections {
+        target: SliceSettingsBridge
+        function onPrinterSwitchDecisionRequested(preset) {
+            presetSwitch.preset = preset
+            presetSwitch.decided = false
+            presetSwitch.open()
+        }
+    }
+
+    ContentDialog {
+        id: presetSwitch
+        objectName: "printerSwitch.dialog"
+        property var preset: ({})
+        property bool decided: false
+        width: Math.min(660, root.width - 32)
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape
+        title: qsTr("Transfer or discard changes")
+
+        header: RowLayout {
+            Label {
+                Layout.fillWidth: true
+                leftPadding: presetSwitch.leftPadding
+                topPadding: Theme.dialogPadding
+                bottomPadding: Theme.dialogPadding
+                font: Typography.subtitle
+                text: presetSwitch.title
+            }
+            IconButton {
+                objectName: "printerSwitch.close"
+                Layout.rightMargin: Theme.dialogPadding
+                flat: true
+                icon.name: FluentIcons.graph_ChromeClose
+                Accessible.name: qsTr("Close")
+                onClicked: presetSwitch.close()
+            }
+        }
+
+        function choose(action, name = "") {
+            if (decided)
+                return
+            decided = true
+            close()
+            Qt.callLater(function () { SliceSettingsBridge.resolvePrinterSwitch(action, name) })
+        }
+        onClosed: choose("cancel")
+
+        ColumnLayout {
+            width: presetSwitch.availableWidth
+            spacing: 10
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                textFormat: Text.PlainText
+                text: qsTr("You have unsaved changes in preset “%1”.").arg(presetSwitch.preset.name || "")
+            }
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.min(230, changeList.implicitHeight)
+                clip: true
+                contentWidth: availableWidth
+                ColumnLayout {
+                    id: changeList
+                    width: parent.width
+                    Repeater {
+                        model: presetSwitch.preset.changes || []
+                        Label {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            wrapMode: Text.Wrap
+                            textFormat: Text.PlainText
+                            text: {
+                                const key = modelData.key.split("#")[0]
+                                const schema = SliceSettingsBridge.getSettingSchema(key)
+                                const title = schema.label || modelData.key
+                                return title + "   " + modelData.before + " → " + modelData.after
+                            }
+                        }
+                    }
+                }
+            }
+            Label {
+                visible: presetSwitch.preset.transferAllowed === true
+                    && (presetSwitch.preset.changes || []).some(function (row) { return !row.transferable })
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                text: qsTr("Changes tied to a different extruder configuration will be skipped during transfer.")
+            }
+        }
+        footer: DialogButtonBox {
+            Button {
+                objectName: "printerSwitch.discard"
+                text: qsTr("Discard")
+                ToolTip.visible: hovered
+                ToolTip.delay: Theme.tooltipDelay
+                ToolTip.text: qsTr("Discard unsaved changes and use the target printer's preset.")
+                onClicked: presetSwitch.choose("discard")
+            }
+            Button {
+                objectName: "printerSwitch.transfer"
+                visible: presetSwitch.preset.transferAllowed === true
+                text: qsTr("Transfer")
+                ToolTip.visible: hovered
+                ToolTip.delay: Theme.tooltipDelay
+                ToolTip.text: qsTr("Apply transferable changes to the target printer.")
+                onClicked: presetSwitch.choose("transfer")
+            }
+            Button {
+                objectName: "printerSwitch.save"
+                text: qsTr("Save")
+                ToolTip.visible: hovered && enabled
+                ToolTip.delay: Theme.tooltipDelay
+                ToolTip.text: qsTr("Save changes to a user preset for the current printer, then continue switching.")
+                onClicked: {
+                    if (presetSwitch.preset.saveAs) {
+                        presetName.text = presetSwitch.preset.name + " - " + qsTr("Copy")
+                        savePresetName.open()
+                    } else {
+                        presetSwitch.choose("save")
+                    }
+                }
+            }
+        }
+    }
+
+    ContentDialog {
+        id: savePresetName
+        width: presetSwitch.width
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape
+        title: qsTr("Save user preset")
+        readonly property var nameStatus: visible
+            ? SliceSettingsBridge.printerSwitchPresetNameStatus(presetName.text) : ({})
+        onOpened: {
+            presetName.forceActiveFocus()
+            presetName.selectAll()
+        }
+
+        ColumnLayout {
+            width: savePresetName.availableWidth
+            TextField {
+                id: presetName
+                objectName: "printerSwitch.presetName"
+                Layout.fillWidth: true
+                placeholderText: qsTr("Preset name")
+            }
+            Label {
+                Layout.fillWidth: true
+                visible: text.length > 0
+                wrapMode: Text.Wrap
+                textFormat: Text.PlainText
+                text: savePresetName.nameStatus.message || ""
+            }
+        }
+        footer: DialogButtonBox {
+            Button {
+                objectName: "printerSwitch.cancel"
+                text: qsTr("Cancel")
+                onClicked: savePresetName.close()
+            }
+            Button {
+                objectName: "printerSwitch.confirmSave"
+                enabled: savePresetName.nameStatus.valid === true
+                text: qsTr("Save")
+                onClicked: {
+                    const name = presetName.text
+                    savePresetName.close()
+                    presetSwitch.choose("save", name)
+                }
+            }
+        }
+    }
+
     ContentDialog {
         id: sendConfirmation
         objectName: "printerSendConfirmation"

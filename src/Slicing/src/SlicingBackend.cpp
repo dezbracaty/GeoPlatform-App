@@ -5,6 +5,7 @@
 #ifdef _WIN32
 #include <QCoreApplication>
 #endif
+#include <QStandardPaths>
 
 #include <atomic>
 #include <condition_variable>
@@ -144,8 +145,11 @@ SlicingBackend::SlicingBackend()
     : m_impl(std::make_unique<Impl>())
 {
     std::vector<libslicer::ConfigDiagnostic> diagnostics;
-    m_available = m_impl->invoke([this, &diagnostics]() {
+    const auto presetDirectory = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+        QStringLiteral("/slicer-presets");
+    m_available = m_impl->invoke([this, &diagnostics, presetDirectory]() {
         libslicer::LibraryOptions options;
+        options.user_preset_directory = presetDirectory.toStdString();
 #ifdef _WIN32
         options.resource_directory =
             (QCoreApplication::applicationDirPath() + "/resources/libslicer").toStdString();
@@ -163,6 +167,9 @@ SlicingBackend::SlicingBackend()
             ? std::string("unknown resource error")
             : diagnostics.front().message;
         LOG_ERROR("SlicingBackend: failed to initialize libslicer: {}", message);
+    } else {
+        for (const auto& diagnostic : diagnostics)
+            LOG_WARN("SlicingBackend: {}: {}", diagnostic.key, diagnostic.message);
     }
 }
 
@@ -190,6 +197,56 @@ const std::vector<libslicer::BuildPlateOption>& SlicingBackend::buildPlateOption
     return m_buildPlateOptions;
 }
 
+std::vector<libslicer::PresetOption> SlicingBackend::printerPresets(
+    const std::string& model, const std::string& variant) const
+{
+    if (!m_available) return {};
+    return m_impl->invoke([this, model, variant] { return m_impl->library->printer_presets(model, variant); });
+}
+
+libslicer::PrinterSwitchReview SlicingBackend::reviewPrinterSwitch(
+    const libslicer::ConfigSelection& selection, bool afterSave)
+{
+    if (!configurationChangesAllowed()) {
+        libslicer::PrinterSwitchReview result;
+        result.diagnostics = busySettingsResult().diagnostics;
+        return result;
+    }
+    return m_impl->invoke([this, selection, afterSave] {
+        return m_impl->library->review_printer_switch(selection, afterSave);
+    });
+}
+
+libslicer::PrinterSwitchSaveResult SlicingBackend::savePrinterSwitchPreset(
+    std::uint64_t revision, libslicer::PrinterSwitchPreset type, const std::string& name, bool validateOnly)
+{
+    std::unique_lock<std::mutex> admissionLock(m_impl->configurationAdmissionMutex);
+    if (!configurationChangesAllowed()) {
+        libslicer::PrinterSwitchSaveResult result;
+        result.diagnostics = busySettingsResult().diagnostics;
+        return result;
+    }
+    return m_impl->invoke([this, revision, type, name, validateOnly] {
+        return m_impl->library->save_printer_switch_preset(revision, type, name, validateOnly);
+    });
+}
+
+libslicer::PrinterSwitchResult SlicingBackend::preparePrinterSwitch(
+    const libslicer::ConfigSelection& selection, std::uint64_t revision,
+    const std::vector<libslicer::PrinterSwitchDecision>& decisions,
+    const std::vector<std::pair<std::string, std::string>>& remembered)
+{
+    std::unique_lock<std::mutex> admissionLock(m_impl->configurationAdmissionMutex);
+    if (!configurationChangesAllowed()) {
+        libslicer::PrinterSwitchResult result;
+        result.diagnostics = busySettingsResult().diagnostics;
+        return result;
+    }
+    return m_impl->invoke([this, selection, revision, decisions, remembered] {
+        return m_impl->library->prepare_printer_switch(selection, revision, decisions, remembered);
+    });
+}
+
 SlicingConfigActivationResult SlicingBackend::activateConfig(
     const libslicer::ConfigSelection& selection,
     const std::vector<std::pair<std::string, std::string>>& patch)
@@ -208,21 +265,8 @@ SlicingConfigActivationResult SlicingBackend::activateConfig(
     }
     const libslicer::ConfigSelection requested = selection;
     const auto requestedPatch = patch;
-    return m_impl->invoke([this, requested, requestedPatch]() mutable {
-        SlicingConfigActivationResult output;
-        auto activated = m_impl->library->activate_config(requested, requestedPatch);
-        output.success = activated.success;
-        output.diagnostics = std::move(activated.diagnostics);
-        if (!output.success) {
-            return output;
-        }
-        output.revision = activated.view.revision;
-        output.selection = std::move(activated.view.selection);
-        output.compatibleProcesses = std::move(activated.view.compatible_processes);
-        output.compatibleFilaments = std::move(activated.view.compatible_filaments);
-        output.settings = std::move(activated.view.settings);
-        output.filamentSlots = std::move(activated.view.filament_slots);
-        return output;
+    return m_impl->invoke([this, requested, requestedPatch]() {
+        return m_impl->library->activate_config(requested, requestedPatch);
     });
 }
 

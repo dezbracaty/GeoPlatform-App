@@ -11,18 +11,7 @@
 
 namespace GPlatform {
 
-struct SlicingConfigActivationResult {
-    bool success{false};
-    std::uint64_t revision{0};
-    libslicer::ResolvedSelection selection;
-    std::vector<libslicer::PresetOption> compatibleProcesses;
-    std::vector<libslicer::PresetOption> compatibleFilaments;
-    std::vector<libslicer::ConfigDiagnostic> diagnostics;
-    std::vector<libslicer::SettingItem> settings;
-    std::vector<libslicer::FilamentSlotInfo> filamentSlots;
-
-    explicit operator bool() const noexcept { return success; }
-};
+using SlicingConfigActivationResult = libslicer::ConfigActivationResult;
 
 struct SlicingConfigPatchResult {
     libslicer::SettingsResult settings;
@@ -55,6 +44,13 @@ public:
     bool configurationChangesAllowed() const noexcept;
     const std::vector<libslicer::MachineModelOption>& machineModels() const noexcept;
     const std::vector<libslicer::BuildPlateOption>& buildPlateOptions() const noexcept;
+    std::vector<libslicer::PresetOption> printerPresets(const std::string& model, const std::string& variant) const;
+    libslicer::PrinterSwitchReview reviewPrinterSwitch(const libslicer::ConfigSelection&, bool afterSave = false);
+    libslicer::PrinterSwitchSaveResult savePrinterSwitchPreset(
+        std::uint64_t revision, libslicer::PrinterSwitchPreset, const std::string& name, bool validateOnly = false);
+    libslicer::PrinterSwitchResult preparePrinterSwitch(const libslicer::ConfigSelection&,
+        std::uint64_t revision, const std::vector<libslicer::PrinterSwitchDecision>&,
+        const std::vector<std::pair<std::string, std::string>>& remembered);
     SlicingConfigActivationResult activateConfig(
         const libslicer::ConfigSelection& selection,
         const std::vector<std::pair<std::string, std::string>>& patch = {});
