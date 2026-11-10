@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <optional>
 #include <QFuture>
 #include <cstdint>
@@ -55,7 +56,8 @@ public:
         const std::optional<libslicer::ProjectMachine>& = {});
     static std::vector<GPlatform::SlicingConfigDB::Filament> documentFilaments(
         const std::vector<libslicer::FilamentSlotInfo>&);
-    void installCommittedConfiguration(PreparedConfiguration&&) noexcept;
+    void installCommittedConfiguration(PreparedConfiguration&&,
+        std::optional<bool> projectPalette = std::nullopt) noexcept;
     void publishCommittedConfiguration();
     // Capture persisted selection on the GUI thread, load only backend data in
     // a worker, then supply the result before module registration constructs us.
@@ -78,6 +80,7 @@ public:
     Q_INVOKABLE void restoreProcessSettings();
     Q_INVOKABLE void markCurrentAsSliced();
     void markAsSlicedForRevision(std::uint64_t sliced, std::optional<std::uint64_t> active);
+    std::uint64_t localProcessRevision() const noexcept { return m_localProcessRevision.load(); }
     Q_INVOKABLE void markNeedsReslice();
     Q_INVOKABLE QVariantList machineModels() const;
     Q_INVOKABLE QVariantList buildPlateOptions() const;
@@ -95,6 +98,10 @@ public:
     bool refreshActiveConfig();
 
     Q_INVOKABLE QVariantMap getSettingSchema(const QString& key) const;
+    Q_INVOKABLE QVariantList parameterModifiers(const QString& modelId) const;
+    Q_INVOKABLE QVariantList localProcessSettings(const QString& modelId, const QString& partId) const;
+    Q_INVOKABLE QString editLocalProcessSetting(const QString& modelId, const QString& partId,
+        const QString& key, const QVariant& value, bool inherit = false);
     Q_INVOKABLE QVariantList getTabPages(const QString& tab,
                                          bool showAdvancedMode = false) const;
     Q_INVOKABLE QVariantList getPageSchema(const QString& tab,
@@ -122,6 +129,7 @@ public:
 signals:
     void hasPendingResliceChanged();
     void settingsChanged();
+    void localProcessSettingsChanged();
     void settingChanged(const QString& key, const QVariant& value);
     void settingRejected(const QString& key, const QString& message);
     void schemaChanged();
@@ -133,6 +141,7 @@ signals:
 
 private:
     explicit SliceSettingsBridge(QObject* parent = nullptr);
+    ~SliceSettingsBridge() override;
 
     void buildSchemaLocked();
     const libslicer::SettingItem* findItemLocked(std::string_view key) const;
@@ -179,5 +188,8 @@ private:
     bool m_schemaLoaded{false};
     int m_schemaRevision{0};
     bool m_hasPendingReslice{false};
+    bool m_projectPalette{false};
+    std::atomic<std::uint64_t> m_localProcessRevision{0};
+    std::size_t m_documentListenerId{0};
     QVariantMap m_projectMachine;
 };

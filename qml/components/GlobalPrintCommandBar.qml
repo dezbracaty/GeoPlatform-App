@@ -314,7 +314,7 @@ PanelSurface {
                         Layout.preferredWidth: implicitWidth
                         Layout.maximumWidth: implicitWidth
                         Layout.preferredHeight: PrintWorkspaceStyle.controlHeight
-                        text: root.narrow ? "" : qsTr("Parameters")
+                        text: root.narrow ? "" : qsTr("Global process")
                         icon.name: root.narrow ? FluentIcons.graph_Settings : ""
                         icon.width: 14
                         icon.height: 14
@@ -322,7 +322,7 @@ PanelSurface {
                         onClicked: root.parametersRequested()
 
                         ToolTip {
-                            text: qsTr("Slicing Parameters")
+                            text: qsTr("Global process")
                             visible: parent.hovered && root.narrow
                             delay: Theme.tooltipDelay
                         }

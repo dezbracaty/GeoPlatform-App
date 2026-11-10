@@ -4256,3 +4256,57 @@ msgstr "当前配置已变化，请重新选择打印机。"
 
 msgid "Copy"
 msgstr "副本"
+
+msgid "Global process"
+msgstr "全局工艺"
+
+msgid "Back to model objects"
+msgstr "返回模型对象"
+
+msgid "Model parameters"
+msgstr "模型参数"
+
+msgid "Model parameters · %1"
+msgstr "模型参数 · %1"
+
+msgid "Modifier parameters · %1"
+msgstr "修改体参数 · %1"
+
+msgid "Modifier %1 · %2"
+msgstr "修改体 %1 · %2"
+
+msgid "Copies of the same object share these settings."
+msgstr "同一对象的副本共享这些设置。"
+
+msgid "Reslicing required"
+msgstr "需要重新切片"
+
+msgid "Search Results"
+msgstr "搜索结果"
+
+msgid "Inherited"
+msgstr "继承"
+
+msgid "Inherited value: %1"
+msgstr "继承值：%1"
+
+msgid "Keep this value as an override"
+msgstr "将当前值保留为局部覆盖"
+
+msgid "Wait for the current task to finish."
+msgstr "请等待当前任务完成。"
+
+msgid "Select a model or modifier to edit its slicing parameters."
+msgstr "请选择要编辑切片参数的模型或修改体。"
+
+msgid "No active slicing profile is available."
+msgstr "当前没有可用的切片配置。"
+
+msgid "Unknown slicing parameter."
+msgstr "未知的切片参数。"
+
+msgid "Invalid slicing parameter."
+msgstr "切片参数无效。"
+
+msgid "Model or modifier settings changed during slicing. Slice again."
+msgstr "切片过程中模型或修改体参数已变化，请重新切片。"

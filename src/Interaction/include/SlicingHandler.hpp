@@ -106,6 +106,7 @@ private:
     // worker materializes its large vertex/triangle arrays into m_sliceSession.
     std::shared_ptr<const SliceSessionBuilder::CapturedRequest> m_sliceSessionCapture;
     std::shared_ptr<const GPlatform::SliceSession> m_sliceSession;
+    std::uint64_t m_localProcessRevision{0};
     QString m_supportMeshStlPath;
     bool m_needCleanupSupportMeshStl{false};
 

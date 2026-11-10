@@ -411,6 +411,17 @@ void ProjectImportHandler::commit() {
             preparedView = SliceSettingsBridge::prepareConfiguration(m_candidate.configuration.view(),m_candidate.configuration.machine());
             filaments = SliceSettingsBridge::documentFilaments(m_candidate.configuration.view().filament_slots);
         }
+        bool projectPalette = m_candidate.load_config;
+        if (configurationChanged && !projectPalette) {
+            const auto active = backend.configSnapshot();
+            const auto imported = m_candidate.configuration.snapshot();
+            for (const auto* key : {"filament_colour", "filament_multi_colour", "filament_colour_type"}) {
+                if (!active || active->value(key) != imported.value(key)) {
+                    projectPalette = true;
+                    break;
+                }
+            }
+        }
         std::vector<std::vector<PreparedPart>> preparedParts;
         std::vector<std::string> objectSemantics, plateSemantics;
         for (const auto& object : m_candidate.scene->objects) {
@@ -563,7 +574,8 @@ void ProjectImportHandler::commit() {
             m_completion.insert("objectIds",created);
             if (!created.empty()) { m_completion.insert("objectId",created.front()); m_completion.insert("modelId",created.front()); }
             if (configurationChanged)
-                SliceSettingsBridge::instance()->installCommittedConfiguration(std::move(*preparedView));
+                SliceSettingsBridge::instance()->installCommittedConfiguration(
+                    std::move(*preparedView), projectPalette ? std::optional<bool>(true) : std::nullopt);
             if (opening) document->getUndoRedoManager()->clear();
             if (opening) {
                 SelectionBridge::instance()->clearSelection();

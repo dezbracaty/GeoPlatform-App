@@ -10,11 +10,13 @@
 #include "ModelObjectDB.hpp"
 #include "ModelSurfaceColorCodec.hpp"
 #include "ModelSurfaceColorDB.hpp"
+#include "SelectionBridge.hpp"
 #include "SlicingBackend.hpp"
 #include "TransactionManager.hpp"
 
 #include <QCoreApplication>
 #include <QLocale>
+#include <QPointer>
 #include <QRegularExpression>
 #include <QSettings>
 #include <QUrl>
@@ -76,8 +78,37 @@ namespace {
         return patch;
     }
 
+    std::vector<std::pair<std::string, std::string>> rememberedPrinterSettings(
+        const libslicer::ConfigSelection& selection) {
+        const bool systemP3 = selection.machine_model_id == "P3" && selection.machine_variant_id == "0.4" &&
+            (selection.printer_preset_id.empty() || selection.printer_preset_id == "P3 0.4 nozzle");
+        if (!systemP3 && selection.printer_preset_id.empty()) return {};
+        QSettings settings;
+        settings.beginGroup(printerPresetGroup(systemP3 ? "P3 0.4 nozzle" : selection.printer_preset_id));
+        auto patch = rememberedPrinterSettings(settings);
+        if (!systemP3 || settings.contains("filament_colour"))
+            return patch;
+
+        settings.endGroup();
+        settings.beginGroup(QStringLiteral("slicing/printers/P3/0.4"));
+        const auto tools = settings.value(kFilamentToolsSetting).toList();
+        const auto palette = settings.value(QStringLiteral("filament_colour")).toString();
+        const auto colors = palette.split(QLatin1Char(';'));
+        static const QRegularExpression rgb(QStringLiteral("^#[0-9A-Fa-f]{6}$"));
+        if (tools.size() != 6 || colors.size() != 6)
+            return patch;
+        for (qsizetype slot = 0; slot < tools.size(); ++slot) {
+            bool ok = false;
+            if (tools[slot].toUInt(&ok) != unsigned(slot) || !ok || !rgb.match(colors[slot]).hasMatch())
+                return patch;
+        }
+        patch.emplace_back("filament_colour", palette.toStdString());
+        return patch;
+    }
+
     void persistSelection(const libslicer::ResolvedSelection& selection, bool active = true,
-                          std::optional<libslicer::ConfigSnapshot> config = {}) {
+                          std::optional<libslicer::ConfigSnapshot> config = {},
+                          bool rememberColors = true) {
         if (!selectionPersistenceEnabled()) return;
 
         QStringList filaments;
@@ -103,6 +134,8 @@ namespace {
         if (!config) config = GPlatform::SlicingBackend::instance().configSnapshot();
         if (config) {
             for (const char* key : printerSelectionKeys) {
+                if (!rememberColors && std::string_view(key).rfind("filament_", 0) == 0)
+                    continue;
                 if (const auto value = config->value(key))
                     settings.setValue(QString::fromLatin1(key), QString::fromStdString(*value));
             }
@@ -467,7 +500,7 @@ SliceSettingsBridge::PreparedConfiguration SliceSettingsBridge::prepareConfigura
 }
 
 void SliceSettingsBridge::installCommittedConfiguration(
-    PreparedConfiguration&& prepared) noexcept {
+    PreparedConfiguration&& prepared, std::optional<bool> projectPalette) noexcept {
     QWriteLocker locker(&m_lock);
     using std::swap;
     swap(m_selection, prepared.view.selection);
@@ -481,6 +514,7 @@ void SliceSettingsBridge::installCommittedConfiguration(
     m_schemaByKey.swap(prepared.schemaByKey);
     m_filamentSlots.swap(prepared.filamentSlots);
     m_projectMachine.swap(prepared.machine);
+    if (projectPalette) m_projectPalette = *projectPalette;
     m_schemaLoaded = !m_schemaSettings.isEmpty();
     ++m_schemaRevision;
     m_hasPendingReslice = true;
@@ -496,8 +530,7 @@ void SliceSettingsBridge::publishCommittedConfiguration() {
 namespace {
 std::optional<GPlatform::SlicingConfigActivationResult> startupConfiguration;
 
-GPlatform::SlicingConfigActivationResult loadStartupConfiguration(libslicer::ConfigSelection selection,
-    const std::vector<std::pair<std::string, std::string>>& remembered = {}) {
+GPlatform::SlicingConfigActivationResult loadStartupConfiguration(libslicer::ConfigSelection selection) {
     auto& backend = GPlatform::SlicingBackend::instance();
     if (!backend.available()) {
         GPlatform::SlicingConfigActivationResult result;
@@ -506,12 +539,19 @@ GPlatform::SlicingConfigActivationResult loadStartupConfiguration(libslicer::Con
     }
 
     if (selection.machine_model_id.empty() || selection.machine_variant_id.empty()) {
+        selection = {};
         selection.machine_model_id = "Flashforge AD5X";
         selection.machine_variant_id = "0.4";
     }
-    const auto restore = [&backend](const libslicer::ConfigSelection& requested,
-                                    const std::vector<std::pair<std::string, std::string>>& settings) {
+    const auto restore = [&backend](libslicer::ConfigSelection requested) {
         GPlatform::SlicingConfigActivationResult result;
+        if (requested.printer_preset_id.empty()) {
+            const auto presets = backend.printerPresets(requested.machine_model_id, requested.machine_variant_id);
+            if (!presets.empty()) requested.printer_preset_id = presets.front().id;
+        }
+        const auto settings = selectionPersistenceEnabled()
+            ? rememberedPrinterSettings(requested)
+            : std::vector<std::pair<std::string, std::string>>{};
         const auto revision = backend.configurationRevision();
         auto prepared = backend.preparePrinterSwitch(requested, revision, {}, settings);
         if (!prepared) {
@@ -533,10 +573,13 @@ GPlatform::SlicingConfigActivationResult loadStartupConfiguration(libslicer::Con
         result.success = true;
         return result;
     };
-    auto result = restore(selection, remembered);
+    auto result = restore(selection);
     if (!result && !selection.printer_preset_id.empty()) {
         selection.printer_preset_id.clear();
-        result = restore(selection, remembered);
+        selection.process_preset_id.clear();
+        selection.filament_preset_ids.clear();
+        selection.filament_physical_tools.clear();
+        result = restore(selection);
     }
     if (!result && (selection.machine_model_id != "Flashforge AD5X" || selection.machine_variant_id != "0.4")) {
         LOG_WARN("SliceSettingsBridge: saved machine '{} / {}' is unavailable; using fallback machine",
@@ -544,27 +587,19 @@ GPlatform::SlicingConfigActivationResult loadStartupConfiguration(libslicer::Con
         selection = {};
         selection.machine_model_id = "Flashforge AD5X";
         selection.machine_variant_id = "0.4";
-        result = restore(selection, {});
+        result = restore(selection);
     }
     return result;
 }
 
-std::vector<std::pair<std::string, std::string>> startupRememberedSettings(
-    const libslicer::ConfigSelection& selection) {
-    if (!selectionPersistenceEnabled() || selection.printer_preset_id.empty()) return {};
-    QSettings settings;
-    settings.beginGroup(printerPresetGroup(selection.printer_preset_id));
-    return rememberedPrinterSettings(settings);
-}
 }
 
 QFuture<GPlatform::SlicingConfigActivationResult> SliceSettingsBridge::prepareStartupConfiguration() {
     Q_ASSERT(QThread::currentThread() == QCoreApplication::instance()->thread());
     const auto selection = restoredSelection();
-    const auto remembered = startupRememberedSettings(selection);
-    // Prime the cached Qt path before entering the backend-only worker.
+    // Prime the cached Qt path before entering the startup worker.
     QCoreApplication::applicationDirPath();
-    return QtConcurrent::run([selection, remembered] { return loadStartupConfiguration(selection, remembered); });
+    return QtConcurrent::run([selection] { return loadStartupConfiguration(selection); });
 }
 
 void SliceSettingsBridge::supplyStartupConfiguration(GPlatform::SlicingConfigActivationResult result) {
@@ -574,14 +609,32 @@ void SliceSettingsBridge::supplyStartupConfiguration(GPlatform::SlicingConfigAct
 
 SliceSettingsBridge::SliceSettingsBridge(QObject* parent)
     : bridge::BridgeBase(parent) {
-    const auto restore = [] {
-        const auto selection = restoredSelection();
-        return loadStartupConfiguration(selection, startupRememberedSettings(selection));
-    };
-    auto result = startupConfiguration ? std::move(*startupConfiguration) : restore();
+    auto result = startupConfiguration ? std::move(*startupConfiguration) : loadStartupConfiguration(restoredSelection());
     startupConfiguration.reset();
     if (!replaceConfig(std::move(result), false))
         LOG_ERROR("SliceSettingsBridge: failed to restore or select fallback machine");
+    const QPointer<SliceSettingsBridge> self(this);
+    m_documentListenerId = DocumentManager::instance()->addChangeListener([self](const auto& change) {
+        if (!self || change.changeType != ChangeType::PROPERTY_CHANGED)
+            return;
+        const bool modelSetting = change.propertyName == "ProjectSemantics" &&
+            (change.dbType == TypeID::MODEL_OBJECT_DB || change.dbType == TypeID::MODEL_PART_DB);
+        const bool baselineChanged = (change.dbType == TypeID::PRINT_BED_DB &&
+            change.propertyName == "ProjectSemantics") || (change.dbType == TypeID::MODEL_INSTANCE_DB &&
+            change.propertyName == "ParentPrintBedDBId");
+        if (modelSetting) ++self->m_localProcessRevision;
+        if (modelSetting || baselineChanged)
+            QMetaObject::invokeMethod(self.data(), [self, modelSetting] {
+                if (!self) return;
+                if (modelSetting) self->markNeedsReslice();
+                emit self->localProcessSettingsChanged();
+            }, Qt::QueuedConnection);
+    });
+}
+
+SliceSettingsBridge::~SliceSettingsBridge() {
+    if (m_documentListenerId)
+        DocumentManager::instance()->removeChangeListener(m_documentListenerId);
 }
 
 SliceSettingsBridge* SliceSettingsBridge::instance() {
@@ -723,7 +776,7 @@ void SliceSettingsBridge::setSetting(const QString& key, const QVariant& value) 
         auto& backend = GPlatform::SlicingBackend::instance();
         const auto machine = backend.activeProjectMachine();
         if (const auto active = backend.activeConfigView(); machine && !machine->project_local && active)
-            persistSelection(active->selection);
+            persistSelection(active->selection, true, {}, !m_projectPalette);
     }
     if (valueChanged)
         emit settingChanged(key, canonicalDisplay);
@@ -892,7 +945,7 @@ bool SliceSettingsBridge::selectMachine(const QString& modelId, const QString& v
         QSettings settings;
         settings.beginGroup(printerPresetGroup(selection.printer_preset_id));
         readPresetSelection(settings, selection);
-        pending.remembered = rememberedPrinterSettings(settings);
+        pending.remembered = rememberedPrinterSettings(selection);
     }
     if (!bedType.isEmpty()) pending.remembered.emplace_back("curr_bed_type", bedType.toStdString());
     pending.review = backend.reviewPrinterSwitch(selection);
@@ -1123,7 +1176,7 @@ bool SliceSettingsBridge::setFilamentColor(int slotIndex, const QColor& color) {
     }
     publishActiveSlicingConfig(active->revision, active->filament_slots);
     if (const auto machine = backend.activeProjectMachine(); machine && !machine->project_local)
-        persistSelection(active->selection);
+        persistSelection(active->selection, true, {}, !m_projectPalette);
     setConfigurationError({});
     emit filamentSlotsChanged();
     emit settingsChanged();
@@ -1172,6 +1225,127 @@ void SliceSettingsBridge::markNeedsReslice() {
 QVariantMap SliceSettingsBridge::getSettingSchema(const QString& key) const {
     QReadLocker locker(&m_lock);
     return m_schemaByKey.value(key);
+}
+
+namespace {
+std::shared_ptr<ModelInstanceDB> selectedParameterInstance(const QString& modelId) {
+    bool ok = false;
+    const DBInstanceID id(modelId.toULongLong(&ok));
+    const auto* selection = SelectionBridge::instance();
+    if (!ok || !id.isValid() || selection->selectionCount() != 1 || selection->selectedId() != id)
+        return {};
+    return DocumentManager::instance()->getDB<ModelInstanceDB>(id);
+}
+
+struct LocalProcessTarget {
+    std::shared_ptr<PrintBedDB> bed;
+    std::shared_ptr<ModelObjectDB> object;
+    std::shared_ptr<ModelPartDB> part;
+
+    explicit operator bool() const { return bool(object); }
+    std::string plateSemantics() const {
+        return bed ? bed->getProjectSemantics() : std::string{};
+    }
+    std::string semantics() const {
+        return part ? part->getProjectSemantics() : object->getProjectSemantics();
+    }
+    std::optional<std::string> parentSemantics() const {
+        if (part) return object->getProjectSemantics();
+        return std::nullopt;
+    }
+};
+
+LocalProcessTarget localProcessTarget(const QString& modelId, const QString& partId) {
+    const auto instance = selectedParameterInstance(modelId);
+    if (!instance) return {};
+    LocalProcessTarget target{
+        DocumentManager::instance()->getDB<PrintBedDB>(instance->getParentPrintBedDBId()),
+        instance->object(), {}};
+    if (partId.isEmpty()) return target;
+    for (const auto& part : instance->parts()) {
+        if (part && part->getRole() == int(ModelPartRole::ParameterModifier) &&
+            QString::number(part->getDBInstanceID().getValue()) == partId) {
+            target.part = part;
+            return target;
+        }
+    }
+    return {};
+}
+}
+
+QVariantList SliceSettingsBridge::parameterModifiers(const QString& modelId) const {
+    QVariantList result;
+    if (const auto instance = selectedParameterInstance(modelId)) {
+        for (const auto& part : instance->parts()) {
+            if (part && part->getRole() == int(ModelPartRole::ParameterModifier))
+                result.push_back(QVariantMap{
+                    {"id", QString::number(part->getDBInstanceID().getValue())},
+                    {"name", QString::fromStdString(part->getDisplayName())}});
+        }
+    }
+    return result;
+}
+
+QVariantList SliceSettingsBridge::localProcessSettings(const QString& modelId, const QString& partId) const {
+    const auto target = localProcessTarget(modelId, partId);
+    if (!target) return {};
+    const auto base = GPlatform::SlicingBackend::instance().configSnapshot();
+    if (!base) return {};
+    try {
+        const auto config = libslicer::Config::for_project_overrides(
+            *base, target.plateSemantics(), target.semantics(), target.parentSemantics());
+        const auto items = config.settings();
+        const auto schema = prepareSchema(items);
+        QVariantList rows;
+        for (const auto& item : items) {
+            auto row = schema.byKey.value(QString::fromStdString(item.key));
+            if (row.isEmpty() || item.group != libslicer::SettingGroup::Process)
+                continue;
+            row.insert("value", displaySettingValue(item, item.value));
+            row.insert("overridden", item.overridden);
+            row.insert("enabled", item.enabled && !item.read_only);
+            rows.push_back(row);
+        }
+        return rows;
+    } catch (const std::exception& error) {
+        LOG_WARN("Cannot read model slicing settings: {}", error.what());
+        return {};
+    }
+}
+
+QString SliceSettingsBridge::editLocalProcessSetting(const QString& modelId, const QString& partId,
+    const QString& key, const QVariant& value, bool inherit) {
+    if (configurationMutationBlocked("local process edit") || TransactionManager::instance().isInTransaction())
+        return tr("Wait for the current task to finish.");
+    const auto target = localProcessTarget(modelId, partId);
+    if (!target) return tr("Select a model or modifier to edit its slicing parameters.");
+    const auto base = GPlatform::SlicingBackend::instance().configSnapshot();
+    if (!base) return tr("No active slicing profile is available.");
+
+    const auto name = key.toStdString();
+    std::string serialized;
+    if (!inherit) {
+        QReadLocker locker(&m_lock);
+        const auto* item = findItemLocked(name);
+        if (!item) return tr("Unknown slicing parameter.");
+        serialized = serializeValueLocked(*item, value);
+    }
+    std::string changed = target.semantics();
+    const auto result = libslicer::edit_project_override(*base, target.plateSemantics(), changed,
+        target.parentSemantics(), name, inherit ? std::nullopt : std::optional<std::string_view>(serialized));
+    if (!result)
+        return result.diagnostics.empty() ? tr("Invalid slicing parameter.")
+            : translatedSettingText(QString::fromStdString(result.diagnostics.front().message));
+    if (changed == target.semantics()) return {};
+
+    TransactionGuard transaction(target.part ? "Edit modifier slicing parameter" : "Edit model slicing parameter");
+    if (target.part)
+        target.part->setProjectSemantics(changed);
+    else
+        target.object->setProjectSemantics(changed);
+    transaction.commit();
+    markNeedsReslice();
+    return {};
 }
 
 QVariantList SliceSettingsBridge::getTabPages(const QString& tab, bool showAdvancedMode) const {
@@ -1599,11 +1773,12 @@ bool SliceSettingsBridge::applyPrinterSwitch(PendingPrinterSwitch&& pending)
 
     const auto targetSelection = prepared.view.selection;
     const bool projectLocal = prepared.projectLocal;
+    const bool rememberSourceColors = !m_projectPalette;
     prepared.view.revision = installed.revision;
-    installCommittedConfiguration(std::move(prepared));
+    installCommittedConfiguration(std::move(prepared), false);
     lease.release();
     if (current && machine && !machine->project_local)
-        persistSelection(current->selection, false, installed.previous.snapshot());
+        persistSelection(current->selection, false, installed.previous.snapshot(), rememberSourceColors);
     if (!projectLocal) persistSelection(targetSelection, true, target);
     publishCommittedConfiguration();
     return true;
@@ -1669,7 +1844,7 @@ bool SliceSettingsBridge::replaceConfig(GPlatform::SlicingConfigActivationResult
         }
     }
     publishActiveSlicingConfig(prepared.view.revision, prepared.view.filament_slots);
-    if (!prepared.projectLocal) persistSelection(prepared.view.selection);
+    if (!prepared.projectLocal) persistSelection(prepared.view.selection, true, {}, !m_projectPalette);
     installCommittedConfiguration(std::move(prepared));
     if (!markPending) { QWriteLocker locker(&m_lock); m_hasPendingReslice = false; }
     publishCommittedConfiguration();

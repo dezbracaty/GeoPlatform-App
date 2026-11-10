@@ -736,6 +736,83 @@ void checkSavedRootUpdatesChildPreset(SliceSettingsBridge& bridge) {
             "Cannot return to the integration fixture printer");
 }
 
+void checkP3PaletteSources() {
+    auto* bridge = SliceSettingsBridge::instance();
+    auto& backend = GPlatform::SlicingBackend::instance();
+    const auto discard = QObject::connect(bridge, &SliceSettingsBridge::printerSwitchDecisionRequested,
+        bridge, [bridge](const QVariantMap&) { bridge->resolvePrinterSwitch("discard"); });
+    const auto disconnect = qScopeGuard([&] { QObject::disconnect(discard); });
+    const auto palette = [&] {
+        const auto config = backend.configSnapshot();
+        return config ? QString::fromStdString(config->value("filament_colour").value_or("")).toUpper() : QString{};
+    };
+    const QString defaults = "#F28E2B;#4E79A7;#59A14F;#B07AA1;#EDC948;#E15759";
+    const QString custom = "#102030;#102030;#102030;#102030;#102030;#102030";
+    const QString legacy = "#102030;#203040;#304050;#405060;#506070;#607080";
+    const QString group = "slicing/printerPresets/P3%200.4%20nozzle";
+    const QString legacyGroup = "slicing/printers/P3/0.4";
+    QSettings settings;
+    const auto selectOther = [&] {
+        require(bridge->selectMachine("Flashforge AD5X", "0.4") &&
+                bridge->selectedMachineModelId() == "Flashforge AD5X", "Cannot switch from P3");
+    };
+    const auto selectP3 = [&] {
+        require(bridge->selectMachine("P3", "0.4") && bridge->selectedMachineModelId() == "P3",
+                "Cannot switch to P3");
+    };
+    selectOther();
+    settings.remove(group);
+    selectP3();
+    require(palette() == defaults, "P3 defaults did not use the six physical tool colors");
+    selectOther();
+    settings.remove(group);
+    settings.setValue(legacyGroup + "/filament_colour", legacy);
+    settings.setValue(legacyGroup + "/slicing/selection/filamentPhysicalTools", QVariantList{0, 1, 2, 3, 4, 5});
+    selectP3();
+    require(palette() == legacy, "P3 lost a matching legacy palette");
+    selectOther();
+    settings.setValue(group + "/filament_colour", custom);
+    selectP3();
+    require(palette() == custom, "P3 overwrote a remembered same-color palette");
+    importAndWait("../../scenarios/p3_4444444_short_ring_handoff/fixtures/4444444-p3-56mm.3mf", "project");
+    require(palette() == "#FFFFFF;#80FF80;#0080FF;#FFAD5B;#737373;#FFFFFF",
+            "Opening a P3 project replaced the project's colors with preset colors");
+    require(bridge->setFilamentColor(0, QColor("#335577")), "Cannot change the opened project's first color");
+    selectOther();
+    selectP3();
+    require(palette() == custom, "The opened project's colors overwrote the preset palette");
+
+    selectOther();
+    const QString ad5xGroup = "slicing/printerPresets/Flashforge%20AD5X%200.4%20nozzle";
+    const auto ad5xColors = settings.value(ad5xGroup + "/filament_colour");
+    require(ad5xColors.isValid(), "The AD5X preset has no remembered palette");
+    const auto ad5xSlots = bridge->filamentSlots().size();
+    importAndWait("../../scenarios/printer_preset_switch_handoff/fixtures/111.3mf", "geometry");
+    require(bridge->filamentSlots().size() > ad5xSlots, "Geometry import did not exercise palette expansion");
+    selectP3();
+    require(settings.value(ad5xGroup + "/filament_colour") == ad5xColors,
+            "Geometry import wrote its expanded palette into the printer preset");
+
+    const auto restoreStartup = [] {
+        auto future = SliceSettingsBridge::prepareStartupConfiguration();
+        future.waitForFinished();
+        return future.result();
+    };
+    settings.setValue("slicing/selection/printerPresetId", "Deleted P3 preset");
+    settings.setValue("slicing/printerPresets/Deleted%20P3%20preset/filament_colour", defaults);
+    const auto restored = restoreStartup();
+    require(restored && restored.view.selection.printer_preset_id == "P3 0.4 nozzle" && palette() == custom,
+            "Startup wrote a deleted P3 preset's colors into the system preset");
+
+    const QString ad5xRemembered = "#123456;#234567;#345678;#456789;#567890";
+    settings.setValue(ad5xGroup + "/filament_colour", ad5xRemembered);
+    settings.setValue("slicing/selection/machineModelId", "Removed printer");
+    const auto fallback = restoreStartup();
+    require(fallback && fallback.view.selection.machine_model_id == "Flashforge AD5X" &&
+            palette().startsWith("#123456"), "Startup ignored the fallback printer's own colors");
+    std::cout << "P3 colors: defaults, legacy mapping, explicit memory, import isolation and startup fallback\n";
+}
+
 int main(int argc,char** argv) {
     qputenv("QT_QPA_PLATFORM","offscreen");
     QStandardPaths::setTestModeEnabled(true);
@@ -805,6 +882,7 @@ int main(int argc,char** argv) {
                 "Explicit geometry intent on project.open replaced the document");
         importAndWait("complete-project.3mf", "project");
         checkPrinterSwitchSaveAndCancel();
+        checkP3PaletteSources();
     } catch (const std::exception& error) {std::cerr<<error.what()<<'\n'; status=1;}
     ActionManager::getInstance()->cleanupBeforeShutdown();
     ActionHandlerRegistry::instance().clearCache();

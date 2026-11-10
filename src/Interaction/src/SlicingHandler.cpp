@@ -540,6 +540,7 @@ bool SlicingHandler::startSliceTaskForModel(const QString& modelId, QString* err
         sessionRequest.supportEnforcerPaths = {m_supportMeshStlPath.toStdString()};
     }
     const auto captureStart = std::chrono::steady_clock::now();
+    m_localProcessRevision = SliceSettingsBridge::instance()->localProcessRevision();
     auto captured = SliceSessionBuilder::capture(sessionRequest);
     const auto captureMs = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - captureStart).count();
@@ -663,6 +664,7 @@ bool SlicingHandler::startSliceTaskForPlate(const QStringList& modelIds, QString
     SliceSessionBuilder::Request sessionRequest;
     sessionRequest.modelIds = validModelIds;
     const auto captureStart = std::chrono::steady_clock::now();
+    m_localProcessRevision = SliceSettingsBridge::instance()->localProcessRevision();
     auto captured = SliceSessionBuilder::capture(sessionRequest);
     const auto captureMs = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - captureStart).count();
@@ -935,6 +937,10 @@ void SlicingHandler::onTaskCompleted() {
     std::optional<GPlatform::Notifications::Notification> completionNotification;
     // 只处理切片模式（导入由 GCodeImportHandler 处理）
     if (m_mode == Mode::Slice) {
+        if (m_success && m_localProcessRevision != SliceSettingsBridge::instance()->localProcessRevision()) {
+            m_success = false;
+            m_errorMessage = tr("Model or modifier settings changed during slicing. Slice again.");
+        }
         if (m_success) {
             // 在主线程中创建可视化
             try { createToolpathPreview(); }

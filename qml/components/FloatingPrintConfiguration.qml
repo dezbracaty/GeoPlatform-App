@@ -15,6 +15,15 @@ PanelSurface {
     property bool collapsed: false
     property bool positioned: false
     property int page: 0
+    property string localModelId: ""
+    property string localPartId: ""
+    property string localTargetName: ""
+    readonly property string selectedModelId: SelectionBridge.selectionCount === 1
+        ? String(SelectionBridge.selectedId) : ""
+    readonly property bool editingLocalProcess: page === 1 && localModelId.length > 0
+        && localModelId === selectedModelId
+    onSelectedModelIdChanged: localModelId = ""
+    onPageChanged: if (page === 0) localModelId = ""
     property int activeSlot: 0
     property Item boundsItem: parent
     property bool workspaceReady: false
@@ -92,6 +101,15 @@ PanelSurface {
     function showObjects() {
         open();
         page = 1;
+    }
+    function showGlobalProcess() {
+        open();
+        page = 0;
+    }
+    function showLocalProcess(partId, name) {
+        localPartId = partId;
+        localTargetName = name;
+        localModelId = selectedModelId;
     }
     function focusSetting(key) {
         open();
@@ -459,7 +477,7 @@ PanelSurface {
                 anchors.margins: 3
                 spacing: 3
                 Repeater {
-                    model: [qsTr("Process parameters"), qsTr("Model objects")]
+                    model: [qsTr("Global process"), qsTr("Model objects")]
                     Button {
                         id: contentTab
                         required property int index
@@ -528,13 +546,62 @@ PanelSurface {
             showParamKeys: false
             fiberAvailable: root.fiberCapable
         }
+        RowLayout {
+            visible: root.editingLocalProcess
+            Layout.fillWidth: true
+            Layout.leftMargin: 16
+            Layout.rightMargin: 16
+            Button {
+                objectName: "print.configuration.localBack"
+                flat: true
+                icon.name: FluentIcons.graph_Back
+                Accessible.name: qsTr("Back to model objects")
+                onClicked: root.localModelId = ""
+            }
+            Label {
+                Layout.fillWidth: true
+                text: root.localPartId.length
+                    ? qsTr("Modifier parameters · %1").arg(root.localTargetName)
+                    : qsTr("Model parameters · %1").arg(root.localTargetName)
+                elide: Text.ElideRight
+                font: Typography.bodyStrong
+            }
+        }
+        Label {
+            visible: root.editingLocalProcess
+            Layout.fillWidth: true
+            Layout.leftMargin: 16
+            Layout.rightMargin: 16
+            Layout.bottomMargin: 6
+            text: qsTr("Copies of the same object share these settings.")
+            font: Typography.caption
+            color: root.secondaryText
+            wrapMode: Text.WordWrap
+        }
+        Loader {
+            active: root.editingLocalProcess
+            visible: active
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.minimumHeight: 0
+            sourceComponent: SlicingSettingsContent {
+                automationNamespace: "print.configuration.local"
+                compactPanel: true
+                embedded: true
+                showParamKeys: false
+                fiberAvailable: root.fiberCapable
+                localMode: true
+                localModelId: root.localModelId
+                localPartId: root.localPartId
+            }
+        }
         ScrollView {
             id: objectsScroll
             objectName: "print.configuration.objects"
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.minimumHeight: 0
-            visible: root.page === 1
+            visible: root.page === 1 && !root.editingLocalProcess
             leftPadding: 16
             rightPadding: 16
             clip: true
@@ -616,6 +683,27 @@ PanelSurface {
                     visible: ModelPropertyBridge.hasSelectedModel && SelectionBridge.selectionCount === 1
                     enabled: root.editingEnabled && !FiberMaskBridge.active && !CutToolBridge.active
                     spacing: 10
+                    Button {
+                        objectName: "print.configuration.objectSettings"
+                        Layout.fillWidth: true
+                        text: qsTr("Model parameters")
+                        onClicked: root.showLocalProcess("", ModelPropertyBridge.displayName)
+                    }
+                    Repeater {
+                        model: {
+                            const models = sceneModels.models
+                            return root.selectedModelId.length
+                                ? SliceSettingsBridge.parameterModifiers(root.selectedModelId) : []
+                        }
+                        delegate: Button {
+                            required property int index
+                            required property var modelData
+                            objectName: "print.configuration.modifierSettings." + index
+                            Layout.fillWidth: true
+                            text: qsTr("Modifier %1 · %2").arg(index + 1).arg(modelData.name)
+                            onClicked: root.showLocalProcess(modelData.id, text)
+                        }
+                    }
                     Label {
                         text: qsTr("Dimensions")
                         font.pixelSize: 11
@@ -800,14 +888,19 @@ PanelSurface {
                 }
                 Label {
                     Layout.fillWidth: true
-                    text: SliceSettingsBridge.modifiedSettingKeys.length > 0 ? qsTr("%1 settings modified").arg(SliceSettingsBridge.modifiedSettingKeys.length) + (SliceSettingsBridge.hasPendingReslice ? qsTr(" · Reslicing required") : "") : qsTr("Process preset unchanged")
+                    text: root.page === 0
+                        ? (SliceSettingsBridge.modifiedSettingKeys.length > 0
+                            ? qsTr("%1 settings modified").arg(SliceSettingsBridge.modifiedSettingKeys.length)
+                              + (SliceSettingsBridge.hasPendingReslice ? qsTr(" · Reslicing required") : "")
+                            : qsTr("Process preset unchanged"))
+                        : (SliceSettingsBridge.hasPendingReslice ? qsTr("Reslicing required") : "")
                     font.pixelSize: 10
                     color: root.secondaryText
                     elide: Text.ElideRight
                 }
                 Button {
                     objectName: "print.configuration.reset"
-                    visible: SliceSettingsBridge.modifiedSettingKeys.length > 0
+                    visible: root.page === 0 && SliceSettingsBridge.modifiedSettingKeys.length > 0
                     text: qsTr("Restore changes")
                     flat: true
                     font.pixelSize: 10

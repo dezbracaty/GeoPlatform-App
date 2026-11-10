@@ -20,6 +20,22 @@ Item {
     // still renders its own title bar by default.
     property bool embedded: false
     property bool compactPanel: false
+    property string localModelId: ""
+    property string localPartId: ""
+    property bool localMode: false
+    property int localRevision: 0
+    property string localEditError: ""
+    readonly property var localRows: {
+        const revision = localRevision
+        return localMode ? SliceSettingsBridge.localProcessSettings(localModelId, localPartId) : []
+    }
+
+    function writeLocalSetting(modelId, partId, key, value, inherit) {
+        if (!localMode || !settingsEditingEnabled || !modelId
+                || modelId !== localModelId || partId !== localPartId) return
+        localEditError = SliceSettingsBridge.editLocalProcessSetting(
+            modelId, partId, key, value, inherit)
+    }
     // Reusing this component must not give retained/hidden editors the same
     // automation identity. An empty namespace preserves existing recordings.
     property string automationNamespace: ""
@@ -58,6 +74,11 @@ Item {
     readonly property var compactPages: compactCatalog.filter(function(page) { return page.id !== "fiber" || fiberAvailable })
     readonly property var compactDefinitions: {
         if (!compactPanel) return []
+        if (localMode)
+            return localRows.filter(function(row) {
+                return row.visible && (showAdvancedMode || row.mode === "basic")
+                    && (fiberAvailable || compactSchemaCategory(row.page) !== "fiber")
+            })
         const revision = schemaRevisionToken
         const rows = []
         for (const page of SliceSettingsBridge.getTabPages("process", showAdvancedMode)) {
@@ -78,6 +99,15 @@ Item {
         return "others"
     }
     readonly property var compactSections: {
+        if (localMode && globalSearchMode) {
+            const query = searchText.trim().toLowerCase()
+            const rows = localRows.filter(function(row) {
+                return row.visible && (fiberAvailable || compactSchemaCategory(row.page) !== "fiber")
+                    && (row.key.toLowerCase().includes(query)
+                        || localizedSchemaText(row.label, row.key).toLowerCase().includes(query))
+            })
+            return rows.length ? [{title: qsTr("Search Results"), rows: rows}] : []
+        }
         const category = compactCatalog.find(function(page) { return page.id === compactCategory })
         if (!category) return []
         const definitions = {}
@@ -1181,6 +1211,12 @@ Item {
             if (key === "curr_bed_type")
                 root.currentBedType = String(value)
         }
+        function onSettingsChanged() {
+            if (root.localMode) root.localRevision++
+        }
+        function onLocalProcessSettingsChanged() {
+            if (root.localMode) root.localRevision++
+        }
     }
 
 
@@ -1196,7 +1232,7 @@ Item {
             Layout.bottomMargin: 8
             spacing: 10
             TextField {
-                objectName: root.compactPanel ? "print.configuration.search" : ""
+                objectName: root.compactPanel ? root.automationName("search") : ""
                 Layout.fillWidth: true
                 implicitHeight: 31
                 font.pixelSize: 11
@@ -1207,7 +1243,7 @@ Item {
                 onTextEdited: root.searchText = text
             }
             CheckBox {
-                objectName: root.compactPanel ? "print.configuration.advanced" : ""
+                objectName: root.compactPanel ? root.automationName("advanced") : ""
                 text: qsTr("Advanced")
                 font.pixelSize: 10
                 indicator.width: 12; indicator.height: 12
@@ -1227,7 +1263,7 @@ Item {
                 delegate: Button {
                     required property int index
                     required property var modelData
-                    objectName: "print.configuration.category." + modelData.id
+                    objectName: root.automationName("category." + modelData.id)
                     height: 27
                     implicitWidth: implicitContentWidth + 16
                     horizontalPadding: 8
@@ -1253,6 +1289,15 @@ Item {
                 }
             }
         }
+        Label {
+            visible: root.localMode && root.localEditError.length > 0
+            Layout.fillWidth: true
+            Layout.leftMargin: 16
+            Layout.rightMargin: 16
+            text: root.localEditError
+            wrapMode: Text.WordWrap
+            color: root.SmoothUI.theme.res.systemFillColorCritical
+        }
         Rectangle {
             Layout.fillWidth: true
             Layout.leftMargin: 16
@@ -1262,7 +1307,7 @@ Item {
         }
         ScrollView {
             id: compactScroll
-            objectName: root.compactPanel ? "print.configuration.parameters" : ""
+            objectName: root.compactPanel ? root.automationName("parameters") : ""
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
@@ -1274,7 +1319,7 @@ Item {
                 width: compactScroll.availableWidth
                 spacing: 0
                 Repeater {
-                    model: root.compactPanel && !root.globalSearchMode ? root.compactSections : []
+                    model: root.compactPanel && (root.localMode || !root.globalSearchMode) ? root.compactSections : []
                     delegate: ColumnLayout {
                         required property var modelData
                         Layout.fillWidth: true
@@ -1294,10 +1339,11 @@ Item {
                                 required property var modelData
                                 title: root.localizedSchemaText(modelData.label, modelData.key)
                                 paramKey: modelData.key
+                                localSetting: root.localMode ? modelData : null
                                 schemaEnabled: modelData.enabled === undefined || !!modelData.enabled
                                 autoInit: false
                                 configRevision: root.schemaRevisionToken
-                                editorObjectNamePrefix: "print.configuration.editor."
+                                editorObjectNamePrefix: root.automationName("editor.")
                                 providedControl: compactInput.editorControl
                                 providedControlKind: compactInput.editorKind
                                 SchemaSettingInput { id: compactInput; definition: modelData }
@@ -1312,7 +1358,7 @@ Item {
                     }
                 }
                 Repeater {
-                    model: root.compactPanel && root.globalSearchMode
+                    model: root.compactPanel && !root.localMode && root.globalSearchMode
                            ? root.globalSearchResults.filter(function(row) {
                                return row.tab === "process" && (root.fiberAvailable || root.compactSchemaCategory(row.page) !== "fiber")
                            }) : []
@@ -1427,7 +1473,9 @@ Item {
         id: settingRow
 
         property string title: ""
-        readonly property bool modified: SliceSettingsBridge.modifiedSettingKeys.indexOf(paramKey) >= 0
+        property var localSetting: null
+        readonly property bool modified: root.localMode ? !!(localSetting && localSetting.overridden)
+            : SliceSettingsBridge.modifiedSettingKeys.indexOf(paramKey) >= 0
         property string paramKey: ""
         property bool autoInit: true
         property bool schemaEnabled: true
@@ -1439,6 +1487,7 @@ Item {
         property var primaryControl: null
         property string primaryControlKind: ""
         property bool controlConnected: false
+        property bool textEditedByUser: false
         readonly property bool multilineControl: providedControlKind === "multiline"
                                                  || primaryControlKind === "multiline"
 
@@ -1592,6 +1641,10 @@ Item {
                 return
             }
 
+            if (root.localMode) {
+                if (localSetting) applyControlValue(primaryControl, localSetting.value)
+                return
+            }
             var currentValue = extractControlValue(primaryControl)
             if (!SliceSettingsBridge.hasSetting(paramKey)) {
                 if (autoInit && currentValue !== undefined) {
@@ -1606,6 +1659,37 @@ Item {
 
         function connectControlSignal() {
             if (controlConnected || !primaryControl) {
+                return
+            }
+            if (root.localMode) {
+                const modelId = root.localModelId
+                const partId = root.localPartId
+                const commitLocal = function() {
+                    if (syncingBridge || !schemaEnabled) return
+                    const value = extractControlValue(primaryControl)
+                    if (value !== undefined) {
+                        root.writeLocalSetting(modelId, partId, paramKey, value, false)
+                        if (root.localEditError.length) syncFromBridge()
+                    }
+                }
+                if (primaryControlKind === "switch")
+                    primaryControl.toggled.connect(commitLocal)
+                else if (primaryControlKind === "combo")
+                    primaryControl.activated.connect(commitLocal)
+                else if (primaryControlKind === "number")
+                    primaryControl.valueCommitted.connect(commitLocal)
+                else if (primaryControlKind === "slider")
+                    primaryControl.moved.connect(commitLocal)
+                else if (primaryControlKind === "text") {
+                    primaryControl.textEdited.connect(function() { textEditedByUser = true })
+                    primaryControl.editingFinished.connect(function() {
+                        if (textEditedByUser) {
+                            textEditedByUser = false
+                            commitLocal()
+                        }
+                    })
+                }
+                controlConnected = true
                 return
             }
 
@@ -1725,6 +1809,25 @@ Item {
                     font.pixelSize: Theme.captionFontSize
                     elide: Text.ElideRight
                 }
+            }
+
+            Button {
+                visible: root.localMode && !!settingRow.localSetting
+                objectName: root.automationName("inheritance." + settingRow.paramKey)
+                flat: true
+                enabled: root.settingsEditingEnabled && (settingRow.modified || settingRow.schemaEnabled)
+                text: settingRow.modified ? qsTr("Restore inheritance") : qsTr("Inherited")
+                font.pixelSize: 10
+                onClicked: {
+                    const setting = settingRow.localSetting
+                    if (setting)
+                        root.writeLocalSetting(root.localModelId, root.localPartId,
+                            settingRow.paramKey, setting.value, !!setting.overridden)
+                }
+                ToolTip.visible: hovered
+                ToolTip.text: settingRow.localSetting && settingRow.localSetting.overridden
+                    ? qsTr("Inherited value: %1").arg(settingRow.localSetting.default)
+                    : qsTr("Keep this value as an override")
             }
 
             Item {
@@ -1982,6 +2085,8 @@ Item {
         property real minValue: -99999
         property real maxValue: 99999
         property int decimals: 2
+        property bool textEditedByUser: false
+        signal valueCommitted()
 
         implicitWidth: 84
         implicitHeight: root.compactPanel ? 28 : 30
@@ -2003,6 +2108,7 @@ Item {
             decimals: numberInput.decimals
         }
 
+        onTextEdited: textEditedByUser = true
         onEditingFinished: {
             var parsed = parseFloat(text)
             if (!isNaN(parsed)) {
@@ -2010,6 +2116,8 @@ Item {
                 value = parsed
             }
             text = Qt.binding(function() { return numberInput.formattedValue() })
+            if (textEditedByUser && !isNaN(parsed)) valueCommitted()
+            textEditedByUser = false
         }
     }
 

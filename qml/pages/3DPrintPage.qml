@@ -63,7 +63,7 @@ ContentPage {
                 return globalPrintBar.openMachineSettings({workspaceIndex: tab === "printer" ? 2 : 1, settingKey: key})
             printConfiguration.focusSetting(key)
         } else
-            printConfiguration.open()
+            printConfiguration.showGlobalProcess()
         return true
     }
 
