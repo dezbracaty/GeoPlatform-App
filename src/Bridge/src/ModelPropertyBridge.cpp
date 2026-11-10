@@ -44,25 +44,23 @@ QObject* ModelPropertyBridge::create(QQmlEngine* engine, QJSEngine* scriptEngine
 void ModelPropertyBridge::connectToSelectionBridge() {
     auto* selectionBridge = SelectionBridge::instance();
     if (selectionBridge) {
-        connect(selectionBridge, &SelectionBridge::selectedModelChanged,
+        connect(selectionBridge, &SelectionBridge::activeTargetChanged,
                 this, [this, selectionBridge]() {
-                    onSelectionChanged(selectionBridge->selectedId());
+                    onSelectionChanged(selectionBridge->activeInstanceId());
                 });
 
         // Initialize with current selection
-        onSelectionChanged(selectionBridge->selectedId());
+        onSelectionChanged(selectionBridge->activeInstanceId());
     }
 }
 
 void ModelPropertyBridge::onSelectionChanged(const DBInstanceID& selectedId) {
     // LOG_INFO("ModelPropertyBridge::onSelectionChanged - ID: {}", selectedId.getValue());
 
-    // Stop listening to previous selection
-    if (m_selectedId.isValid()) {
-        stopListeningTo(m_selectedId);
-    }
-
+    clearListeners();
     m_selectedId = selectedId;
+    m_selectedPartId = SelectionBridge::instance()->activePartId();
+    if (m_selectedPartId.isValid()) startListeningTo(m_selectedPartId);
 
     // Start listening to new selection
     if (m_selectedId.isValid()) {
@@ -86,6 +84,10 @@ void ModelPropertyBridge::updateFromActor(const std::shared_ptr<ActorDB>& actor)
         return;
     }
 
+    if (m_selectedPartId.isValid()) {
+        updateFromPart();
+        return;
+    }
     m_hasSelectedModel = true;
 
     m_displayName = QString::fromStdString(actor->getDisplayName());
@@ -139,6 +141,46 @@ void ModelPropertyBridge::updateFromActor(const std::shared_ptr<ActorDB>& actor)
     updateBounds(actor);
 
     // LOG_INFO("ModelPropertyBridge updated from actor ID: {}", m_selectedId.getValue());
+}
+
+void ModelPropertyBridge::updateFromPart() {
+    auto* document = DocumentManager::instance();
+    const auto instance = document->getDB<ModelInstanceDB>(m_selectedId);
+    const auto part = document->getDB<ModelPartDB>(m_selectedPartId);
+    if (!instance || !part || part->object() != instance->object()) {
+        clearProperties();
+        return;
+    }
+    m_hasSelectedModel = true;
+    m_displayName = QString::fromStdString(part->getDisplayName());
+    m_modelType = QStringLiteral("Modifier");
+    const auto local = part->getLocalTransform();
+    const auto pos = local.getPosition();
+    const auto rot = local.getEuler();
+    const auto scale = local.getScale();
+    m_position = QVector3D(pos.x, pos.y, pos.z);
+    m_rotation = QVector3D(rot.x, rot.y, rot.z);
+    m_scale = QVector3D(scale.x, scale.y, scale.z);
+    const auto config = document->getDB<GPlatform::SlicingConfigDB>(instance->getSlicingConfigDBId());
+    const int mode = part->getFilamentBindingMode();
+    const int slot = mode == int(ModelFilamentBindingMode::InheritProjectDefault) ? 0
+        : GPlatform::Slicing::resolveModelFilamentSlot(*part, config.get()).effectiveSlot;
+    if (m_filamentSlot != slot || m_filamentBindingMode != mode) {
+        m_filamentSlot = slot;
+        m_filamentBindingMode = mode;
+        emit filamentBindingChanged();
+    }
+    const auto geometry = part->geometry();
+    const auto bounds = instance->partWorldBounds(m_selectedPartId);
+    m_boundsValid = bounds.valid;
+    const auto center = bounds.valid ? bounds.getCenter() : Vector3{};
+    const auto size = bounds.valid ? bounds.getSize() : Vector3{};
+    m_boundsCenter = QVector3D(center.x, center.y, center.z);
+    m_boundsSize = QVector3D(size.x, size.y, size.z);
+    m_partCount = 1;
+    m_vertexCount = geometry ? geometry->vertexCount() : 0;
+    m_triangleCount = geometry ? geometry->triangleCount() : 0;
+    emit modelStatisticsChanged();
 }
 
 void ModelPropertyBridge::clearProperties() {
@@ -236,15 +278,18 @@ void ModelPropertyBridge::updateSpecificProperty(const std::string& propertyName
 void ModelPropertyBridge::onPropertyChanged(const DBInstanceID& id,
                                             const std::string& propertyName,
                                             const std::any& newValue) {
+    if (m_selectedPartId.isValid()) {
+        if (id == m_selectedId || id == m_selectedPartId) updateFromPart();
+        return;
+    }
     if (id != m_selectedId) return;
-
 
     // 只更新变化的属性，而不是重新获取所有属性
     updateSpecificProperty(propertyName);
 }
 
 void ModelPropertyBridge::onObjectDeleted(const DBInstanceID& id) {
-    if (id == m_selectedId) {
+    if (id == m_selectedId || id == m_selectedPartId) {
         m_selectedId = DBInstanceID(0);  // Set to invalid ID
         clearProperties();
     }
@@ -287,6 +332,26 @@ qulonglong ModelPropertyBridge::triangleCount() const {
 // Property setters using the base class executeInTransaction
 void ModelPropertyBridge::setPosition(const QVector3D& pos) {
     if (m_position == pos) return;
+    if (m_selectedPartId.isValid()) {
+        auto* document = DocumentManager::instance();
+        const auto part = document->getDB<ModelPartDB>(m_selectedPartId);
+        if (!part || TransactionManager::instance().isInTransaction()) return;
+        Transform next = part->getLocalTransform();
+        next.setPosition({pos.x(), pos.y(), pos.z()});
+        TransactionGuard transaction("Set Modifier Position");
+        std::string error;
+        const auto targetId = ModelGraphUtil::setInstancePartLocalTransform(
+            m_selectedId, m_selectedPartId, next, &error);
+        if (!targetId.isValid()) {
+            transaction.rollback();
+            LOG_WARN("Cannot set modifier position: {}", error);
+            return;
+        }
+        SelectionBridge::instance()->setSelectedModifier(m_selectedId, targetId);
+        transaction.commit();
+        updateFromPart();
+        return;
+    }
 
     executeInTransaction("Set Position", [this, pos]() {
         if (auto actor = getSelectedActor()) {
@@ -297,6 +362,7 @@ void ModelPropertyBridge::setPosition(const QVector3D& pos) {
 }
 
 void ModelPropertyBridge::setRotation(const QVector3D& rot) {
+    if (m_selectedPartId.isValid()) return;
     if (m_rotation == rot) return;
 
     executeInTransaction("Set Rotation", [this, rot]() {
@@ -312,6 +378,7 @@ void ModelPropertyBridge::setRotation(const QVector3D& rot) {
 }
 
 void ModelPropertyBridge::setScale(const QVector3D& scale) {
+    if (m_selectedPartId.isValid()) return;
     if (m_scale == scale) return;
 
     executeInTransaction("Set Scale", [this, scale]() {
@@ -323,6 +390,7 @@ void ModelPropertyBridge::setScale(const QVector3D& scale) {
 }
 
 void ModelPropertyBridge::setDiffuseColor(const QVector3D& color) {
+    if (m_selectedPartId.isValid()) return;
     if (m_diffuseColor == color && m_filamentSlot == 0) return;
 
     executeInTransaction("Set Diffuse Color", [this, color]() {
@@ -441,39 +509,36 @@ void ModelPropertyBridge::updateModelStatistics(
 }
 
 bool ModelPropertyBridge::assignFilamentSlot(int slot) {
-    if (!m_selectedId.isValid() || slot < 1) return false;
-    const bool accepted = ActionManager::getInstance()->triggerAction(
-        QStringLiteral("model.filament.assign"),
-        QVariantMap{
-            {QStringLiteral("modelId"),
-             QVariant::fromValue<qulonglong>(m_selectedId.getValue())},
-            {QStringLiteral("slot"), slot}});
-    if (accepted) {
-        if (const auto instance = std::dynamic_pointer_cast<ModelInstanceDB>(
-                getSelectedActor())) {
-            updateFilamentBinding(instance);
-        }
-    }
-    return accepted;
+    return slot > 0 && assignFilament(false, slot);
 }
 
 bool ModelPropertyBridge::useProjectDefaultFilament() {
-    if (!m_selectedId.isValid() || m_filamentSlot == 0) return false;
-    const bool accepted = ActionManager::getInstance()->triggerAction(
-        QStringLiteral("model.filament.use_default"),
-        QVariantMap{{QStringLiteral("modelId"),
-                     QVariant::fromValue<qulonglong>(
-                         m_selectedId.getValue())}});
-    if (accepted) {
-        if (const auto instance = std::dynamic_pointer_cast<ModelInstanceDB>(
-                getSelectedActor())) {
-            updateFilamentBinding(instance);
-        }
+    return assignFilament(true, 0);
+}
+
+bool ModelPropertyBridge::assignFilament(bool useDefault, int slot) {
+    if (!m_selectedId.isValid()) return false;
+    const auto instanceId = m_selectedId;
+    const auto partId = m_selectedPartId;
+    QVariantMap params{{"modelId", QVariant::fromValue<qulonglong>(instanceId.getValue())}};
+    if (partId.isValid()) params.insert("partId", QVariant::fromValue<qulonglong>(partId.getValue()));
+    if (!useDefault) params.insert("slot", slot);
+    const auto outcome = ActionManager::getInstance()->invokeActionWithReceipt(
+        useDefault ? QStringLiteral("model.filament.use_default") : QStringLiteral("model.filament.assign"), params);
+    if (!outcome.value("success").toBool() || outcome.value("pending").toBool()) return false;
+    auto* selection = SelectionBridge::instance();
+    // Do not restore an obsolete editing target after a selection change.
+    if (selection->activeInstanceId() == instanceId && selection->activePartId() == partId && partId.isValid()) {
+        const auto ids = outcome.value("result").toMap().value("partIds").toList();
+        if (ids.size() == 1)
+            selection->setSelectedModifier(instanceId, DBInstanceID(ids.front().toULongLong()));
     }
-    return accepted;
+    if (const auto actor = getSelectedActor()) updateFromActor(actor);
+    return true;
 }
 
 void ModelPropertyBridge::setOpacity(float opacity) {
+    if (m_selectedPartId.isValid()) return;
     if (qFuzzyCompare(m_opacity, opacity)) return;
 
     executeInTransaction("Set Opacity", [this, opacity]() {

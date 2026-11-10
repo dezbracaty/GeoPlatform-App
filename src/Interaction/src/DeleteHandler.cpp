@@ -46,7 +46,7 @@ void DeleteHandler::deleteSelectedModels() {
     }
 
     // 获取所有选中的对象IDs
-    const auto& selectedIds = selectionBridge->getSelectedIds();
+    const auto selectedIds = selectionBridge->getSelectedIds();
 
     if (selectedIds.empty()) {
         LOG_DEBUG("No valid selected objects to delete");

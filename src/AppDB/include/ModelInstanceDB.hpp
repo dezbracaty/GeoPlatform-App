@@ -61,6 +61,7 @@ public:
     BoundingBox localBounds() const override;
     BoundingBox worldBounds() const override;
     BoundingBox worldBoundsAt(const Transform::Matrix4& matrix) const override;
+    BoundingBox partWorldBounds(DBInstanceID partId) const;
     BoundingBox modelPartBoundsAt(const Transform::Matrix4& matrix) const;
     std::optional<RayHit> intersectWorldRay(
         const Vector3& worldOrigin,

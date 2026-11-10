@@ -55,11 +55,7 @@ public:
     ModelPartDB();
     ~ModelPartDB() override;
 
-    static const trans::Prop& PROP_LocalTransform();
-    Transform getLocalTransform() const;
-    void setLocalTransform(const Transform& value);
-    std::function<void(const Transform&)> onLocalTransformChanged =
-        [](const Transform&) {};
+    FIELD_VALUE(ModelPartDB, Transform, LocalTransform)
 
     FIELD_VALUE_SIMPLE(ModelPartDB, int, Role)
     FIELD_VALUE_SIMPLE(ModelPartDB, int, OrderIndex)
@@ -91,10 +87,4 @@ public:
 
 protected:
     void initializeProperties() override;
-    std::any getPropertyImpl(const trans::Prop& prop) const override;
-    void setPropertyImpl(
-        const trans::Prop& prop, const std::any& value) override;
-
-private:
-    Transform m_localTransform;
 };

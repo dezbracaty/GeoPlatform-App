@@ -298,8 +298,8 @@ RenderPickResult PickService::pickCpuForView(
         nearest = hit->worldDistance;
         result.status = PickStatus::Hit;
         result.payload.objectId = id;
+        result.payload.partId = hit->partId;
         if (detail != PickDetail::Object) {
-            result.payload.partId = hit->partId;
             result.payload.localPosition = hit->localPosition;
             result.payload.worldPosition = hit->worldPosition;
         }

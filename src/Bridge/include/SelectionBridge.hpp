@@ -10,6 +10,7 @@
 #include <QJSEngine>
 #include <memory>
 #include <vector>
+#include <optional>
 #include <SystemTypes.hpp>
 
 // Forward declarations
@@ -35,6 +36,11 @@ class SelectionBridge : public PropertyBridgeBase {
     Q_PROPERTY(bool hasScaleWidget READ hasScaleWidget NOTIFY hasScaleWidgetChanged)
     Q_PROPERTY(bool hasTranslateWidget READ hasTranslateWidget NOTIFY hasTranslateWidgetChanged)
     Q_PROPERTY(bool hasMirrorWidget READ hasMirrorWidget NOTIFY hasMirrorWidgetChanged)
+
+    // Active editing target; legacy selection properties remain whole-Actor only.
+    Q_PROPERTY(bool hasActiveTarget READ hasActiveTarget NOTIFY activeTargetChanged)
+    Q_PROPERTY(QString activeInstanceId READ activeInstanceIdString NOTIFY activeTargetChanged)
+    Q_PROPERTY(QString activePartId READ activePartIdString NOTIFY activeTargetChanged)
 
     // === Material Color Properties ===
     Q_PROPERTY(QVector3D diffuseColor READ diffuseColor WRITE setDiffuseColor
@@ -100,6 +106,19 @@ public:
     // C++ interface for updating selection
     void setSelectedObjects(const std::vector<DBInstanceID>& selectedIds);
     void clearSelection();
+    // Mutually exclusive with m_selectedIds. Legacy Actor APIs deliberately
+    // expose an empty selection while a modifier is the active edit target.
+    struct ModifierTarget {
+        DBInstanceID instanceId;
+        DBInstanceID partId;
+    };
+    bool setSelectedModifier(DBInstanceID instanceId, DBInstanceID partId);
+    const std::optional<ModifierTarget>& modifierTarget() const { return m_modifierTarget; }
+    bool hasActiveTarget() const { return !m_selectedIds.empty() || m_modifierTarget.has_value(); }
+    DBInstanceID activeInstanceId() const;
+    DBInstanceID activePartId() const;
+    QString activeInstanceIdString() const;
+    QString activePartIdString() const;
 
     // Update widget status - called by widget handler
     void updateOrientationWidgetStatus();
@@ -175,6 +194,7 @@ public:
 
 signals:
     // Selection signals
+    void activeTargetChanged();
     void selectedModelChanged();
     void hasSelectionChanged();
     void selectionCountChanged();
@@ -214,6 +234,9 @@ private:
 
     // Member variables
     std::vector<DBInstanceID> m_selectedIds;
+    std::optional<ModifierTarget> m_modifierTarget;
+    bool m_targetValidationQueued{false};
+    void queueTargetValidation();
     mutable QVariant m_cachedSelectedModel;
     mutable bool m_cacheValid = false;
     bool m_hasMirrorWidget = false;  // 跟踪镜像 widget 是否被激活

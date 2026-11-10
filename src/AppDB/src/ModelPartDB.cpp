@@ -6,51 +6,9 @@
 #include "../include/ModelSurfaceColorDB.hpp"
 
 #include <DocumentManager.hpp>
-#include <TransactionManager.hpp>
 
-ModelPartDB::ModelPartDB() {
-    m_localTransform.identity();
-}
-
+ModelPartDB::ModelPartDB() = default;
 ModelPartDB::~ModelPartDB() = default;
-
-const trans::Prop& ModelPartDB::PROP_LocalTransform() {
-    static const trans::Prop prop(typeid(ModelPartDB), "LocalTransform");
-    return prop;
-}
-
-Transform ModelPartDB::getLocalTransform() const {
-    return m_localTransform;
-}
-
-void ModelPartDB::setLocalTransform(const Transform& value) {
-    if (m_localTransform != value) {
-        if (TransactionManager::instance().isInTransaction()) {
-            TransactionManager::instance().recordPropertyChange(
-                shared_from_this(), PROP_LocalTransform(),
-                std::any(m_localTransform), std::any(value));
-        }
-        setPropertyImpl(PROP_LocalTransform(), std::any(value));
-    }
-    onLocalTransformChanged(value);
-}
-
-std::any ModelPartDB::getPropertyImpl(const trans::Prop& prop) const {
-    if (prop.nameView() == "LocalTransform") return std::any(m_localTransform);
-    return AutoRegisterDB::getPropertyImpl(prop);
-}
-
-void ModelPartDB::setPropertyImpl(
-    const trans::Prop& prop, const std::any& value) {
-    if (prop.nameView() == "LocalTransform") {
-        if (const auto* transform = std::any_cast<Transform>(&value)) {
-            m_localTransform = *transform;
-            notifyChange(ChangeType::PROPERTY_CHANGED, "LocalTransform");
-        }
-        return;
-    }
-    AutoRegisterDB::setPropertyImpl(prop, value);
-}
 
 void ModelPartDB::initializeProperties() {
     setProjectSemantics({});

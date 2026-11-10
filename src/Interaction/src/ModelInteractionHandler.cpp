@@ -16,6 +16,9 @@ REGISTER_PERSISTENT_INTERACTION_ACTION(
 #include "SelectionBridge.hpp"
 
 #include <ActorDB.hpp>
+#include <ModelInstanceDB.hpp>
+#include <ModelPartDB.hpp>
+#include <ModelGraphUtil.hpp>
 #include <DocumentManager.hpp>
 #include <ImmediateNotifyGuard.hpp>
 #include <SelectionBoxWidgetDB.hpp>
@@ -84,7 +87,19 @@ std::vector<DBInstanceID> parseModelIds(const QVariantMap& params) {
 } // namespace
 
 ModelInteractionHandler::ModelInteractionHandler(QObject* parent)
-    : IActionHandlerBase(parent) {}
+    : IActionHandlerBase(parent) {
+    connect(SelectionBridge::instance(), &SelectionBridge::activeTargetChanged, this, [this] {
+        if (m_drag.armed && !draggedActorIsStillSelected()) finishDrag(false);
+        hideSelectionVisuals();
+        if (isActive() && !m_selectionInputSuspended) restoreSelectionVisuals();
+    });
+    connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
+        if (state != Qt::ApplicationActive) finishDrag(false);
+    });
+    connect(qGuiApp, &QGuiApplication::focusWindowChanged, this, [this](QWindow*) {
+        finishDrag(false);
+    });
+}
 
 ModelInteractionHandler::~ModelInteractionHandler() {
     finishDrag(false);
@@ -144,6 +159,22 @@ void ModelInteractionHandler::handleAction(
 void ModelInteractionHandler::executeSelectionAction(
     const std::shared_ptr<ActionContext>& context) {
     const auto requestedIds = parseModelIds(context->getParams());
+    bool partIdOk = false;
+    const auto rawPartId = context->getParam("partId").toULongLong(&partIdOk);
+    if (context->getParams().contains("partId") && (!partIdOk || rawPartId == 0)) {
+        context->setError(ActionErrorCode::InvalidParams, "partId must identify a modifier part");
+        return;
+    }
+    const DBInstanceID partId(rawPartId);
+    if (partId.isValid()) {
+        if (requestedIds.size() != 1 ||
+            !SelectionBridge::instance()->setSelectedModifier(requestedIds.front(), partId)) {
+            context->setError(ActionErrorCode::TargetNotFound, "Modifier does not belong to the model instance");
+            return;
+        }
+        context->setResult(QVariantMap{{"modelId", requestedIds.front().getValue()}, {"partId", partId.getValue()}});
+        return;
+    }
     if (requestedIds.empty()) {
         context->setError(ActionErrorCode::TargetRequired,
                           "selection.pick requires modelId/dbId/modelIds");
@@ -201,6 +232,7 @@ ModelInteractionHandler::aiDescriptorTable() const {
             "write",
             {{"modelId", "number", false},
              {"dbId", "number", false},
+             {"partId", "number", false},
              {"modelIds", "array", false},
              {"dbIds", "array", false},
              {"addToSelection", "bool", false},
@@ -264,7 +296,7 @@ bool ModelInteractionHandler::onMousePressEvent(QMouseEvent* event) {
         viewId, pressPosition, GPlatform::Rendering::PickDetail::Object,
         scope ? &scope->candidates : nullptr);
     if (pick.status == GPlatform::Rendering::PickStatus::Miss) {
-        if ((!scope || scope->clearOnBlankClick) && !SelectionBridge::instance()->getSelectedIds().empty() &&
+        if ((!scope || scope->clearOnBlankClick) && SelectionBridge::instance()->hasActiveTarget() &&
             event->modifiers() == Qt::NoModifier) {
             m_blankClick = BlankClickCandidate{viewId, pressPosition};
         }
@@ -285,8 +317,47 @@ bool ModelInteractionHandler::onMousePressEvent(QMouseEvent* event) {
         return false;
     }
 
+    // Tool-owned temporary actors retain their original whole-object gestures.
+    if (!scope && pick.payload.partId && directDragModifierAllowed(event->modifiers())) {
+        const auto part = document->getDB<ModelPartDB>(*pick.payload.partId);
+        if (part && part->getRole() == int(ModelPartRole::ParameterModifier))
+            return beginModifierGesture(actor->getDBInstanceID(), *pick.payload.partId,
+                                        viewId, pressPosition);
+    }
     return beginModelGesture(
         actor, viewId, pressPosition, event->modifiers());
+}
+
+bool ModelInteractionHandler::beginModifierGesture(
+    DBInstanceID instanceId, DBInstanceID partId, DBInstanceID viewId,
+    const QPoint& pressPosition) {
+    auto* document = DocumentManager::instance();
+    const auto instance = document->getDB<ModelInstanceDB>(instanceId);
+    const auto part = document->getDB<ModelPartDB>(partId);
+    if (!instance || !part) return false;
+    auto* selection = SelectionBridge::instance();
+    const bool alreadySelected = selection->activeInstanceId() == instanceId &&
+        selection->activePartId() == partId;
+    if (!selection->setSelectedModifier(instanceId, partId)) return false;
+    const auto linear = instance->getTransform().getMatrix().block<3, 3>(0, 0).eval();
+    if (!instance->isDragable() || !linear.allFinite() || std::abs(linear.determinant()) <= 1e-12f)
+        return true;
+    m_drag.armed = true;
+    m_drag.viewId = viewId;
+    m_drag.actorId = instanceId;
+    m_drag.partId = partId;
+    m_drag.originalPartId = partId;
+    m_drag.initialTransform = instance->getTransform();
+    m_drag.initialPartTransform = part->getLocalTransform();
+    m_drag.pressPosition = pressPosition;
+    m_drag.latestPosition = pressPosition;
+    m_drag.requiresThreshold = !alreadySelected;
+    const auto bounds = instance->partWorldBounds(partId);
+    m_drag.anchorWorldPosition = bounds.getCenter();
+    const auto anchor = intersectDragPlane(pressPosition);
+    if (!anchor) { m_drag = DragState{}; return true; }
+    m_drag.anchorWorldPosition = *anchor;
+    return true;
 }
 
 bool ModelInteractionHandler::beginModelGesture(
@@ -434,63 +505,47 @@ void ModelInteractionHandler::selectObject(DBInstanceID id, bool additive) {
 
 void ModelInteractionHandler::applySelection(
     const std::vector<DBInstanceID>& selectedIds) {
-    auto* bridge = SelectionBridge::instance();
-    const std::vector<DBInstanceID> previous = bridge->getSelectedIds();
-    if (previous == selectedIds) {
-        return;
-    }
-    for (const auto id : previous) {
-        if (!containsId(selectedIds, id)) {
-            clearSelectionVisual(id);
-        }
-    }
-    for (const auto id : selectedIds) {
-        if (!containsId(previous, id)) {
-            applySelectionVisual(id);
-        }
-    }
-    bridge->setSelectedObjects(selectedIds);
+    SelectionBridge::instance()->setSelectedObjects(selectedIds);
 }
 
 void ModelInteractionHandler::clearSelection() {
     auto* bridge = SelectionBridge::instance();
-    const std::vector<DBInstanceID> selected = bridge->getSelectedIds();
-    for (const auto id : selected) {
-        clearSelectionVisual(id);
-    }
     bridge->clearSelection();
 }
 
 void ModelInteractionHandler::hideSelectionVisuals() {
-    const auto selected = SelectionBridge::instance()->getSelectedIds();
-    for (const auto id : selected) {
-        clearSelectionVisual(id);
-    }
+    std::vector<DBInstanceID> keys;
+    for (const auto& entry : m_selectionBoxes) keys.push_back(entry.first);
+    for (const auto id : keys) destroySelectionBox(id);
 }
 
 void ModelInteractionHandler::restoreSelectionVisuals() {
-    const auto selected = SelectionBridge::instance()->getSelectedIds();
-    for (const auto id : selected) {
-        applySelectionVisual(id);
+    auto* selection = SelectionBridge::instance();
+    if (const auto& target = selection->modifierTarget()) {
+        createSelectionBox(target->instanceId, target->partId);
+        return;
     }
+    for (const auto id : selection->getSelectedIds()) applySelectionVisual(id);
 }
 
 void ModelInteractionHandler::applySelectionVisual(DBInstanceID id) {
     createSelectionBox(id);
 }
 
-void ModelInteractionHandler::clearSelectionVisual(DBInstanceID id) {
-    destroySelectionBox(id);
-}
-
-void ModelInteractionHandler::createSelectionBox(DBInstanceID actorId) {
-    if (!actorId.isValid() || actorId.isTemp() || m_selectionBoxes.count(actorId) != 0) {
+void ModelInteractionHandler::createSelectionBox(DBInstanceID actorId, DBInstanceID partId) {
+    const auto key = partId.isValid() ? partId : actorId;
+    if (!actorId.isValid() || actorId.isTemp() || m_selectionBoxes.count(key) != 0) {
         return;
     }
+    // Derived widgets must not leave raw notification pointers in a long-lived
+    // model transaction after the widget itself has been destroyed.
+    ImmediateNotifyGuard immediate;
     TransientUpdateGuard transient;
     const auto widget = trans::TransDB::create<SelectionBoxWidgetDB>(actorId);
     if (widget) {
-        m_selectionBoxes[actorId] = widget->getDBInstanceID();
+        widget->setLinkedPartID(partId);
+        widget->updateFromLinkedActor();
+        m_selectionBoxes[key] = widget->getDBInstanceID();
     }
 }
 
@@ -501,6 +556,7 @@ void ModelInteractionHandler::destroySelectionBox(DBInstanceID actorId) {
     }
     if (auto* document = DocumentManager::instance();
         document && document->getDBInstance(box->second)) {
+        ImmediateNotifyGuard immediate;
         TransientUpdateGuard transient;
         document->unregisterDBInstance(box->second);
     }
@@ -537,6 +593,37 @@ void ModelInteractionHandler::updateDrag(
             std::round(delta.x / kSnapStepMillimeters);
         delta.y = kSnapStepMillimeters *
             std::round(delta.y / kSnapStepMillimeters);
+    }
+
+    if (m_drag.partId.isValid()) {
+        if (actor->getTransform() != m_drag.initialTransform) {
+            finishDrag(false);
+            return;
+        }
+        const auto linear = m_drag.initialTransform.getMatrix().block<3, 3>(0, 0).eval();
+        const Eigen::Vector3f localDelta = linear.inverse() * Eigen::Vector3f(delta.x, delta.y, delta.z);
+        Transform next = m_drag.initialPartTransform;
+        next.translate({localDelta.x(), localDelta.y(), localDelta.z()});
+        const auto part = DocumentManager::instance()->getDB<ModelPartDB>(m_drag.partId);
+        if (!part || next == part->getLocalTransform()) return;
+        if (!m_drag.transaction) {
+            if (TransactionManager::instance().isInTransaction()) { finishDrag(false); return; }
+            m_drag.transaction = std::make_unique<TransactionGuard>("Direct Modifier Translation");
+        }
+        std::string error;
+        // Isolate/map before immediate geometry notifications are published.
+        ImmediateNotifyGuard immediate;
+        const auto targetId = ModelGraphUtil::setInstancePartLocalTransform(
+            m_drag.actorId, m_drag.partId, next, &error);
+        if (!targetId.isValid()) {
+            LOG_WARN("Modifier drag failed: {}", error);
+            finishDrag(false);
+            return;
+        }
+        m_drag.partId = targetId;
+        m_drag.moved = true;
+        SelectionBridge::instance()->setSelectedModifier(m_drag.actorId, targetId);
+        return;
     }
 
     const Vector3 newPosition(
@@ -609,7 +696,10 @@ std::shared_ptr<ActorDB> ModelInteractionHandler::resolveDraggedActor() const {
 }
 
 bool ModelInteractionHandler::draggedActorIsStillSelected() const {
-    const auto& selected = SelectionBridge::instance()->getSelectedIds();
+    const auto* selection = SelectionBridge::instance();
+    if (m_drag.partId.isValid())
+        return selection->activeInstanceId() == m_drag.actorId && selection->activePartId() == m_drag.partId;
+    const auto& selected = selection->getSelectedIds();
     return selected.size() == 1 && selected.front() == m_drag.actorId;
 }
 
@@ -623,11 +713,16 @@ void ModelInteractionHandler::finishDrag(bool commit) {
     m_drag = DragState{};
     const auto scope = m_scopeOwner && m_pointerScope && m_pointerScope->viewId == completed.viewId
         ? m_pointerScope : std::nullopt;
+    auto* selection = SelectionBridge::instance();
+    const bool restoreModifier = !commit && completed.originalPartId.isValid() &&
+        selection->activeInstanceId() == completed.actorId && selection->activePartId() == completed.partId;
     if (completed.transaction) {
         if (commit) completed.transaction->commit();
         else completed.transaction->rollback();
         completed.transaction.reset();
     }
+    if (restoreModifier)
+        selection->setSelectedModifier(completed.actorId, completed.originalPartId);
     const auto actor = DocumentManager::instance()->getDB<ActorDB>(completed.actorId);
     if (!commit && actor && actor->isTempDB()) {
         TransientUpdateGuard transient;

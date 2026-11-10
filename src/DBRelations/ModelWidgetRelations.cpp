@@ -11,6 +11,7 @@
 #include "ModelTranslateWidgetDB.hpp"
 #include "SelectionBoxWidgetDB.hpp"
 #include "TransactionManager.hpp"
+#include <ImmediateNotifyGuard.hpp>
 #include <QCoreApplication>
 #include <QTimer>
 
@@ -76,6 +77,7 @@ void detachSelectionBoxFromActor(DBRelationDetachContext& context) {
             }
             // Selection bounds are derived UI state. Their deferred cleanup
             // must not become another undo entry or erase a redo branch.
+            ImmediateNotifyGuard immediate;
             TransientUpdateGuard transient;
             document->unregisterDBInstance(widgetId);
         });
@@ -140,7 +142,7 @@ void registerRelations() {
         TypeID::SELECTION_BOX_WIDGET_DB,
         SelectionBoxRelation,
         ActorSyncRule,
-        WATCH_PROPS("WorldBounds"),
+        WATCH_PROPS("WorldBounds", ModelInstanceDB::kObjectRelation),
         syncWidgetFromActor<SelectionBoxWidgetDB>,
         attachWidgetToActor<SelectionBoxWidgetDB>,
         detachSelectionBoxFromActor);

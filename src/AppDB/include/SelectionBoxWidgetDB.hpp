@@ -22,6 +22,7 @@ public:
     }
 
     FIELD_RELATION_REF(SelectionBoxWidgetDB, LinkedActorID)
+    FIELD_VALUE(SelectionBoxWidgetDB, DBInstanceID, LinkedPartID)
     FIELD_VALUE(SelectionBoxWidgetDB, Vector3, ModelBoundsMin)
     FIELD_VALUE(SelectionBoxWidgetDB, Vector3, ModelBoundsMax)
     FIELD_VALUE_SIMPLE(SelectionBoxWidgetDB, bool, HasValidBounds)

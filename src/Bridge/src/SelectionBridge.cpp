@@ -2,6 +2,8 @@
 #include "BridgeRegistration.hpp"
 #include <DocumentManager.hpp>
 #include <ActorDB.hpp>
+#include <ModelInstanceDB.hpp>
+#include <ModelPartDB.hpp>
 #include <algorithm>
 #include <memory>
 #include "Foundation/Log.h"
@@ -114,9 +116,8 @@ int SelectionBridge::selectionCount() const {
 }
 
 void SelectionBridge::setSelectedObjects(const std::vector<DBInstanceID>& selectedIds) {
-    if (m_selectedIds == selectedIds) {
-        return; // No change
-    }
+    if (m_selectedIds == selectedIds && !m_modifierTarget) return;
+    m_modifierTarget.reset();
 
     LOG_DEBUG("SelectionBridge: Selection changed, {} objects selected", selectedIds.size());
 
@@ -160,6 +161,7 @@ void SelectionBridge::setSelectedObjects(const std::vector<DBInstanceID>& select
     emit hasSelectionChanged();
     emit selectionCountChanged();
     emit selectionChanged(qmlIds);
+    emit activeTargetChanged();
 
     // 更新widget状态
     LOG_INFO("📡 SelectionBridge: Emitting widget status change signals - hasScaleWidget: {}", hasScaleWidget());
@@ -169,9 +171,9 @@ void SelectionBridge::setSelectedObjects(const std::vector<DBInstanceID>& select
 }
 
 void SelectionBridge::clearSelection() {
-    if (m_selectedIds.empty()) {
-        return; // Already empty
-    }
+    if (m_selectedIds.empty() && !m_modifierTarget) return;
+    m_modifierTarget.reset();
+    clearListeners();
 
     LOG_INFO("🧹 SelectionBridge: Selection cleared");
 
@@ -187,12 +189,81 @@ void SelectionBridge::clearSelection() {
     emit hasSelectionChanged();
     emit selectionCountChanged();
     emit selectionChanged(QVariantList());
+    emit activeTargetChanged();
 
     // 更新widget状态
     emit hasOrientationWidgetChanged();
     emit hasScaleWidgetChanged();
     emit hasTranslateWidgetChanged();
     emit hasMirrorWidgetChanged();
+}
+
+DBInstanceID SelectionBridge::activeInstanceId() const {
+    return m_modifierTarget ? m_modifierTarget->instanceId
+        : (m_selectedIds.size() == 1 ? m_selectedIds.front() : DBInstanceID{});
+}
+DBInstanceID SelectionBridge::activePartId() const {
+    return m_modifierTarget ? m_modifierTarget->partId : DBInstanceID{};
+}
+QString SelectionBridge::activeInstanceIdString() const {
+    const auto id = activeInstanceId();
+    return id.isValid() ? QString::number(id.getValue()) : QString{};
+}
+QString SelectionBridge::activePartIdString() const {
+    const auto id = activePartId();
+    return id.isValid() ? QString::number(id.getValue()) : QString{};
+}
+bool SelectionBridge::setSelectedModifier(DBInstanceID instanceId, DBInstanceID partId) {
+    auto* document = DocumentManager::instance();
+    const auto instance = document->getDB<ModelInstanceDB>(instanceId);
+    if (!instance) return false;
+    const auto parts = instance->parts();
+    const auto found = std::find_if(parts.begin(), parts.end(), [partId](const auto& part) {
+        return part && part->getDBInstanceID() == partId &&
+            part->getRole() == int(ModelPartRole::ParameterModifier);
+    });
+    if (found == parts.end()) return false;
+    if (m_modifierTarget && m_modifierTarget->instanceId == instanceId &&
+        m_modifierTarget->partId == partId) return true;
+    const bool hadWholeSelection = !m_selectedIds.empty();
+    removeLinkedWidgets(m_selectedIds);
+    m_selectedIds.clear();
+    m_modifierTarget = ModifierTarget{instanceId, partId};
+    m_cacheValid = false;
+    updateMaterialProperties();
+    clearListeners();
+    startListeningTo(instanceId);
+    startListeningTo(partId);
+    if (hadWholeSelection) {
+        emit selectedModelChanged();
+        emit hasSelectionChanged();
+        emit selectionCountChanged();
+        emit selectionChanged(QVariantList{});
+        emit hasOrientationWidgetChanged();
+        emit hasScaleWidgetChanged();
+        emit hasTranslateWidgetChanged();
+    }
+    // Publish only the final target, including COW remaps during a drag.
+    emit activeTargetChanged();
+    return true;
+}
+void SelectionBridge::queueTargetValidation() {
+    if (!m_modifierTarget || m_targetValidationQueued) return;
+    m_targetValidationQueued = true;
+    // Validate the completed graph, never a COW detach/attach intermediate state.
+    QMetaObject::invokeMethod(this, [this] {
+        m_targetValidationQueued = false;
+        if (!m_modifierTarget) return;
+        const auto target = *m_modifierTarget;
+        const auto instance = DocumentManager::instance()->getDB<ModelInstanceDB>(target.instanceId);
+        if (instance) {
+            for (const auto& part : instance->parts()) {
+                if (part && part->getDBInstanceID() == target.partId &&
+                    part->getRole() == int(ModelPartRole::ParameterModifier)) return;
+            }
+        }
+        clearSelection();
+    }, Qt::QueuedConnection);
 }
 
 DBInstanceID SelectionBridge::selectedId() const {
@@ -1034,6 +1105,10 @@ void SelectionBridge::updateSpecificMaterialProperty(const std::string& property
 void SelectionBridge::onPropertyChanged(const DBInstanceID& id,
                                        const std::string& propertyName,
                                        const std::any& newValue) {
+    if (m_modifierTarget) {
+        queueTargetValidation();
+        return;
+    }
     LOG_DEBUG("SelectionBridge::onPropertyChanged - ID: {}, Property: {}", id.getValue(), propertyName);
     
     // 只处理选中对象的属性变化
@@ -1071,6 +1146,10 @@ void SelectionBridge::onObjectCreated(const DBInstanceID& id) {
 }
 
 void SelectionBridge::onObjectDeleted(const DBInstanceID& id) {
+    if (m_modifierTarget) {
+        queueTargetValidation();
+        return;
+    }
     // 如果删除的是选中的对象，需要从选中列表中移除
     bool wasSelected = false;
     for (auto it = m_selectedIds.begin(); it != m_selectedIds.end(); ++it) {
@@ -1092,7 +1171,12 @@ void SelectionBridge::onObjectDeleted(const DBInstanceID& id) {
         emit selectedModelChanged();
         emit hasSelectionChanged();
         emit selectionCountChanged();
-        
+        QVariantList remaining;
+        for (const auto selected : m_selectedIds)
+            remaining.push_back(QVariant::fromValue<qulonglong>(selected.getValue()));
+        emit selectionChanged(remaining);
+        emit activeTargetChanged();
+
         LOG_INFO("SelectionBridge: Deleted object {} was selected, updated selection", id.getValue());
     }
 }

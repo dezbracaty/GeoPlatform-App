@@ -1,6 +1,8 @@
 #include "SelectionBoxWidgetDB.hpp"
 
 #include "ActorDB.hpp"
+#include "ModelPartDB.hpp"
+#include "ModelInstanceDB.hpp"
 #include "DocumentManager.hpp"
 #include "Foundation/Log.h"
 #include <cmath>
@@ -23,6 +25,7 @@ void SelectionBoxWidgetDB::initializeSubWidgetProperties() {
     // The dependency edge can only be attached after this widget has been
     // registered and has a concrete TypeID in DocumentManager.
     setLinkedActorID(DBInstanceID());
+    setLinkedPartID(DBInstanceID());
 
     setModelBoundsMin(Vector3());
     setModelBoundsMax(Vector3());
@@ -57,7 +60,15 @@ void SelectionBoxWidgetDB::updateFromLinkedActor() {
         return;
     }
 
-    const ActorDB::BoundingBox bounds = actor->worldBounds();
+    ActorDB::BoundingBox bounds;
+    if (getLinkedPartID().isValid()) {
+        const auto instance = std::dynamic_pointer_cast<ModelInstanceDB>(actor);
+        const auto part = document->getDB<ModelPartDB>(getLinkedPartID());
+        if (instance && part && part->object() == instance->object() && part->geometry())
+            bounds = instance->partWorldBounds(getLinkedPartID());
+    } else {
+        bounds = actor->worldBounds();
+    }
     const bool finite =
         std::isfinite(bounds.min.x) && std::isfinite(bounds.min.y) && std::isfinite(bounds.min.z) &&
         std::isfinite(bounds.max.x) && std::isfinite(bounds.max.y) && std::isfinite(bounds.max.z);

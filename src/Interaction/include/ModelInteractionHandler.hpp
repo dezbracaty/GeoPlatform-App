@@ -67,6 +67,9 @@ private:
         bool moved{false};
         DBInstanceID viewId{INVALID_DB_ID};
         DBInstanceID actorId{INVALID_DB_ID};
+        DBInstanceID partId{INVALID_DB_ID};
+        DBInstanceID originalPartId{INVALID_DB_ID};
+        Transform initialPartTransform;
         QPoint pressPosition;
         QPoint latestPosition;
         Qt::KeyboardModifiers latestModifiers{Qt::NoModifier};
@@ -96,13 +99,14 @@ private:
                            DBInstanceID viewId,
                            const QPoint& pressPosition,
                            Qt::KeyboardModifiers modifiers);
+    bool beginModifierGesture(DBInstanceID instanceId, DBInstanceID partId,
+                              DBInstanceID viewId, const QPoint& pressPosition);
     void applySelection(const std::vector<DBInstanceID>& selectedIds);
     void clearSelection();
     void hideSelectionVisuals();
     void restoreSelectionVisuals();
     void applySelectionVisual(DBInstanceID id);
-    void clearSelectionVisual(DBInstanceID id);
-    void createSelectionBox(DBInstanceID actorId);
+    void createSelectionBox(DBInstanceID actorId, DBInstanceID partId = DBInstanceID{});
     void destroySelectionBox(DBInstanceID actorId);
 
     void updateDrag(const QPoint& screenPosition,

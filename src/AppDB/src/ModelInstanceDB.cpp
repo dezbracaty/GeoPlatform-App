@@ -156,6 +156,16 @@ ActorDB::BoundingBox ModelInstanceDB::worldBoundsAt(
     return boundsAt(instanceMatrix, false);
 }
 
+ActorDB::BoundingBox ModelInstanceDB::partWorldBounds(DBInstanceID partId) const {
+    for (const auto& part : parts()) {
+        if (!part || part->getDBInstanceID() != partId) continue;
+        const auto geometry = part->geometry();
+        return geometry ? geometry->boundsAfterTransform(
+            getTransformMatrix() * part->getLocalTransform().getMatrix()) : BoundingBox{};
+    }
+    return {};
+}
+
 ActorDB::BoundingBox ModelInstanceDB::modelPartBoundsAt(
     const Transform::Matrix4& instanceMatrix) const {
     return boundsAt(instanceMatrix, true);

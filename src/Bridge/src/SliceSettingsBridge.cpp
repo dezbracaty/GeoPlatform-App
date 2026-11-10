@@ -1,3 +1,4 @@
+#include <ModelGraphUtil.hpp>
 #include "SliceSettingsBridge.hpp"
 #include "BridgeRegistration.hpp"
 
@@ -1232,7 +1233,7 @@ std::shared_ptr<ModelInstanceDB> selectedParameterInstance(const QString& modelI
     bool ok = false;
     const DBInstanceID id(modelId.toULongLong(&ok));
     const auto* selection = SelectionBridge::instance();
-    if (!ok || !id.isValid() || selection->selectionCount() != 1 || selection->selectedId() != id)
+    if (!ok || !id.isValid() || selection->activeInstanceId() != id)
         return {};
     return DocumentManager::instance()->getDB<ModelInstanceDB>(id);
 }
@@ -1339,10 +1340,32 @@ QString SliceSettingsBridge::editLocalProcessSetting(const QString& modelId, con
     if (changed == target.semantics()) return {};
 
     TransactionGuard transaction(target.part ? "Edit modifier slicing parameter" : "Edit model slicing parameter");
-    if (target.part)
-        target.part->setProjectSemantics(changed);
-    else
-        target.object->setProjectSemantics(changed);
+    const auto instance = selectedParameterInstance(modelId);
+    if (!instance) {
+        transaction.rollback();
+        return tr("The selected model is no longer available.");
+    }
+    const auto unique = ModelGraphUtil::ensureUniqueObjectForInstance(instance->getDBInstanceID());
+    if (!unique) {
+        transaction.rollback();
+        return tr("Unable to isolate the selected model for editing.");
+    }
+    auto* document = DocumentManager::instance();
+    if (target.part) {
+        const auto partId = unique.mapPart(target.part->getDBInstanceID());
+        const auto part = document->getDB<ModelPartDB>(partId);
+        if (!part) {
+            transaction.rollback();
+            return tr("The selected modifier is no longer available.");
+        }
+        part->setProjectSemantics(changed);
+        const auto* selection = SelectionBridge::instance();
+        if (selection->activeInstanceId() == instance->getDBInstanceID() &&
+            selection->activePartId() == target.part->getDBInstanceID())
+            SelectionBridge::instance()->setSelectedModifier(instance->getDBInstanceID(), partId);
+    } else {
+        document->getDB<ModelObjectDB>(unique.objectId)->setProjectSemantics(changed);
+    }
     transaction.commit();
     markNeedsReslice();
     return {};

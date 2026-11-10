@@ -16,10 +16,10 @@ PanelSurface {
     property bool positioned: false
     property int page: 0
     property string localModelId: ""
-    property string localPartId: ""
-    property string localTargetName: ""
-    readonly property string selectedModelId: SelectionBridge.selectionCount === 1
-        ? String(SelectionBridge.selectedId) : ""
+    readonly property string localPartId: SelectionBridge.activePartId
+    readonly property string localTargetName: ModelPropertyBridge.displayName
+    readonly property bool modifierSelected: localPartId.length > 0
+    readonly property string selectedModelId: SelectionBridge.activeInstanceId
     readonly property bool editingLocalProcess: page === 1 && localModelId.length > 0
         && localModelId === selectedModelId
     onSelectedModelIdChanged: localModelId = ""
@@ -107,9 +107,10 @@ PanelSurface {
         page = 0;
     }
     function showLocalProcess(partId, name) {
-        localPartId = partId;
-        localTargetName = name;
-        localModelId = selectedModelId;
+        const params = {modelId: selectedModelId};
+        if (partId.length) params.partId = partId;
+        if (ActionManager.triggerAction("selection.pick", params))
+            localModelId = selectedModelId;
     }
     function focusSetting(key) {
         open();
@@ -123,7 +124,7 @@ PanelSurface {
         return -1;
     }
     function setVector(kind, axis, value) {
-        if (SelectionBridge.selectionCount !== 1 || !editingEnabled)
+        if (!selectedModelId.length || !editingEnabled)
             return;
         const v = kind === "position" ? ModelPropertyBridge.position : ModelPropertyBridge.rotation;
         const next = Qt.vector3d(axis === 0 ? value : v.x, axis === 1 ? value : v.y, axis === 2 ? value : v.z);
@@ -573,7 +574,7 @@ PanelSurface {
             Layout.leftMargin: 16
             Layout.rightMargin: 16
             Layout.bottomMargin: 6
-            text: qsTr("Copies of the same object share these settings.")
+            text: qsTr("Changes apply to the selected model instance.")
             font: Typography.caption
             color: root.secondaryText
             wrapMode: Text.WordWrap
@@ -672,7 +673,7 @@ PanelSurface {
                 }
                 Label {
                     Layout.fillWidth: true
-                    visible: SelectionBridge.selectionCount !== 1
+                    visible: !root.selectedModelId.length
                     text: SelectionBridge.hasSelection ? qsTr("Select one model to edit its properties") : qsTr("Select a model to view its properties")
                     font.pixelSize: 11
                     color: root.secondaryText
@@ -680,13 +681,21 @@ PanelSurface {
                 }
                 ColumnLayout {
                     Layout.fillWidth: true
-                    visible: ModelPropertyBridge.hasSelectedModel && SelectionBridge.selectionCount === 1
+                    visible: ModelPropertyBridge.hasSelectedModel && root.selectedModelId.length > 0
                     enabled: root.editingEnabled && !FiberMaskBridge.active && !CutToolBridge.active
                     spacing: 10
+                    Button {
+                        objectName: "print.configuration.selectParent"
+                        visible: root.modifierSelected
+                        Layout.fillWidth: true
+                        text: qsTr("Select whole model")
+                        onClicked: ActionManager.triggerAction("selection.pick", {modelId: root.selectedModelId})
+                    }
                     Button {
                         objectName: "print.configuration.objectSettings"
                         Layout.fillWidth: true
                         text: qsTr("Model parameters")
+                        visible: !root.modifierSelected
                         onClicked: root.showLocalProcess("", ModelPropertyBridge.displayName)
                     }
                     Repeater {
@@ -701,8 +710,24 @@ PanelSurface {
                             objectName: "print.configuration.modifierSettings." + index
                             Layout.fillWidth: true
                             text: qsTr("Modifier %1 · %2").arg(index + 1).arg(modelData.name)
-                            onClicked: root.showLocalProcess(modelData.id, text)
+                            highlighted: root.localPartId === modelData.id
+                            onClicked: ActionManager.triggerAction("selection.pick", {
+                                modelId: root.selectedModelId, partId: modelData.id
+                            })
                         }
+                    }
+                    Button {
+                        objectName: "print.configuration.modifierParameters"
+                        visible: root.modifierSelected
+                        Layout.fillWidth: true
+                        text: qsTr("Modifier parameters")
+                        onClicked: root.showLocalProcess(root.localPartId, ModelPropertyBridge.displayName)
+                    }
+                    Label {
+                        visible: root.modifierSelected
+                        Layout.fillWidth: true
+                        text: qsTr("Modifier") + " · " + ModelPropertyBridge.displayName
+                        wrapMode: Text.Wrap
                     }
                     Label {
                         text: qsTr("Dimensions")
@@ -744,10 +769,11 @@ PanelSurface {
                         ColumnLayout {
                             required property string modelData
                             readonly property string kind: modelData
+                            visible: !root.modifierSelected || kind === "position"
                             Layout.fillWidth: true
                             spacing: 7
                             Label {
-                                text: parent.kind === "position" ? qsTr("Position") + " / mm" : qsTr("Rotation") + " / °"
+                                text: parent.kind === "position" ? (root.modifierSelected ? qsTr("Position relative to model") : qsTr("Position")) + " / mm" : qsTr("Rotation") + " / °"
                                 font.pixelSize: 11
                                 color: root.secondaryText
                             }
@@ -771,7 +797,7 @@ PanelSurface {
                         }
                     }
                     Label {
-                        text: qsTr("Model material")
+                        text: root.modifierSelected ? qsTr("Modifier material") : qsTr("Model material")
                         font.pixelSize: 11
                         color: root.secondaryText
                     }
@@ -800,7 +826,14 @@ PanelSurface {
                                 ModelPropertyBridge.assignFilamentSlot(model[index].id);
                         }
                     }
+                    Label {
+                        visible: root.modifierSelected && ModelPropertyBridge.filamentBindingMode === 2
+                        text: qsTr("Inherited from model")
+                        font.pixelSize: 11
+                        color: root.secondaryText
+                    }
                     RowLayout {
+                        visible: !root.modifierSelected
                         Layout.fillWidth: true
                         spacing: 7
                         Button {
@@ -825,6 +858,7 @@ PanelSurface {
                         }
                     }
                     Label {
+                        visible: !root.modifierSelected
                         text: qsTr("Scale") + "  " + [ModelPropertyBridge.scale.x, ModelPropertyBridge.scale.y, ModelPropertyBridge.scale.z].map(function (value) {
                             return Number(value).toFixed(2);
                         }).join(" / ")
@@ -840,6 +874,7 @@ PanelSurface {
                     }
                     Button {
                         objectName: "print.configuration.modelColor"
+                        visible: !root.modifierSelected
                         text: qsTr("Change model appearance color")
                         Layout.fillWidth: true
                         implicitHeight: 30
@@ -848,7 +883,7 @@ PanelSurface {
                     }
                     Button {
                         objectName: "print.configuration.fiberMask"
-                        visible: root.fiberCapable
+                        visible: root.fiberCapable && !root.modifierSelected
                         Layout.fillWidth: true
                         implicitHeight: 32
                         text: qsTr("Edit fiber mask")

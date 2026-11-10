@@ -616,6 +616,34 @@ bool ModelGraphUtil::replacePartMaterial(
     return true;
 }
 
+DBInstanceID ModelGraphUtil::setInstancePartLocalTransform(
+    DBInstanceID instanceId, DBInstanceID sourcePartId,
+    const Transform& transform, std::string* error) {
+    auto* document = DocumentManager::instance();
+    const auto instance = document ? document->getDB<ModelInstanceDB>(instanceId) : nullptr;
+    if (!instance || !transform.getMatrix().allFinite()) {
+        setError(error, "Invalid instance or local transform");
+        return DBInstanceID{};
+    }
+    const auto parts = instance->parts();
+    if (std::none_of(parts.begin(), parts.end(), [sourcePartId](const auto& part) {
+            return part && part->getDBInstanceID() == sourcePartId;
+        })) {
+        setError(error, "Part does not belong to the model instance");
+        return DBInstanceID{};
+    }
+    auto transaction = transactionIfNeeded("Transform Instance Part");
+    const auto unique = ensureUniqueObjectForInstance(instanceId);
+    const auto targetId = unique.mapPart(sourcePartId);
+    if (!unique || !targetId.isValid() || !setPartLocalTransform(targetId, transform, error)) {
+        if (!unique) setError(error, unique.error);
+        if (transaction) transaction->rollback();
+        return DBInstanceID{};
+    }
+    if (transaction) transaction->commit();
+    return targetId;
+}
+
 bool ModelGraphUtil::setPartLocalTransform(
     DBInstanceID partId, const Transform& transform, std::string* error) {
     auto* document = DocumentManager::instance();

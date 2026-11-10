@@ -100,6 +100,10 @@ public:
         std::string* error = nullptr);
     static EnsureUniqueResult ensureUniqueObjectForInstance(
         DBInstanceID instanceId);
+    // Returns the real target part ID after isolating a shared instance.
+    static DBInstanceID setInstancePartLocalTransform(
+        DBInstanceID instanceId, DBInstanceID sourcePartId,
+        const Transform& transform, std::string* error = nullptr);
     static bool replaceInstancePartGeometry(
         DBInstanceID instanceId, DBInstanceID sourcePartId,
         vtkPolyData* geometry, std::string* error = nullptr);
