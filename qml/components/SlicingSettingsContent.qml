@@ -20,34 +20,6 @@ Item {
     // still renders its own title bar by default.
     property bool embedded: false
     property bool compactPanel: false
-    property bool objectMode: false
-    property string objectModelId: ""
-    property string objectPartId: ""
-    property var objectSettingsData: ({})
-    property var objectDefinitions: []
-    property string objectEditError: ""
-
-    function refreshObjectSettings() {
-        if (!objectMode || !objectModelId || TaskStateNotifier.isBusy)
-            return
-        const data = SliceSettingsBridge.objectSettings(objectModelId, objectPartId)
-        const definitions = data.rows || []
-        // Value updates leave the editor delegates in place, including focused
-        // text fields and sliders handling a drag.
-        if (JSON.stringify(objectDefinitions) !== JSON.stringify(definitions))
-            objectDefinitions = definitions
-        objectSettingsData = data
-    }
-
-    function objectSettingFor(key) {
-        return objectSettingsData.values ? objectSettingsData.values[key] : null
-    }
-
-    onObjectModelIdChanged: {
-        objectEditError = ""
-        refreshObjectSettings()
-    }
-    onObjectPartIdChanged: refreshObjectSettings()
     // Reusing this component must not give retained/hidden editors the same
     // automation identity. An empty namespace preserves existing recordings.
     property string automationNamespace: ""
@@ -86,10 +58,6 @@ Item {
     readonly property var compactPages: compactCatalog.filter(function(page) { return page.id !== "fiber" || fiberAvailable })
     readonly property var compactDefinitions: {
         if (!compactPanel) return []
-        if (objectMode) return objectDefinitions.filter(function(row) {
-            return (globalSearchMode || showAdvancedMode || row.mode === "basic")
-                && (fiberAvailable || compactSchemaCategory(row.page) !== "fiber")
-        })
         const revision = schemaRevisionToken
         const rows = []
         for (const page of SliceSettingsBridge.getTabPages("process", showAdvancedMode)) {
@@ -1195,19 +1163,10 @@ Item {
     Component.onCompleted: {
         refreshContext()
         syncPresetComboSelection()
-        refreshObjectSettings()
     }
 
     Connections {
         target: SliceSettingsBridge
-
-        function onObjectSettingsChanged() {
-            root.refreshObjectSettings()
-        }
-
-        function onSettingsChanged() {
-            root.refreshObjectSettings()
-        }
 
         function onMachineSelectionChanged() {
             root.refreshContext()
@@ -1224,14 +1183,6 @@ Item {
         }
     }
 
-    Connections {
-        target: TaskStateNotifier
-        enabled: root.objectMode
-        function onIsBusyChanged() {
-            if (!TaskStateNotifier.isBusy)
-                root.refreshObjectSettings()
-        }
-    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -1245,8 +1196,7 @@ Item {
             Layout.bottomMargin: 8
             spacing: 10
             TextField {
-                objectName: root.objectMode ? "print.configuration.objectSearch"
-                            : (root.compactPanel ? "print.configuration.search" : "")
+                objectName: root.compactPanel ? "print.configuration.search" : ""
                 Layout.fillWidth: true
                 implicitHeight: 31
                 font.pixelSize: 11
@@ -1257,8 +1207,7 @@ Item {
                 onTextEdited: root.searchText = text
             }
             CheckBox {
-                objectName: root.objectMode ? "print.configuration.objectAdvanced"
-                            : (root.compactPanel ? "print.configuration.advanced" : "")
+                objectName: root.compactPanel ? "print.configuration.advanced" : ""
                 text: qsTr("Advanced")
                 font.pixelSize: 10
                 indicator.width: 12; indicator.height: 12
@@ -1278,8 +1227,7 @@ Item {
                 delegate: Button {
                     required property int index
                     required property var modelData
-                    objectName: (root.objectMode ? "print.configuration.objectCategory."
-                                                 : "print.configuration.category.") + modelData.id
+                    objectName: "print.configuration.category." + modelData.id
                     height: 27
                     implicitWidth: implicitContentWidth + 16
                     horizontalPadding: 8
@@ -1312,19 +1260,9 @@ Item {
             height: 1
             color: root.SmoothUI.theme.res.dividerStrokeColorDefault
         }
-        Label {
-            visible: root.objectMode && text.length > 0
-            Layout.fillWidth: true
-            Layout.leftMargin: 16
-            Layout.rightMargin: 16
-            wrapMode: Text.Wrap
-            text: root.objectEditError || root.objectSettingsData.error || ""
-            color: root.SmoothUI.theme.res.systemFillColorCaution
-        }
         ScrollView {
             id: compactScroll
-            objectName: root.objectMode ? "print.configuration.objectParameters"
-                        : (root.compactPanel ? "print.configuration.parameters" : "")
+            objectName: root.compactPanel ? "print.configuration.parameters" : ""
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
@@ -1359,9 +1297,7 @@ Item {
                                 schemaEnabled: modelData.enabled === undefined || !!modelData.enabled
                                 autoInit: false
                                 configRevision: root.schemaRevisionToken
-                                editorObjectNamePrefix: root.objectMode ? "print.configuration.objectEditor."
-                                                                       : "print.configuration.editor."
-                                objectSetting: root.objectMode ? root.objectSettingFor(paramKey) : null
+                                editorObjectNamePrefix: "print.configuration.editor."
                                 providedControl: compactInput.editorControl
                                 providedControlKind: compactInput.editorKind
                                 SchemaSettingInput { id: compactInput; definition: modelData }
@@ -1377,13 +1313,9 @@ Item {
                 }
                 Repeater {
                     model: root.compactPanel && root.globalSearchMode
-                           ? (root.objectMode ? root.compactDefinitions.filter(function(row) {
-                               const query = root.searchText.trim().toLowerCase()
-                               return row.key.toLowerCase().includes(query) ||
-                                   root.localizedSchemaText(row.label, row.key).toLowerCase().includes(query)
-                           }) : root.globalSearchResults.filter(function(row) {
+                           ? root.globalSearchResults.filter(function(row) {
                                return row.tab === "process" && (root.fiberAvailable || root.compactSchemaCategory(row.page) !== "fiber")
-                           })) : []
+                           }) : []
                     delegate: SearchResultCard {}
                 }
             }
@@ -1439,7 +1371,6 @@ Item {
                 configRevision: root.schemaRevisionToken
                 providedControl: searchSettingInput.editorControl
                 providedControlKind: searchSettingInput.editorKind
-                objectSetting: root.objectMode ? root.objectSettingFor(paramKey) : null
 
                 SchemaSettingInput {
                     id: searchSettingInput
@@ -1496,17 +1427,7 @@ Item {
         id: settingRow
 
         property string title: ""
-        readonly property bool modified: root.objectMode ? !!(objectSetting && objectSetting.overridden)
-                                        : SliceSettingsBridge.modifiedSettingKeys.indexOf(paramKey) >= 0
-        readonly property bool importedDifference: !root.objectMode
-            && SliceSettingsBridge.importedProcessDifferenceKeys.indexOf(paramKey) >= 0
-        readonly property bool highlighted: root.objectMode ? modified
-            : SliceSettingsBridge.highlightedProcessKeys.indexOf(paramKey) >= 0
-        property var objectSetting: null
-        property string objectEditTarget: ""
-        property string partEditTarget: ""
-        property bool objectTextEdited: false
-        property bool objectSliderMoved: false
+        readonly property bool modified: SliceSettingsBridge.modifiedSettingKeys.indexOf(paramKey) >= 0
         property string paramKey: ""
         property bool autoInit: true
         property bool schemaEnabled: true
@@ -1659,15 +1580,10 @@ Item {
 
             var value = extractControlValue(primaryControl)
             if (value !== undefined) {
-                if (root.objectMode && (!objectEditTarget || !root.settingsEditingEnabled || !schemaEnabled))
-                    return
-                // A schema change can replace this delegate during the commit.
-                controlSyncTimer.restart()
-                if (root.objectMode) {
-                    root.objectEditError = SliceSettingsBridge.editObjectSetting(objectEditTarget, paramKey, value, false, partEditTarget)
-                } else {
-                    SliceSettingsBridge.setSetting(paramKey, value)
-                }
+                SliceSettingsBridge.setSetting(paramKey, value)
+                // The library may reject or normalize this edit. Its accepted
+                // value remains authoritative, including unchanged revisions.
+                syncFromBridge()
             }
         }
 
@@ -1676,11 +1592,6 @@ Item {
                 return
             }
 
-            if (root.objectMode) {
-                if (objectSetting)
-                    applyControlValue(primaryControl, objectSetting.value)
-                return
-            }
             var currentValue = extractControlValue(primaryControl)
             if (!SliceSettingsBridge.hasSetting(paramKey)) {
                 if (autoInit && currentValue !== undefined) {
@@ -1699,73 +1610,29 @@ Item {
             }
 
             if (primaryControlKind === "switch") {
-                if (root.objectMode)
-                    primaryControl.toggled.connect(commitToBridge)
-                else
-                    primaryControl.checkedChanged.connect(commitToBridge)
+                primaryControl.checkedChanged.connect(commitToBridge)
                 controlConnected = true
                 return
             }
             if (primaryControlKind === "slider" || primaryControlKind === "number") {
-                if (root.objectMode && primaryControlKind === "slider") {
-                    primaryControl.moved.connect(function() {
-                        if (primaryControl.pressed)
-                            objectSliderMoved = true
-                        else
-                            commitToBridge()
-                    })
-                    primaryControl.pressedChanged.connect(function() {
-                        if (!primaryControl.pressed && objectSliderMoved) {
-                            objectSliderMoved = false
-                            commitToBridge()
-                        }
-                    })
-                } else {
-                    primaryControl.valueChanged.connect(commitToBridge)
-                }
+                primaryControl.valueChanged.connect(commitToBridge)
                 controlConnected = true
                 return
             }
             if (primaryControlKind === "combo") {
-                if (root.objectMode)
-                    primaryControl.activated.connect(commitToBridge)
-                else
-                    primaryControl.currentIndexChanged.connect(commitToBridge)
+                primaryControl.currentIndexChanged.connect(commitToBridge)
                 controlConnected = true
                 return
             }
             if (primaryControlKind === "text") {
-                if (root.objectMode) {
-                    primaryControl.textEdited.connect(function() { objectTextEdited = true })
-                    primaryControl.editingFinished.connect(commitObjectText)
-                } else {
-                    primaryControl.editingFinished.connect(commitToBridge)
-                }
+                primaryControl.editingFinished.connect(commitToBridge)
                 controlConnected = true
                 return
             }
             if (primaryControlKind === "multiline") {
-                if (root.objectMode) {
-                    primaryControl.textChanged.connect(function() {
-                        if (!syncingBridge && primaryControl.activeFocus)
-                            objectTextEdited = true
-                    })
-                    primaryControl.activeFocusChanged.connect(function() {
-                        if (!primaryControl.activeFocus)
-                            commitObjectText()
-                    })
-                } else {
-                    primaryControl.textChanged.connect(commitToBridge)
-                }
+                primaryControl.textChanged.connect(commitToBridge)
                 controlConnected = true
             }
-        }
-
-        function commitObjectText() {
-            if (!objectTextEdited)
-                return
-            objectTextEdited = false
-            commitToBridge()
         }
 
         function bindLoadedEditor(resolvedControl, editorKind) {
@@ -1791,15 +1658,8 @@ Item {
         }
 
         Component.onCompleted: {
-            objectEditTarget = root.objectModelId
-            partEditTarget = root.objectPartId
             bindLoadedEditor(providedControl, providedControlKind)
             controlSyncTimer.restart()
-        }
-
-        onObjectSettingChanged: {
-            if (!objectTextEdited && !objectSliderMoved)
-                controlSyncTimer.restart()
         }
 
         onProvidedControlChanged: {
@@ -1820,7 +1680,6 @@ Item {
 
         Connections {
             target: SliceSettingsBridge
-            enabled: !root.objectMode
 
             function onSettingsChanged() {
                 controlSyncTimer.restart()
@@ -1853,47 +1712,10 @@ Item {
                 Label {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    text: root.compactPanel && settingRow.highlighted ? "• " + title : title
-                    color: settingRow.highlighted
-                           ? root.SmoothUI.theme.accentColor.defaultBrushFor(root.SmoothUI.dark)
-                           : (root.compactPanel ? root.SmoothUI.theme.res.textFillColorSecondary
-                                                : root.SmoothUI.theme.res.textFillColorPrimary)
+                    text: root.compactPanel && settingRow.modified ? "• " + title : title
+                    color: root.compactPanel ? root.SmoothUI.theme.res.textFillColorSecondary : root.SmoothUI.theme.res.textFillColorPrimary
                     font: root.compactPanel ? root.compactCaptionFont : Typography.caption
                     elide: Text.ElideRight
-                }
-
-                Label {
-                    visible: settingRow.importedDifference
-                    text: qsTr("Project import record")
-                    font.pixelSize: 10
-                    color: root.SmoothUI.theme.res.textFillColorSecondary
-                }
-
-                Label {
-                    visible: !root.objectMode && settingRow.modified
-                    text: qsTr("Edited in this session")
-                    font.pixelSize: 10
-                    color: root.SmoothUI.theme.res.textFillColorSecondary
-                }
-
-                Button {
-                    visible: root.objectMode
-                    objectName: "print.configuration.objectInherit." + settingRow.paramKey
-                    enabled: !!settingRow.objectSetting && root.settingsEditingEnabled
-                             && (settingRow.modified || settingRow.schemaEnabled)
-                    implicitHeight: 22
-                    flat: true
-                    font.pixelSize: 10
-                    text: settingRow.modified ? qsTr("Restore inheritance") : qsTr("Inherited · Override")
-                    onClicked: {
-                        const setting = settingRow.objectSetting
-                        root.objectEditError = SliceSettingsBridge.editObjectSetting(settingRow.objectEditTarget,
-                            settingRow.paramKey, setting.value, settingRow.modified, settingRow.partEditTarget)
-                    }
-                    ToolTip.visible: hovered
-                    ToolTip.text: settingRow.modified && settingRow.objectSetting
-                                  ? qsTr("Inherited value: %1").arg(settingRow.objectSetting.inheritedValue)
-                                  : qsTr("Keep this value when the process settings change")
                 }
 
                 Label {

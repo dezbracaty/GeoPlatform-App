@@ -72,15 +72,10 @@ bool ModelFilamentAssignmentHandler::apply(
     for (const auto& part : instance->parts()) {
         if (part) sourceParts.push_back(part->getDBInstanceID());
     }
-    const auto partValue = context->getParam(QStringLiteral("partId"));
-    const bool inheritObject = useDefault && context->getParam(QStringLiteral("inheritObject")).toBool();
-    if (partValue.isValid() || inheritObject) {
-        bool partIdOk = false;
-        const auto rawPartId = partValue.toULongLong(&partIdOk);
-        if (!partIdOk || rawPartId == 0) {
-            context->setError(ActionErrorCode::InvalidParams, QStringLiteral("Invalid model part ID"));
-            return false;
-        }
+    bool partIdOk = false;
+    const auto rawPartId = context->getParam(QStringLiteral("partId"))
+        .toULongLong(&partIdOk);
+    if (partIdOk && rawPartId > 0) {
         const DBInstanceID requested(rawPartId);
         const auto found = std::find(
             sourceParts.begin(), sourceParts.end(), requested);
@@ -88,12 +83,6 @@ bool ModelFilamentAssignmentHandler::apply(
             context->setError(
                 ActionErrorCode::TargetNotFound,
                 QStringLiteral("Part does not belong to the model instance"));
-            return false;
-        }
-        const auto part = document->getDB<ModelPartDB>(requested);
-        if (!part || (part->getRole() != int(ModelPartRole::Model) &&
-                      part->getRole() != int(ModelPartRole::ParameterModifier))) {
-            context->setError(ActionErrorCode::InvalidParams, QStringLiteral("This part has no material assignment"));
             return false;
         }
         sourceParts = {requested};
@@ -129,9 +118,10 @@ bool ModelFilamentAssignmentHandler::apply(
             return false;
         }
         if (!useDefault) part->setDefaultFilamentSlot(slot);
-        const auto mode = inheritObject ? ModelFilamentBindingMode::InheritObject
-            : useDefault ? ModelFilamentBindingMode::InheritProjectDefault : ModelFilamentBindingMode::ExplicitSlot;
-        part->setFilamentBindingMode(int(mode));
+        part->setFilamentBindingMode(static_cast<int>(
+            useDefault
+                ? ModelFilamentBindingMode::InheritProjectDefault
+                : ModelFilamentBindingMode::ExplicitSlot));
         changedPartIds.push_back(QVariant::fromValue<qulonglong>(
             targetPartId.getValue()));
     }
@@ -139,7 +129,7 @@ bool ModelFilamentAssignmentHandler::apply(
     context->setResult(QVariantMap{
         {QStringLiteral("modelId"),
          QVariant::fromValue<qulonglong>(modelId.getValue())},
-        {QStringLiteral("mode"), inheritObject ? QStringLiteral("object") : useDefault
+        {QStringLiteral("mode"), useDefault
             ? QStringLiteral("projectDefault")
             : QStringLiteral("explicitSlot")},
         {QStringLiteral("slot"), useDefault ? QVariant{} : QVariant(slot)},
@@ -168,8 +158,7 @@ ModelFilamentAssignmentHandler::aiDescriptorTable() const {
             "write",
             {
                 {"modelId", "number", true},
-                {"partId", "number", false},
-                {"inheritObject", "bool", false}
+                {"partId", "number", false}
             },
             {"model", "filament", "assignment"})}
     };

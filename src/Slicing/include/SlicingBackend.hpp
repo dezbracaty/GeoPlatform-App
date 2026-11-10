@@ -16,7 +16,6 @@ using SlicingConfigActivationResult = libslicer::ConfigActivationResult;
 struct SlicingConfigPatchResult {
     libslicer::SettingsResult settings;
     std::uint64_t appliedRevision{0};
-    libslicer::ProcessPresetComparison processPresetComparison;
     explicit operator bool() const noexcept { return bool(settings); }
 };
 
@@ -46,19 +45,21 @@ public:
     const std::vector<libslicer::MachineModelOption>& machineModels() const noexcept;
     const std::vector<libslicer::BuildPlateOption>& buildPlateOptions() const noexcept;
     std::vector<libslicer::PresetOption> printerPresets(const std::string& model, const std::string& variant) const;
-    libslicer::PrinterSwitchReview reviewPrinterSwitch(const libslicer::ConfigSelection&);
+    libslicer::PrinterSwitchReview reviewPrinterSwitch(const libslicer::ConfigSelection&, bool afterSave = false);
+    libslicer::PrinterSwitchSaveResult savePrinterSwitchPreset(
+        std::uint64_t revision, libslicer::PrinterSwitchPreset, const std::string& name, bool validateOnly = false);
     libslicer::PrinterSwitchResult preparePrinterSwitch(const libslicer::ConfigSelection&,
         std::uint64_t revision, const std::vector<libslicer::PrinterSwitchDecision>&,
         const std::vector<std::pair<std::string, std::string>>& remembered);
     SlicingConfigActivationResult activateConfig(
         const libslicer::ConfigSelection& selection,
         const std::vector<std::pair<std::string, std::string>>& patch = {});
-    SlicingConfigPatchResult applyConfigPatch(
+    libslicer::SettingsResult applyConfigPatch(
         const std::vector<std::pair<std::string, std::string>>& patch);
     SlicingConfigPatchResult applyConfigPatchIfRevision(std::uint64_t expectedRevision,
         const std::vector<std::pair<std::string, std::string>>& patch);
-    SlicingConfigPatchResult setConfigValue(std::string_view key, std::string_view value);
-    SlicingConfigPatchResult resetConfigValue(std::string_view key);
+    libslicer::SettingsResult setConfigValue(std::string_view key, std::string_view value);
+    libslicer::SettingsResult resetConfigValue(std::string_view key);
     std::optional<libslicer::ActiveConfigView> activeConfigView() const;
     std::uint64_t configurationRevision() const;
     libslicer::ConfigActivationResult setFilamentPreset(

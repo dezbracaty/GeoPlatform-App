@@ -4,8 +4,6 @@
 
 #include <cstdint>
 #include <string>
-#include <tuple>
-#include <utility>
 #include <vector>
 
 namespace GPlatform {
@@ -22,7 +20,6 @@ struct SliceSessionSourceRevision {
     std::uint64_t modelId{0};
     std::uint64_t meshRevision{0};
     int surfaceColorRevision{0};
-    std::vector<std::tuple<std::uint64_t, std::string, int, int>> partSemantics;
 };
 
 // Immutable value captured at the user-visible slice boundary. Worker code

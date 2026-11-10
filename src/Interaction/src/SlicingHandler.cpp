@@ -219,7 +219,6 @@ void SlicingHandler::onEnter(std::shared_ptr<ActionContext> context) {
             }
             LOG_ERROR("SlicingHandler: {}", message.toStdString());
             EnvironmentSwitchHandler::switchEnvironment("normal");
-            NotificationManager::instance()->showError(tr("Unable to start slicing"), message);
         }
 
     } else if (actionCode == "model.importGCode") {
@@ -820,14 +819,8 @@ void SlicingHandler::performSlice() {
     m_pendingOutput->name = m_modelName;
     m_pendingOutput->sourceScope = m_sliceSourceScope;
     m_pendingOutput->sourceModelId = m_sliceSourceModelId;
-    for (const auto& source : session->sources) {
+    for (const auto& source : session->sources)
         m_pendingOutput->sourceModelIds.emplace_back(source.modelId);
-        m_pendingOutput->sourcePartSemantics.push_back(source.partSemantics);
-    }
-    for (const auto& object : session->request.objects) {
-        m_pendingOutput->sourceObjectSemantics.push_back(object.project_semantics);
-        m_pendingOutput->sourceObjectFilamentSlots.push_back(object.default_filament_slot);
-    }
     m_pendingOutput->printBedId = m_slicePrintBedId;
     m_pendingOutput->displayModelId = m_sliceSourceScope == GPlatform::ToolpathPreviewSourceScope::SingleModel
         ? int(m_sliceSourceModelId.getValue()) : int(DBInstanceID(m_modelId).getValue());

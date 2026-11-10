@@ -4,9 +4,6 @@
 #include <QStringList>
 #include <memory>
 #include <atomic>
-#include <string>
-#include <tuple>
-#include <utility>
 #include <vector>
 
 namespace GPlatform {
@@ -33,10 +30,6 @@ struct SliceOutputRecord {
     DBInstanceID printBedId{INVALID_DB_ID}, sourceModelId{INVALID_DB_ID};
     // Immutable provenance from the exact slice request, not the current bed contents.
     std::vector<DBInstanceID> sourceModelIds;
-    // Indexed by sourceModelIds. Legacy outputs have no object settings snapshot.
-    std::vector<std::string> sourceObjectSemantics;
-    std::vector<int> sourceObjectFilamentSlots;
-    std::vector<std::vector<std::tuple<std::uint64_t, std::string, int, int>>> sourcePartSemantics;
     int displayModelId = -1;
     ToolpathPreviewStats stats;
     bool geometryAvailable = false;

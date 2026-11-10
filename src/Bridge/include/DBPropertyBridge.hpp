@@ -1,7 +1,6 @@
 #pragma once
 
 #include <ObservableBridgeBase.hpp>
-#include <TempDBScope.hpp>
 #include <QProperty>
 #include <QBindable>
 #include <QVariantList>
@@ -33,7 +32,6 @@ public:
     bool gridDisplayExists() const { return m_gridDisplayExists; }
     int meshCount() const { return m_meshCount; }
     QVariantList models() const;
-    Q_INVOKABLE void highlightModelPart(const QString& modelId, const QString& partId);
 
     // Bindables
     QBindable<bool> bindableGridDisplayExists() { return &m_gridDisplayExists; }
@@ -49,11 +47,6 @@ private:
 
 private:
     void markBindingsDirty();
-    void updatePartHighlight();
-    DBInstanceID m_highlightModel{INVALID_DB_ID};
-    DBInstanceID m_highlightPart{INVALID_DB_ID};
-    DBInstanceID m_highlightGeometry{INVALID_DB_ID};
-    TempDBScope m_partHighlight;
 
 private:
     // 使用 Q_OBJECT_BINDABLE_PROPERTY 声明可绑定属性

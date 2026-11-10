@@ -213,9 +213,7 @@ Button {
             var appliedBedType = SliceSettingsBridge.getSetting("curr_bed_type")
             if (appliedBedType === undefined || appliedBedType === null
                     || String(appliedBedType) !== requestedBedType) {
-                applyError = machineChanged
-                             ? qsTr("Machine changed, but the build plate could not be applied. Check the application log.")
-                             : qsTr("Failed to apply build plate. Check the application log.")
+                applyError = qsTr("Failed to apply build plate. Check the application log.")
                 return false
             }
         }

@@ -19,8 +19,6 @@
 #include <vtkPolyData.h>
 #include <vtkSmartPointer.h>
 
-#include <QCoreApplication>
-#include <QString>
 #include <QtGlobal>
 
 #include <algorithm>
@@ -44,12 +42,9 @@ public:
 
     struct Volume {
         ModelGeometryDB::ReadHandle geometry;
-        DBInstanceID partId{INVALID_DB_ID};
         std::array<double, 16> localTransform{};
         std::uint64_t meshRevision{0};
         int defaultFilamentSlot{1};
-        int filamentBindingMode{0};
-        int explicitFilamentSlot{0};
         libslicer::SliceVolumeRole role{
             libslicer::SliceVolumeRole::ModelPart};
         std::optional<SurfaceColors> surfaceColors;
@@ -280,8 +275,7 @@ SliceSessionBuilder::CaptureResult SliceSessionBuilder::capture(const Request& r
         model.defaultFilamentSlot = owner->getDefaultFilamentSlot();
         if (model.defaultFilamentSlot < 0 ||
             static_cast<std::size_t>(model.defaultFilamentSlot) > filamentCount) {
-            result.error = QCoreApplication::translate("SlicingHandler", "%1 requests material slot %2, but only %3 slots are available.")
-                .arg(QString::fromStdString(model.name)).arg(model.defaultFilamentSlot).arg(filamentCount).toStdString();
+            result.error = "Object default references a missing filament slot";
             return result;
         }
         Transform::Matrix4 matrix;
@@ -357,9 +351,7 @@ SliceSessionBuilder::CaptureResult SliceSessionBuilder::capture(const Request& r
             const auto filament = GPlatform::Slicing::resolveModelFilamentSlot(
                 *part, slicingConfig.get(), filamentCount);
             if (!filament.requestedSlotValid) {
-                result.error = QCoreApplication::translate("SlicingHandler", "%1 / %2 requests material slot %3, but only %4 slots are available.")
-                    .arg(QString::fromStdString(model.name), QString::fromStdString(part->getDisplayName()))
-                    .arg(part->getDefaultFilamentSlot()).arg(filamentCount).toStdString();
+                result.error = "Model part references a missing filament slot";
                 return result;
             }
             if (!appendVolume(part->geometry().get(), part->getLocalTransform(),
@@ -369,9 +361,6 @@ SliceSessionBuilder::CaptureResult SliceSessionBuilder::capture(const Request& r
                 return result;
             }
             auto& volume = model.volumes.back();
-            volume.partId = part->getDBInstanceID();
-            volume.filamentBindingMode = part->getFilamentBindingMode();
-            volume.explicitFilamentSlot = filament.explicitlyBound ? part->getDefaultFilamentSlot() : 0;
             volume.projectSemantics = part->getProjectSemantics();
             volume.surfaceAnnotations = part->getSurfaceAnnotations();
             volume.annotationsFingerprint = part->getAnnotationsTopologyFingerprint();
@@ -566,13 +555,7 @@ SliceSessionBuilder::Result SliceSessionBuilder::build(
         session->sources.push_back({
             model.modelId,
             model.meshRevision,
-            surfaceRevision,
-            {}});
-        for (const auto& volume : model.volumes) {
-            if (volume.partId.isValid())
-                session->sources.back().partSemantics.emplace_back(
-                    volume.partId.getValue(), volume.projectSemantics, volume.filamentBindingMode, volume.explicitFilamentSlot);
-        }
+            surfaceRevision});
     }
 
     if (!session->valid()) {

@@ -86,7 +86,6 @@ public:
      * Synchronous CPU Actor Pick for interactions that must decide whether
      * to consume the current input event. The call never builds or repairs
      * acceleration data; it only reads each Part's eagerly maintained BVH state.
-     * Object picks retain the nearest Part's optional identity.
      */
     GPlatform::Rendering::RenderPickResult pickCpuForView(
         DBInstanceID viewId,

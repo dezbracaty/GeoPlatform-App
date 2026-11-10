@@ -23,10 +23,6 @@ ToolpathPublicationResult publishToolpathResult(std::shared_ptr<SliceOutputRecor
         result.error = QStringLiteral("Slice source models are missing or no longer belong to the print bed");
         return result;
     }
-    if (modelSlice && !ToolpathPreviewRelations::sourceObjectSettingsMatch(*output)) {
-        result.error = QStringLiteral("Model slicing parameters changed. Slice again to update the output.");
-        return result;
-    }
     if (!output->validate(&result.error)) return result;
     output->previewError = prepared.error;
     output->warnings.append(prepared.warnings);
@@ -110,8 +106,6 @@ ToolpathPublicationResult publishToolpathResult(std::shared_ptr<SliceOutputRecor
             if (modelSlice && (!ToolpathPreviewRelations::sourceModelsAvailable(output->sourceModelIds, output->printBedId) ||
                 (candidate && !ToolpathPreviewRelations::sourceEdgesMatch(candidate->getDBInstanceID(), output->sourceModelIds))))
                 throw std::runtime_error("Slice source models or dependencies changed before publication");
-            if (modelSlice && !ToolpathPreviewRelations::sourceObjectSettingsMatch(*output))
-                throw std::runtime_error("Model slicing parameters changed before publication");
             if (transaction) transaction->commit();
         } catch (const std::bad_alloc&) {
             if (transaction) { transaction->rollback(); document->flushPendingChanges(); }

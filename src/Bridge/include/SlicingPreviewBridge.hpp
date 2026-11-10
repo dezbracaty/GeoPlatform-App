@@ -242,7 +242,6 @@ private:
     void clearAllToolpathPreviewsInternal(int preservedModelId);
     void forgetCurrentOutput();
     void checkDocumentDeletion(const DocumentManager::ChangeNotification& change);
-    void invalidateChangedObjectSettings();
     DocumentManager::ListenerID m_documentListenerId{0};
     PreparedOutputPublication makeOutputPublication(
         std::shared_ptr<GPlatform::SliceOutputRecord> output,

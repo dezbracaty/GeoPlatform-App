@@ -1,7 +1,6 @@
 #include "SlicingPreviewBridge.hpp"
 #include "BridgeRegistration.hpp"
 #include "SlicingPreviewViewDescriptors.hpp"
-#include "SliceSettingsBridge.hpp"
 
 #include "DocumentManager.hpp"
 #include "ModelInstanceDB.hpp"
@@ -39,23 +38,11 @@ SlicingPreviewBridge::SlicingPreviewBridge(QObject* parent)
     });
     const QPointer<SlicingPreviewBridge> self(this);
     m_documentListenerId = DocumentManager::instance()->addChangeListener([self](const auto& change) {
-        const bool partLifecycle = change.dbType == TypeID::MODEL_PART_DB &&
-            change.changeType != ChangeType::PROPERTY_CHANGED;
-        const bool objectSettings = partLifecycle ||
-            (change.changeType == ChangeType::PROPERTY_CHANGED &&
-             (change.dbType == TypeID::MODEL_OBJECT_DB || change.dbType == TypeID::MODEL_PART_DB) &&
-             (change.propertyName == "ProjectSemantics" || change.propertyName == "DefaultFilamentSlot" ||
-              change.propertyName == "FilamentBindingMode"));
-        const bool deletion = change.changeType == ChangeType::OBJECT_DELETED &&
-            (change.dbType == TypeID::TOOLPATH_PREVIEW_DB ||
-             change.dbType == TypeID::MODEL_INSTANCE_DB || change.dbType == TypeID::PRINT_BED_DB);
-        if (!self || (!objectSettings && !deletion)) return;
-        QMetaObject::invokeMethod(self.data(), [self, change, objectSettings] {
-            if (!self || self->m_shuttingDown.load()) return;
-            if (objectSettings)
-                self->invalidateChangedObjectSettings();
-            else
-                self->checkDocumentDeletion(change);
+        if (!self || change.changeType != ChangeType::OBJECT_DELETED ||
+            (change.dbType != TypeID::TOOLPATH_PREVIEW_DB &&
+             change.dbType != TypeID::MODEL_INSTANCE_DB && change.dbType != TypeID::PRINT_BED_DB)) return;
+        QMetaObject::invokeMethod(self.data(), [self, change] {
+            if (self && !self->m_shuttingDown.load()) self->checkDocumentDeletion(change);
         }, Qt::QueuedConnection);
     });
     LOG_INFO("SlicingPreviewBridge created");
@@ -86,10 +73,10 @@ std::shared_ptr<GPlatform::ToolpathPreviewDB> SlicingPreviewBridge::getCurrentPr
 }
 
 QString SlicingPreviewBridge::resolveCurrentPrintOutputPath() const {
-    return resolveCurrentPrintOutputPath(QStringLiteral("gcode"));
+    return m_currentOutput ? m_currentOutput->gcode.path : QString();
 }
 QString SlicingPreviewBridge::resolveCurrentPrintOutputPath(const QString& formatId) const {
-    if (!m_currentOutput || !ToolpathPreviewRelations::sourceObjectSettingsMatch(*m_currentOutput)) return {};
+    if (!m_currentOutput) return {};
     if (formatId == QStringLiteral("gcode-3mf")) return m_currentOutput->package.path;
     if (formatId == QStringLiteral("gcode")) return m_currentOutput->gcode.path;
     return {};
@@ -1473,35 +1460,6 @@ void SlicingPreviewBridge::forgetCurrentOutput() {
     m_activePreviewName.clear();
     m_currentModelId = -1;
     m_previewArtifactPath.clear();
-}
-
-void SlicingPreviewBridge::invalidateChangedObjectSettings() {
-    if (!m_currentOutput || ToolpathPreviewRelations::sourceObjectSettingsMatch(*m_currentOutput))
-        return;
-
-    // Keep the source selection for Reslice, while retiring the obsolete files and geometry.
-    const auto previousOutput = m_currentOutput;
-    const auto preview = m_activePreview;
-    const auto material = preview ? preview->getMaterial() : nullptr;
-    auto stale = std::make_shared<GPlatform::SliceOutputRecord>();
-    stale->sourceScope = previousOutput->sourceScope;
-    stale->printBedId = previousOutput->printBedId;
-    stale->sourceModelId = previousOutput->sourceModelId;
-    stale->sourceModelIds = previousOutput->sourceModelIds;
-    stale->name = previousOutput->name;
-    forgetCurrentOutput();
-    m_currentOutput = std::move(stale);
-    if (preview) {
-        auto* document = DocumentManager::instance();
-        TransientUpdateGuard derived;
-        document->flushPendingChanges();
-        preview->releasePrintOutputArtifacts();
-        preview->removeMaterial();
-        document->unregisterDBInstance(preview->getDBInstanceID());
-        document->flushPendingChanges();
-    }
-    SliceSettingsBridge::instance()->markNeedsReslice();
-    notifyCurrentOutput();
 }
 
 void SlicingPreviewBridge::checkDocumentDeletion(const DocumentManager::ChangeNotification& change) {

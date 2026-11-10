@@ -4,10 +4,7 @@
 #include "DocumentManager.hpp"
 #include <DBRelationRegistry.hpp>
 #include <ModelInstanceDB.hpp>
-#include <ModelObjectDB.hpp>
-#include <ModelPartDB.hpp>
 #include <PrintBedDB.hpp>
-#include <SliceOutputRecord.hpp>
 #include <TransactionManager.hpp>
 #include <QCoreApplication>
 #include <QThread>
@@ -21,46 +18,6 @@ bool sourceModelsAvailable(const std::vector<DBInstanceID>& ids, DBInstanceID be
     for (const auto id : ids) {
         const auto instance = document->getDB<ModelInstanceDB>(id);
         if (!instance || instance->getParentPrintBedDBId() != bedId) return false;
-    }
-    return true;
-}
-
-bool sourceObjectSettingsMatch(const GPlatform::SliceOutputRecord& output) {
-    if (output.sourceObjectSemantics.empty())
-        return true;
-    if (output.sourceObjectSemantics.size() != output.sourceModelIds.size())
-        return false;
-    if (!output.sourceObjectFilamentSlots.empty() && output.sourceObjectFilamentSlots.size() != output.sourceModelIds.size())
-        return false;
-    const bool hasPartSnapshot = !output.sourcePartSemantics.empty();
-    if (hasPartSnapshot && output.sourcePartSemantics.size() != output.sourceModelIds.size())
-        return false;
-    auto* document = DocumentManager::instance();
-    for (std::size_t i = 0; i < output.sourceModelIds.size(); ++i) {
-        const auto instance = document->getDB<ModelInstanceDB>(output.sourceModelIds[i]);
-        const auto object = instance ? instance->object() : nullptr;
-        if (!object || object->getProjectSemantics() != output.sourceObjectSemantics[i])
-            return false;
-        if (!output.sourceObjectFilamentSlots.empty() && object->getDefaultFilamentSlot() != output.sourceObjectFilamentSlots[i])
-            return false;
-        if (hasPartSnapshot) {
-            std::size_t partIndex = 0;
-            const auto& snapshots = output.sourcePartSemantics[i];
-            for (const auto& part : instance->parts()) {
-                if (!part || !part->hasValidMesh())
-                    continue;
-                if (partIndex >= snapshots.size())
-                    return false;
-                const auto& [id, semantics, binding, slot] = snapshots[partIndex];
-                if (part->getDBInstanceID().getValue() != id || part->getProjectSemantics() != semantics ||
-                    part->getFilamentBindingMode() != binding ||
-                    (binding == int(ModelFilamentBindingMode::ExplicitSlot) && part->getDefaultFilamentSlot() != slot))
-                    return false;
-                ++partIndex;
-            }
-            if (partIndex != snapshots.size())
-                return false;
-        }
     }
     return true;
 }

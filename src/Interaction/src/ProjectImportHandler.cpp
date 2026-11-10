@@ -563,7 +563,7 @@ void ProjectImportHandler::commit() {
             m_completion.insert("objectIds",created);
             if (!created.empty()) { m_completion.insert("objectId",created.front()); m_completion.insert("modelId",created.front()); }
             if (configurationChanged)
-                SliceSettingsBridge::instance()->installCommittedConfiguration(std::move(*preparedView), !opening);
+                SliceSettingsBridge::instance()->installCommittedConfiguration(std::move(*preparedView));
             if (opening) document->getUndoRedoManager()->clear();
             if (opening) {
                 SelectionBridge::instance()->clearSelection();

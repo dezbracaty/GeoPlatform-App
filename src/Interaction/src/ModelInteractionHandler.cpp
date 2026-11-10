@@ -18,7 +18,6 @@ REGISTER_PERSISTENT_INTERACTION_ACTION(
 #include <ActorDB.hpp>
 #include <DocumentManager.hpp>
 #include <ImmediateNotifyGuard.hpp>
-#include <ModelPartDB.hpp>
 #include <SelectionBoxWidgetDB.hpp>
 #include <TransactionManager.hpp>
 #include <ViewportCoordinateSystem.hpp>
@@ -32,7 +31,6 @@ REGISTER_PERSISTENT_INTERACTION_ACTION(
 
 #include <algorithm>
 #include <cmath>
-#include <utility>
 
 namespace {
 
@@ -225,6 +223,7 @@ std::optional<QVariantMap> ModelInteractionHandler::getAIDescriptor(
 
 void ModelInteractionHandler::onExit() {
     finishDrag(false);
+    m_blankClick.reset();
     hideSelectionVisuals();
     m_selectionInputSuspended = false;
     setActive(false);
@@ -233,12 +232,13 @@ void ModelInteractionHandler::onExit() {
 
 void ModelInteractionHandler::onSuspend() {
     finishDrag(false);
+    m_blankClick.reset();
     hideSelectionVisuals();
     LOG_DEBUG("ModelInteractionHandler suspended by environment");
 }
 
 void ModelInteractionHandler::onResume() {
-    m_click.reset();
+    m_blankClick.reset();
     restoreSelectionVisuals();
     LOG_DEBUG("ModelInteractionHandler resumed by environment");
 }
@@ -249,7 +249,7 @@ bool ModelInteractionHandler::onMousePressEvent(QMouseEvent* event) {
         return false;
     }
 
-    m_click.reset();
+    m_blankClick.reset();
     const DBInstanceID viewId(inputViewId());
     if (viewId == INVALID_DB_ID) {
         return false;
@@ -266,7 +266,7 @@ bool ModelInteractionHandler::onMousePressEvent(QMouseEvent* event) {
     if (pick.status == GPlatform::Rendering::PickStatus::Miss) {
         if ((!scope || scope->clearOnBlankClick) && !SelectionBridge::instance()->getSelectedIds().empty() &&
             event->modifiers() == Qt::NoModifier) {
-            m_click = ClickCandidate{viewId, pressPosition, dragThreshold()};
+            m_blankClick = BlankClickCandidate{viewId, pressPosition};
         }
         return false;
     }
@@ -285,17 +285,8 @@ bool ModelInteractionHandler::onMousePressEvent(QMouseEvent* event) {
         return false;
     }
 
-    const bool handled = beginModelGesture(
+    return beginModelGesture(
         actor, viewId, pressPosition, event->modifiers());
-    if (handled && !scope && event->modifiers() == Qt::NoModifier && pick.payload.partId) {
-        const auto part = document->getDB<ModelPartDB>(*pick.payload.partId);
-        if (part && part->getRole() == static_cast<int>(ModelPartRole::ParameterModifier)) {
-            m_click = ClickCandidate{viewId, pressPosition, kNewSelectionDragThreshold,
-                pick.payload.objectId, *pick.payload.partId};
-            m_drag.requiresThreshold = true;
-        }
-    }
-    return handled;
 }
 
 bool ModelInteractionHandler::beginModelGesture(
@@ -358,9 +349,16 @@ bool ModelInteractionHandler::onMouseMoveEvent(QMouseEvent* event) {
         return false;
     }
 
-    if (m_click && (!(event->buttons() & Qt::LeftButton) ||
-        !m_click->matches(DBInstanceID(inputViewId()), event->position().toPoint())))
-        m_click.reset();
+    if (m_blankClick) {
+        const bool sameView = DBInstanceID(inputViewId()) == m_blankClick->viewId;
+        const int distance =
+            (event->position().toPoint() - m_blankClick->pressPosition)
+                .manhattanLength();
+        if (!sameView || !(event->buttons() & Qt::LeftButton) ||
+            distance >= dragThreshold()) {
+            m_blankClick.reset();
+        }
+    }
 
     if (!m_drag.armed) {
         return false;
@@ -382,8 +380,7 @@ bool ModelInteractionHandler::onMouseReleaseEvent(QMouseEvent* event) {
         return false;
     }
 
-    const bool hadDrag = m_drag.armed;
-    if (hadDrag) {
+    if (m_drag.armed) {
         const bool sameView = DBInstanceID(inputViewId()) == m_drag.viewId;
         if (sameView) {
             m_drag.latestPosition = event->position().toPoint();
@@ -391,23 +388,20 @@ bool ModelInteractionHandler::onMouseReleaseEvent(QMouseEvent* event) {
             updateDrag(m_drag.latestPosition, m_drag.latestModifiers);
         }
         finishDrag(sameView);
+        return true;
     }
 
-    const auto click = std::exchange(m_click, std::nullopt);
-    if (click && click->matches(DBInstanceID(inputViewId()), event->position().toPoint())) {
-        if (!click->partId.isValid()) {
+    if (m_blankClick) {
+        const bool clear = DBInstanceID(inputViewId()) == m_blankClick->viewId &&
+            (event->position().toPoint() - m_blankClick->pressPosition)
+                    .manhattanLength() < dragThreshold();
+        m_blankClick.reset();
+        if (clear) {
             clearSelection();
-        } else if (event->modifiers() == Qt::NoModifier) {
-            auto* selection = SelectionBridge::instance();
-            if (selection->selectionCount() == 1 && selection->selectedId() == click->modelId) {
-                emit selection->parameterModifierPicked(QString::number(click->modelId.getValue()),
-                                                        QString::number(click->partId.getValue()));
-            }
-            return true;
         }
     }
 
-    return hadDrag;
+    return false;
 }
 
 bool ModelInteractionHandler::onKeyPressEvent(QKeyEvent* event) {
@@ -443,7 +437,6 @@ void ModelInteractionHandler::applySelection(
     auto* bridge = SelectionBridge::instance();
     const std::vector<DBInstanceID> previous = bridge->getSelectedIds();
     if (previous == selectedIds) {
-        emit bridge->modelSelectionReaffirmed();
         return;
     }
     for (const auto id : previous) {
@@ -460,7 +453,6 @@ void ModelInteractionHandler::applySelection(
 }
 
 void ModelInteractionHandler::clearSelection() {
-    m_click.reset();
     auto* bridge = SelectionBridge::instance();
     const std::vector<DBInstanceID> selected = bridge->getSelectedIds();
     for (const auto id : selected) {
@@ -622,8 +614,6 @@ bool ModelInteractionHandler::draggedActorIsStillSelected() const {
 }
 
 void ModelInteractionHandler::finishDrag(bool commit) {
-    if (!commit)
-        m_click.reset();
     if (!m_drag.armed) {
         return;
     }

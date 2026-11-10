@@ -948,9 +948,6 @@ msgstr "语言"
 msgid "Machine"
 msgstr "机型"
 
-msgid "Machine changed, but the build plate could not be applied. Check the application log."
-msgstr "机型已切换，但打印板应用失败，请检查程序日志"
-
 msgid "Machine settings cannot be changed while slicing"
 msgstr "切片任务运行期间不能修改机器配置"
 
@@ -2967,18 +2964,6 @@ msgstr "请在蒙版编辑面板中删除选中的蒙版。"
 msgid "Restore inheritance"
 msgstr "恢复继承"
 
-msgid "Model parts"
-msgstr "模型部件"
-
-msgid "Modifier"
-msgstr "修改体"
-
-msgid "Parameter modifier"
-msgstr "参数修改体"
-
-msgid "Slot %1"
-msgstr "料槽 %1"
-
 msgid "Later masks override earlier masks"
 msgstr "后面的蒙版覆盖前面的蒙版"
 
@@ -4218,72 +4203,6 @@ msgstr "已跳过空模型部件：%1"
 msgid "The model material assignments could not be restored."
 msgstr "无法恢复模型的材料归属。"
 
-msgid "Back to models"
-msgstr "返回模型列表"
-
-msgid "Model slicing parameters"
-msgstr "模型切片参数"
-
-msgid "Inherited · Override"
-msgstr "已继承 · 设为覆盖"
-
-msgid "Inherited value: %1"
-msgstr "继承值：%1"
-
-msgid "Keep this value when the process settings change"
-msgstr "工艺参数变化时保留此值"
-
-msgid "Select one model to edit its slicing parameters."
-msgstr "请选择一个模型来编辑切片参数。"
-
-msgid "No active slicing profile is available."
-msgstr "当前没有可用的切片配置。"
-
-msgid "Unknown slicing parameter."
-msgstr "未知的切片参数。"
-
-msgid "Invalid slicing parameter."
-msgstr "无效的切片参数。"
-
-msgid "Project import records: %1"
-msgstr "工程全局导入记录：%1 项"
-
-msgid " · Session edits: %1"
-msgstr " · 本次修改：%1 项"
-
-msgid "Undo session edits"
-msgstr "撤销本次修改"
-
-msgid "Edited in this session"
-msgstr "本次修改"
-
-msgid "Project import record"
-msgstr "工程导入记录"
-
-msgid "Import records include compatibility conversions."
-msgstr "工程导入记录包含兼容转换。"
-
-msgid "Import records include compatibility conversions. No comparable parent preset."
-msgstr "工程导入记录包含兼容转换。当前没有可比较的父预设。"
-
-msgid "Part material"
-msgstr "部件耗材"
-
-msgid "Follow model material"
-msgstr "跟随模型耗材"
-
-msgid "Missing material slot %1"
-msgstr "缺少耗材槽 %1"
-
-msgid "Unable to start slicing"
-msgstr "无法开始切片"
-
-msgid "%1 requests material slot %2, but only %3 slots are available."
-msgstr "%1 引用了耗材槽 %2，当前只有 %3 个槽位。"
-
-msgid "%1 / %2 requests material slot %3, but only %4 slots are available."
-msgstr "%1 / %2 引用了耗材槽 %3，当前只有 %4 个槽位。"
-
 msgid "Save user preset"
 msgstr "保存用户预设"
 
@@ -4293,8 +4212,29 @@ msgstr "转移或丢弃改动"
 msgid "You have unsaved changes in preset “%1”."
 msgstr "预设“%1”有未保存的改动。"
 
+msgid "Discard unsaved changes and use the target printer's preset."
+msgstr "放弃未保存的改动，使用目标机型的预设。"
+
+msgid "Apply transferable changes to the target printer."
+msgstr "将可转移的改动应用到目标机型。"
+
+msgid "Save changes to a user preset for the current printer, then continue switching."
+msgstr "将改动保存到当前机型的用户预设，然后继续切换。"
+
 msgid "Preset name"
 msgstr "预设名称"
+
+msgid "Invalid preset name"
+msgstr "预设名称无效"
+
+msgid "Overwriting a system profile is not allowed"
+msgstr "不能覆盖系统预设"
+
+msgid "Saving will overwrite this user preset."
+msgstr "保存后将覆盖这个用户预设。"
+
+msgid "Saving will overwrite this user preset, which is incompatible with the current printer."
+msgstr "保存后将覆盖这个与当前打印机不兼容的用户预设。"
 
 msgid "Changes tied to a different extruder configuration will be skipped during transfer."
 msgstr "转移时会跳过与不同喷头配置关联的改动。"
@@ -4310,9 +4250,6 @@ msgstr "无法切换打印机"
 
 msgid "Preset saved. Printer switch failed. %1"
 msgstr "预设已保存。打印机切换失败。%1"
-
-msgid "Preset saved. Printer switch failed. The configuration has changed."
-msgstr "预设已保存。打印机切换失败，当前配置已变化。"
 
 msgid "The configuration has changed. Choose the printer again."
 msgstr "当前配置已变化，请重新选择打印机。"
