@@ -150,6 +150,88 @@ class AcceptanceCheck(unittest.TestCase):
         manifest = read_json(output / 'screenshot_review.json')
         self.assertEqual([c['status'] for c in manifest['cases']], ['passed', 'not_run'])
 
+    def test_next_session_starts_before_background_review_finishes(self):
+        import run_acceptance
+        import shutil
+        import threading
+        from unittest.mock import patch
+        self.metadata.update(artifacts={}, checks=[])
+        self.save_metadata()
+        shutil.copytree(self.scenario, self.assets / 'scenarios/job2')
+        write_json(self.assets / 'scenarios/job2/metadata.json', dict(self.metadata, id='job2'))
+        started, release, finished = threading.Event(), threading.Event(), threading.Event()
+        observations = []
+        calls = []
+
+        def review(checkpoints, execution, output):
+            if output.name == 'job':
+                started.set()
+                if not release.wait(3):
+                    raise RuntimeError('Next session never released the review')
+                finished.set()
+            return dict(path='review/screenshots.json', pendingCount=0)
+
+        def writer():
+            calls.append(True)
+            if len(calls) == 2:
+                observations.append((started.wait(2), finished.is_set()))
+                release.set()
+
+        # The report index is independent of this scheduling barrier fixture.
+        output = self.root / 'background-batch'
+        tools = Path(__file__).resolve().parents[1] / 'tools/journal'
+        with patch('run_acceptance.collect_screenshots', side_effect=review), \
+                patch('run_acceptance.write_summary'), patch('builtins.print'):
+            code = run_acceptance.main(['--assets', str(self.assets), '--journal-tools', str(tools),
+                '--application', str(self.application), '--cases', 'all', '--output', str(output)],
+                session=SessionFixture(writer))
+        self.assertEqual(code, 0)
+        self.assertEqual(observations, [(True, False)])
+        self.assertTrue(finished.is_set())
+        for name in ('job', 'job2'):
+            self.assertEqual(read_json(output / name / 'case_result.json')['reviewStatus'], 'not_applicable')
+
+    def test_cancelled_batch_drains_review_and_keeps_background_errors(self):
+        import run_acceptance
+        import shutil
+        import threading
+        from unittest.mock import patch
+        self.metadata.update(artifacts={}, checks=[])
+        self.save_metadata()
+        shutil.copytree(self.scenario, self.assets / 'scenarios/job2')
+        write_json(self.assets / 'scenarios/job2/metadata.json', dict(self.metadata, id='job2'))
+        started, release = threading.Event(), threading.Event()
+        session = SessionFixture()
+        session.cancel_event = threading.Event()
+
+        def review(*_args):
+            started.set()
+            if not release.wait(3):
+                raise RuntimeError('Review was awaited before case completion')
+            raise RuntimeError('Background review diagnostic')
+
+        def progress(event):
+            if event['phase'] == 'end':
+                self.assertTrue(started.wait(2))
+                session.cancel_event.set()
+                release.set()
+
+        tools = Path(__file__).resolve().parents[1] / 'tools/journal'
+        output = self.root / 'background-error'
+        with patch('run_acceptance.collect_screenshots', side_effect=review), patch('builtins.print'):
+            code = run_acceptance.main(['--assets', str(self.assets), '--journal-tools', str(tools),
+                '--application', str(self.application), '--cases', 'all', '--output', str(output)],
+                session=session, progress=progress)
+        self.assertEqual(code, 1)
+        self.assertEqual(session.calls, 1)
+        self.assertTrue(read_json(output / 'summary.json')['cancelled'])
+        result = read_json(output / 'job/case_result.json')
+        self.assertEqual(result['status'], 'passed')
+        self.assertEqual(result['reviewStatus'], 'failed')
+        self.assertEqual(result['screenshotReviewError'], 'Background review diagnostic')
+        manifest = read_json(output / 'screenshot_review.json')
+        self.assertEqual(manifest['cases'][0]['message'], 'Background review diagnostic')
+
     def test_batch_prepares_each_theme_and_restores_original_settings(self):
         import configparser
         import run_acceptance

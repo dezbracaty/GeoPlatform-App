@@ -606,13 +606,19 @@ class JournalRunner:
             for index, entry in enumerate(document["entries"], start=1):
                 if cancel_event is not None and cancel_event.is_set():
                     raise InterruptedError("Replay cancelled by caller")
-                remaining = entry["atMs"] / 1000.0 - (time.monotonic() - started)
+                scheduled = entry["atMs"] / 1000.0
+                now = time.monotonic()
+                remaining = scheduled - (now - started)
                 if remaining > 0:
                     if cancel_event is not None:
                         if cancel_event.wait(remaining):
                             raise InterruptedError("Replay cancelled by caller")
                     else:
                         time.sleep(remaining)
+                else:
+                    # A slow capture/check must not consume later input gaps.
+                    # Resume the recorded cadence instead of bursting to catch up.
+                    started = now - scheduled
                 if progress:
                     progress(index, len(document["entries"]), entry)
                 result = self._execute_entry(journal_path, output, entry, index, validate)

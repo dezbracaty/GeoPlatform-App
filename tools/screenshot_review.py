@@ -125,7 +125,7 @@ def write_batch_report(output, summary):
         cases.append(dict(id=name, status=case.get('status', 'not_run'),
                           executionStatus=result.get('executionStatus', 'not_started'),
                           result=f'{name}/case_result.json' if result else None,
-                          message=result.get('error', ''), methodResults=result.get('methodResults', [])))
+                          message=result.get('error') or result.get('screenshotReviewError', ''), methodResults=result.get('methodResults', [])))
         review = result.get('screenshotReview')
         if review:
             path = (output / name / review['path']).resolve()
@@ -133,9 +133,18 @@ def write_batch_report(output, summary):
                 raise ValueError('Screenshot review manifest escapes the batch directory')
             checkpoints = json.loads(path.read_text(encoding='utf8'))['checkpoints']
         else:
+            processing = result.get('reviewStatus') == 'processing'
+            execution = {}
+            if processing:
+                execution = {step['index']: step for step in json.loads(
+                    (output / name / 'execution_result.json').read_text(encoding='utf8')).get('results', [])}
             checkpoints = [dict(item, executionStatus='not_run', comparisonStatus='not_run',
-                                reviewStatus='not_applicable', message=result.get('error') or '场景未执行')
+                                reviewStatus='not_applicable', message=result.get('error') or result.get('screenshotReviewError') or '场景未执行')
                            for item in summary.get('screenshotCheckpoints', {}).get(name, [])]
+            if processing:
+                for checkpoint in checkpoints:
+                    checkpoint.update(executionStatus=execution.get(checkpoint['index'], {}).get('status', 'not_run'),
+                                      comparisonStatus='processing', message='截图辅助报告后台生成中')
         for checkpoint in checkpoints:
             row = dict(checkpoint, case=name)
             row['id'] = hashlib.sha256(json.dumps([name, row['index'], row.get('baselineSha256'),

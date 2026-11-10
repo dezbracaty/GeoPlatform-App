@@ -7,10 +7,11 @@ import os
 from pathlib import Path
 import sys
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
-from acceptance import load_case, run_case, write_summary
+from acceptance import load_case, run_case, write_case_result, write_summary
 from verification_methods import METHODS, SUPPLEMENTAL_VALIDATORS, VALIDATORS
-from screenshot_review import checkpoint_declarations
+from screenshot_review import checkpoint_declarations, collect_screenshots
 
 
 def regression_environment():
@@ -145,6 +146,27 @@ def main(argv=None, *, session=None, progress=None):
                 settings.write_bytes(backup)
             else:
                 settings.unlink(missing_ok=True)
+    reviews = ThreadPoolExecutor(max_workers=1, thread_name_prefix='journal-review')
+    pending_reviews = []
+
+    def submit_review(checkpoints, execution, case_output):
+        pending_reviews.append((case_output, reviews.submit(
+            collect_screenshots, checkpoints, execution, case_output)))
+
+    def finish_reviews():
+        for case_output, future in pending_reviews[:]:
+            if not future.done():
+                continue
+            result = json.loads((case_output / 'case_result.json').read_text(encoding='utf-8'))
+            try:
+                result['screenshotReview'] = future.result()
+                result['reviewStatus'] = 'pending' if result['screenshotReview']['pendingCount'] else 'not_applicable'
+            except Exception as exc:
+                result.update(reviewStatus='failed', screenshotReviewError=str(exc))
+            checks = json.loads((case_output / 'checks.json').read_text(encoding='utf-8'))
+            write_case_result(case_output, result, checks)
+            pending_reviews.remove((case_output, future))
+
     try:
         for case_index, name in enumerate(selected, 1):
             if session is not None and getattr(session, 'cancel_event', None) is not None and session.cancel_event.is_set():
@@ -163,9 +185,11 @@ def main(argv=None, *, session=None, progress=None):
             result = run_case(args.assets, name, args.application, output / name, case_exports,
                               session if session is not None else JournalExecutionSession(), load_journal,
                               review_screenshots=True, environment_overrides=environment,
+                              review_submit=submit_review,
                               **(dict(capture_candidates=True) if args.capture_candidates else {}))
             summary['cases'].append(dict(id=name, status=result['status'], result=f'{name}/case_result.json'))
             update_run_summary(summary)
+            finish_reviews()
             write_summary(output, summary)
             print('END ' + name + ': ' + result['status'], flush=True)
             if progress:
@@ -178,6 +202,11 @@ def main(argv=None, *, session=None, progress=None):
             summary['settingsRestored'] = settings is not None
         except OSError as exc:
             summary.update(status='failed', cleanupError=str(exc))
+        reviews.shutdown(wait=True)
+        try:
+            finish_reviews()
+        except Exception as exc:
+            summary.update(status='failed', screenshotReviewError=str(exc))
         write_summary(output, summary)
     return 0 if summary['status'] == 'passed' else 1 if summary['status'] in {'failed', 'blocked'} else 2
 

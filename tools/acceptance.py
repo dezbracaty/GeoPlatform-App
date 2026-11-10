@@ -258,7 +258,7 @@ def write_case_result(output, result, checks):
             '<p><a href="case_result.json">Case result</a> | <a href="checks.json">Business checks</a></p>'
             '{}<table><tr><th>Check</th><th>Status</th><th>Details</th></tr>{}</table>').format(
         html.escape(result['id']), html.escape(result['status']), html.escape(result.get('scope', '')),
-        html.escape(result.get('error', '')), '<p><a href="verification_report.html">Original Journal report</a></p>'
+        html.escape(result.get('error') or result.get('screenshotReviewError', '')), '<p><a href="verification_report.html">Original Journal report</a></p>'
         if result.get('executionResultPath') else '', rows)
     (output / 'case_report.html').write_text(body + review_link, encoding='utf8')
 
@@ -397,7 +397,7 @@ def materialize_journal(case, output, export_root, *, capture_candidates=False, 
 
 
 def run_case(root, name, application, output, exports, session, journal_loader, *, review_screenshots=False,
-             environment_overrides=None, capture_candidates=False):
+             environment_overrides=None, capture_candidates=False, review_submit=None):
     """Run one fresh session; preserve its report and evaluate declared business checks."""
     root, output, application = Path(root).resolve(), Path(output).resolve(), Path(application).resolve()
     if output.exists():
@@ -541,6 +541,11 @@ def run_case(root, name, application, output, exports, session, journal_loader, 
     result['elapsedSeconds'] = round((time.time_ns() - started) / 1e9, 2)
     result['executionStatus'] = ('completed' if execution.get('success') and
         execution.get('completedEntries') == len(case['document']['entries']) else 'failed')
+    if review_screenshots and review_submit is not None:
+        result['reviewStatus'] = 'processing'
+        write_case_result(output, result, checks)
+        review_submit(checkpoints, execution, output)
+        return result
     if review_screenshots:
         try:
             result['screenshotReview'] = collect_screenshots(checkpoints, execution, output)

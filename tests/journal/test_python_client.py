@@ -153,6 +153,48 @@ def restart_probe_directory():
 
 
 class JournalPythonClientCheck(unittest.TestCase):
+    def test_slow_checkpoint_does_not_consume_later_input_gap(self):
+        runner = JournalRunner(Mock())
+        clock = [0.0]
+        dispatched = []
+        entries = [
+            {"atMs": 0, "kind": "verify.screenshot", "payload": {}},
+            {"atMs": 10, "kind": "input.mouse", "payload": {}},
+            {"atMs": 210, "kind": "input.mouse", "payload": {}},
+        ]
+
+        def execute(_path, _output, entry, _index, _validate):
+            dispatched.append(clock[0])
+            if entry["kind"] == "verify.screenshot":
+                clock[0] += 0.35
+            return {"status": "passed"}
+
+        with patch("journal_runner.time.monotonic", side_effect=lambda: clock[0]), \
+                patch("journal_runner.time.sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
+                patch.object(runner, "_execute_entry", side_effect=execute):
+            result = runner.run({"journalPath": "case.json", "journalSha256": "test", "entries": entries}, ".")
+        self.assertEqual(len(result["results"]), 3)
+        for actual, expected in zip(dispatched, [0.0, 0.35, 0.55]):
+            self.assertAlmostEqual(actual, expected)
+
+    def test_fast_requests_keep_the_recorded_cadence(self):
+        runner = JournalRunner(Mock())
+        clock = [0.0]
+        dispatched = []
+        entries = [{"atMs": at, "kind": "action", "payload": {}} for at in (0, 10, 20)]
+
+        def execute(*_args):
+            dispatched.append(clock[0])
+            clock[0] += 0.002
+            return {"status": "passed"}
+
+        with patch("journal_runner.time.monotonic", side_effect=lambda: clock[0]), \
+                patch("journal_runner.time.sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
+                patch.object(runner, "_execute_entry", side_effect=execute):
+            runner.run({"journalPath": "case.json", "journalSha256": "test", "entries": entries}, ".")
+        for actual, expected in zip(dispatched, [0.0, 0.01, 0.02]):
+            self.assertAlmostEqual(actual, expected)
+
     def test_macos_activation_waits_for_owned_registration_without_launching(self):
         from journal_execution_session import _activate_owned_macos_application
         executable = Path("/Applications/Test App.app/Contents/MacOS/Test").resolve()
