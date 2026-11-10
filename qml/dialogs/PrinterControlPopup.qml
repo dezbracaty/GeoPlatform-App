@@ -430,6 +430,7 @@ AppPopup {
                 }
                 Button {
                     objectName: "printerConfigureMoonrakerButton"
+                    Layout.fillWidth: true
                     implicitHeight: 27
                     font.pixelSize: 12
                     text: qsTr("Connect to Moonraker")
@@ -450,15 +451,12 @@ AppPopup {
                 }
                 Button {
                     objectName: "printerControlFlashforgeAccountButton"
+                    Layout.fillWidth: true
                     implicitHeight: 27
                     font.pixelSize: 12
                     visible: PrinterService.supportsAccount
                     text: PrinterService.signedIn
                           ? qsTr("Flashforge account") : qsTr("Sign in to Flashforge")
-                    icon.name: FluentIcons.graph_Contact
-                    icon.width: 16
-                    icon.height: 16
-                    flat: true
                     onClicked: control.flashforgeAccountRequested()
                 }
             }
