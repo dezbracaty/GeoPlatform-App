@@ -1,5 +1,7 @@
 # App 双平台构建
 
+跨仓临时分支提交和 MR 全量门禁的讨论定稿见 [MR 回归流程](mr-regression-workflow.md)。其中四参数主入口及强制门禁是待实施设计；下文描述目前已实现的 App 手动构建流程，二者不能混作已上线能力。
+
 本仓库只有一个 `Build App` workflow，同时构建 Windows x64 和 macOS Universal。入口为 Actions → Build App → Run workflow；主仓库的 Run Build App 也调用同一入口并等待真实结果。
 
 仅手动或被主仓库显式调用，不监听源码 push，不更新 SDK；默认在全部启用的检查成功后发布 App 预发布版。

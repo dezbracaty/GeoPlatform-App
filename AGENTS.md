@@ -14,6 +14,7 @@
 - VTK/Filament、DBSync、拾取与帧交换：`.agents/skills/gplatform-rendering/SKILL.md`。
 - 真实程序 Journal 编写、回放与验收：`.agents/skills/gplatform-journal/SKILL.md`。
 - SDK 导出、独立 App 消费与交付：`.agents/skills/gplatform-sdk-delivery/SKILL.md`。
+- 同名临时分支交付、跨仓提交推送与关联 MR 回归：`.agents/skills/gplatform-mr-delivery/SKILL.md`。
 
 按任务组合；小型文本或布局修改不自动升级成完整设计、审查或性能分析流程。
 处理 `qml/`、`src/Bridge/`、`src/Interaction/` 时先读对应目录的 `AGENTS.md`。
@@ -26,6 +27,7 @@
 
 ## 源码与依赖
 
+- 跨仓批次在各仓同名临时分支交付；本批代码和新增测试不直接提交 main，PR 目标按本次约定确定。新增测试不要求先在目标平台跑过才允许提交。完整流程与既有回归资产边界见 `docs/mr-regression-workflow.md`。
 - App、Orca 和 SDK 是不同提交边界；检查实际工作区和目标提交，未经任务授权不升级依赖指针。
 - 已授权的跨仓库提交/交付，子仓库目标提交推送成功后，及时同步本次任务涉及的父仓库 gitlink 并提交推送；开发分支引用同步不等待 CI 完成。CI 结果单独记录，正式合并/发布遵守对应验收要求。独立 App 无可访问宿主时说明该边界。
 - 完整源码宿主、独立 App、Orca 单独构建使用各自的 CMake 入口。
