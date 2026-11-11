@@ -941,7 +941,7 @@ PanelSurface {
                     font.pixelSize: 10
                     implicitHeight: 28
                     enabled: root.editingEnabled
-                    onClicked: SliceSettingsBridge.restoreProcessSettings()
+                    onClicked: SliceSettingsBridge.restoreCurrentPreset("process")
                 }
             }
         }

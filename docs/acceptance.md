@@ -12,7 +12,12 @@ App `tools/journal/` 是 Python 客户端、GUI、启动/握手、输入回放�
 执行报告的唯一实现，相关 Python 测试位于 `tests/journal/`，与 App 提交一起版本化。
 SDK 的 C++ JournalSystem 提供应用端服务、输入执行和原始数据接口；Python 工具不随 SDK 发布。
 主仓库 `scripts/run_journals.py` 只是共享入口的兼容转发，不再在内存中替换执行器源码。
-完整宿主私有 C++ 回归继续留在 `Core/tests`，只改为读取固定资产。
+App 的浮动参数面板、参数拒绝、底部任务栏布局，以及本批迁移的四项模型关系和
+VTK／Filament 业务集成检查由 `App/tests` 维护。两个渲染集成检查使用宿主后端私有实现，
+仅在完整宿主提供对应后端时注册；其余检查沿用 App 的测试入口。
+共享模型夹具 `TestModelGraphFixture.hpp` 也随 App 维护；
+宿主测试引用该文件，不保留副本。宿主实现的私有检查仍由 `Core/tests` 维护。
+Journal、模型和已批准的 DB／截图基线仍统一放在 TestAssets。
 原生切片回归的 catalog、模型、配置和三平台 G-code 基线由资产仓库 `slicing_regression/` 维护，
 直接算法调用与比较实现仍在宿主 `scripts/`；它们沿用原生回归格式，不转换为 GUI Journal。
 确定性模型生成器随资产维护，宿主旧生成入口仅转发。Journal 状态提示场景也统一从

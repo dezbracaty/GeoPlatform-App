@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Dialogs
 import QtQuick.Layouts
 import GPlatform 1.0
 import SmoothUI
@@ -850,206 +849,232 @@ Item {
                 Rectangle {
                     id: filamentSlotPanel
                     Layout.fillWidth: true
-                    Layout.preferredHeight: visible ? (root.perToolMaterials
-                        ? 88 + 80 * Math.max.apply(null, root.toolGroups.map(function(group) { return Math.max(1, group.slots.length) }))
-                        : 124) : 0
+                    Layout.preferredHeight: visible ? Math.min(filamentSlotContent.implicitHeight + 16,
+                                                               Math.max(160, root.height * 0.45)) : 0
                     visible: !root.globalSearchMode && root.workspaceIndex === 1
                     radius: root.SmoothUI.radius
                     color: PrintWorkspaceStyle.secondarySurface(root.SmoothUI.dark)
 
-                    ColumnLayout {
+                    ScrollView {
+                        id: filamentSlotScroll
                         anchors.fill: parent
                         anchors.margins: 8
-                        spacing: 6
+                        clip: true
+                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                        ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 8
+                        ColumnLayout {
+                            id: filamentSlotContent
+                            width: filamentSlotScroll.availableWidth
+                            spacing: 6
 
-                            ComboBox {
-                                objectName: root.automationName("fiberToolMappingCombo")
-                                visible: root.editableToolMapping
-                                enabled: root.settingsEditingEnabled
-                                model: [qsTr("Automatic"), qsTr("Manual")]
-                                currentIndex: String(SliceSettingsBridge.getSetting("filament_map_mode", ""))
-                                    .indexOf("Manual") >= 0 ? 1 : 0
-                                onActivated: function(index) {
-                                    SliceSettingsBridge.setFilamentToolMapping(
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+
+                                ComboBox {
+                                    objectName: root.automationName("fiberToolMappingCombo")
+                                    visible: root.editableToolMapping
+                                    enabled: root.settingsEditingEnabled
+                                    model: [qsTr("Automatic"), qsTr("Manual")]
+                                    currentIndex: String(SliceSettingsBridge.getSetting("filament_map_mode", ""))
+                                        .indexOf("Manual") >= 0 ? 1 : 0
+                                    onActivated: function(index) {
+                                        SliceSettingsBridge.setFilamentToolMapping(
+                                            root.filamentSlots.map(function(slot) {
+                                                return slot.physicalToolIndex + 1
+                                            }), index === 0)
+                                    }
+                                }
+
+                                Button {
+                                    objectName: root.automationName("fiberSwapPhysicalToolsButton")
+                                    visible: root.editableToolMapping
+                                    enabled: root.settingsEditingEnabled && root.filamentSlots.length === 2
+                                    text: qsTr("Swap left and right")
+                                    onClicked: SliceSettingsBridge.setFilamentToolMapping(
                                         root.filamentSlots.map(function(slot) {
-                                            return slot.physicalToolIndex + 1
-                                        }), index === 0)
+                                            return 2 - slot.physicalToolIndex
+                                        }), false)
+                                }
+
+                                Label {
+                                    text: qsTr("%1 slots").arg(root.filamentSlots.length)
+                                    font: Typography.bodyStrong
+                                    color: root.SmoothUI.theme.res.textFillColorPrimary
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: SliceSettingsBridge.selectedMachine.variableFilamentSlots
+                                          ? qsTr("Variable slots · %1/%2 active")
+                                                .arg(root.filamentSlots.length)
+                                                .arg(SliceSettingsBridge.selectedMachine.maxFilamentSlots || 1)
+                                          : qsTr("Machine-fixed · %1 nozzles")
+                                                .arg(SliceSettingsBridge.selectedMachine.physicalToolCount || 1)
+                                    font: Typography.caption
+                                    color: root.SmoothUI.theme.res.textFillColorSecondary
+                                    elide: Text.ElideRight
+                                }
+
+                                Button {
+                                    objectName: root.automationName(root.embedded
+                                                ? "machineSelectorFilamentAddSlotButton"
+                                                : "filamentAddSlotButton")
+                                    visible: SliceSettingsBridge.selectedMachine.variableFilamentSlots
+                                             && !root.perToolMaterials
+                                             && root.filamentSlots.length
+                                                < (SliceSettingsBridge.selectedMachine.maxFilamentSlots || 1)
+                                    text: qsTr("Add Slot")
+                                    enabled: root.settingsEditingEnabled
+                                    Accessible.name: qsTr("Add filament slot")
+                                    onClicked: SliceSettingsBridge.setFilamentSlotCount(
+                                                   root.filamentSlots.length + 1)
+                                }
+
+                                Label {
+                                    visible: SliceSettingsBridge.configurationError.length > 0
+                                    text: SliceSettingsBridge.configurationError
+                                    font: Typography.caption
+                                    color: root.SmoothUI.theme.res.systemFillColorCritical
+                                    elide: Text.ElideRight
+                                    Layout.maximumWidth: 240
                                 }
                             }
 
-                            Button {
-                                objectName: root.automationName("fiberSwapPhysicalToolsButton")
-                                visible: root.editableToolMapping
-                                enabled: root.settingsEditingEnabled && root.filamentSlots.length === 2
-                                text: qsTr("Swap left and right")
-                                onClicked: SliceSettingsBridge.setFilamentToolMapping(
-                                    root.filamentSlots.map(function(slot) {
-                                        return 2 - slot.physicalToolIndex
-                                    }), false)
-                            }
-
-                            Label {
-                                text: qsTr("%1 slots").arg(root.filamentSlots.length)
-                                font: Typography.bodyStrong
-                                color: root.SmoothUI.theme.res.textFillColorPrimary
-                            }
-
-                            Label {
+                            GridLayout {
+                                id: filamentSlotRow
                                 Layout.fillWidth: true
-                                text: SliceSettingsBridge.selectedMachine.variableFilamentSlots
-                                      ? qsTr("Variable slots · %1/%2 active")
-                                            .arg(root.filamentSlots.length)
-                                            .arg(SliceSettingsBridge.selectedMachine.maxFilamentSlots || 1)
-                                      : qsTr("Machine-fixed · %1 nozzles")
-                                            .arg(SliceSettingsBridge.selectedMachine.physicalToolCount || 1)
-                                font: Typography.caption
-                                color: root.SmoothUI.theme.res.textFillColorSecondary
-                                elide: Text.ElideRight
-                            }
+                                columns: root.perToolMaterials
+                                         ? Math.max(1, Math.min(root.toolGroups.length, Math.floor((filamentSlotContent.width + 8) / 188))) : 1
+                                columnSpacing: 8
+                                rowSpacing: 10
 
-                            Button {
-                                objectName: root.automationName(root.embedded
-                                            ? "machineSelectorFilamentAddSlotButton"
-                                            : "filamentAddSlotButton")
-                                visible: SliceSettingsBridge.selectedMachine.variableFilamentSlots
-                                         && !root.perToolMaterials
-                                         && root.filamentSlots.length
-                                            < (SliceSettingsBridge.selectedMachine.maxFilamentSlots || 1)
-                                text: qsTr("Add Slot")
-                                enabled: root.settingsEditingEnabled
-                                Accessible.name: qsTr("Add filament slot")
-                                onClicked: SliceSettingsBridge.setFilamentSlotCount(
-                                               root.filamentSlots.length + 1)
-                            }
+                                Repeater {
+                                    model: root.toolGroups
 
-                            Label {
-                                visible: SliceSettingsBridge.configurationError.length > 0
-                                text: SliceSettingsBridge.configurationError
-                                font: Typography.caption
-                                color: root.SmoothUI.theme.res.systemFillColorCritical
-                                elide: Text.ElideRight
-                                Layout.maximumWidth: 240
-                            }
-                        }
-
-                        RowLayout {
-                            id: filamentSlotRow
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            spacing: 8
-
-                            Repeater {
-                                model: root.toolGroups
-
-                                delegate: ColumnLayout {
-                                    id: physicalToolGroup
-                                    required property var modelData
-                                    Layout.fillWidth: true
-                                    Layout.alignment: Qt.AlignTop
-                                    RowLayout {
-                                        visible: root.perToolMaterials
-                                        Layout.fillWidth: true
-                                        Label {
-                                            Layout.fillWidth: true
-                                            text: physicalToolGroup.modelData.slots.length > 0 ? root.physicalToolLabel(physicalToolGroup.modelData.slots[0]) : qsTr("Nozzle %1").arg(physicalToolGroup.modelData.physical)
-                                            font: Typography.bodyStrong
-                                        }
-                                        Button {
-                                            objectName: root.automationName((root.embedded ? "machineSelectorFilamentAddToToolButton_" : "filamentAddToToolButton_") + physicalToolGroup.modelData.physical)
-                                            text: qsTr("Add Slot")
-                                            enabled: root.settingsEditingEnabled && physicalToolGroup.modelData.slots.length < physicalToolGroup.modelData.capacity
-                                            onClicked: SliceSettingsBridge.addFilamentToTool(physicalToolGroup.modelData.physical)
-                                        }
-                                    }
-                                    GridLayout {
+                                    delegate: ColumnLayout {
+                                        id: physicalToolGroup
+                                        required property var modelData
                                         Layout.fillWidth: true
                                         Layout.alignment: Qt.AlignTop
-                                        columns: root.perToolMaterials ? 1 : Math.max(1, physicalToolGroup.modelData.slots.length)
-                                        Repeater {
-                                            model: physicalToolGroup.modelData.slots
-
-                                            delegate: Rectangle {
-                                                id: filamentSlotCard
-                                                required property int index
-                                                required property var modelData
-                                                readonly property var compatiblePresets: modelData.compatiblePresets || []
+                                        RowLayout {
+                                            visible: root.perToolMaterials
+                                            Layout.fillWidth: true
+                                            Label {
                                                 Layout.fillWidth: true
-                                                Layout.preferredHeight: 74
-                                                Layout.minimumWidth: 126
-                                                radius: root.SmoothUI.radius
-                                                color: PrintWorkspaceStyle.surface(root.SmoothUI.dark)
+                                                Layout.minimumWidth: 0
+                                                elide: Text.ElideRight
+                                                text: physicalToolGroup.modelData.slots.length > 0 ? root.physicalToolLabel(physicalToolGroup.modelData.slots[0]) : qsTr("Nozzle %1").arg(physicalToolGroup.modelData.physical)
+                                                font: Typography.bodyStrong
+                                            }
+                                            Button {
+                                                objectName: root.automationName((root.embedded ? "machineSelectorFilamentAddToToolButton_" : "filamentAddToToolButton_") + physicalToolGroup.modelData.physical)
+                                                text: qsTr("Add Slot")
+                                                visible: physicalToolGroup.modelData.capacity > 1
+                                                enabled: root.settingsEditingEnabled && physicalToolGroup.modelData.slots.length < physicalToolGroup.modelData.capacity
+                                                onClicked: SliceSettingsBridge.addFilamentToTool(physicalToolGroup.modelData.physical)
+                                            }
+                                        }
+                                        GridLayout {
+                                            Layout.fillWidth: true
+                                            Layout.alignment: Qt.AlignTop
+                                            columns: root.perToolMaterials ? 1
+                                                     : Math.max(1, Math.min(physicalToolGroup.modelData.slots.length,
+                                                                           Math.floor((filamentSlotContent.width + 8) / 188)))
+                                            Repeater {
+                                                model: physicalToolGroup.modelData.slots
 
-                                                ColumnLayout {
-                                                    anchors.fill: parent
-                                                    anchors.margins: 6
-                                                    spacing: 4
+                                                delegate: Rectangle {
+                                                    id: filamentSlotCard
+                                                    required property int index
+                                                    required property var modelData
+                                                    readonly property var compatiblePresets: modelData.compatiblePresets || []
+                                                    Layout.fillWidth: true
+                                                    objectName: root.automationName("filamentSlotCard_" + modelData.number)
+                                                    Layout.preferredHeight: 84
+                                                    Layout.minimumWidth: 0
+                                                    radius: root.SmoothUI.radius
+                                                    color: PrintWorkspaceStyle.surface(root.SmoothUI.dark)
 
-                                                    RowLayout {
-                                                        Layout.fillWidth: true
-                                                        spacing: 6
+                                                    ColumnLayout {
+                                                        anchors.fill: parent
+                                                        anchors.margins: 6
+                                                        spacing: 4
 
-                                                        Rectangle {
-                                                            Layout.preferredWidth: 22
-                                                            Layout.preferredHeight: 22
-                                                            radius: 5
-                                                            color: filamentSlotCard.modelData.color || "#808080"
-                                                            border.width: 1
-                                                            border.color: root.SmoothUI.theme.res.controlStrokeColorDefault
-                                                        }
-
-                                                        Label {
+                                                        RowLayout {
                                                             Layout.fillWidth: true
-                                                            text: (SliceSettingsBridge.selectedMachine.physicalToolCount > 1 ? root.physicalToolLabel(filamentSlotCard.modelData) + " · " : "") + qsTr("Slot %1 · %2").arg(filamentSlotCard.modelData.number).arg(filamentSlotCard.modelData.materialType || qsTr("Unknown"))
-                                                            font: Typography.bodyStrong
-                                                            color: root.SmoothUI.theme.res.textFillColorPrimary
-                                                            elide: Text.ElideRight
+                                                            spacing: 6
+
+                                                            ColorPicker {
+                                                                objectName: root.automationName("filamentColorButton_" + filamentSlotCard.modelData.number)
+                                                                Layout.preferredWidth: 38
+                                                                Layout.preferredHeight: 32
+                                                                enabled: root.settingsEditingEnabled
+                                                                current: filamentSlotCard.modelData.color || "#808080"
+                                                                titleText: qsTr("Filament %1 Color").arg(filamentSlotCard.modelData.number)
+                                                                Accessible.name: qsTr("Edit filament %1 color").arg(filamentSlotCard.modelData.number)
+                                                                contentItem: Rectangle {
+                                                                    implicitWidth: 26
+                                                                    implicitHeight: 20
+                                                                    radius: 4
+                                                                    color: parent.current
+                                                                    border.width: 1
+                                                                    border.color: root.SmoothUI.theme.res.controlStrokeColorDefault
+                                                                }
+                                                                onAccepted: {
+                                                                    SliceSettingsBridge.setFilamentColor(filamentSlotCard.modelData.index, current)
+                                                                    current = Qt.binding(function() { return filamentSlotCard.modelData.color || "#808080" })
+                                                                }
+                                                                ToolTip.visible: hovered
+                                                                ToolTip.text: Accessible.name + " · " + String(current).toUpperCase()
+                                                            }
+
+                                                            Label {
+                                                                Layout.fillWidth: true
+                                                                Layout.minimumWidth: 0
+                                                                text: (!root.perToolMaterials && SliceSettingsBridge.selectedMachine.physicalToolCount > 1 ? root.physicalToolLabel(filamentSlotCard.modelData) + " · " : "") + qsTr("Slot %1 · %2").arg(filamentSlotCard.modelData.number).arg(filamentSlotCard.modelData.materialType || qsTr("Unknown"))
+                                                                font: Typography.bodyStrong
+                                                                color: root.SmoothUI.theme.res.textFillColorPrimary
+                                                                elide: Text.ElideRight
+                                                            }
+
+                                                            IconButton {
+                                                                objectName: root.automationName("restoreFilamentPresetButton_" + filamentSlotCard.modelData.number)
+                                                                Layout.preferredWidth: 28
+                                                                Layout.preferredHeight: 28
+                                                                flat: true
+                                                                enabled: root.settingsEditingEnabled && filamentSlotCard.modelData.presetModified
+                                                                icon.name: FluentIcons.graph_Undo
+                                                                icon.width: 14
+                                                                icon.height: 14
+                                                                Accessible.name: qsTr("Restore filament %1 preset").arg(filamentSlotCard.modelData.number)
+                                                                onClicked: SliceSettingsBridge.restoreCurrentPreset("filament", filamentSlotCard.modelData.index)
+                                                                ToolTip.visible: hovered
+                                                                ToolTip.text: Accessible.name
+                                                            }
                                                         }
 
-                                                        IconButton {
-                                                            Layout.preferredWidth: 28
-                                                            Layout.preferredHeight: 28
-                                                            flat: true
-                                                            radius: 5
-                                                            icon.name: FluentIcons.graph_Edit
-                                                            icon.width: 13
-                                                            icon.height: 13
-                                                            Accessible.name: qsTr("Edit filament %1 color").arg(filamentSlotCard.modelData.number)
-                                                            onClicked: filamentColorDialog.open()
+                                                        ComboBox {
+                                                            objectName: root.automationName((root.embedded ? "machineSelectorFilamentSlotPresetCombo_" : "filamentSlotPresetCombo_") + String(filamentSlotCard.modelData.number))
+                                                            Layout.fillWidth: true
+                                                            Layout.minimumWidth: 0
+                                                            Layout.preferredHeight: 32
+                                                            enabled: root.settingsEditingEnabled && filamentSlotCard.compatiblePresets.length > 0
+                                                            model: filamentSlotCard.compatiblePresets
+                                                            textRole: "name"
+                                                            valueRole: "id"
+                                                            currentIndex: root.indexByValue(filamentSlotCard.compatiblePresets, "id", filamentSlotCard.modelData.presetId)
+                                                            onActivated: function (presetIndex) {
+                                                                if (presetIndex < 0 || presetIndex >= filamentSlotCard.compatiblePresets.length)
+                                                                    return;
+                                                                SliceSettingsBridge.selectFilamentPresetForSlot(filamentSlotCard.modelData.index, filamentSlotCard.compatiblePresets[presetIndex].id);
+                                                            }
 
-                                                            ToolTip.visible: hovered
-                                                            ToolTip.text: Accessible.name
-                                                        }
-
-                                                        ColorDialog {
-                                                            id: filamentColorDialog
-                                                            title: qsTr("Filament %1 Color").arg(filamentSlotCard.modelData.number)
-                                                            selectedColor: filamentSlotCard.modelData.color || "#808080"
-                                                            onAccepted: SliceSettingsBridge.setFilamentColor(filamentSlotCard.modelData.index, selectedColor)
-                                                        }
-                                                    }
-
-                                                    ComboBox {
-                                                        objectName: root.automationName((root.embedded ? "machineSelectorFilamentSlotPresetCombo_" : "filamentSlotPresetCombo_") + String(filamentSlotCard.modelData.number))
-                                                        Layout.fillWidth: true
-                                                        Layout.preferredHeight: 32
-                                                        enabled: root.settingsEditingEnabled && filamentSlotCard.compatiblePresets.length > 0
-                                                        model: filamentSlotCard.compatiblePresets
-                                                        textRole: "name"
-                                                        valueRole: "id"
-                                                        currentIndex: root.indexByValue(filamentSlotCard.compatiblePresets, "id", filamentSlotCard.modelData.presetId)
-                                                        onActivated: function (presetIndex) {
-                                                            if (presetIndex < 0 || presetIndex >= filamentSlotCard.compatiblePresets.length)
-                                                                return;
-                                                            SliceSettingsBridge.selectFilamentPresetForSlot(filamentSlotCard.modelData.index, filamentSlotCard.compatiblePresets[presetIndex].id);
-                                                        }
-
-                                                        ToolTip {
-                                                            visible: parent.hovered
-                                                            text: parent.currentText
+                                                            ToolTip {
+                                                                visible: parent.hovered
+                                                                text: parent.currentText
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -1148,11 +1173,15 @@ Item {
                 spacing: 8
 
                 Button {
+                    objectName: root.automationName("restoreCurrentPresetButton")
+                    visible: root.workspaceIndex !== 1
                     text: qsTr("Restore Current Preset")
-                    enabled: root.settingsEditingEnabled
+                    enabled: root.settingsEditingEnabled && (root.currentSchemaTab === "printer"
+                              ? SliceSettingsBridge.printerPresetModified
+                              : SliceSettingsBridge.modifiedSettingKeys.length > 0)
                     Layout.preferredHeight: PrintWorkspaceStyle.controlHeight
                     onClicked: {
-                        SliceSettingsBridge.resetToDefaults()
+                        SliceSettingsBridge.restoreCurrentPreset(root.currentSchemaTab)
                     }
                 }
 

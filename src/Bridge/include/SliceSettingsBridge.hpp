@@ -26,6 +26,7 @@ class SliceSettingsBridge final : public bridge::BridgeBase {
     Q_PROPERTY(bool hasPendingReslice READ hasPendingReslice NOTIFY hasPendingResliceChanged)
     Q_PROPERTY(QVariantMap settings READ settings WRITE setSettings NOTIFY settingsChanged)
     Q_PROPERTY(QStringList modifiedSettingKeys READ modifiedSettingKeys NOTIFY settingsChanged)
+    Q_PROPERTY(bool printerPresetModified READ printerPresetModified NOTIFY settingsChanged)
     Q_PROPERTY(bool schemaLoaded READ schemaLoaded NOTIFY schemaChanged)
     Q_PROPERTY(int schemaRevision READ schemaRevision NOTIFY schemaChanged)
     Q_PROPERTY(QString selectedMachineModelId READ selectedMachineModelId NOTIFY machineSelectionChanged)
@@ -46,7 +47,7 @@ public:
     struct PreparedConfiguration {
         libslicer::ActiveConfigView view;
         QVariantMap machine;
-        std::unordered_map<std::string, std::string> processBaseline;
+        QStringList modifiedProcessKeys;
         std::unordered_map<std::string, std::size_t> itemIndex;
         QVariantList schemaSettings, schemaPages, filamentSlots;
         QHash<QString, QVariantMap> schemaByKey;
@@ -68,6 +69,7 @@ public:
 
     QVariantMap settings() const;
     QStringList modifiedSettingKeys() const;
+    bool printerPresetModified() const;
     void setSettings(const QVariantMap& settings);
 
     Q_INVOKABLE QVariant getSetting(const QString& key,
@@ -76,8 +78,7 @@ public:
     Q_INVOKABLE void ensureSetting(const QString& key, const QVariant& value);
     Q_INVOKABLE bool hasSetting(const QString& key) const;
     Q_INVOKABLE void removeSetting(const QString& key);
-    Q_INVOKABLE void resetToDefaults();
-    Q_INVOKABLE void restoreProcessSettings();
+    Q_INVOKABLE void restoreCurrentPreset(const QString& tab = QStringLiteral("process"), int filamentSlot = -1);
     Q_INVOKABLE void markCurrentAsSliced();
     void markAsSlicedForRevision(std::uint64_t sliced, std::optional<std::uint64_t> active);
     std::uint64_t localProcessRevision() const noexcept { return m_localProcessRevision.load(); }
@@ -144,6 +145,7 @@ private:
     ~SliceSettingsBridge() override;
 
     void buildSchemaLocked();
+    void refreshPresetState();
     const libslicer::SettingItem* findItemLocked(std::string_view key) const;
     bool applyChangedItemsLocked(const std::vector<libslicer::SettingItem>& changedItems);
     QVariant displayValueLocked(const libslicer::SettingItem& item,
@@ -178,7 +180,8 @@ private:
     std::vector<libslicer::PresetOption> m_compatibleProcesses;
     std::vector<libslicer::PresetOption> m_compatibleFilaments;
     std::vector<libslicer::SettingItem> m_items;
-    std::unordered_map<std::string, std::string> m_processBaseline;
+    QStringList m_modifiedProcessKeys;
+    bool m_printerPresetModified{false};
     std::unordered_map<std::string, std::size_t> m_itemIndex;
     QVariantList m_schemaSettings;
     QVariantList m_schemaPages;

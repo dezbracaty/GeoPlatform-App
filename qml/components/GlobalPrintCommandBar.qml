@@ -15,7 +15,6 @@ PanelSurface {
     property int objectCount: 0
     property string selectedFileName: ""
     property bool hasSelection: false
-    property bool parametersAvailable: !previewMode
     property bool printerControlOpen: false
 
     property alias printerAnchor: deviceStatus
@@ -88,7 +87,6 @@ PanelSurface {
     readonly property string currentJobName:
         (submissionNameMode ? PrinterService.submissionDisplayName : PrinterService.jobFileName)
         || qsTr("Print Job")
-    signal parametersRequested()
     signal machinePopupOpening()
     signal printerControlRequested()
     signal addModelRequested()
@@ -304,29 +302,6 @@ PanelSurface {
                     Layout.minimumWidth: implicitWidth
                     Layout.maximumWidth: implicitWidth
                     spacing: PrintWorkspaceStyle.space4
-
-                    Button {
-                        id: parameterButton
-                        objectName: "print.configuration.open"
-                        visible: root.parametersAvailable
-                        Layout.fillWidth: false
-                        Layout.minimumWidth: implicitWidth
-                        Layout.preferredWidth: implicitWidth
-                        Layout.maximumWidth: implicitWidth
-                        Layout.preferredHeight: PrintWorkspaceStyle.controlHeight
-                        text: root.narrow ? "" : qsTr("Global process")
-                        icon.name: root.narrow ? FluentIcons.graph_Settings : ""
-                        icon.width: 14
-                        icon.height: 14
-                        font: Typography.caption
-                        onClicked: root.parametersRequested()
-
-                        ToolTip {
-                            text: qsTr("Global process")
-                            visible: parent.hovered && root.narrow
-                            delay: Theme.tooltipDelay
-                        }
-                    }
 
                     Button {
                         id: normalPrimaryButton
