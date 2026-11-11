@@ -1811,45 +1811,55 @@ Item {
                 }
             }
 
-            Button {
-                visible: root.localMode && !!settingRow.localSetting
-                objectName: root.automationName("inheritance." + settingRow.paramKey)
-                flat: true
-                enabled: root.settingsEditingEnabled && (settingRow.modified || settingRow.schemaEnabled)
-                text: settingRow.modified ? qsTr("Restore inheritance") : qsTr("Inherited")
-                font.pixelSize: 10
-                onClicked: {
-                    const setting = settingRow.localSetting
-                    if (setting)
-                        root.writeLocalSetting(root.localModelId, root.localPartId,
-                            settingRow.paramKey, setting.value, !!setting.overridden)
-                }
-                ToolTip.visible: hovered
-                ToolTip.text: settingRow.localSetting && settingRow.localSetting.overridden
-                    ? qsTr("Inherited value: %1").arg(settingRow.localSetting.default)
-                    : qsTr("Keep this value as an override")
-            }
-
-            Item {
-                id: controlHost
+            RowLayout {
+                // The outer grid has two cells: label and the complete editor.
+                // Inheritance is part of the editor, never a third grid item.
                 Layout.fillWidth: settingRow.multilineControl
-                Layout.preferredWidth: settingRow.multilineControl ? -1 : (root.compactPanel ? 117 : 280)
-                Layout.preferredHeight: implicitHeight
                 Layout.alignment: settingRow.multilineControl
                                   ? Qt.AlignLeft | Qt.AlignTop
                                   : Qt.AlignRight | Qt.AlignVCenter
-                enabled: root.settingsEditingEnabled && settingRow.schemaEnabled
-                implicitWidth: root.compactPanel ? 117 : 280
-                implicitHeight: controlRow.implicitHeight
+                spacing: 6
 
-                RowLayout {
-                    id: controlRow
-                    anchors.fill: parent
-                    spacing: 0
+                Button {
+                    visible: root.localMode && !!settingRow.localSetting
+                    objectName: root.automationName("inheritance." + settingRow.paramKey)
+                    flat: true
+                    enabled: root.settingsEditingEnabled && (settingRow.modified || settingRow.schemaEnabled)
+                    text: settingRow.modified ? qsTr("Restore inheritance") : qsTr("Inherited")
+                    font.pixelSize: 10
+                    onClicked: {
+                        const setting = settingRow.localSetting
+                        if (setting)
+                            root.writeLocalSetting(root.localModelId, root.localPartId,
+                                settingRow.paramKey, setting.value, !!setting.overridden)
+                    }
+                    ToolTip.visible: hovered
+                    ToolTip.text: settingRow.localSetting && settingRow.localSetting.overridden
+                        ? qsTr("Inherited value: %1").arg(settingRow.localSetting.default)
+                        : qsTr("Keep this value as an override")
+                }
 
-                    Item {
-                        visible: !settingRow.multilineControl
-                        Layout.fillWidth: true
+                Item {
+                    id: controlHost
+                    Layout.fillWidth: settingRow.multilineControl
+                    Layout.preferredWidth: settingRow.multilineControl ? -1 : (root.compactPanel ? 117 : 280)
+                    Layout.preferredHeight: implicitHeight
+                    Layout.alignment: settingRow.multilineControl
+                                      ? Qt.AlignLeft | Qt.AlignTop
+                                      : Qt.AlignRight | Qt.AlignVCenter
+                    enabled: root.settingsEditingEnabled && settingRow.schemaEnabled
+                    implicitWidth: root.compactPanel ? 117 : 280
+                    implicitHeight: controlRow.implicitHeight
+
+                    RowLayout {
+                        id: controlRow
+                        anchors.fill: parent
+                        spacing: 0
+
+                        Item {
+                            visible: !settingRow.multilineControl
+                            Layout.fillWidth: true
+                        }
                     }
                 }
             }
