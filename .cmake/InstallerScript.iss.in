@@ -26,6 +26,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 DisableProgramGroupPage=yes
 RestartApplications=no
+ChangesAssociations=yes
 ; Uncomment the following line to run in non administrative install mode (install for current user only.)
 ;PrivilegesRequired=lowest
 OutputDir=.\
@@ -44,6 +45,32 @@ Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.i
 Name: "settingsreset"; Description: "全新安装（重置全部设置）"; GroupDescription: "安装方式："; Flags: exclusive
 Name: "settingskeep"; Description: "覆盖安装（保留全部设置）"; GroupDescription: "安装方式："; Flags: exclusive unchecked
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkablealone
+
+[Registry]
+; Advertise handlers without changing extension defaults or UserChoice.
+Root: HKA; Subkey: "Software\Classes\GPlatform.STL"; ValueType: string; ValueData: "GPlatform stl"
+Root: HKA; Subkey: "Software\Classes\GPlatform.STL\DefaultIcon"; ValueType: string; ValueData: "{app}\{#MyAppExeName},0"
+Root: HKA; Subkey: "Software\Classes\GPlatform.STL\shell\open\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
+Root: HKA; Subkey: "Software\Classes\.stl\OpenWithProgids"; ValueType: string; ValueName: "GPlatform.STL"; ValueData: ""
+Root: HKA; Subkey: "Software\GPlatform\Capabilities\FileAssociations"; ValueType: string; ValueName: ".stl"; ValueData: "GPlatform.STL"
+Root: HKA; Subkey: "Software\Classes\GPlatform.3MF"; ValueType: string; ValueData: "GPlatform 3mf"
+Root: HKA; Subkey: "Software\Classes\GPlatform.3MF\DefaultIcon"; ValueType: string; ValueData: "{app}\{#MyAppExeName},0"
+Root: HKA; Subkey: "Software\Classes\GPlatform.3MF\shell\open\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
+Root: HKA; Subkey: "Software\Classes\.3mf\OpenWithProgids"; ValueType: string; ValueName: "GPlatform.3MF"; ValueData: ""
+Root: HKA; Subkey: "Software\GPlatform\Capabilities\FileAssociations"; ValueType: string; ValueName: ".3mf"; ValueData: "GPlatform.3MF"
+Root: HKA; Subkey: "Software\Classes\GPlatform.GCode"; ValueType: string; ValueData: "GPlatform gcode"
+Root: HKA; Subkey: "Software\Classes\GPlatform.GCode\DefaultIcon"; ValueType: string; ValueData: "{app}\{#MyAppExeName},0"
+Root: HKA; Subkey: "Software\Classes\GPlatform.GCode\shell\open\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
+Root: HKA; Subkey: "Software\Classes\.gcode\OpenWithProgids"; ValueType: string; ValueName: "GPlatform.GCode"; ValueData: ""
+Root: HKA; Subkey: "Software\GPlatform\Capabilities\FileAssociations"; ValueType: string; ValueName: ".gcode"; ValueData: "GPlatform.GCode"
+Root: HKA; Subkey: "Software\Classes\gplatform"; ValueType: string; ValueData: "URL:GPlatform Open"
+Root: HKA; Subkey: "Software\Classes\gplatform"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKA; Subkey: "Software\Classes\gplatform\shell\open\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
+Root: HKA; Subkey: "Software\GPlatform\Capabilities"; ValueType: string; ValueName: "ApplicationName"; ValueData: "GPlatform"
+Root: HKA; Subkey: "Software\GPlatform\Capabilities"; ValueType: string; ValueName: "ApplicationDescription"; ValueData: "Open STL and 3MF models and preview G-code in GPlatform."
+Root: HKA; Subkey: "Software\GPlatform\Capabilities"; ValueType: string; ValueName: "ApplicationIcon"; ValueData: "{app}\{#MyAppExeName},0"
+Root: HKA; Subkey: "Software\GPlatform\Capabilities\URLAssociations"; ValueType: string; ValueName: "gplatform"; ValueData: "gplatform"
+Root: HKA; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "GPlatform"; ValueData: "Software\GPlatform\Capabilities"
 
 [Files]
 ; Extract prerequisites before the application files in this solid-compressed archive.
@@ -200,3 +227,36 @@ begin
   Result := VCRuntimeRestartRequired;
 end;
 
+
+{ Remove only associations whose current command still belongs to this install. }
+procedure RemoveOwnedHandler(RootKey: Integer; const ProgId, Extension, Expected: String);
+var Command: String;
+begin
+  if RegQueryStringValue(RootKey, 'Software\Classes\' + ProgId + '\shell\open\command', '', Command)
+     and (CompareText(Command, Expected) = 0) then
+  begin
+    if Extension <> '' then
+      RegDeleteValue(RootKey, 'Software\Classes\.' + Extension + '\OpenWithProgids', ProgId);
+    RegDeleteKeyIncludingSubkeys(RootKey, 'Software\Classes\' + ProgId);
+  end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var RootKey: Integer; Expected, Icon, Registered: String;
+begin
+  if CurUninstallStep <> usUninstall then Exit;
+  if IsAdminInstallMode then RootKey := HKLM64 else RootKey := HKCU;
+  Expected := '"' + ExpandConstant('{app}\{#MyAppExeName}') + '" "%1"';
+  RemoveOwnedHandler(RootKey, 'GPlatform.STL', 'stl', Expected);
+  RemoveOwnedHandler(RootKey, 'GPlatform.3MF', '3mf', Expected);
+  RemoveOwnedHandler(RootKey, 'GPlatform.GCode', 'gcode', Expected);
+  RemoveOwnedHandler(RootKey, 'gplatform', '', Expected);
+  if RegQueryStringValue(RootKey, 'Software\GPlatform\Capabilities', 'ApplicationIcon', Icon)
+     and (CompareText(Icon, ExpandConstant('{app}\{#MyAppExeName},0')) = 0) then
+  begin
+    RegDeleteKeyIncludingSubkeys(RootKey, 'Software\GPlatform\Capabilities');
+    if RegQueryStringValue(RootKey, 'Software\RegisteredApplications', 'GPlatform', Registered)
+       and (Registered = 'Software\GPlatform\Capabilities') then
+      RegDeleteValue(RootKey, 'Software\RegisteredApplications', 'GPlatform');
+  end;
+end;

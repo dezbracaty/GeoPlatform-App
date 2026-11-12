@@ -346,6 +346,46 @@ QVariantMap ActionManager::invokeActionWithReceipt(const QString& actionCode,
     return receipt;
 }
 
+namespace {
+QVariantMap nativeOutcome(QVariantMap outcome) {
+    const auto result = outcome.value("result").toMap();
+    const bool cancelled = result.value("cancelled").toBool();
+    const bool success = outcome.value("success").toBool() && !cancelled &&
+        (!result.contains("success") || result.value("success").toBool());
+    outcome.insert("success", success);
+    outcome.insert("status", cancelled ? "cancelled" : success ? "completed" : "failed");
+    if (!success && outcome.value("error").toString().isEmpty())
+        outcome.insert("error", result.value("errorMessage"));
+    return outcome;
+}
+}
+
+QVariantMap ActionManager::invokeTrackedAction(const QString& actionCode,
+                                               const QVariantMap& params,
+                                               const QVariantMap& metadata) {
+    const auto id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    PendingInvocation pending;
+    pending.native = true;
+    pending.data = {{"actionCode", actionCode}, {"meta", metadata}};
+    m_pendingInvocations.insert(id, pending);
+    QVariantMap receipt;
+    triggerActionInternal(actionCode, params, false, id, metadata, &receipt);
+    receipt.insert("invocationId", id);
+    receipt.insert("metadata", metadata);
+    const bool running = receipt.value("accepted").toBool() &&
+        receipt.value("success").toBool() && receipt.value("pending").toBool();
+    receipt.insert("async", running);
+    if (running) {
+        m_pendingInvocations[id].data.insert("seq", receipt.value("seq"));
+        receipt.insert("status", "running");
+    } else {
+        m_pendingInvocations.remove(id);
+        receipt.insert("pending", false);
+        receipt = nativeOutcome(receipt);
+    }
+    return receipt;
+}
+
 bool ActionManager::triggerAction(const QString& actionCode, const QVariantMap& params) {
     return triggerActionInternal(actionCode, params, false);
 }
@@ -431,6 +471,18 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
     const bool isMiddlewareHandler = (handlerType == HandlerType::Middleware);
     const bool isExclusiveHandler = (handlerType == HandlerType::Exclusive);
 
+    const bool nativeTracked = m_pendingInvocations.contains(invocationId) &&
+        m_pendingInvocations.value(invocationId).native;
+    if (nativeTracked && (handler->isPersistent() || m_activeHandler == handler ||
+        m_suspendedHandler == handler ||
+        std::find(m_backgroundHandlers.begin(), m_backgroundHandlers.end(), handler) != m_backgroundHandlers.end() ||
+        std::find(m_middlewareHandlers.begin(), m_middlewareHandlers.end(), handler) != m_middlewareHandlers.end())) {
+        setOutcome(buildActionOutcome(invokeSeq, actionCode, false, false,
+            "The handler is already running or is persistent", {}, false, handlerType,
+            false, ActionErrorCode::SystemUnavailable));
+        return false;
+    }
+
     const auto activeHandler = m_activeHandler;
     if (activeHandler && !activeHandler->prepareForAction(actionCode, handlerType)) {
         setOutcome(buildActionOutcome(invokeSeq, actionCode, false, false,
@@ -512,6 +564,13 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
     context->setParams(params);
     context->setInvocationId(invocationId);
     context->setInvocationMetadata(invocationMetadata);
+    const auto generation = ++m_handlerGenerations[handler.get()];
+    if (nativeTracked) {
+        auto& pending = m_pendingInvocations[invocationId];
+        pending.handler = handler;
+        pending.context = context;
+        pending.generation = generation;
+    }
 
     const HandlerPtr previousActiveHandler = m_activeHandler;
 
@@ -641,7 +700,8 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
             } else if (!handlerStillActive) {
                 // Handler已经自己完成并调用了onExit，直接清理
                 LOG_DEBUG("Handler completed synchronously, cleaning up immediately");
-                m_activeHandler = nullptr;
+                if (nativeTracked) handler->onExit();
+                if (m_activeHandler == handler) m_activeHandler.reset();
                 setOutcome(buildActionOutcome(invokeSeq,
                                                          actionCode,
                                                          true,
@@ -699,6 +759,7 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
         // must be observable by every caller, including menus and Journal.
         return !context->hasError();
     } catch (const std::exception& e) {
+        if (nativeTracked) handler->onExit();
         if (isExclusiveHandler && m_activeHandler == handler) {
             m_activeHandler = previousActiveHandler;
         }
@@ -935,9 +996,9 @@ QVariantMap ActionManager::invokeActionByAI(const QString& actionCode,
     QVariantMap invocationMeta = meta;
     invocationMeta.insert("invocationId", invocationId);
 
-    QVariantMap pending;
-    pending.insert("actionCode", actionCode);
-    pending.insert("meta", invocationMeta);
+    PendingInvocation pending;
+    pending.data.insert("actionCode", actionCode);
+    pending.data.insert("meta", invocationMeta);
     m_pendingInvocations.insert(invocationId, pending);
 
     const bool accepted = triggerActionByAI(actionCode, params, invocationMeta);
@@ -952,7 +1013,7 @@ QVariantMap ActionManager::invokeActionByAI(const QString& actionCode,
         return receipt;
     }
 
-    pending.insert("seq", receipt.value("seq"));
+    pending.data.insert("seq", receipt.value("seq"));
     m_pendingInvocations.insert(invocationId, pending);
 
     receipt.insert("success", true);
@@ -974,13 +1035,15 @@ void ActionManager::onHandlerInvocationCompleted(const QString& invocationId,
         return;
     }
 
-    const QVariantMap pending = it.value();
+    const auto pending = it.value();
+    if (pending.native && (sender() != pending.handler.get() || !pending.context ||
+        pending.context->getInvocationId() != invocationId)) return;
     m_pendingInvocations.erase(it);
 
     QVariantMap outcome = handlerOutcome;
     outcome.insert("invocationId", invocationId);
-    outcome.insert("actionCode", pending.value("actionCode"));
-    outcome.insert("seq", pending.value("seq"));
+    outcome.insert("actionCode", pending.data.value("actionCode"));
+    outcome.insert("seq", pending.data.value("seq"));
     outcome.insert("accepted", true);
     outcome.insert("async", true);
     outcome.insert("pending", false);
@@ -988,6 +1051,23 @@ void ActionManager::onHandlerInvocationCompleted(const QString& invocationId,
         outcome.insert("status", outcome.value("success").toBool()
                                      ? QStringLiteral("completed")
                                      : QStringLiteral("failed"));
+    }
+    if (pending.native) {
+        outcome = nativeOutcome(outcome); // Snapshot before onCleanup clears importer state.
+        outcome.insert("released", true);
+        if (m_handlerGenerations.value(pending.handler.get()) == pending.generation) {
+            if (m_activeHandler == pending.handler && !pending.handler->isActive()) {
+                pending.handler->onExit();
+                if (m_activeHandler == pending.handler) m_activeHandler.reset();
+                emit actionCompleted(QString::fromLatin1(pending.handler->metaObject()->className()),
+                                     outcome.value("success").toBool());
+            } else if (m_activeHandler == pending.handler || m_suspendedHandler == pending.handler) {
+                outcome.insert("success", false);
+                outcome.insert("status", "failed");
+                outcome.insert("error", "Importer reported completion before releasing its operation");
+                outcome.insert("released", false);
+            }
+        }
     }
     m_lastActionOutcome = outcome;
     LOG_INFO("Action invocation completed: action={} invocation={} success={}",
