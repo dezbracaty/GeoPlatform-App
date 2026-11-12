@@ -61,7 +61,7 @@ def prepare_theme(settings, theme):
 
 
 
-def main(argv=None, *, session=None, progress=None):
+def main(argv=None, *, session=None, progress=None, between_cases=None):
     app_root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, help='Complete host source (compatibility entry)')
@@ -168,6 +168,7 @@ def main(argv=None, *, session=None, progress=None):
         update_run_summary(summary)
 
     def finish_reviews():
+        changed = False
         for request in waiting_reviews[:]:
             checkpoints, execution, case_output = request
             if any(step.get('status') == 'pending' for step in execution.get('results', [])):
@@ -187,6 +188,15 @@ def main(argv=None, *, session=None, progress=None):
             checks = json.loads((case_output / 'checks.json').read_text(encoding='utf-8'))
             write_case_result(case_output, result, checks)
             pending_reviews.remove((case_output, future))
+            changed = True
+        return changed
+
+    def refresh_pending():
+        changed = comparisons.collect()
+        finish_comparisons(changed)
+        reviews_changed = finish_reviews()
+        if changed or reviews_changed:
+            write_summary(output, summary)
 
     try:
         for case_index, name in enumerate(selected, 1):
@@ -216,6 +226,8 @@ def main(argv=None, *, session=None, progress=None):
             print('END ' + name + ': ' + status, flush=True)
             if progress:
                 progress(dict(case=name, index=case_index, total=len(selected), phase='end', status=status))
+            if between_cases is not None and case_index < len(selected):
+                between_cases(refresh_pending)
     except Exception as exc:
         summary.update(status='failed', error=str(exc))
     finally:

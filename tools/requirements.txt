@@ -1,4 +1,3 @@
-# Python batch regression and native result viewer. Python must include modern Tk.
-customtkinter==6.0.0
+# Journal web workbench and the shared regression/comparison modules.
 Pillow>=10,<13
 numpy>=1.24,<3

@@ -4,45 +4,35 @@
 下述命令从 App 仓库根目录执行，完整宿主可以先进入 `App/`。
 SDK 只提供应用端 C++ Journal 服务，模型与场景仍由 `tests/TestAssets` 固定子模块提供。
 
-JournalSystem v2 的主要入口是 Python GUI。GPlatform 只提供输入/Action 执行以及原始 DB/截图数据；Journal 文件、回放时间、比较和报告均由 Python 负责。
+Journal 的交互入口是网页工作台。电脑 A 运行 Python 服务和 GPlatform，电脑 B 使用浏览器访问；录制、回放、比较、输入与结果文件均保留在 A。浏览器刷新或断开不会停止任务。
 
-## 启动
-
-### 场景测试
-
-GUI 分为“场景测试”和“录制”两页，日志默认折叠。
-启动后离线读取场景与本地录制，不自动连接应用。
-
-```bash
-python3 tools/journal/journalsystem_gui.py \
-  --application /path/to/GPlatform
-```
-
-选择实际测试程序和场景后，查看验收目标、DB/截图验收方式及资产准备状态，再点击“运行场景”。
-场景默认来自 `tests/TestAssets/scenarios/`；也可选择同一资产结构下的 scenarios 目录。
-名称、验收声明及标准由现有 `metadata.json` 和测试资产维护，GUI 不编辑标准。
-需要导出文件的场景还需选择 App 实际导出目录。LFS 指针、缺少输入或不合法标准会阻止启动；
-缺少必要验收检查则明确提示未验收，不能将仅执行成功当作通过。
-
-场景运行直接调用 App 的 `tools/run_acceptance.py`，复用准备检查、业务验收、配置恢复和报告流程；
-该入口使用共享 `JournalExecutionSession` 启动、清理独立实例。
-最近结果只读取所选程序与所选场景对应的 `case_result.json`，提供场景报告和结果目录。
-“批量回归测试”通过同一 App 入口执行所选资产目录内的全部场景，不受列表搜索或单个选择影响。
-批量运行复用进度、取消和实例清理；有导出场景时须先选择导出目录。
-结束后点击“显示最近批量结果”，打开 App 的 Python 对照窗口；最近批次按程序路径和资产目录匹配，
-失败、取消和未运行场景也保留。自动 DB／截图判定继续决定执行结果，人工备注不改变通过或失败。
-取消会中断条目间等待，等待当前通信操作返回后完成会话清理；取消后的不完整执行不会通过验收。
-忙碌、录制或等待重试保存期间，禁止切换输入或启动另一项任务。
-
-界面使用 CustomTkinter 6 和 Pillow，业务执行继续复用现有 Python 工具。
-首次使用先安装 GUI 依赖：
+## 启动工作台
 
 ```bash
 python3 -m pip install -r tools/requirements.txt
+python3 tools/journal/journal_server.py --application /path/to/GPlatform
 ```
 
-请使用带现代 Tk 的 Python；GUI 启动不自动安装依赖。
-界面以侧栏区分“场景测试”和“操作录制”，场景与录制均由实际目录加载。
+启动后显示本机地址与随机6位数字连接码，并打开浏览器。Python 无需 Tk。局域网使用：
+
+```bash
+python3 tools/journal/journal_server.py --application /path/to/GPlatform --listen 0.0.0.0
+```
+
+B 打开 `http://A的局域网IP:8765` 并输入 A 终端显示的连接码。服务端口默认8765，应用 Journal 端口默认9999，两者独立。所有页面使用同一个 A 端工作台。只在可信局域网使用 HTTP；跨不可信网络时通过 SSH 隧道或受保护的 HTTPS 入口访问，不直接公开端口。连接码不写入 URL 或网页本地存储。登录后使用独立的长随机会话凭证，刷新网页保持登录；同一IP连续输错5次暂停登录60秒，已登录会话不受影响。短连接码只用于登录，不作为Bearer凭证。默认每次启动重新生成，也可通过 `GPLATFORM_WORKBENCH_TOKEN` 指定6位数字连接码（保留前导零）。
+
+工作台提供“场景库”“回放记录”“录制”。设置中的程序与导出目录均为 A 上的路径。场景来源为服务启动指定的 App `tests/TestAssets`，网页不编辑标准。勾选决定本次批次，搜索只筛选显示，启动后队列固定。
+
+服务调用唯一正式入口 `tools/run_acceptance.py`，复用独立实例启动、业务验收、后台整图比较、配置恢复与清理。逐项暂停发生在应用清理后的场景边界；暂停时后台比较继续，点击继续执行下一项。停止保留已完成结果，未运行及未完成项不能通过。录制、待重试保存、回放和配置修改互斥。
+
+回放记录统一展示截图、完整原始 DB 字节比较和产物证据；图片支持并排、本次、原始差异及原尺寸同步缩放拖动。自动结论直接读取正式报告，人工备注单独保存为 `review-decisions.json`，不能改写自动通过或失败。历史记录按当前程序路径与资产目录筛选；场景列表中的最近结果还核对实际程序哈希及场景输入哈希。
+
+回放记录页的“打开已有结果”接受 A 上的结果目录，读取原始报告且不移动或重写它。
+已有结果位于默认回放目录或 `--output-root`。CLI 的显式输出通过 `latest-result.json` 登记后同样可以查看。单次回放使用 `execution_result.json`，批次使用 `summary.json` 与 `screenshot_review.json`，不生成替代判定。
+
+关闭网页不影响 A 的任务。停止服务前先停止并保存录制；终端 Ctrl+C 会请求取消回放并等待清理，未保存录制会阻止正常关闭。此能力不包含服务崩溃或机器断电后的录制内存恢复。
+
+`run_gui.sh` 是同一服务的便捷入口，可用 `GPLATFORM_JOURNAL_PYTHON` 选择 Python。旧 Tk 工作台与独立 Tk 对比窗口已退役。
 
 CLI 使用同一个中间层，例如从仓库根目录：
 
@@ -55,7 +45,7 @@ python3 tools/journal/journal_runner.py \
 
 输出目录必须不存在；省略 --app 则仅连接已有实例，默认端口 9999，不负责其退出。
 macOS 的 `.app/Contents/MacOS/` 子程序启动后，中间层等待 LaunchServices 注册，核对本会话
-子 PID、bundle 和可执行路径且同 bundle 没有其他实例，再用 `lsappinfo setfront #PID` 激活已有
+子 PID、bundle 和可执行路径，从同 bundle 的注册实例中精确选取本会话 PID，再用 `lsappinfo setfront #PID` 激活已有
 进程。它不会用 `open -a` 启动替代实例；身份不符、子进程退出或注册超时按普通启动失败保存诊断。
 激活仍须通过应用原有 Ready 和 replayId 握手；连接已有应用及 Windows/Linux 启动流程保持不变。
 省略 `--output` 时，从应用的 `journal.paths` 读取 `playbacks`，保存到该目录下的
@@ -74,8 +64,7 @@ outputPath/sessionPath 写为 `.`；读取时用结果文件所在目录解析�
 HTML 的内部证据链接也使用相对路径，并进行 URL 编码；整个会话重命名、移动或复制时无需修改文件内容。
 外部源脚本、基线和保留实例的临时实时日志仍保留外部路径，报告将外部证据标记为 external；
 这些外部资源不随结果目录迁移。运行期返回给 GUI/CLI 的绝对路径不变，仅持久化内部引用使用相对路径。
-GUI 将场景结果保留在场景详情内；CLI 显式 `--output` 可用于 CI 自定义位置。
-GUI 的最近结果只读取所选程序默认回放目录内的场景结果。
+网页将场景结果保留在回放记录内；CLI 显式 `--output` 可用于 CI 自定义位置。
 应用启动输出先临时保存，连接后才取得正式目录；若启动失败、尚无法取得目录，
 诊断保存在系统临时目录 `journal-startup-failed-*`，并输出实际路径（系统可能清理临时文件）。
 `application.log` 是截至测试结束的日志；使用 `--keep-app` 时，后续输出仍写临时日志，
@@ -95,7 +84,7 @@ GUI 的最近结果只读取所选程序默认回放目录内的场景结果。
 `environment_overrides` 字符串字典。该参数在默认清理后应用，仅传给新启动的
 测试子进程，并记录到 execution result；不修改调用进程或桌面环境。
 未传参数时保留原有行为。通用执行器不决定平台的 DPR 策略，Windows 场景测试的
-具体变量由 App `tools/run_acceptance.py` 维护，GUI 场景测试复用同一入口。
+具体变量由 App `tools/run_acceptance.py` 维护，网页场景测试复用同一入口。
 
 录制检查点保存系统原生 DPR 的原始 PNG，例如 DPR 2 的整窗图为 **2764×1908** 像素。
 不在每份新录制 metadata 重复保存窗口/DPR。旧 metadata 中的 DPR/imageSize 作为基线说明接受，
@@ -103,7 +92,7 @@ GUI 的最近结果只读取所选程序默认回放目录内的场景结果。
 
 正式 `verify.screenshot` 保留原有自动比较：尺寸不同仍失败，region/regions 与 blurRadius
 仍使用基线的物理像素，容差和通道差不变。跨 DPR 图片不会因为辅助窗口能展示而自动通过。
-App 的对照窗口单独把已知整窗 DPR 1/2/3/4 图片生成 1382×954 的派生视图，并提示差异区域；
+历史辅助报告可把已知整窗 DPR 1/2/3/4 图片生成 1382×954 的派生视图，并提示差异区域；网页优先展示原始图与严格差异。
 原始 expected/actual 和正式 diff 均保留。详情见 App 的 `docs/verification-methods.md`。
 
 先用项目原有方式启动应用，仅在需要不同端口时传 `--ghost-port`：
@@ -112,10 +101,10 @@ App 的对照窗口单独把已知整窗 DPR 1/2/3/4 图片生成 1382×954 的�
 ./build-Release/GPlatform/GPlatform.app/Contents/MacOS/GPlatform --ghost-port 9999
 ```
 
-再启动 GUI：
+再启动工作台服务，并在网页录制页连接9999端口：
 
 ```bash
-python3 tools/journal/journalsystem_gui.py --port 9999
+python3 tools/journal/journal_server.py --application /path/to/GPlatform
 ```
 
 截图验证依赖 Pillow：
@@ -126,21 +115,22 @@ python3 -m pip install Pillow
 
 录制页连接用户已经启动的本地应用，端口放在“连接设置”内。
 录制默认保留原有鼠标移动规则，支持悬停和拖动；可填写录制名称。
+建议从选择机型、导入模型等初始步骤开始录制；独立回放不会继承当前应用未保存的工程或机型状态。截图候选中的录制提示也可能与回放不同，需审核，不能自动纳入正式标准。
 截图与 DB 检查点按需在弹窗中采集，均为候选数据，需人工核对后再纳入正式标准资产。
 
 停止并保存后，可选择录制进行完整诊断回放。回放通过共享 Session 启动独立实例，
 不重启当前录制连接中的程序。诊断报告与 App 正式场景验收分开显示。
-GUI 不提供单步、手动 Action、关闭验证、远程地址、保留测试实例或目录重命名/删除入口；
+网页不提供单步、手动 Action、关闭验证、保留测试实例或目录重命名/删除入口；
 底层协议和 CLI 原有能力仍由各自入口维护。
 
-录制期间连接中断不会停止 App 录制。保持当前 GUI 窗口，重新连接同一录制实例后可继续；
+录制期间连接中断不会停止 App 录制。保持 A 上的工作台服务运行，重新连接同一录制实例后可继续；
 客户端通过现有录制标识确认会话，不会覆盖另一场录制。
 停止后若写盘失败，按钮变为“重试保存”。事件、检查点、路径和元数据保留在 Python 内存中，
 断线也能重试，不会再次请求 App 停止。保存成功前不能开始新录制；关闭时提示未保存内容。
-此能力不包含 GUI 崩溃或进程退出后的持久化恢复。
+此能力不包含服务崩溃或进程退出后的持久化恢复。
 
 CLI 连接已有实例回放时，仍使用 `journal.replay.begin` 及 replayId 重启/就绪协议；
-应只对专门用于测试、没有未保存工作的应用实例执行。GUI 录制诊断使用独立实例。
+应只对专门用于测试、没有未保存工作的应用实例执行。网页录制诊断使用独立实例。
 
 ## Journal v2
 
@@ -248,14 +238,17 @@ App 正式场景还在执行结果外生成 `case_result.json`、`case_report.ht
 只识别会话目录中的 `events/Journal.json`，不回退读取根目录 Journal；回放结果无需包含 Journal。
 录制产生的 `events/Journal.json` 和截图基线保留在录制会话中。
 
-## GUI 命令行参数
+## 工作台命令行参数
 
 ```text
---port PORT          本地录制服务端口，默认 9999
---application FILE   本次要验证的实际可执行文件
+--application FILE   A 电脑上的实际可执行文件
 --app-root DIR       提供统一验收入口与测试资产的 App 源码目录
+--exports DIR        A 电脑上 App 实际导出目录
+--output-root DIR    回放结果保存目录，默认沿用应用目录
+--listen ADDRESS     网页监听地址，默认127.0.0.1；局域网用0.0.0.0
+--port PORT          网页端口，默认8765；录制连接端口在网页中设置
+--no-browser         启动后不自动打开本机浏览器
 ```
-
 
 截图比较的 `region` 使用物理像素矩形；`regions` 可声明多个矩形的并集，两者互斥，所有目标来自同一捕获帧。
 `tolerance` 是选定像素的最低匹配比例。`maxChannelDifference` 默认为0，显式声明时为0～255的整数；仅各RGBA通道差值均不超过此值的像素才匹配。

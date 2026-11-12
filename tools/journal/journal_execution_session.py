@@ -19,7 +19,7 @@ from journal_display_profile import (WINDOW_PROFILE, process_environment,
                                      validate_preconditions, wait_for_window)
 
 
-def _macos_bundle_instance(bundle, deadline):
+def _macos_bundle_instance(bundle, deadline, expected_pid):
     """Read LaunchServices identity without launching or changing an application."""
     def query(*arguments):
         remaining = deadline - time.monotonic()
@@ -34,22 +34,28 @@ def _macos_bundle_instance(bundle, deadline):
         if found:
             raise RuntimeError("Cannot read macOS application registration")
         return None
-    if len(applications) != 1:
-        raise RuntimeError("Another instance of the test application is registered")
-    output = query("-all", "info", "-only", "pid", "-only", "bundlepath",
-                   "-only", "executablepath", applications[0])
-    identity = {}
-    # -all emits a dictionary (often on one line), rather than the default
-    # human-readable summary. Read only the three independently checked fields.
-    for match in re.finditer(
-            r'(?:^|[,{])\s*"(pid|LSBundlePath|CFBundleExecutablePath)"\s*=\s*("(?:[^"\\]|\\.)*"|[0-9]+)',
-            output, re.MULTILINE):
-        if match[1] in identity:
-            raise RuntimeError("Ambiguous macOS application registration")
-        identity[match[1]] = json.loads(match[2])
-    if set(identity) != {"pid", "LSBundlePath", "CFBundleExecutablePath"}:
-        raise RuntimeError("Incomplete macOS application registration")
-    return identity
+    owned = []
+    for application in applications:
+        output = query("-all", "info", "-only", "pid", "-only", "bundlepath",
+                       "-only", "executablepath", application)
+        identity = {}
+        # Read complete identities. The recording application may share the
+        # bundle, but only the child PID owned by this session may be activated.
+        for match in re.finditer(
+                r'(?:^|[,{])\s*"(pid|LSBundlePath|CFBundleExecutablePath)"\s*=\s*("(?:[^"\\]|\\.)*"|[0-9]+)',
+                output, re.MULTILINE):
+            if match[1] in identity:
+                raise RuntimeError("Ambiguous macOS application registration")
+            identity[match[1]] = json.loads(match[2])
+        if set(identity) != {"pid", "LSBundlePath", "CFBundleExecutablePath"}:
+            raise RuntimeError("Incomplete macOS application registration")
+        if identity['pid'] == expected_pid:
+            owned.append(identity)
+        elif len(applications) == 1:
+            raise RuntimeError("Registered application is not the owned child")
+    if len(owned) > 1:
+        raise RuntimeError("Ambiguous macOS application registration for owned PID")
+    return owned[0] if owned else None
 
 
 def _activate_owned_macos_application(process, executable, deadline):
@@ -71,7 +77,7 @@ def _activate_owned_macos_application(process, executable, deadline):
     while True:
         if process.poll() is not None:
             raise RuntimeError("Test application exited while waiting for macOS registration")
-        identity = _macos_bundle_instance(bundle, deadline)
+        identity = _macos_bundle_instance(bundle, deadline, process.pid)
         if identity is not None:
             break
         time.sleep(min(0.05, max(0, deadline - time.monotonic())))
@@ -81,7 +87,7 @@ def _activate_owned_macos_application(process, executable, deadline):
     subprocess.run(["/usr/bin/lsappinfo", "setfront", "#" + str(process.pid)],
                    check=True, capture_output=True, text=True,
                    timeout=max(0.01, min(2, deadline - time.monotonic())))
-    check(_macos_bundle_instance(bundle, deadline))
+    check(_macos_bundle_instance(bundle, deadline, process.pid))
     return {"mechanism": "LaunchServices.setfront", "pid": process.pid,
             "bundlePath": str(bundle)}
 

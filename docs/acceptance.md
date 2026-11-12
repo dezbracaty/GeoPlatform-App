@@ -8,7 +8,7 @@ App 在 `tests/TestAssets` 以子模块固定提交；完整宿主使用 `App/te
 资产仓库只拥有模型、Journal、metadata、预期、基线、格式和确定性生成器。
 
 App `tools/acceptance.py` 拥有业务验收编排与最终结论；`tools/acceptance_checks.py` 拥有产物检查。
-App `tools/journal/` 是 Python 客户端、GUI、启动/握手、输入回放、DB/截图比较、清理和
+App `tools/journal/` 是 Python 客户端、网页服务、启动/握手、输入回放、DB/截图比较、清理和
 执行报告的唯一实现，相关 Python 测试位于 `tests/journal/`，与 App 提交一起版本化。
 SDK 的 C++ JournalSystem 提供应用端服务、输入执行和原始数据接口；Python 工具不随 SDK 发布。
 主仓库 `scripts/run_journals.py` 只是共享入口的兼容转发，不再在内存中替换执行器源码。
@@ -61,7 +61,7 @@ metadata v3 声明 `id/name/testPurpose/scope/inputs/unverifiedScopes/verificati
 
 `tools/run_acceptance.py` 同时支持完整宿主和独立 App，默认加载本 App 的 `tools/journal/`，
 不依赖完整宿主或另外配置工具目录。`--journal-tools` 仅用于显式选择开发中的另一份工具，
-实际工具来源仍写入报告。GUI 默认 App 根目录由自身位置确定；CLI、GUI 和候选采集共用实现。
+实际工具来源仍写入报告。工作台默认 App 根目录由自身位置确定；CLI、工作台和候选采集共用实现。
 宿主旧 `ThirdParty/JournalSystem/tools` 仅保留命令行转发，不再维护一套模块。
 
 1. 校验场景格式、模型实体/哈希、输入对应关系、检查器和输出声明。
@@ -79,7 +79,7 @@ DB 与截图验收分别复用正式 `verify.db` 与 `verify.screenshot`，入�
 ## 结果目录与判定
 
 所有活动场景统一放在 `scenarios/<id>/events/Journal.json`，旁边必须有正式 metadata。
-CLI、GUI 和 CI 共用 `session_repository.discover_scenarios()`；发现其他位置的 Journal 或缺少
+CLI、工作台和 CI 共用 `session_repository.discover_scenarios()`；发现其他位置的 Journal 或缺少
 Journal 的顶层 metadata 时直接报错，不能静默漏项。已登记场景的 `windows/events/Journal.json`
 仅保留为历史平台版本，不作为 Mac mini 的另一个入口。输入文件放入模型目录并登记目录清单。
 
@@ -126,10 +126,10 @@ python App/tools/run_acceptance.py --list-methods
 python App/tools/run_acceptance.py --application build-Release/GPlatform/GPlatform.exe --cases p3_height_color_export --exports "$env:USERPROFILE/Downloads/GPlatform/Gcode" --output build-Release/Testing/AppAcceptance/new-run
 ```
 
-GUI 默认场景目录也指向资产仓库。“运行场景”和“批量回归测试”均使用上述共享入口；
+网页默认场景目录也指向资产仓库。勾选回放通过上述共享入口执行指定场景；
 录制页的诊断回放显示 Journal 原始验收，不能替代正式场景的 `case_result.json`。
 
-GUI 默认将结果保存在所选可执行文件旁的 `Journal/playbacks/session_…/`；macOS 即
+工作台默认将结果保存在所选可执行文件旁的 `Journal/playbacks/session_…/`；macOS 即
 `GPlatform.app/Contents/MacOS/Journal/playbacks/`。CLI 的 `--output` 覆盖本次保存位置。
 批量结果在批次目录下按场景 ID 分目录。标准图片不从历史回放目录选择，而由每个检查点的
 `payload.baseline` 相对源 Journal 解析；正式场景通常引用 `baselines/screenshots/<case>/`。
@@ -140,24 +140,16 @@ GUI 默认将结果保存在所选可执行文件旁的 `Journal/playbacks/sessi
 多场景导出自动隔离到 `<exports>/<批次目录名>/<case>/`，避免相同文件名相互覆盖；
 单场景仍直接使用传入的导出目录。结果目录必须新建，不能复用上次目录。
 
-GUI 的“显示最近结果”、场景报告和录制回放报告共用本地 Python 查看器。
-CLI 的自定义输出目录通过默认回放目录下的 `latest-result.json` 记录位置；该文件只用于定位，
-结论仍读取原始结果。最近结果包含单场景、整批和直接回放，不限于完整批次。
-也可手动打开已有结果：
+录制、场景与批次结果统一由 Journal 网页工作台查看：
 
 ```sh
 python -m pip install -r App/tools/requirements.txt
-python App/tools/review_results.py <run-directory>
+python App/tools/journal/journal_server.py --application /path/to/GPlatform
 ```
 
-Python 需带可用的现代 Tk。每组卡片对应一个截图检查点；卡片区滚轮上下切换组，
-hover 展开标准图和差异提示图，点击后在同一窗口下方显示标准／本次／差异详情。
-没有批次清单的单次回放直接读取 `execution_result.json`，不生成替代结论；
-场景目录中的 `case_result.json` 仍优先决定业务状态，避免 DB／文件失败被回放通过覆盖。
-严格截图显示自动校验结果、比较中状态和差异像素数，隐藏旧的降噪／人工采纳控件。
-详情支持同步缩放、拖动和切换完整像素差异；DB 结果、输入失败、缺图及未运行项单独保留状态。
-原始图像哈希绑定可选人工备注，另存 `review-decisions.json`，不会改写 `case_result.json` 或自动判定。
-对照提示、OCR 或备注不可用不改变自动结果；工具错误会保存在辅助诊断字段中。
+服务电脑负责执行与保存结果，其他电脑通过浏览器访问。默认只监听本机；局域网启动可加 `--listen 0.0.0.0`，使用服务启动时显示的6位数字连接码登录。无需 Tk。详见 [工作台说明](../tools/journal/README.md)。
+
+CLI 的自定义输出目录通过默认回放目录下的 `latest-result.json` 记录位置；该文件只用于定位，结论仍读取原始结果。最近结果包含单场景、整批和直接回放。网页支持截图原尺寸同步缩放拖动、原始差异、DB完整字节及文件证据；缺图、比较中、未运行和清理失败保留真实状态。严格结果不能人工改通过。候选人工意见另存 `review-decisions.json`，绑定原始图像哈希。
 
 增加场景先确定数据验收还是画面验收，再补对应标准 DB 或标准截图，复用现有比较代码。
 截图基线需要独立审批与平台/DPR/主题来源。实机结果不属于本轮场景验收。
@@ -223,7 +215,7 @@ Windows/macOS 自动定位该 INI，其他平台使用 `--settings-file`。这�
 正式截图验收仍比较原始图像，尺寸不同会失败；对照窗口的派生图可跨已知 DPR 展示，
 但不会代替自动验证。更新标准仍需核对独立预期、保留原始证据，并在目标环境的新进程中复跑。
 
-App `tools/run_acceptance.py` 拥有 Windows 场景测试的启动环境策略：CLI 和 GUI 场景
+App `tools/run_acceptance.py` 拥有 Windows 场景测试的启动环境策略：CLI 和网页场景
 测试均通过此入口，对新测试实例显式传入 `QT_ENABLE_HIGHDPI_SCALING=0`、
 `QT_SCALE_FACTOR=1`、`QT_FONT_DPI=96`，用于建立 DPR 1 的 Windows 标准。
 候选采集也走同一入口。桌面缩放、注册表和用户环境变量不变。

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="same-origin">
+  <title>Journal · 回归工作台</title>
+  <link rel="stylesheet" href="/app.css">
+  <script defer src="/app.js"></script>
+</head>
+<body>
+<section id="login-page" class="login-screen" aria-labelledby="login-title">
+  <form id="login-form" class="login-card">
+    <div class="brand"><span class="brand-mark">J</span>Journal</div>
+    <h1 id="login-title">连接回归工作台</h1>
+    <p>输入运行机器提供的6位数字连接码。</p>
+    <label for="access-token">连接码</label>
+    <input id="access-token" type="text" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" placeholder="6位数字" title="请输入6位数字连接码" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" required>
+    <p id="login-error" class="form-error" role="alert" hidden></p>
+    <button id="login-submit" class="primary" type="submit">进入工作台 <span aria-hidden="true">↗</span></button>
+    <small>连接成功后保持登录。连接码不写入网址或浏览器本地存储。</small>
+  </form>
+</section>
+<div id="application" hidden>
+<header class="topbar">
+  <div class="top-left"><div class="brand"><span class="brand-mark">J</span>Journal</div><nav class="nav" aria-label="主要导航"><button id="library-nav" class="active">场景库</button><button id="runs-nav">回放记录</button><button id="record-nav">录制</button></nav></div>
+  <div class="top-right"><button id="active-task-nav" class="record-live-nav" hidden><span class="dot" aria-hidden="true"></span><span id="active-task-caption">运行中</span></button><button id="record-live-nav" class="record-live-nav" hidden><span class="dot" aria-hidden="true"></span><span class="record-live-caption">录制中</span><span id="record-live-duration">00:00</span></button><span id="machine-name" class="machine-name">运行机器</span><button id="open-config" class="secondary compact">设置</button></div>
+</header>
+<div id="connection-banner" class="connection-banner" role="status" hidden></div>
+<main class="page">
+<section id="library-page" aria-labelledby="library-title">
+ <div class="page-heading"><div><div class="eyebrow">REGRESSION WORKSPACE</div><h1 id="library-title">回归测试</h1><p class="intro">选择场景，开始回放，查看结果。</p></div><button class="environment" id="environment-config"><span class="app-symbol">G</span><span><strong id="application-name">GPlatform</strong><small id="application-caption">配置被测程序</small></span><span class="dot" aria-hidden="true"></span></button></div>
+ <div class="library">
+  <div class="library-tools"><div class="section-title">测试场景 <span class="count" id="case-total">加载中</span></div><label class="search"><span aria-hidden="true">⌕</span><input id="case-search" type="search" aria-label="搜索场景" placeholder="搜索名称或脚本 ID"></label></div>
+  <div class="table-wrap"><table><thead><tr><th><input type="checkbox" id="select-all" aria-label="勾选当前筛选场景"></th><th>场景</th><th class="method-col">验证方式</th><th class="result-col">最近结果</th><th></th></tr></thead><tbody id="case-list"><tr><td colspan="5" class="empty-search">正在加载真实场景…</td></tr></tbody></table></div>
+  <div class="selection-footer"><div class="selection-meta"><span id="selection-count" class="selected-number" aria-live="polite">已选 0 项</span><button id="clear-selection" class="link-button">清空选择</button></div><div class="selection-actions"><label class="check-label"><input id="review-each" type="checkbox">逐项暂停查看</label><button id="start-run" class="primary" disabled>开始回放 <span class="button-count" id="start-count">0</span><span aria-hidden="true">↗</span></button></div></div>
+ </div>
+ <div class="page-foot"><span id="case-library-caption">场景以运行机器上的资产目录为准。</span><span id="library-busy-note"></span></div>
+</section>
+<section id="run-page" hidden aria-labelledby="run-title">
+ <button class="back" id="back-library">← 返回场景库</button>
+ <div class="run-heading"><div><h1 id="run-title">回放结果</h1><div class="run-subtitle"><span id="batch-label"></span><span id="batch-size"></span></div></div><div class="run-actions"><button class="secondary" id="pause-run" hidden>本项后暂停</button><button class="danger" id="stop-run" hidden>停止</button><button class="primary" id="retry-run" hidden>重跑失败项 <span aria-hidden="true">↗</span></button></div></div>
+ <div class="batch-strip" aria-live="polite"><div class="strip-body"><div class="live-status"><span class="live-mark" id="live-symbol" aria-hidden="true">○</span><div class="live-text"><strong id="live-title">等待结果</strong><small id="live-subtitle"></small></div></div><div class="batch-counts"><div>执行 <strong id="replay-count">0 / 0</strong></div><div>比较 <strong id="compare-count">0 / 0</strong></div><div>通过 <strong id="pass-count">0</strong></div><div class="fail">失败 <strong id="fail-count">0</strong></div></div></div><div class="track" role="progressbar" aria-label="比较完成进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="run-progress"><div class="track-fill" id="progress-fill"></div></div></div>
+ <div id="result-error" class="result-error" role="alert" hidden></div>
+ <div class="workspace"><aside class="queue-panel" aria-label="回放队列"><div class="queue-heading"><span>场景与结果</span><span id="queue-count">0 项</span></div><div class="queue-list" id="queue-list"></div><div class="queue-note">点击场景查看结果。<br>查看项与运行项相互独立。</div></aside><section class="evidence" aria-label="场景检查点与证据"><div class="evidence-heading"><div><h2 id="evidence-title">选择一个场景</h2><div class="mono" id="evidence-id"></div></div><span class="status-pill" id="evidence-status">未验证</span></div><div class="evidence-meta"><div class="checkpoints" id="checkpoint-list"></div><button class="link-button" id="follow-current" hidden>定位运行项 ↗</button></div><div id="evidence-content"></div><section id="review-panel" class="review-panel" hidden aria-labelledby="review-title"><h3 id="review-title">人工审核</h3><p>只记录审核意见，不改变自动验收结论或正式标准。</p><form id="review-form"><label for="review-decision">审核意见</label><select id="review-decision"><option value="pending">待审核</option><option value="accepted">接受候选</option><option value="defect">确认缺陷</option></select><label for="review-note">备注</label><textarea id="review-note" rows="3" maxlength="12000"></textarea><button id="save-review" class="secondary" type="submit">保存审核意见</button></form></section></section></div>
+ <div class="run-footer"><details><summary>执行日志与任务详情</summary><div class="log" id="run-log"></div><div class="output-path" id="run-output"></div><details class="summary-details"><summary>完整结果摘要</summary><pre id="run-summary"></pre></details></details><span class="focus-note">浏览器断开不会停止任务。实际回放需要运行机器上的 GPlatform 保持前台。</span></div>
+</section>
+<section id="record-page" hidden aria-labelledby="record-title"><div class="record-layout">
+ <div class="page-heading"><div><div class="eyebrow">JOURNAL RECORDER</div><h1 id="record-title">录制操作</h1><p class="intro">连接运行机器上已打开的 GPlatform，记录操作与候选检查点。</p></div></div>
+ <div class="record-card">
+  <div class="connection-row"><div class="connection-state"><span class="app-symbol">G</span><div><strong>GPlatform</strong><small id="record-connection-caption">先打开应用，再连接到录制会话。</small></div></div><div class="connection-action"><span class="record-connection-tag" id="record-connection-state"><span class="dot" aria-hidden="true"></span>未连接</span><button id="record-connect" class="secondary">连接应用</button></div></div>
+  <details class="connection-options"><summary>连接设置</summary><div class="connection-fields"><label>本机端口<input id="record-port" type="number" min="1" max="65535" value="9999" aria-label="运行机器上的 Journal 端口"></label><span>连接当前服务所在机器上的应用；重新连接保留当前录制与检查点。</span></div></details>
+  <div id="record-form" class="record-form"><h2>新录制</h2><label class="record-name-label" for="record-name">录制名称 <span class="muted">· 可选</span></label><div class="record-name-row"><input class="record-name-input" id="record-name" placeholder="例如：P3 工程切换与保存" maxlength="100"><button id="record-start" class="primary record-start" disabled><span class="dot" aria-hidden="true"></span>开始录制</button></div><p class="record-form-note" id="record-form-note">留空则按时间命名。录制会跟随你在 GPlatform 中的实际操作。</p></div>
+  <div id="record-session" class="record-session" hidden><div class="record-session-top"><div><div class="record-session-title"><h2 id="record-session-name"></h2><span id="record-duration" class="record-timer">00:00</span></div><div class="record-session-state" id="record-session-state"></div></div><div class="record-session-actions"><button id="record-add-point" class="secondary">＋ 添加检查点</button><button id="record-save" class="primary record-save">停止并保存</button></div></div><div class="checkpoint-heading"><span>候选检查点</span><span id="record-point-count">0 项</span></div><div id="record-point-list" class="record-point-list"></div><div class="record-session-foot"><span id="record-save-caption">检查点随本次 Journal 一起保存。</span></div></div>
+  <div class="record-candidate-note">录制与检查点均为候选内容，保存不会自动加入正式场景或覆盖验收标准。</div>
+ </div>
+ <section id="record-detail" class="record-detail" hidden><div class="record-session-top"><div><h2 id="record-detail-name"></h2><p class="intro" id="record-detail-caption"></p></div><button id="record-replay" class="primary">回放检查 ↗</button></div><p class="record-page-note">回放检查会启动独立实例并生成诊断结果；候选记录不会因此成为正式验收通过。</p></section>
+ <section class="recent-recordings" aria-labelledby="recent-recordings-title"><div class="recent-heading"><h2 id="recent-recordings-title">已保存的录制</h2><span class="count" id="record-history-count">0 项</span></div><div id="record-history-list" class="record-history-list"></div></section>
+ <p class="record-page-note">录制连接已有应用，回放检查另启独立实例。切换网页页面会保留服务器上的录制状态。</p>
+</div></section>
+<section id="history-page" hidden aria-labelledby="history-title"><div class="page-heading"><div><div class="eyebrow">REPLAY HISTORY</div><h1 id="history-title">回放记录</h1><p class="intro">每次执行独立保存，结果随时回看。</p></div></div><details class="open-result"><summary>打开已有结果</summary><form id="open-result-form"><label for="open-result-path">运行机器上的结果目录</label><div class="open-result-row"><input id="open-result-path" placeholder="输入 A 电脑上的完整结果目录路径" autocomplete="off" spellcheck="false" required><button id="open-result-submit" class="secondary" type="submit" disabled>打开结果 ↗</button></div><p class="modal-error" id="open-result-error" role="alert" hidden></p></form></details><div id="history-list"></div></section>
+</main>
+</div>
+<div id="config-modal" class="record-modal" role="dialog" aria-modal="true" aria-labelledby="config-title" hidden><form id="config-form" class="record-modal-card config-card"><div class="modal-heading"><h2 id="config-title">运行设置</h2><button id="config-close" type="button" aria-label="关闭设置">×</button></div><p class="modal-note">以下路径均位于运行机器 <strong id="config-machine"></strong>，不是浏览器所在设备。</p><label for="config-application">GPlatform 可执行文件</label><input id="config-application" autocomplete="off" spellcheck="false" placeholder="运行机器上的可执行文件完整路径" required><label for="config-exports">导出目录</label><input id="config-exports" autocomplete="off" spellcheck="false" placeholder="供导出类场景使用的实际目录"><label>资产目录</label><p id="config-assets" class="read-only-path"></p><p class="modal-note">资产目录由服务启动参数指定。任务或录制进行中不能更换运行配置。</p><p class="modal-error" id="config-error" role="alert" hidden></p><div class="modal-footer"><button type="button" id="config-cancel" class="secondary">取消</button><button id="config-save" type="submit" class="primary">保存设置</button></div></form></div>
+<div id="record-point-modal" class="record-modal" role="dialog" aria-modal="true" aria-labelledby="record-point-modal-title" hidden><form class="record-modal-card" id="record-point-form"><div class="modal-heading"><h2 id="record-point-modal-title">添加候选检查点</h2><button id="record-point-close" type="button" aria-label="关闭检查点窗口">×</button></div><label for="record-point-kind">检查类型</label><select id="record-point-kind"><option value="screenshot">截图</option><option value="db">DB 对象数据</option></select><div id="record-db-field" hidden><label for="record-db-id">DBInstanceID</label><input id="record-db-id" inputmode="numeric" placeholder="非零十进制对象 ID" autocomplete="off"></div><label for="record-point-note">备注 <span class="muted">· 可选</span></label><textarea id="record-point-note" placeholder="这个检查点想要核对什么？" maxlength="1000"></textarea><p class="modal-note">候选数据会随 Journal 保存，稍后回放检查并审核。</p><p class="modal-error" id="record-point-error" role="alert" hidden></p><div class="modal-footer"><button type="button" id="record-point-cancel" class="secondary">取消</button><button type="submit" id="record-point-save" class="primary">添加检查点</button></div></form></div>
+<div id="zoom-dialog" class="zoom-dialog" role="dialog" aria-modal="true" aria-label="原尺寸证据查看" hidden><div class="zoom-header"><div><h3 id="zoom-title">原尺寸证据</h3><span class="zoom-hint">滚轮缩放 · 拖动平移 · 并排同步</span></div><div class="zoom-actions"><button id="zoom-out" aria-label="缩小">−</button><span id="zoom-scale">100%</span><button id="zoom-in" aria-label="放大">＋</button><button id="zoom-reset">原尺寸</button><button id="close-zoom">关闭 ×</button></div></div><div id="zoom-body" class="zoom-grid"></div></div>
+<div class="toast" id="toast" role="status" hidden></div>
+</body>
+</html>
