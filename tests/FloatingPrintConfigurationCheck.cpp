@@ -164,6 +164,18 @@ int main(int argc, char** argv) {
     qmlRegisterSingletonType(QUrl::fromLocalFile(QStringLiteral(POPUP_QML_ROOT "/global/PrintWorkspaceStyle.qml")),
                              "GPlatform", 1, 0, "PrintWorkspaceStyle");
     try {
+        if (app.arguments().contains("--slice-progress")) {
+            const auto description = GPlatform::describeSlicingProgress({.5f,
+                "Generating infill toolpath",12,32,"Planning fiber contours"});
+            require(description == QStringLiteral("正在规划纤维轮廓\n本模型 12/32 层 · 37%"),
+                    qPrintable(description));
+            require(GPlatform::describeSlicingProgress({.5f,"Generating infill toolpath"}) ==
+                        QStringLiteral("正在生成填充路径"), "Uncounted slicing stage was not translated");
+            require(GPlatform::describeSlicingProgress({.5f,"Uncatalogued SDK stage"}) ==
+                        QStringLiteral("Uncatalogued SDK stage"), "Missing translation lost its source text");
+            std::cout << "Slicing progress Chinese presentation and source fallback passed\n";
+            return 0;
+        }
         auto* settings = SliceSettingsBridge::instance();
         const auto initialLayerHeight = settings->getSetting("layer_height").toDouble();
         require(initialLayerHeight > 0, "No real active configuration");

@@ -70,6 +70,9 @@ add_dependencies(FloatingPrintConfigurationCheck gplatform_i18n_mo)
 add_test(NAME FloatingPrintConfigurationCheck COMMAND FloatingPrintConfigurationCheck)
 add_test(NAME FloatingPrintConfigurationLayoutCheck COMMAND FloatingPrintConfigurationCheck --layout)
 add_test(NAME SlicingSettingRejectionCheck COMMAND FloatingPrintConfigurationCheck --setting-rejection)
+add_test(NAME SlicingProgressPresentationCheck COMMAND FloatingPrintConfigurationCheck --slice-progress)
+set_tests_properties(SlicingProgressPresentationCheck PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software" TIMEOUT 30)
 set_tests_properties(FloatingPrintConfigurationCheck FloatingPrintConfigurationLayoutCheck SlicingSettingRejectionCheck PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software" TIMEOUT 45)
 if(WIN32)

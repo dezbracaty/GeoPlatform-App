@@ -2,11 +2,10 @@
 
 #include "Foundation/Log.h"
 
-#ifdef _WIN32
 #include <QCoreApplication>
-#endif
 #include <QStandardPaths>
 
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <deque>
@@ -18,6 +17,23 @@
 #include <utility>
 
 namespace GPlatform {
+
+QString describeSlicingProgress(const libslicer::SliceProgress& progress)
+{
+    const auto translated = [](std::string_view source) {
+        const QByteArray text(source.data(), qsizetype(source.size()));
+        return QCoreApplication::translate("LibSlicerSettings", text.constData());
+    };
+    QString description = translated(progress.detail.empty() ? progress.stage : progress.detail);
+    if (progress.total_layers > 0) {
+        const auto completed = std::min(progress.completed_layers, progress.total_layers);
+        description += QLatin1Char('\n') + QCoreApplication::translate("LibSlicerSettings",
+            "%1/%2 layers (%3%)")
+            .arg(qulonglong(completed)).arg(qulonglong(progress.total_layers))
+            .arg(int(100.0 * double(completed) / double(progress.total_layers)));
+    }
+    return description;
+}
 
 class SlicingBackend::Impl final {
 public:

@@ -360,9 +360,9 @@ void CalibrationBridge::startWork(bool prepareTask, int plate) {
                     if (item.output) continue; // Retry only incomplete plates, using the same native task.
                     session->failed = int(i);
                     update("slicing", float(i)/float(count), QStringLiteral("正在切片打印盘 %1 / %2…").arg(i+1).arg(count));
-                    callbacks.progress = [update, i, count](float p, std::string_view stage) {
-                        update("slicing", (float(i)+std::clamp(p,0.0f,1.0f))/float(count),
-                            QStringLiteral("打印盘 %1 / %2 · %3").arg(i+1).arg(count).arg(QString::fromUtf8(stage.data(),qsizetype(stage.size()))));
+                    callbacks.progress_details = [update, i, count](const libslicer::SliceProgress& progress) {
+                        update("slicing", (float(i)+std::clamp(progress.progress,0.0f,1.0f))/float(count),
+                            QStringLiteral("打印盘 %1 / %2 · %3").arg(i+1).arg(count).arg(GPlatform::describeSlicingProgress(progress)));
                     };
                     libslicer::CalibrationOutputOptions options;
                     options.generate_preview = true; options.generate_gcode_3mf = true;

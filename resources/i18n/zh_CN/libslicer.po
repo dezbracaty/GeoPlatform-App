@@ -16884,3 +16884,42 @@ msgstr "请选择自动或手动摆放擦嘴塔"
 
 msgid "Enter a tower coordinate"
 msgstr "请输入擦嘴塔坐标"
+
+msgid "%1/%2 layers (%3%)"
+msgstr "本模型 %1/%2 层 · %3%"
+
+msgid "Planning fiber contours"
+msgstr "正在规划纤维轮廓"
+
+msgid "Generating fiber infill"
+msgstr "正在生成纤维填充"
+
+msgid "Generating matrix infill"
+msgstr "正在生成基材填充"
+
+msgid "Compiling fiber toolpath"
+msgstr "正在编译纤维执行路径"
+
+msgid "Loading models"
+msgstr "正在加载模型"
+
+msgid "Validating print"
+msgstr "正在校验打印配置"
+
+msgid "Slicing model"
+msgstr "正在切片模型"
+
+msgid "Packaging sliced G-code 3MF"
+msgstr "正在打包切片 G-code 3MF"
+
+msgid "Preparing toolpath preview"
+msgstr "正在准备刀路预览"
+
+msgid "Slicing completed"
+msgstr "切片完成"
+
+msgid "Loading G-code"
+msgstr "正在加载 G-code"
+
+msgid "G-code preview ready"
+msgstr "G-code 预览已就绪"

@@ -3,6 +3,7 @@
 #include "SliceSession.hpp"
 #include <libslicer/Library.hpp>
 #include <libslicer/Calibration.hpp>
+#include <QString>
 
 #include <cstdint>
 #include <memory>
@@ -10,6 +11,8 @@
 #include <vector>
 
 namespace GPlatform {
+
+QString describeSlicingProgress(const libslicer::SliceProgress& progress);
 
 using SlicingConfigActivationResult = libslicer::ConfigActivationResult;
 

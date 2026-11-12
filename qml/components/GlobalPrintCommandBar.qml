@@ -362,18 +362,33 @@ PanelSurface {
                 }
 
                 ColumnLayout {
+                    readonly property int descriptionBreak: root.taskDescription.indexOf("\n")
                     Layout.fillWidth: true
                     Layout.preferredWidth: root.progressContentMinimumWidth
-                    Layout.minimumWidth: 0
+                    Layout.minimumWidth: taskProgressDetails.visible
+                                         ? Math.min(taskProgressDetails.implicitWidth, root.progressContentMinimumWidth) : 0
                     Layout.maximumWidth: root.progressContentMinimumWidth
                     spacing: 2
 
                     Label {
                         Layout.fillWidth: true
-                        text: root.taskDescription || qsTr("Processing…")
+                        objectName: "printTaskProgressDescription"
+                        text: (parent.descriptionBreak < 0 ? root.taskDescription
+                               : root.taskDescription.slice(0, parent.descriptionBreak)) || qsTr("Processing…")
                         elide: Text.ElideRight
                         color: root.SmoothUI.theme.res.textFillColorPrimary
                         font: Typography.bodyStrong
+                    }
+
+                    Label {
+                        id: taskProgressDetails
+                        Layout.fillWidth: true
+                        objectName: "printTaskProgressDetails"
+                        visible: parent.descriptionBreak >= 0
+                        text: visible ? root.taskDescription.slice(parent.descriptionBreak + 1).replace(/\n/g, " ") : ""
+                        elide: Text.ElideRight
+                        color: root.SmoothUI.theme.res.textFillColorSecondary
+                        font: Typography.caption
                     }
 
                     ProgressBar {

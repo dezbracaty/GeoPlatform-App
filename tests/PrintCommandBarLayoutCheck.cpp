@@ -392,6 +392,21 @@ ApplicationWindow {
             for (int state = 0; state < 8; ++state)
                 for (bool disconnected : {false, true}) exerciseLayout(width, state, disconnected, true);
         }
+        for (const auto* count : {"12/32", "1200/3200"}) for (const int width : {1600,800,640}) {
+            eval(root.get(), QStringLiteral("TaskStateNotifier.currentDescription = '正在规划纤维轮廓\\n本模型 %1 层 · 37%'").arg(count));
+            exerciseLayout(width,7,false,true);
+            auto* progressLabel=root->findChild<QQuickItem*>("printTaskProgressDescription");
+            auto* progressDetails=root->findChild<QQuickItem*>("printTaskProgressDetails");
+            check(progressLabel && progressLabel->isVisible(),"Missing task progress description");
+            check(progressDetails && progressDetails->isVisible(),"Missing task progress layer counts");
+            check(!progressLabel->property("truncated").toBool() && !progressDetails->property("truncated").toBool(),
+                  QStringLiteral("Actual infill count/substage text was truncated: window=%1 label=%2x%3 lines=%4 text=%5")
+                      .arg(width).arg(progressLabel->width()).arg(progressLabel->height())
+                      .arg(progressDetails->property("lineCount").toInt()).arg(progressDetails->property("text").toString()));
+            const auto position=progressDetails->mapToItem(bar,QPointF());
+            check(progressLabel->mapToItem(bar,QPointF()).y()>=0 && position.y()+progressDetails->height()<=bar->height(),
+                  "Two-line task progress extends beyond the command bar");
+        }
         app.removeTranslator(&chinese);
         engine.retranslate();
         // A03/A04: real preview command-bar branch, production export route and save callback.
