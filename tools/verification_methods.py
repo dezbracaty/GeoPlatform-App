@@ -7,11 +7,13 @@ METHODS = {
 VALIDATORS = {
     'journal-db': dict(methods=['db'], source='journal', kind='verify.db'),
     'journal-screenshot': dict(methods=['screenshot'], source='journal', kind='verify.screenshot'),
+    'journal-screenshot-capture': dict(methods=['screenshot'], source='journal', kind='action', code='screenshot.capture'),
 }
 
-# Preserve the existing P3 file check as a separate specialized check. It does
-# not prove a scenario's DB or screenshot result and cannot satisfy either mode.
-SUPPLEMENTAL_VALIDATORS = {'gcode-job': dict(source='artifacts'), 'project-gcode': dict(source='artifacts')}
+# File checks supplement the selected DB or screenshot acceptance method;
+# they cannot substitute for that method's required comparisons.
+SUPPLEMENTAL_VALIDATORS = {'gcode-job': dict(source='artifacts'), 'project-gcode': dict(source='artifacts'),
+                          'calibration-observation': dict(source='artifacts')}
 
 
 def verification_plan(metadata, document):
@@ -31,15 +33,17 @@ def verification_plan(metadata, document):
                            methods=[], supplemental=True))
     for validator, adapter in VALIDATORS.items():
         if adapter['source'] == 'journal':
-            indices = [i for i, entry in enumerate(document['entries'], 1) if entry['kind'] == adapter['kind']]
+            indices = [i for i, entry in enumerate(document['entries'], 1) if entry['kind'] == adapter['kind']
+                       and (not adapter.get('code') or entry.get('payload', {}).get('code') == adapter['code'])]
             if indices:
-                if adapter['methods'] != required:
-                    raise ValueError('Comparison kind differs from the scenario acceptance type; use captures for diagnostics')
                 checks.append(dict(id=validator, validator=validator, required=True,
                                    methods=adapter['methods'], entryIndices=indices))
     if len({c['id'] for c in checks}) != len(checks):
         raise ValueError('Check IDs collide with a registered Journal check')
-    covered = {m for check in checks if check['required'] for m in check['methods']}
+    covered = {m for check in checks if check['required'] and
+               (check['validator'] != 'journal-screenshot-capture' or
+                all(document['entries'][i - 1]['payload'].get('baseline') for i in check['entryIndices']))
+               for m in check['methods']}
     missing = [m for m in required if m not in covered]
     return dict(requiredMethods=required, checks=checks, missingMethods=missing,
                 readiness='missing_checks' if missing else 'ready')
@@ -51,6 +55,7 @@ def method_results(plan, checks):
         relevant = [c for c in checks if c['required'] and method in c.get('methods', [])]
         expected_ids = {c['id'] for c in plan['checks'] if c['required'] and method in c['methods']}
         status = ('failed' if any(c['status'] == 'failed' for c in relevant) else
+                  'pending' if any(c['status'] == 'pending' for c in relevant) else
                   'passed' if expected_ids and expected_ids == {c['id'] for c in relevant} and
                   all(c['status'] == 'passed' for c in relevant) else 'not_verified')
         results.append(dict(method=method, status=status, checkIds=[c['id'] for c in relevant]))
@@ -67,8 +72,11 @@ def journal_checks(plan, execution):
         selected = [r for r in execution.get('results', []) if r.get('index') in check['entryIndices']]
         passed = (len(selected) == len(check['entryIndices']) and
                   {r['index'] for r in selected} == set(check['entryIndices']) and
-                  all(r.get('kind') == adapter['kind'] and r.get('status') == 'passed' for r in selected))
+                  all(r.get('kind') == adapter['kind'] and r.get('status') == 'passed' and
+                      ('screenshot' not in adapter['methods'] or r.get('comparison', {}).get('status') == 'passed')
+                      for r in selected))
         failed = any(r.get('status') == 'failed' for r in selected)
-        checks.append(dict(check, status='passed' if passed else 'failed' if failed else 'not_verified',
+        pending = any(r.get('status') == 'pending' for r in selected)
+        checks.append(dict(check, status='passed' if passed else 'failed' if failed else 'pending' if pending else 'not_verified',
                            message='Formal Journal assertions', evidence=['execution_result.json']))
     return checks

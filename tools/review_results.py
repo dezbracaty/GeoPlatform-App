@@ -41,7 +41,7 @@ COLORS = {
 DECISIONS = {"pending": "待人工审核", "accepted": "差异可接受", "defect": "确认缺陷"}
 EXECUTION = {"completed": "执行完成", "captured": "已采集", "passed": "执行通过",
              "failed": "执行失败", "blocked": "执行阻塞", "not_run": "未执行",
-             "capture_error": "采集失败"}
+             "capture_error": "采集失败", "pending": "比较中"}
 
 
 class ImageView(ctk.CTkFrame):
@@ -196,10 +196,10 @@ class ReviewWindow(ctk.CTk):
         header = ctk.CTkFrame(self, fg_color="transparent", corner_radius=0)
         header.grid(row=0, column=0, sticky="ew", padx=22, pady=(16, 10))
         header.columnconfigure(0, weight=1)
-        self.label(header, "GPlatform / 批量回归", size=12).grid(row=0, column=0, sticky="w")
+        self.label(header, "GPlatform / Journal 验收结果", size=12).grid(row=0, column=0, sticky="w")
         self.label(header, "截图对照", size=22, color="text").grid(row=1, column=0, sticky="w")
         self.label(header, textvariable=self.summary, size=12).grid(row=0, column=1, rowspan=2, padx=18)
-        self.button(header, "打开批次", self.choose_batch).grid(row=0, column=2, rowspan=2)
+        self.button(header, "打开结果", self.choose_batch).grid(row=0, column=2, rowspan=2)
         self.button(header, "刷新", self.reload_batch, width=52).grid(row=0, column=3, rowspan=2, padx=(8, 0))
         navigation = ctk.CTkFrame(self, fg_color="transparent", corner_radius=0)
         navigation.grid(row=1, column=0, sticky="ew", padx=22, pady=(4, 12))
@@ -208,7 +208,7 @@ class ReviewWindow(ctk.CTk):
         names.grid(row=0, column=0, sticky="ew")
         self.title_label = self.label(names, "选择一个批量回归结果目录", size=16, color="text")
         self.title_label.pack(fill="x")
-        self.path_label = self.label(names, "读取 screenshot_review.json；不会改写执行结果或标准图", size=12)
+        self.path_label = self.label(names, "读取批次或单次回放结果；不会改写执行结果或标准图", size=12)
         self.path_label.pack(fill="x")
         self.jump_menu = ctk.CTkOptionMenu(navigation, variable=self.jump, values=["尚无检查点"], command=self.jump_to,
                                          width=220, height=32, font=ctk.CTkFont(self.font_family, 12),
@@ -303,6 +303,7 @@ class ReviewWindow(ctk.CTk):
         self.saved_review = self.label(info, "", size=11, wraplength=490)
         self.saved_review.pack(fill="x", pady=4)
         editor = ctk.CTkFrame(inspector, fg_color="transparent")
+        self.review_editor = editor
         editor.grid(row=0, column=1, sticky="new")
         identity = ctk.CTkFrame(editor, fg_color="transparent")
         identity.pack(fill="x", pady=(0, 6))
@@ -326,7 +327,7 @@ class ReviewWindow(ctk.CTk):
     def choose_batch(self):
         if not self.flush_notes():
             return
-        directory = filedialog.askdirectory(parent=self, title="选择批量回归结果目录")
+        directory = filedialog.askdirectory(parent=self, title="选择批次或单次回放结果目录")
         if directory:
             self.open_batch(directory)
 
@@ -431,7 +432,11 @@ class ReviewWindow(ctk.CTk):
         if self.batch:
             pending = sum(self.batch.can_review(r) and self.batch.decision(r).get("decision", "pending") == "pending"
                           for r in self.batch.rows)
-            self.summary.set(f"{len(self.batch.rows)} 组对比 · {pending} 组待审核 · 批次 {self.batch.document.get('status', '未知')}")
+            counts = {status: sum(r.get('automaticStatus', r.get('executionStatus')) == status for r in self.batch.rows)
+                      for status in ('passed', 'failed', 'pending')}
+            self.summary.set(f"{len(self.batch.rows)} 张 · 通过 {counts['passed']} · 失败 {counts['failed']} · "
+                             f"比较中 {counts['pending']} · 结果 {self.batch.document.get('status', '未知')}" +
+                             (f" · 待人工审核 {pending}" if pending else ''))
             if self.batch.document.get('screenshotReviewError'):
                 self.summary.set(self.summary.get() + " · 辅助清单更新失败，当前对照可能不完整")
         if row is None:
@@ -439,6 +444,7 @@ class ReviewWindow(ctk.CTk):
             self.review_label.configure(text="")
             return
         execution = row.get("executionStatus", "unknown")
+        exact = (row.get('comparisonMetadata') or {}).get('policyVersion') == 'journal-exact'
         self.execution_label.configure(text=EXECUTION.get(execution, execution),
                                        text_color=COLORS["green"] if execution in ("completed", "captured", "passed") else COLORS["red"])
         can_review = self.batch.can_review(row)
@@ -447,6 +453,17 @@ class ReviewWindow(ctk.CTk):
             "未执行 · 不可审核" if execution == "not_run" else "证据或比较不可用 · 不可审核")
         self.review_label.configure(text=DECISIONS.get(decision, decision) if can_review else unavailable,
                                    text_color=COLORS["green" if decision == "accepted" else "red" if decision == "defect" or not can_review else "orange"])
+        if exact:
+            status = row.get('automaticStatus', execution)
+            count = (row.get('comparisonMetadata') or {}).get('rawDifferencePixelCount')
+            self.execution_label.configure(text={'passed': '截图校验通过', 'failed': '截图校验失败',
+                                                 'pending': '后台比较中'}.get(status, EXECUTION.get(status, status)))
+            self.review_label.configure(text=f'整图 1:1 · 差异像素 {count}' if count is not None else
+                                        '整图 1:1 · ' + ('等待比较完成' if status == 'pending' else '标准缺失或比较异常'),
+                                        text_color=COLORS['green' if status == 'passed' else 'orange' if status == 'pending' else 'red'])
+            self.footer.configure(text='自动校验结果直接读取运行记录；此窗口不改变通过状态或标准图')
+        else:
+            self.footer.configure(text='截图提示与人工审核独立于执行结果；颜色不代表缺陷或通过结论')
 
     def select(self, index):
         if not self.batch or not 0 <= index < len(self.batch.rows) or index == self.selected:
@@ -576,7 +593,8 @@ class ReviewWindow(ctk.CTk):
             spread = (card_width / 2 + 10) if offset == 0 and self.hovered else 12
             before = self.image_for(row, "expectedView", "expected")
             after = self.image_for(row, "rawDiff" if self.raw_diff else "diff")
-            for side, source, label in ((-1, before, "标准图"), (1, after, "原始像素差异" if self.raw_diff else "差异提示 · 降噪")):
+            exact = (row.get('comparisonMetadata') or {}).get('policyVersion') == 'journal-exact'
+            for side, source, label in ((-1, before, "标准图"), (1, after, "整图逐像素差异" if exact else "原始像素差异" if self.raw_diff else "差异提示 · 降噪")):
                 x = width / 2 + side * spread * scale
                 angle = 0 if offset == 0 and self.hovered else (-3 if side < 0 else 3)
                 photo = self._card_image(source, row, label, round(card_width * scale), round(card_height * scale), angle,
@@ -667,7 +685,20 @@ class ReviewWindow(ctk.CTk):
         self.views[0].set_image(expected, "缺少标准截图或读取失败")
         self.views[1].set_image(actual, message)
         self.views[2].set_image(diff, "缺少差异图；请查看执行与比较提示")
-        self.views[2].title.configure(text="归一化原始像素差异（标准图底图）" if self.raw_diff else "降噪差异提示（标准图底图）")
+        exact = (row.get('comparisonMetadata') or {}).get('policyVersion') == 'journal-exact'
+        if exact:
+            self.diff_mode.pack_forget()
+            self.review_editor.grid_remove()
+        else:
+            self.diff_mode.pack(side='left', before=self.zoom_slider)
+            self.review_editor.grid()
+        exclusions = (row.get('comparisonMetadata') or {}).get('excludedRegions', [])
+        self.legend.configure(text=('红色标记参与校验的变化像素；排除：' + '；'.join(
+                                        f"{item['reason']} {item['rectangle']}" for item in exclusions) if exclusions else
+                                    '红色标记所有变化像素；任一像素不同即校验失败') if exact else
+                              '红：需重点核对的差异   橙：疑似渲染差异或弱提示，仍需人工确认')
+        self.views[2].title.configure(text="整图逐像素差异（标准图底图）" if exact else
+                                     "归一化原始像素差异（标准图底图）" if self.raw_diff else "降噪差异提示（标准图底图）")
         self._set_image_view()
         execution = row.get("executionStatus", "unknown")
         self.detail_execution.configure(text="执行结果：" + EXECUTION.get(execution, execution))
@@ -704,6 +735,10 @@ class ReviewWindow(ctk.CTk):
         self.saved_review.configure(text="人工结论：" + (DECISIONS.get(saved.get("decision", "pending"), "待人工审核") if can_review else "不可审核") +
                                     (f" · {saved['reviewer']}" if saved.get("reviewer") else ""))
         self.save_status.configure(text="备注自动保存；审核不改写执行结果，不替换标准图", text_color=COLORS["muted"])
+        if exact:
+            self.saved_review.configure(text='后台比较中，完成后刷新查看结果' if execution == 'pending' else
+                                        '自动校验结果已写入，无需人工确认')
+            self.save_status.configure(text='查看标准图、实际图和逐像素差异；此窗口不改写自动结果或标准图')
 
     def set_diff_mode(self, value):
         self.raw_diff = value == "原始像素差异"
@@ -796,8 +831,8 @@ class ReviewWindow(ctk.CTk):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="GPlatform 批量回归结果查看窗口（原生 Python）")
-    parser.add_argument("directory", nargs="?", type=Path, help="含 screenshot_review.json 的批次目录")
+    parser = argparse.ArgumentParser(description="GPlatform Journal 结果查看窗口（原生 Python）")
+    parser.add_argument("directory", nargs="?", type=Path, help="批次或单次回放结果目录")
     args = parser.parse_args(argv)
     ctk.set_appearance_mode("system")
     try:

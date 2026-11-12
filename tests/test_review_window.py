@@ -4,6 +4,7 @@ GPLATFORM_REVIEW_GUI_TESTS=1 python -m unittest discover -s tests -p test_review
 Requires a desktop session, CustomTkinter, Pillow and a Python with working Tk.
 """
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -165,6 +166,69 @@ class ReviewWindowEvents(unittest.TestCase):
         self.assertIn("failed-case", text)
         self.assertIn("Independent DB failure", text)
         self.assertIn("failed", self.window.title())
+
+    def test_exact_results_show_pixel_failure_without_requesting_manual_review(self):
+        rows = [dict(self.rows[0], reviewStatus='not_applicable', automaticStatus='failed', executionStatus='failed',
+                     comparisonMetadata=dict(policyVersion='journal-exact', rawDifferencePixelCount=17))]
+        self.write_manifest(rows)
+        self.window.reload_batch()
+        self.window.show_details()
+        self.pump()
+        self.assertEqual(self.window.execution_label.cget('text'), '截图校验失败')
+        self.assertIn('差异像素 17', self.window.review_label.cget('text'))
+        self.assertIn('失败 1', self.window.summary.get())
+        self.assertNotIn('不可用', self.window.review_label.cget('text'))
+        self.assertIn('整图逐像素', self.window.views[2].title.cget('text'))
+        self.assertEqual(self.window.review_buttons['accepted'].cget('state'), 'disabled')
+
+@unittest.skipUnless(all(importlib.util.find_spec(name) for name in ('_tkinter', 'customtkinter', 'PIL')),
+                     'requires optional viewer dependencies; no desktop session is needed')
+class JournalRecentResultTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.directory = Path(temporary.name)
+
+    def test_journal_recent_result_opens_explicit_batch_and_single_replay(self):
+        from unittest.mock import Mock
+        sys.path.insert(0, str(TOOLS / 'journal'))
+        from journalsystem_gui import JournalSystemGUI
+        from session_repository import JournalSessionRepository
+        playbacks = self.directory / 'playbacks'
+        custom = self.directory / 'custom'
+        custom.mkdir()
+        app, assets = self.directory / 'app', self.directory / 'assets'
+        (custom / 'summary.json').write_text(json.dumps(dict(selectionScope='explicit',
+            applicationPath=str(app), assetsRoot=str(assets), status='failed', completedCaseCount=1, plannedCaseCount=1)))
+        (custom / 'screenshot_review.json').write_text('{}')
+        repository = JournalSessionRepository(playbacks=playbacks)
+        repository.remember_result(custom)
+        gui = SimpleNamespace(application_var=SimpleNamespace(get=lambda: str(app)),
+            repository=SimpleNamespace(scenarios=assets / 'scenarios', recordings=self.directory / 'recordings'),
+            _playbacks=lambda: playbacks, batch_result_label=Mock())
+        JournalSystemGUI._show_latest_batch(gui)
+        self.assertEqual(gui.last_batch_output, custom.resolve())
+        raw = self.directory / 'raw'
+        raw.mkdir()
+        execution = dict(acceptance='failed', completedEntries=82, totalEntries=82,
+                         applicationPath=str(app), journalPath=str(assets / 'scenarios/model/events/Journal.json'))
+        (raw / 'execution_result.json').write_text(json.dumps(execution))
+        repository.remember_result(raw)
+        JournalSystemGUI._show_latest_batch(gui)
+        self.assertEqual(gui.last_batch_output, raw.resolve())
+        self.assertIn('82/82', gui.batch_result_label.configure.call_args.kwargs['text'])
+        for changes in [dict(applicationPath=str(self.directory / 'other-app')),
+                        dict(applicationPath=''),
+                        dict(journalPath=str(self.directory / 'other-assets/scenarios/model/events/Journal.json')),
+                        dict(journalPath='')]:
+            with self.subTest(changes=changes):
+                (raw / 'execution_result.json').write_text(json.dumps(dict(execution, **changes)))
+                JournalSystemGUI._show_latest_batch(gui)
+                self.assertIsNone(gui.last_batch_output)
+        (raw / 'execution_result.json').write_text(json.dumps(dict(execution,
+            journalPath=str(gui.repository.recordings / 'session_recorded/Journal.json'))))
+        JournalSystemGUI._show_latest_batch(gui)
+        self.assertEqual(gui.last_batch_output, raw.resolve())
 
 
 if __name__ == "__main__":

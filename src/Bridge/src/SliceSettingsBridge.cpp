@@ -861,7 +861,17 @@ void SliceSettingsBridge::restoreProcessSettings() {
 
 QVariantList SliceSettingsBridge::machineModels() const {
     QVariantList models;
-    for (const auto& machine : GPlatform::SlicingBackend::instance().machineModels()) {
+    auto& backend = GPlatform::SlicingBackend::instance();
+    auto machines = backend.machineModels();
+    for (const auto& project : backend.projectMachineModels()) {
+        auto existing = std::find_if(machines.begin(), machines.end(),
+            [&](const auto& machine) { return machine.id == project.id; });
+        if (existing == machines.end())
+            machines.push_back(project);
+        else
+            existing->variants.insert(existing->variants.end(), project.variants.begin(), project.variants.end());
+    }
+    for (const auto& machine : machines) {
         QVariantList variants;
         for (const auto& variant : machine.variants) {
             const auto [originX, originY] = printableAreaOrigin(variant);
@@ -882,8 +892,10 @@ QVariantList SliceSettingsBridge::machineModels() const {
                 {QStringLiteral("originY"), originY},
                 {QStringLiteral("printerPresetId"), QString::fromStdString(variant.printer_preset_id)}
             };
+            const auto presets = backend.printerPresets(machine.id, variant.id);
+            if (presets.empty())
+                variantMap.insert(QStringLiteral("projectPreset"), true);
             variants.push_back(variantMap);
-            const auto presets = GPlatform::SlicingBackend::instance().printerPresets(machine.id, variant.id);
             for (const auto& preset : presets) {
                 if (preset.is_default) continue;
                 variantMap.insert(QStringLiteral("printerPresetId"), QString::fromStdString(preset.id));
@@ -995,7 +1007,7 @@ void SliceSettingsBridge::resolvePrinterSwitch(const QString& action, const QStr
         auto& backend = GPlatform::SlicingBackend::instance();
         auto saved = backend.savePrinterSwitchPreset(pending.review.revision, preset.type, saveName.toStdString());
         if (!saved) {
-            const auto message = saved.diagnostics.empty() ? tr("Could not save user preset")
+            const auto message = saved.diagnostics.empty() ? tr("Could not save preset")
                 : QString::fromStdString(saved.diagnostics.front().message);
             m_printerSwitch.reset();
             emit settingRejected(QStringLiteral("printer"), message);

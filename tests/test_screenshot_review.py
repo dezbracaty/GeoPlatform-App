@@ -41,7 +41,8 @@ class CaptureSession:
                 expected.write_bytes(original)
                 Image.new('RGBA', (2764, 1908) if self.mismatch else (1382, 954),
                           'black' if self.mismatch else 'white').save(actual)
-                row.update(status='failed' if self.mismatch else 'passed', evidence=[str(expected), str(actual)])
+                row.update(status='failed' if self.mismatch else 'passed', evidence=[str(expected), str(actual)],
+                           comparison=dict(status='failed' if self.mismatch else 'passed'))
             elif self.fail_input:
                 row.update(status='failed', message='actual input target missing')
             rows.append(row)
@@ -108,6 +109,25 @@ class ScreenshotReviewCheck(unittest.TestCase):
         self.assertEqual(result['status'], 'passed')
         self.assertEqual(result['journalAcceptance'], 'passed')
         self.assertEqual(result['screenshotReview']['pendingCount'], 2)
+
+    def test_exact_executor_result_is_presented_without_second_comparison_or_ocr(self):
+        from unittest.mock import patch
+        output = self.root / 'exact-result'
+        output.mkdir()
+        for name in ('expected.png', 'actual.png', 'diff.png'):
+            (output / name).write_bytes(self.original)
+        checkpoints = [dict(index=1, kind='verify.screenshot', atMs=0, baselineBytes=self.original)]
+        execution = dict(results=[dict(index=1, kind='verify.screenshot', status='passed',
+            evidence=['expected.png', 'actual.png', 'diff.png'],
+            comparison=dict(mode='exact', status='passed', differentPixels=0))])
+        with patch('screenshot_review.comparison_images', side_effect=AssertionError('Must reuse executor result')), \
+                patch('screenshot_review.raw_comparison_images', side_effect=AssertionError('Must not compare twice')):
+            report = collect_screenshots(checkpoints, execution, output)
+        self.assertEqual(report['pendingCount'], 0)
+        row = load_document(output / report['path'])['checkpoints'][0]
+        self.assertEqual(row['comparisonStatus'], 'identical')
+        self.assertEqual(row['differencePixelCount'], 0)
+        self.assertEqual((output / row['rawDiff']).read_bytes(), self.original)
 
     def test_optional_hint_failure_falls_back_without_changing_verdict(self):
         from unittest.mock import patch

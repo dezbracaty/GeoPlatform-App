@@ -29,6 +29,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -79,7 +80,7 @@ DBInstanceID configurationActivePlate() {
 }
 QString importAndWait(const QString& filename, const QString& intent,
                       const QString& action = "file.import") {
-    const auto path = QStringLiteral(THREE_MF_FIXTURES) + '/' + filename;
+    const auto path = QFileInfo(filename).isAbsolute() ? filename : QStringLiteral(THREE_MF_FIXTURES) + '/' + filename;
     const auto source = bytes(path);
     auto* actions = ActionManager::getInstance();
     QStringList warnings;
@@ -692,7 +693,13 @@ void checkPrinterSwitchSaveAndCancel() {
             "The switch did not finish after the remaining decision");
 }
 
-void writeInheritedUserPresetFixture(const QString& configDirectory) {
+const auto projectCollisionName = QStringLiteral("0.20mm Standard @MyKlipper(111.3mf)");
+
+QString projectCollisionFile(const QString& configDirectory) {
+    return configDirectory + QStringLiteral("/slicer-presets/CFSYS/process/") + projectCollisionName + ".json";
+}
+
+void writeUserPresetFixtures(const QString& configDirectory) {
     const auto processDirectory = configDirectory + QStringLiteral("/slicer-presets/P3/process");
     require(QDir().mkpath(processDirectory + QStringLiteral("/base")), "Cannot create user preset fixture directory");
     const auto write = [](const QString& path, const QJsonObject& fields) {
@@ -707,6 +714,11 @@ void writeInheritedUserPresetFixture(const QString& configDirectory) {
     write(processDirectory + QStringLiteral("/Acceptance child.json"),
           {{"name", "Acceptance child"}, {"from", "User"}, {"version", "2.0.0.5"},
            {"inherits", "Acceptance root"}, {"print_settings_id", "Acceptance child"}});
+    const auto collisionPath = projectCollisionFile(configDirectory);
+    require(QDir().mkpath(QFileInfo(collisionPath).path()), "Cannot create CFSYS preset fixture directory");
+    write(collisionPath, {{"name", projectCollisionName}, {"from", "User"}, {"version", "2.0.0.5"},
+           {"inherits", "CCF&CIRON @CFSYS"}, {"print_settings_id", projectCollisionName},
+           {"initial_layer_line_width", "0.62"}});
 }
 
 void checkSavedRootUpdatesChildPreset(SliceSettingsBridge& bridge) {
@@ -734,6 +746,65 @@ void checkSavedRootUpdatesChildPreset(SliceSettingsBridge& bridge) {
             "Cached child retained the original value after saving its root");
     require(bridge.selectMachine("Flashforge AD5X", "0.4") && bridge.selectedMachineModelId() == "Flashforge AD5X",
             "Cannot return to the integration fixture printer");
+}
+
+void checkProjectPresetSaveAndReselect(SliceSettingsBridge& bridge) {
+    auto& backend = GPlatform::SlicingBackend::instance();
+    const auto path = QStringLiteral(PRINTER_SWITCH_PROJECT);
+    const auto originalFile = bytes(path);
+    const auto collisionPath = projectCollisionFile(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation));
+    const auto originalUserPreset = bytes(collisionPath);
+    importAndWait(path, "project");
+    const auto source = backend.activeConfigView();
+    const auto config = backend.configSnapshot();
+    require(source && config && config->value("initial_layer_line_width") == "180%",
+            "The original MyKlipper project was not opened with its project process");
+    const auto& selection = source->selection;
+    const auto model = QString::fromStdString(selection.machine_model_id);
+    const auto variant = QString::fromStdString(selection.machine_variant_id);
+    const auto printer = QString::fromStdString(selection.printer_preset_id);
+    const auto process = QString::fromStdString(selection.process_preset_id);
+    require(process == "0.20mm Standard @MyKlipper-1(111.3mf)",
+            "Orca did not allocate a separate name for the conflicting project process at import");
+    bridge.setSetting("initial_layer_line_width", QStringLiteral("165%"));
+    QVariantMap prompt;
+    const auto connection = QObject::connect(&bridge, &SliceSettingsBridge::printerSwitchDecisionRequested, &bridge,
+        [&](const QVariantMap& preset) { prompt = preset; });
+    const auto disconnect = qScopeGuard([&] { QObject::disconnect(connection); });
+    require(bridge.selectMachine("CFSYS Alpha500 Printer", "0.4") &&
+            prompt.value("name").toString() == process && !prompt.value("saveAs").toBool(),
+            "An existing project preset should be saved under its current name");
+    bridge.resolvePrinterSwitch("save");
+    require(bridge.selectedMachineModelId() == "CFSYS Alpha500 Printer",
+            "Saving the MyKlipper project preset did not complete the switch");
+    require(bridge.selectProcessPreset(projectCollisionName), "The installed process is unavailable on Alpha500");
+    const auto installed = backend.configSnapshot();
+    require(installed && installed->value("initial_layer_line_width") == "0.62",
+            "The installed process picked up the project edit");
+    bool projectPrinterOffered = false;
+    for (const auto& option : bridge.machineModels()) {
+        const auto machine = option.toMap();
+        if (machine.value("id").toString() != model) continue;
+        for (const auto& item : machine.value("variants").toList()) {
+            const auto nozzle = item.toMap();
+            if (nozzle.value("id").toString() == variant && nozzle.value("printerPresetId").toString() == printer)
+                projectPrinterOffered = true;
+        }
+    }
+    require(projectPrinterOffered && bridge.selectMachine(model, variant, {}, printer) &&
+            bridge.selectedMachineModelId() == model, "Cannot reselect the saved project printer");
+    const auto projectMachine = backend.activeProjectMachine();
+    require(projectMachine && projectMachine->project_local, "The reselected printer lost its project scope");
+    require(bridge.selectedProcessPresetId() == process || bridge.selectProcessPreset(process),
+            "The saved process is unavailable after reselecting its project printer");
+    const auto saved = backend.configSnapshot();
+    require(saved && saved->value("initial_layer_line_width") == "165%" && bytes(path) == originalFile &&
+            bytes(collisionPath) == originalUserPreset,
+            "The saved project process lost its edit or changed either source file");
+    importAndWait(path, "project");
+    const auto reopened = backend.configSnapshot();
+    require(reopened && reopened->value("initial_layer_line_width") == "180%",
+            "Reopening the original 3MF retained the previous project's saved process");
 }
 
 void checkP3PaletteSources() {
@@ -774,7 +845,7 @@ void checkP3PaletteSources() {
     settings.setValue(group + "/filament_colour", custom);
     selectP3();
     require(palette() == custom, "P3 overwrote a remembered same-color palette");
-    importAndWait("../../scenarios/p3_4444444_short_ring_handoff/fixtures/4444444-p3-56mm.3mf", "project");
+    importAndWait("../imported/p3-short-ring/4444444-p3-56mm.3mf", "project");
     require(palette() == "#FFFFFF;#80FF80;#0080FF;#FFAD5B;#737373;#FFFFFF",
             "Opening a P3 project replaced the project's colors with preset colors");
     require(bridge->setFilamentColor(0, QColor("#335577")), "Cannot change the opened project's first color");
@@ -787,7 +858,7 @@ void checkP3PaletteSources() {
     const auto ad5xColors = settings.value(ad5xGroup + "/filament_colour");
     require(ad5xColors.isValid(), "The AD5X preset has no remembered palette");
     const auto ad5xSlots = bridge->filamentSlots().size();
-    importAndWait("../../scenarios/printer_preset_switch_handoff/fixtures/111.3mf", "geometry");
+    importAndWait("../imported/printer-preset-switch/111.3mf", "geometry");
     require(bridge->filamentSlots().size() > ad5xSlots, "Geometry import did not exercise palette expansion");
     selectP3();
     require(settings.value(ad5xGroup + "/filament_colour") == ad5xColors,
@@ -827,7 +898,7 @@ int main(int argc,char** argv) {
     int status=0;
     try {
         require(settings.isValid(),"Cannot create isolated 3MF integration settings");
-        writeInheritedUserPresetFixture(configDirectory);
+        writeUserPresetFixtures(configDirectory);
         SettingsHelper::getInstance()->init(argv);
         registerApplicationModules();
         MenuData::getInstance()->loadMenusFromFile(QStringLiteral(THREE_MF_MENUS));
@@ -882,6 +953,7 @@ int main(int argc,char** argv) {
                 "Explicit geometry intent on project.open replaced the document");
         importAndWait("complete-project.3mf", "project");
         checkPrinterSwitchSaveAndCancel();
+        checkProjectPresetSaveAndReselect(*configuration);
         checkP3PaletteSources();
     } catch (const std::exception& error) {std::cerr<<error.what()<<'\n'; status=1;}
     ActionManager::getInstance()->cleanupBeforeShutdown();

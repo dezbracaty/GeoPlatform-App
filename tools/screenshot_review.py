@@ -2,6 +2,7 @@
 import hashlib
 import html
 import json
+import shutil
 from pathlib import Path
 from urllib.parse import quote
 
@@ -29,9 +30,9 @@ def snapshot_checkpoints(case, asset_root, verify_hashes=True):
     """Freeze standards before playback, including checkpoints never reached."""
     rows = checkpoint_declarations(case['document'])
     for row in rows:
-        if row['kind'] != 'verify.screenshot':
-            continue
         payload = case['document']['entries'][row['index'] - 1]['payload']
+        if row['kind'] != 'verify.screenshot' and not payload.get('baseline'):
+            continue
         try:
             baseline = (case['journal'].parent / payload['baseline']).resolve()
             relative = baseline.relative_to(asset_root).as_posix()
@@ -53,7 +54,7 @@ def collect_screenshots(checkpoints, execution, output):
         row = {key: value for key, value in checkpoint.items() if key != 'baselineBytes'}
         destination = output / 'review' / f"checkpoint-{row['index']:04d}"
         destination.mkdir(parents=True, exist_ok=True)
-        standard = row['kind'] == 'verify.screenshot'
+        standard = 'baselineBytes' in checkpoint
         row.update(executionStatus='not_run', comparisonStatus='not_run', reviewStatus='not_applicable')
         if 'baselineBytes' in checkpoint:
             (destination / 'expected.png').write_bytes(checkpoint['baselineBytes'])
@@ -65,7 +66,7 @@ def collect_screenshots(checkpoints, execution, output):
             row['executionStatus'] = step['status']
             row['automaticStatus'] = step['status']
             evidence = step.get('evidence', [])
-            compared = standard and step.get('kind') == 'verify.screenshot'
+            compared = len(evidence) >= 2 and (standard or bool(step.get('comparison')))
             actual = evidence[1] if compared and len(evidence) >= 2 else evidence[0] if not compared and evidence else None
             if actual and step['status'] in {'passed', 'failed'}:
                 try:
@@ -76,7 +77,24 @@ def collect_screenshots(checkpoints, execution, output):
                     (destination / 'actual.png').write_bytes(data)
                     row.update(actual=(destination / 'actual.png').relative_to(output).as_posix(),
                                actualSha256=hashlib.sha256(data).hexdigest())
-                    if standard:
+                    if step.get('comparison', {}).get('mode') == 'exact':
+                        # Present the executor's result directly. Do not run a
+                        # second image/OCR comparison or request manual approval.
+                        comparison = step['comparison']
+                        count = comparison.get('differentPixels')
+                        row.update(comparisonStatus='identical' if comparison['status'] == 'passed' else
+                                   'different' if count is not None else 'unavailable',
+                                   differencePixelCount=count, message=step.get('message', ''),
+                                   comparisonMetadata=dict(policyVersion='journal-exact', rawDifferencePixelCount=count,
+                                                           excludedRegions=comparison.get('excludedRegions', [])))
+                        if len(evidence) >= 3:
+                            diff = (output / evidence[2]).resolve()
+                            if not diff.is_relative_to(output):
+                                raise ValueError('Screenshot difference escapes this run')
+                            shutil.copyfile(diff, destination / 'raw-diff.png')
+                            row.update(diff=(destination / 'raw-diff.png').relative_to(output).as_posix(), rawDiff=
+                                       (destination / 'raw-diff.png').relative_to(output).as_posix())
+                    elif standard:
                         row.update(reviewStatus='pending')
                         try:
                             comparison = comparison_images(destination / 'expected.png', destination / 'actual.png',
@@ -92,7 +110,7 @@ def collect_screenshots(checkpoints, execution, output):
                         if comparison['comparisonStatus'] == 'unavailable':
                             row['reviewStatus'] = 'not_applicable'
                     else:
-                        row['comparisonStatus'] = 'diagnostic'
+                        row['comparisonStatus'] = step.get('comparison', {}).get('status', 'diagnostic')
                 except Exception as exc:
                     row.update(comparisonStatus='capture_error', reviewStatus='not_applicable', message=str(exc))
             else:

@@ -295,7 +295,7 @@ Item {
                     "modelId": machine.id,
                     "variantId": variant.id,
                     "presetId": variant.printerPresetId,
-                    "name": variant.userPreset ? variant.name : qsTr("%1 · %2 mm").arg(machine.name).arg(variant.nozzleDiameter)
+                    "name": variant.userPreset || variant.projectPreset ? variant.name : qsTr("%1 · %2 mm").arg(machine.name).arg(variant.nozzleDiameter)
                 })
             }
         }
@@ -740,6 +740,7 @@ Item {
                 }
 
                 Switch {
+                    objectName: root.automationName("advancedSettingsSwitch")
                     checked: root.showAdvancedMode
                     text: checked ? qsTr("Advanced") : qsTr("Normal")
                     onClicked: {
@@ -1780,7 +1781,7 @@ Item {
         GridLayout {
             id: settingLayout
             anchors.fill: parent
-            columns: settingRow.multilineControl ? 1 : 2
+            columns: settingRow.multilineControl ? 1 : (root.localMode && settingRow.localSetting ? 3 : 2)
             columnSpacing: 8
             rowSpacing: settingRow.multilineControl ? 6 : 0
 

@@ -4218,8 +4218,8 @@ msgstr "放弃未保存的改动，使用目标机型的预设。"
 msgid "Apply transferable changes to the target printer."
 msgstr "将可转移的改动应用到目标机型。"
 
-msgid "Save changes to a user preset for the current printer, then continue switching."
-msgstr "将改动保存到当前机型的用户预设，然后继续切换。"
+msgid "Save the preset changes, then continue switching."
+msgstr "保存预设改动，然后继续切换。"
 
 msgid "Preset name"
 msgstr "预设名称"

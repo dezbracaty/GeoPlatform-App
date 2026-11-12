@@ -115,7 +115,7 @@ class JournalExecutionSession:
 
     def run(self, journal_path, *, application=None, host="127.0.0.1", port=0,
             output_dir=None, keep_app=False, startup_timeout=30, progress=None, log=None,
-            environment_overrides=None):
+            environment_overrides=None, comparisons=None, validate=True):
         progress = progress if progress is not None else self.progress
         log = log if log is not None else self.log
         journal_path = Path(journal_path).resolve()
@@ -206,8 +206,9 @@ class JournalExecutionSession:
             output = JournalSessionRepository(playbacks=paths["playbacks"]).create_playback(output)
             output_ready = True
             emit("Journal 已连接；开始执行文件（不再请求应用重启）")
-            result = JournalRunner(client).run(document, output_dir=output, progress=progress,
-                                               cancel_event=self.cancel_event)
+            result = JournalRunner(client, comparisons=comparisons).run(
+                document, output_dir=output, progress=progress, validate=validate,
+                cancel_event=self.cancel_event)
             if environment_overrides is not None:
                 result["environmentOverrides"] = dict(environment_overrides)
             result["windowProfile"] = WINDOW_PROFILE
@@ -288,9 +289,16 @@ class JournalExecutionSession:
                 result.update(success=False, acceptance="failed")
             result["sessionPath"] = str(output)
             result["outputPath"] = str(output)
+            if application:
+                result["applicationPath"] = str(Path(application).resolve())
             if paths is not None:
                 result["journalPaths"] = paths
             result["port"] = port
             finish_result(result)
+            if paths is not None:
+                try:
+                    JournalSessionRepository(playbacks=paths['playbacks']).remember_result(output)
+                except OSError as exc:
+                    emit(f'无法记录最近结果入口：{exc}')
             emit(f"执行结果：{result['acceptance']}；报告：{result['reportPath']}")
         return result

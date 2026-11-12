@@ -8,6 +8,40 @@ from pathlib import Path
 import tempfile
 
 
+def execution_document(directory):
+    """Adapt a saved single replay for the existing viewer without changing it."""
+    execution = json.loads((directory / 'execution_result.json').read_text(encoding='utf8'))
+    journal = Path(execution.get('journalPath', 'Journal.json'))
+    name = journal.parent.parent.name if journal.parent.name == 'events' else journal.stem
+    case_path = directory / 'case_result.json'
+    case = json.loads(case_path.read_text(encoding='utf8')) if case_path.is_file() else dict(
+        id=name, status=execution['acceptance'], error=execution.get('error'))
+    rows = []
+    for step in execution['results']:
+        if step['kind'] != 'verify.screenshot' and step.get('actionCode') != 'screenshot.capture':
+            continue
+        comparison, evidence = step.get('comparison', {}), step.get('evidence', [])
+        row = dict(id=str(step['index']), case=case['id'], index=step['index'],
+                   label=f"截图 {step['index']}", kind=step['kind'], executionStatus=step['status'],
+                   automaticStatus=step['status'], reviewStatus='not_applicable',
+                   comparisonStatus='identical' if comparison.get('status') == 'passed' else
+                       'different' if comparison.get('differentPixels') is not None else
+                       'processing' if comparison.get('status') == 'pending' else 'unavailable',
+                   comparisonMetadata=dict(policyVersion='journal-exact' if comparison.get('mode') == 'exact' else 'journal-replay',
+                       rawDifferencePixelCount=comparison.get('differentPixels'),
+                       excludedRegions=comparison.get('excludedRegions', [])),
+                   message=step.get('message', ''))
+        keys = ('expected', 'actual', 'diff') if len(evidence) >= 2 else ('actual',)
+        for key, value in zip(keys, evidence):
+            # The viewer accepts only artifacts inside this saved execution.
+            row[key] = (directory / value).resolve().relative_to(directory).as_posix()
+        if row.get('diff'):
+            row['rawDiff'] = row['diff']
+        rows.append(row)
+    return dict(schemaVersion=1, scope='batch-screenshot-review', runId=str(directory),
+                status=case['status'], cases=[case], checkpoints=rows)
+
+
 class ReviewBatch:
     def __init__(self, directory):
         self.directory = Path(directory).resolve()
@@ -15,7 +49,8 @@ class ReviewBatch:
 
     def reload(self):
         path = self.directory / 'screenshot_review.json'
-        document = json.loads(path.read_text(encoding='utf8'))
+        document = (json.loads(path.read_text(encoding='utf8')) if path.is_file() else
+                    execution_document(self.directory))
         if (document.get('schemaVersion') != 1 or document.get('scope') != 'batch-screenshot-review' or
                 not isinstance(document.get('runId'), str) or not isinstance(document.get('checkpoints'), list)):
             raise ValueError('Unsupported batch screenshot review manifest')

@@ -43,6 +43,7 @@ public:
     bool available() const noexcept;
     bool configurationChangesAllowed() const noexcept;
     const std::vector<libslicer::MachineModelOption>& machineModels() const noexcept;
+    std::vector<libslicer::MachineModelOption> projectMachineModels() const;
     const std::vector<libslicer::BuildPlateOption>& buildPlateOptions() const noexcept;
     std::vector<libslicer::PresetOption> printerPresets(const std::string& model, const std::string& variant) const;
     libslicer::PrinterSwitchReview reviewPrinterSwitch(const libslicer::ConfigSelection&, bool afterSave = false);

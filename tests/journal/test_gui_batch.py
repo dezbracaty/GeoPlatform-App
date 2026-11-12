@@ -53,16 +53,24 @@ class BatchGuiTests(unittest.TestCase):
         self.gui.busy=True;self.gui.run_batch();self.gui._start_task.assert_not_called()
         self.gui.task='batch';self.gui.cancel();self.assertTrue(self.gui.cancel_event.is_set())
 
-    def test_latest_is_matched_to_program_assets_and_all_selection(self):
+    def test_latest_is_matched_to_program_and_assets_for_any_selection(self):
         base=self.gui._playbacks()
-        for name,program,scope in [('session_old',self.program,'all'),('session_wrong',self.root/'other','all'),('session_single',self.program,'explicit')]:
+        for stamp,(name,program,scope,assets) in enumerate([
+                ('session_old',self.program,'all',self.gui.repository.scenarios.parent),
+                ('session_single',self.program,'explicit',self.gui.repository.scenarios.parent),
+                ('session_wrong',self.root/'other','all',self.gui.repository.scenarios.parent),
+                ('session_other_assets',self.program,'all',self.root/'other-assets')], 1):
             p=base/name;p.mkdir(parents=True)
             (p/'summary.json').write_text(json.dumps(dict(selectionScope=scope,applicationPath=str(program),
-                assetsRoot=str(self.gui.repository.scenarios.parent),status='failed',completedCaseCount=1,plannedCaseCount=2)))
+                assetsRoot=str(assets),status='failed',completedCaseCount=1,plannedCaseCount=2)))
             (p/'screenshot_review.json').write_text('{}')
+            __import__('os').utime(p/'summary.json',(stamp,stamp))
         self.gui._show_latest_batch()
-        self.assertEqual(self.gui.last_batch_output,base/'session_old')
+        self.assertEqual(self.gui.last_batch_output,(base/'session_single').resolve())
         self.assertIn('已完成 1/2',self.gui.batch_result_label.configure.call_args.kwargs['text'])
+        (base/'session_single'/'summary.json').unlink()
+        self.gui._show_latest_batch()
+        self.assertEqual(self.gui.last_batch_output,(base/'session_old').resolve())
 
     def test_open_results_launches_native_python_viewer_for_exact_batch(self):
         self.gui.last_batch_output=self.root/'run'

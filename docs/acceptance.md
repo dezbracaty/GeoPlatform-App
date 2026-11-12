@@ -31,11 +31,33 @@ Journal 仍使用现有 v2 协议，不引入新 RPC、输入调度或业务查�
 
 metadata v3 声明 `id/name/testPurpose/scope/inputs/unverifiedScopes/verification.requiredMethods/acceptanceTarget`；
 有自动产物检查的场景还声明 `artifacts/checks/expected`，格式见资产仓库 `schemas/scenario.schema.json`。
+
+校准的保存/采纳结果可声明必需的 `calibration-observation` 补充检查，`artifacts` 为 `[]`，
+独立预期放在 `expected.calibrationObservations`。执行器只读取本次运行开始后由应用生成的
+校准记录，核对任务身份、参数、观察值、目标材料及采纳状态，并归档到结果的
+`artifacts/calibration/`。每轮预期对应一份新记录；旧记录不能使保存操作通过。
+完成弹窗中的记录文件名包含随机 UUID，不适合固定像素标准；保留保存输入，关闭该弹窗后
+拍摄稳定的后续界面，保存结果由记录检查验证。其余截图仍须整图精确比较。
 模型通过 `namespace/id` 引用。Journal 实际导入路径必须与声明一致，且不能逃逸资产目录。
 生产 Action 创建的模型记录 Action 和完整参数，并与 Journal 核对。
 模型几何预期来自解析构造；任务预期来自明确业务要求，不能直接采纳当前错误输出。
 
 ## 统一入口与处理顺序
+
+正式 `--application`／GUI 新进程回放由 `JournalExecutionSession` 统一设置
+`GPLATFORM_JOURNAL_SESSION=1`。`SliceSettingsBridge` 因此不读取或保存用户记忆的
+机型、喷嘴、打印机／工艺／耗材选择；启动选择为空时从 `Flashforge AD5X / 0.4`
+默认配置开始，切机时也不读取用户记忆的该机型配置。用户日常保留A500不会成为此入口的起始机型。
+场景中的P3、A500或项目自带机型由原有真实操作／工程导入建立，不能把最终目标机型统一提前到所有场景开头。
+
+这层保护只在正式执行器启动的新进程中建立；手动在普通程序内回放或连接已有进程，
+不能假设已忽略当前机型。此类场景必须先通过已有业务输入建立并核对其声明的起始状态。
+声明 `applicationEnvironment` 的场景不允许仅连接已有程序；metadata中的说明文字本身不是切机动作。
+机型、喷嘴和预设下拉优先按控件objectName定位，键入完整显示名称并用Return确认，随后以已有DB／截图检查实际选择。
+具名鼠标输入可不写position，由执行器取控件中心；不得用列表第N行的屏幕坐标代替具体选项身份。
+既有P3等场景已采用文字＋Return。3D视口拾取及不能文字检索的虚拟图例，应按各自真实交互处理，不混同为机型下拉。
+
+不要为已有统一启动保护给每份Journal机械添加重复切机，从而改变首次打开、取消切机或工程恢复的覆盖。
 
 `tools/run_acceptance.py` 同时支持完整宿主和独立 App，默认加载本 App 的 `tools/journal/`，
 不依赖完整宿主或另外配置工具目录。`--journal-tools` 仅用于显式选择开发中的另一份工具，
@@ -55,6 +77,11 @@ DB 与截图验收分别复用正式 `verify.db` 与 `verify.screenshot`，入�
 该检查器验证软件刀路，不验证固件宏和实机打印。
 
 ## 结果目录与判定
+
+所有活动场景统一放在 `scenarios/<id>/events/Journal.json`，旁边必须有正式 metadata。
+CLI、GUI 和 CI 共用 `session_repository.discover_scenarios()`；发现其他位置的 Journal 或缺少
+Journal 的顶层 metadata 时直接报错，不能静默漏项。已登记场景的 `windows/events/Journal.json`
+仅保留为历史平台版本，不作为 Mac mini 的另一个入口。输入文件放入模型目录并登记目录清单。
 
 ```text
 <run>/summary.json
@@ -113,7 +140,10 @@ GUI 默认将结果保存在所选可执行文件旁的 `Journal/playbacks/sessi
 多场景导出自动隔离到 `<exports>/<批次目录名>/<case>/`，避免相同文件名相互覆盖；
 单场景仍直接使用传入的导出目录。结果目录必须新建，不能复用上次目录。
 
-GUI 的“显示最近批量结果”打开本地 Python 窗口，也可手动打开已有批次：
+GUI 的“显示最近结果”、场景报告和录制回放报告共用本地 Python 查看器。
+CLI 的自定义输出目录通过默认回放目录下的 `latest-result.json` 记录位置；该文件只用于定位，
+结论仍读取原始结果。最近结果包含单场景、整批和直接回放，不限于完整批次。
+也可手动打开已有结果：
 
 ```sh
 python -m pip install -r App/tools/requirements.txt
@@ -122,21 +152,24 @@ python App/tools/review_results.py <run-directory>
 
 Python 需带可用的现代 Tk。每组卡片对应一个截图检查点；卡片区滚轮上下切换组，
 hover 展开标准图和差异提示图，点击后在同一窗口下方显示标准／本次／差异详情。
+没有批次清单的单次回放直接读取 `execution_result.json`，不生成替代结论；
+场景目录中的 `case_result.json` 仍优先决定业务状态，避免 DB／文件失败被回放通过覆盖。
+严格截图显示自动校验结果、比较中状态和差异像素数，隐藏旧的降噪／人工采纳控件。
 详情支持同步缩放、拖动和切换完整像素差异；DB 结果、输入失败、缺图及未运行项单独保留状态。
 原始图像哈希绑定可选人工备注，另存 `review-decisions.json`，不会改写 `case_result.json` 或自动判定。
 对照提示、OCR 或备注不可用不改变自动结果；工具错误会保存在辅助诊断字段中。
 
 增加场景先确定数据验收还是画面验收，再补对应标准 DB 或标准截图，复用现有比较代码。
-截图基线需要独立审批与平台/DPR/主题/容差来源。实机结果不属于本轮场景验收。
+截图基线需要独立审批与平台/DPR/主题来源。实机结果不属于本轮场景验收。
 
 回归时间轴应移除录制时的停顿，分别核对键鼠输入、动画、后台导入和切片所需的短间隔。
 慢检查造成回放落后时，执行器顺延时间轴，保留后续输入间隔，不通过突发派发追赶原时刻。
 同一状态已有 `verify.screenshot` 时，复用其原始实际图作为诊断证据，不再额外安排 `screenshot.capture`。
-同一状态、同一基准及相同参数的全匹配区域检查，可用既有 `regions` 合并为一次采集，覆盖全部原区域；
-不同状态、不同容差或重复观察同一区域的时序检查保持独立。
-审核报告中比较区域像素完全一致时，直接保存零差异图，跳过感知差异与 OCR 分析；有差异时继续生成原有辅助提示。
-批量回归在后台串行生成截图辅助报告，前台继续下一场景；退出批次前收齐后台任务并更新最终报告。现场采集与正式断言仍按顺序完成。
-调整时序或移除诊断采集后，保持原断言、比较区域和容差，核对 `dbBaselines.entryIndex`，并实际回放验证。
+同一状态、同一基准的重复截图可合并为一次采集；正式比较不读取场景的区域或容差来缩小门禁。
+不同状态或重复观察同一区域的时序检查保持独立。
+正式截图报告直接复用执行器的标准图、实际图、差异图及结果，不再重复执行感知比较或 OCR。
+批量回归在后台串行生成截图辅助报告，前台继续下一场景；退出批次前收齐后台任务并更新最终报告。截图像素比较在独立后台线程池执行，前台截图落盘后继续回放和启动下一场景；只有整批结束才等待剩余比较。结果直接回填原步骤，pending 不能算通过。
+调整时序或移除重复采集后，保持原标准图与 DB 预期，核对 `dbBaselines.entryIndex`，并实际回放验证。
 
 ## 3MF 的业务验收与样本回归
 
@@ -157,8 +190,8 @@ manifest 固定上游提交、下载链接、大小和 SHA-256，许可来源另
 分别遍历 Geometry/Project 入口。前者允许原生拒绝并检查活动配置不被读取污染，后者对照原生读取成功/拒绝、
 有效配置及几何转换；这两项不能替代真实 App 的文件选择、交互与视口验收。
 
-每个业务场景只选择 DB 或截图门禁。`capture.db` 只是原始数据采集，只有正式 `verify.db` 或
-`verify.screenshot` 及相应独立标准才能满足门禁。单个配置 DB 不代表文档对象图、实例数、角色、
+每个业务场景声明 DB 或截图作为主要目标；所有截图都附加强制整图比较，默认仅排除统一 FPS 按钮区域；另有3张原生导入询问图按明确批准的局部动画例外处理，规则见 `verification-methods.md`。`capture.db` 只是原始数据采集。
+`verify.screenshot` 和 `screenshot.capture` 必须绑定独立标准，不能仅凭保存图片满足门禁。单个配置 DB 不代表文档对象图、实例数、角色、
 历史或完整 Backend 配置；这些范围必须由实际对应对象的比较或原生专项分别证明。
 尚缺断言的场景保持 `not_verified`，不能因操作完成或输出文件检查通过而升级。
 
@@ -215,7 +248,7 @@ JournalSystem 的 `environment_overrides` 是通用子进程环境参数，不�
 P/K/R、其他平面、绝对圆心和非平面沉积明确拒绝。均匀层的最少层数与 Z 格点由独立源事实、
 声明的 UI 层高和原内核中点规则推导；薄模型仍必须生成正确的一个初层。
 
-截图只覆盖 Journal 声明的目标区域。诊断截图、原生对照及输出检查分别报告，不据此宣称
+截图在后台按原尺寸整图逐像素比较；历史区域和容差不再缩小正式门禁。原生对照及输出检查分别报告，不据此宣称
 选择状态、全视口外观、完整刀路等价、设备行为或实物打印已经验收。
 
 ## Windows 基准采集
@@ -225,8 +258,10 @@ P/K/R、其他平面、绝对圆心和非平面沉积明确拒绝。均匀层的
 DB 使用已有 capture.db，截图使用已有 screenshot.capture，并进入同一截图复核报告。
 执行失败仍报 failed，候选完成报 not_verified，不会自动更新标准。
 
-逐检查点核对业务目标后，仅将审核通过的原始文件写入 TestAssets/windows，记录来源、哈希和审核依据，
-再用原有 verify.db/verify.screenshot 完整回放。候选目录不能作为通过结果，CI 拒绝 candidateCollection。
+逐检查点核对业务目标后，将审核通过的原始文件写入对应平台资产分支的 `baselines/db/<case>/`
+或 `baselines/screenshots/<case>/`，同步 `scenarios/<case>/` 的标准引用、来源、哈希和审核依据，
+再用原有 verify.db/verify.screenshot 完整回放。不另建顶层 `TestAssets/windows` 验收入口；
+macmini 分支各场景中的 `windows/` 是保留原字节的历史资产。候选目录不能作为通过结果，CI 拒绝 candidateCollection。
 
 包含部署资源路径的 DB 场景可声明 `deploymentResources`（`resources/...` 相对路径到 SHA256 的映射），
 并在 `preconditions.applicationDirectory` 保留采集目录。物化时先验证当前应用资源哈希，再绑定标准中

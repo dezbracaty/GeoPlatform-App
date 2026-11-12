@@ -8,7 +8,6 @@ import subprocess
 import sys
 import threading
 import uuid
-import webbrowser
 from datetime import datetime
 from pathlib import Path
 import tkinter as tk
@@ -23,7 +22,7 @@ from journal_runner import JournalRunner, load_journal
 from journal_execution_session import JournalExecutionSession
 from session_repository import JournalSessionRepository
 
-STATUS = {"passed": "通过", "failed": "失败", "blocked": "阻塞", "not_verified": "未验收"}
+STATUS = {"passed": "通过", "failed": "失败", "blocked": "阻塞", "not_verified": "未验收", "pending": "后台比较中"}
 
 
 class JournalSystemGUI:
@@ -357,7 +356,7 @@ class JournalSystemGUI:
         self.result_folder_button.pack(side=tk.LEFT, padx=4)
         self.batch_result_label = self._label(results, "尚未执行批量回归。", wraplength=500, justify="left", size=11)
         self.batch_result_label.grid(row=2, column=0, sticky="w", padx=18, pady=(3, 8))
-        self.batch_review_button = self._button(results, "显示最近批量结果", self.open_batch_results, kind="quiet")
+        self.batch_review_button = self._button(results, "显示最近结果", self.open_batch_results, kind="quiet")
         self.batch_review_button.configure(width=160)
         self.batch_review_button.grid(row=3, column=0, sticky="w", padx=15, pady=(0, 12))
         self._label(right, "每次启动独立实例；完成后保存报告并清理实例。", size=10,
@@ -594,7 +593,8 @@ class JournalSystemGUI:
         self.batch_button.configure(state="normal" if valid_program and self.cases and not locked and
                                     (not batch_needs_exports or self.exports_var.get()) else "disabled")
         self.batch_review_button.configure(state="normal" if not locked and self.last_batch_output and
-            (self.last_batch_output / "screenshot_review.json").is_file() else "disabled")
+            any((self.last_batch_output / name).is_file() for name in
+                ('screenshot_review.json', 'execution_result.json')) else "disabled")
         for button in (self.cancel_button, self.cancel_replay_button):
             if self.busy and self.task in ("scene", "batch", "replay"):
                 button.pack(side=tk.LEFT, padx=8)
@@ -765,7 +765,9 @@ class JournalSystemGUI:
     def _show_latest_result(self):
         self.last_report = self.last_output = None
         base, case = self._playbacks(), self.selected_case
-        paths = list(base.glob(f"session_*/{case['path'].name}/case_result.json")) if base and case else []
+        paths = [directory / case['path'].name / 'case_result.json'
+                 for directory in JournalSessionRepository(playbacks=base).result_directories()
+                 if (directory / case['path'].name / 'case_result.json').is_file()] if base and case else []
         if not paths:
             self.result_label.configure(text="尚未运行。完成后在这里查看本场景的结果。")
             return
@@ -789,12 +791,27 @@ class JournalSystemGUI:
         self.last_batch_output = None
         application = self.application_var.get().strip()
         assets = self.repository.scenarios.parent.resolve()
-        candidates = list(self._playbacks().glob("session_*/summary.json")) if application else []
-        for path in sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True):
+        candidates = JournalSessionRepository(playbacks=self._playbacks()).result_directories() if application else []
+        for directory in candidates:
             try:
+                path = directory / 'summary.json'
+                if not path.is_file():
+                    path = directory / 'execution_result.json'
+                    execution = json.loads(path.read_text(encoding='utf8'))
+                    if (not execution.get('applicationPath') or not execution.get('journalPath') or
+                            Path(execution['applicationPath']).resolve() != Path(application).resolve()):
+                        continue
+                    journal = Path(execution['journalPath']).resolve()
+                    recordings = self.repository.recordings
+                    if not (journal.is_relative_to(self.repository.scenarios.resolve()) or
+                            (recordings and journal.is_relative_to(recordings.resolve()))):
+                        continue
+                    self.last_batch_output = directory
+                    self.batch_result_label.configure(text='最近回放 · ' + STATUS.get(execution.get('acceptance'), '未知') +
+                        f" · 已执行 {execution.get('completedEntries', 0)}/{execution.get('totalEntries', 0)} 步\n结果目录：{directory.name}")
+                    return
                 summary = json.loads(path.read_text(encoding="utf8"))
-                if (summary.get("selectionScope") != "all" or
-                        Path(summary.get("applicationPath", "")).resolve() != Path(application).resolve() or
+                if (Path(summary.get("applicationPath", "")).resolve() != Path(application).resolve() or
                         Path(summary.get("assetsRoot", "")).resolve() != assets or
                         not (path.parent / "screenshot_review.json").is_file()):
                     continue
@@ -803,11 +820,11 @@ class JournalSystemGUI:
                 status = "已取消" if summary.get("cancelled") else STATUS.get(summary.get("status"), "未知")
                 stamp = datetime.fromtimestamp(path.stat().st_mtime).strftime("%m-%d %H:%M")
                 self.batch_result_label.configure(text=f"最近批次 · {stamp} · {status} · 已完成 {completed}/{total}\n"
-                    f"截图待审核 {summary.get('screenshotReviewPendingCount', 0)}；执行结果与人工审核分别保存。")
+                    f"结果目录：{directory.name}")
                 return
             except (OSError, ValueError, TypeError):
                 continue
-        self.batch_result_label.configure(text="当前程序和资产目录尚无批量回归结果。")
+        self.batch_result_label.configure(text="当前程序和资产目录尚无回放结果。")
 
     def run_batch(self):
         if self.busy or self.recording or self.pending_save or not self.cases:
@@ -846,11 +863,14 @@ class JournalSystemGUI:
     def open_batch_results(self):
         if self.busy or self.recording or self.pending_save or not self.last_batch_output:
             return
+        self._open_result_viewer(self.last_batch_output)
+
+    def _open_result_viewer(self, directory):
         viewer = self.app_root / "tools/review_results.py"
         if not viewer.is_file():
             messagebox.showerror("缺少结果查看器", str(viewer), parent=self.root)
             return
-        subprocess.Popen([sys.executable, str(viewer), str(self.last_batch_output)])
+        subprocess.Popen([sys.executable, str(viewer), str(directory)])
 
     def _session(self):
         return JournalExecutionSession(
@@ -887,6 +907,7 @@ class JournalSystemGUI:
         self.progress_var.set("已取消，未完成验收" if self.cancel_event.is_set() else STATUS.get(result["status"], result["status"]))
         self.log("场景结果：" + STATUS.get(result["status"], result["status"]))
         self._show_latest_result()
+        self._show_latest_batch()
 
     def cancel(self):
         if self.busy and self.task in ("scene", "batch", "replay"):
@@ -1076,6 +1097,7 @@ class JournalSystemGUI:
             self.record_result.configure(text=f"诊断回放：{status}。候选检查点不代表正式场景标准已获确认。")
             self.progress_var.set("录制诊断回放已结束")
             self.log(f"录制诊断报告：{self.record_report}")
+            self._show_latest_batch()
         self._start_task("replay", "准备独立实例回放录制…",
                          lambda: self._session().run(journal, application=app, startup_timeout=120), finished)
 
@@ -1086,11 +1108,11 @@ class JournalSystemGUI:
 
     def open_report(self):
         if self.last_report and self.last_report.is_file():
-            webbrowser.open(self.last_report.resolve().as_uri())
+            self._open_result_viewer(self.last_report.parent)
 
     def open_record_report(self):
         if self.record_report and self.record_report.is_file():
-            webbrowser.open(self.record_report.resolve().as_uri())
+            self._open_result_viewer(self.record_report.parent)
 
     def open_result_folder(self):
         if self.last_output:

@@ -47,7 +47,7 @@ PanelSurface {
                     modelId: models[i].id,
                     variantId: variant.id,
                     presetId: variant.printerPresetId,
-                    name: variant.userPreset ? variant.name : models[i].name + " · " + variant.nozzleDiameter + " mm"
+                    name: variant.userPreset || variant.projectPreset ? variant.name : models[i].name + " · " + variant.nozzleDiameter + " mm"
                 });
             }
         }
@@ -317,9 +317,14 @@ PanelSurface {
                     function revealActiveSlot() {
                         const button = slotRepeater.itemAt(root.activeSlot);
                         if (!button) return;
-                        contentX = Math.max(0, Math.min(button.x, contentWidth - width,
-                            Math.max(contentX, button.x + button.width - width)));
+                        let nextX = contentX;
+                        if (button.x < nextX)
+                            nextX = button.x;
+                        else if (button.x + button.width > nextX + width)
+                            nextX = button.x + button.width - width;
+                        contentX = Math.max(0, Math.min(Math.max(0, contentWidth - width), nextX));
                     }
+                    onContentWidthChanged: Qt.callLater(revealActiveSlot)
                     onWidthChanged: Qt.callLater(revealActiveSlot)
                     Connections {
                         target: root

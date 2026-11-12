@@ -5,7 +5,9 @@ import hashlib
 import html
 import json
 import os
+import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -15,6 +17,22 @@ from journal_display_profile import WINDOW_PROFILE, wait_for_window
 
 FORMAT_VERSION = 2
 DB_SERIALIZATION_FORMAT = "transdb.cereal-portable-binary.v1"
+# Only these reviewed native-import question images contain the continuously
+# animated task indicator. Other stages, including cancel/retry, remain exact.
+NATIVE_IMPORT_PROGRESS_BASELINES = {
+    ("three_mf_filepicker_geometry", "import-mode.png"),
+    ("three_mf_native_decision_cancel", "native-question.png"),
+    ("three_mf_target2_geometry", "native-options.png"),
+}
+
+
+def _native_import_progress_baseline(path):
+    parts = Path(path).parts
+    return (sys.platform == "darwin" and len(parts) >= 4
+            and parts[-4:-2] == ("baselines", "screenshots")
+            and parts[-2:] in NATIVE_IMPORT_PROGRESS_BASELINES)
+
+
 ENTRY_KINDS = {
     "input.mouse",
     "input.key",
@@ -201,7 +219,8 @@ def compare_serialized_data(expected_base64, actual_base64):
 
 
 def compare_screenshots(expected_path, actual_png, tolerance, diff_path, region=None,
-                        *, regions=None, max_channel_difference=0, blur_radius=0):
+                        *, regions=None, max_channel_difference=0, blur_radius=0, details=None,
+                        exclude_fps=False, exclude_import_progress=False):
     rectangles = _screenshot_regions(region, regions)
     channel_limit = _max_channel_difference(max_channel_difference)
     radius = _blur_radius(blur_radius)
@@ -216,6 +235,8 @@ def compare_screenshots(expected_path, actual_png, tolerance, diff_path, region=
         expected = source.convert("RGBA")
     with Image.open(BytesIO(actual_png)) as source:
         actual = source.convert("RGBA")
+    if details is not None:
+        details.update(expectedSize=list(expected.size), actualSize=list(actual.size), differentPixels=None)
     if expected.size != actual.size:
         actual.save(diff_path)
         return False, 0.0, f"size mismatch: {expected.size} != {actual.size}"
@@ -228,7 +249,29 @@ def compare_screenshots(expected_path, actual_png, tolerance, diff_path, region=
         if x + width > expected.width or y + height > expected.height:
             raise ValueError(f"screenshot region {[x, y, width, height]} exceeds image size {expected.size}")
         painter.rectangle((x, y, x + width - 1, y + height - 1), fill=255)
+    excluded = []
+    if exclude_fps or exclude_import_progress:
+        # The compact FPS button sits at the top right of the shared 1382x954
+        # window. Include its changing width and shadow, scaled to native DPR.
+        # Other window sizes/cropped images get no implicit exclusion.
+        logical_width, logical_height = WINDOW_PROFILE['logicalSize']
+        scale = expected.width / logical_width
+        if round(logical_height * scale) == expected.height:
+            areas = [('fps', (1260, 72, 1370, 108))] if exclude_fps else []
+            if exclude_import_progress and expected.size == (1382, 954):
+                # GlobalPrintCommandBar.taskContent: rotating 16px icon and
+                # the 300x5 indeterminate content, excluding its status label.
+                areas += [('native-import-spinner', (736, 894, 760, 918)),
+                          ('native-import-progress', (766, 913, 1066, 918))]
+            for reason, bounds in areas:
+                left, top, right, bottom = [round(value * scale) for value in bounds]
+                painter.rectangle((left, top, right - 1, bottom - 1), fill=0)
+                excluded.append(dict(reason=reason, rectangle=[left, top, right - left, bottom - top]))
     total = selected.histogram()[255]
+    if not total:
+        raise ValueError('Screenshot comparison has no pixels outside excluded areas')
+    if details is not None:
+        details.update(excludedRegions=excluded, comparedPixels=total)
 
     # Filter only the comparison inputs, never the saved expected/actual evidence.
     # The explicit physical-pixel radius bounds the spatial loss of detail.
@@ -242,11 +285,16 @@ def compare_screenshots(expected_path, actual_png, tolerance, diff_path, region=
         changed = ImageChops.lighter(changed, channel)
     changed_mask = ImageChops.multiply(
         changed.point(lambda value: 255 if value > channel_limit else 0), selected)
-    similarity = (total - changed_mask.histogram()[255]) / total
+    different = changed_mask.histogram()[255]
+    similarity = (total - different) / total
+    if details is not None:
+        details['differentPixels'] = different
     Image.composite(
         Image.new("RGBA", expected.size, (255, 0, 0, 255)),
         reference, changed_mask).save(diff_path)
     reason = "pixel similarity"
+    if excluded:
+        reason += " excluding " + ", ".join(f"{item['reason']} {item['rectangle']}" for item in excluded)
     if regions is not None:
         reason += f" in regions {[list(value) for value in rectangles]}"
     elif region is not None:
@@ -255,7 +303,94 @@ def compare_screenshots(expected_path, actual_png, tolerance, diff_path, region=
         reason += f" with maxChannelDifference={channel_limit}"
     if radius:
         reason += f" with blurRadius={radius}"
-    return similarity >= tolerance, similarity, reason
+    return (different == 0 if tolerance == 1 else similarity >= tolerance), similarity, reason
+
+
+class ScreenshotComparisons:
+    """Batch-owned workers; only collect() on the caller thread changes results."""
+
+    def __init__(self):
+        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="journal-compare")
+        self._jobs = []
+        self._summaries = {}
+        self._paths = set()
+
+    @staticmethod
+    def _compare(expected, actual, diff, preparation_error, exclude_import_progress):
+        comparison = dict(status="failed", mode="exact", differentPixels=None)
+        evidence = [actual]
+        try:
+            if preparation_error:
+                raise ValueError(preparation_error)
+            evidence = [expected, actual]
+            passed, similarity, reason = compare_screenshots(
+                expected, actual.read_bytes(), 1.0, diff, details=comparison, exclude_fps=True,
+                exclude_import_progress=exclude_import_progress)
+            comparison.update(status="passed" if passed else "failed", similarity=similarity)
+            evidence.append(diff)
+            message = f"Full-image exact comparison: {reason}; differentPixels={comparison['differentPixels']}"
+        except Exception as exc:
+            message = f"Screenshot comparison failed: {exc}"
+        return dict(status=comparison['status'], comparison=comparison, message=message, evidence=evidence)
+
+    def prepare(self, journal_path, output, payload, index, actual):
+        expected = output / "screenshots" / f"screenshot_{index:03d}_expected.png"
+        diff = output / "screenshots" / f"screenshot_{index:03d}_diff.png"
+        paths = {path.resolve() for path in (expected, actual, diff)}
+        if len(paths) != 3 or self._paths.intersection(paths):
+            raise ValueError("Screenshot output collides with pending comparison evidence")
+        self._paths.update(paths)
+        error = None
+        exclude_import_progress = False
+        try:
+            baseline = payload.get("baseline")
+            if not isinstance(baseline, str) or not baseline:
+                raise ValueError("Screenshot has no approved baseline")
+            # Freeze the standard before the next scene starts. Image decoding
+            # and all pixel work happen exclusively in the worker.
+            baseline_path = (journal_path.parent / baseline).resolve()
+            exclude_import_progress = _native_import_progress_baseline(baseline_path)
+            expected.write_bytes(baseline_path.read_bytes())
+        except Exception as exc:
+            error = str(exc)
+        return expected, diff, error, exclude_import_progress
+
+    def submit(self, output, prepared, actual, result):
+        expected, diff, error, exclude_import_progress = prepared
+        result.update(status="pending", message="Screenshot comparison queued",
+                      comparison=dict(status="pending", mode="exact"), evidence=[actual])
+        future = self._executor.submit(self._compare, expected, actual, diff, error, exclude_import_progress)
+        self._jobs.append((future, result, str(output.resolve())))
+
+    def track(self, summary):
+        if any(step.get("status") == "pending" for step in summary["results"]):
+            self._summaries[str(Path(summary["outputPath"]).resolve())] = summary
+
+    def collect(self):
+        """Apply completed work without waiting; return changed execution outputs."""
+        changed = set()
+        for job in self._jobs[:]:
+            future, result, output = job
+            if not future.done():
+                continue
+            try:
+                result.update(future.result())
+            except Exception as exc:
+                result.update(status="failed", message=f"Screenshot worker failed: {exc}",
+                              comparison=dict(status="failed", mode="exact", error=str(exc)))
+            self._jobs.remove(job)
+            changed.add(output)
+        for output in changed:
+            if output in self._summaries:
+                finish_result(self._summaries[output])
+                if not any(step.get("status") == "pending" for step in self._summaries[output]["results"]):
+                    del self._summaries[output]
+        return changed
+
+    def close(self):
+        """The batch/standalone owner calls this only after replay has ended."""
+        self._executor.shutdown(wait=True)
+        return self.collect()
 
 
 def _result_path(value, directory):
@@ -285,10 +420,12 @@ def write_report(path, summary):
     passed = sum(1 for result in results if result["status"] == "passed")
     failed = sum(1 for result in results if result["status"] == "failed")
     skipped = sum(1 for result in results if result["status"] == "skipped")
-    checked = sum(1 for result in results if result["kind"].startswith("verify.") and result["status"] == "passed")
+    checked = sum(1 for result in results if result["status"] == "passed" and
+                  (result["kind"].startswith("verify.") or result.get("comparison", {}).get("status") == "passed"))
     captures = sum(1 for result in results if result["status"] == "passed" and
                    (result["kind"].startswith("capture.") or
-                    result.get("actionCode") == "screenshot.capture"))
+                    (result.get("actionCode") == "screenshot.capture" and
+                     result.get("comparison", {}).get("status") != "passed")))
     rows = []
     for result in results:
         links = []
@@ -330,11 +467,15 @@ def finish_result(summary):
     results = summary["results"]
     success = (bool(results) and not summary.get("error") and
                not summary.get("cleanupErrors") and
+               len(results) == summary.get("totalEntries", len(results)) and
                not any(item["status"] in ("failed", "not_run") for item in results))
-    validations = [item for item in results if item["kind"].startswith("verify.")]
+    validations = [item for item in results if item["kind"].startswith("verify.") or
+                   item.get("comparison", {}).get("status") in ("pending", "passed", "failed")]
+    pending = any(item["status"] == "pending" for item in results)
+    disabled = any(item.get("comparison", {}).get("status") == "skipped" for item in results)
     summary["success"] = bool(success)
-    summary["acceptance"] = ("failed" if not success else "passed"
-                             if validations and all(item["status"] == "passed" for item in validations)
+    summary["acceptance"] = ("failed" if not success else "pending" if pending else "passed"
+                             if not disabled and validations and all(item["status"] == "passed" for item in validations)
                              else "not_verified")
     summary["completedEntries"] = len(results)
     summary["validationEntries"] = len(validations)
@@ -348,8 +489,9 @@ def finish_result(summary):
 class JournalRunner:
     """Owns Journal files, fixed-time replay, validation and reports."""
 
-    def __init__(self, client):
+    def __init__(self, client, *, comparisons=None):
         self.client = client
+        self.comparisons = comparisons
         self.session_path = None
         self._checkpoints = []
         self.recording = False
@@ -418,7 +560,7 @@ class JournalRunner:
         self._checkpoints.append(entry)
         return entry
 
-    def record_screenshot(self, label, tolerance=0.99):
+    def record_screenshot(self, label, tolerance=1.0):
         if not self.recording or self.session_path is None:
             raise RuntimeError("Start recording before adding a screenshot checkpoint")
         result = self.client.capture_screenshot()
@@ -487,6 +629,7 @@ class JournalRunner:
                     result["actionCode"] = entry["payload"]["code"]
                 dispatched = entry
                 screenshot_path = None
+                screenshot_standard = None
                 if (entry["kind"] == "action" and
                         entry["payload"].get("code") == "file.import"):
                     filepath = entry["payload"].get("params", {}).get("filePath")
@@ -500,21 +643,27 @@ class JournalRunner:
                         dispatched["payload"]["params"]["filePath"] = str(fixture_path)
                 if entry["kind"] == "action" and entry["payload"].get("code") == "screenshot.capture":
                     filepath = entry["payload"].get("params", {}).get("filepath")
-                    if filepath:
-                        # Keep relative screenshot artifacts in this execution's
-                        # directory, not the app's working directory. The Action
-                        # itself and the request protocol remain unchanged.
-                        screenshot_path = (output / filepath).resolve()
-                        if screenshot_path.exists():
-                            raise FileExistsError(f"Screenshot already exists: {screenshot_path}")
-                        dispatched = copy.deepcopy(entry)
-                        dispatched["payload"]["params"]["filepath"] = str(screenshot_path)
+                    screenshot_path = (output / (filepath or f"screenshots/screenshot_{index:03d}_actual.png")).resolve()
+                    if screenshot_path.exists():
+                        raise FileExistsError(f"Screenshot already exists: {screenshot_path}")
+                    screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+                    dispatched = copy.deepcopy(entry)
+                    dispatched["payload"].setdefault("params", {})["filepath"] = str(screenshot_path)
+                    # Baseline is a Python executor binding, not an App Action parameter.
+                    dispatched["payload"].pop("baseline", None)
+                    if validate:
+                        screenshot_standard = self.comparisons.prepare(
+                            journal_path, output, entry["payload"], index, screenshot_path)
                 self.client.execute_entry(dispatched)
                 if screenshot_path is not None:
                     if not screenshot_path.is_file() or screenshot_path.stat().st_size == 0:
                         raise RuntimeError(f"Screenshot Action did not save an image: {screenshot_path}")
                     result["evidence"].append(screenshot_path)
-                    result["message"] = "screenshot Action saved image; visual correctness not compared"
+                    if validate:
+                        self.comparisons.submit(output, screenshot_standard, screenshot_path, result)
+                    else:
+                        result.update(message="Candidate screenshot saved; not verification",
+                                      comparison=dict(status="skipped"))
             elif entry["kind"] == "capture.db":
                 data = self.client.serialize_db(entry["payload"]["dbInstanceId"])
                 raw = base64.b64decode(data["serialized"], validate=True)
@@ -563,29 +712,12 @@ class JournalRunner:
                 else:
                     result["message"] = "complete TransDB state matches"
             elif entry["kind"] == "verify.screenshot":
-                baseline = (journal_path.parent /
-                            entry["payload"]["baseline"]).resolve()
-                expected_path = (
-                    output / "screenshots" / f"screenshot_{index:03d}_expected.png")
-                expected_path.write_bytes(baseline.read_bytes())
-                result["evidence"] = [expected_path]
-                capture = self.client.capture_screenshot()
                 actual_path = (
                     output / "screenshots" / f"screenshot_{index:03d}_actual.png")
-                diff_path = (
-                    output / "screenshots" / f"screenshot_{index:03d}_diff.png")
+                standard = self.comparisons.prepare(journal_path, output, entry["payload"], index, actual_path)
+                capture = self.client.capture_screenshot()
                 actual_path.write_bytes(capture["png"])
-                passed, similarity, reason = compare_screenshots(
-                    expected_path, capture["png"],
-                    float(entry["payload"].get("tolerance", 0.99)), diff_path,
-                    region=entry["payload"].get("region"),
-                    regions=entry["payload"].get("regions"),
-                    max_channel_difference=entry["payload"].get("maxChannelDifference", 0),
-                    blur_radius=entry["payload"].get("blurRadius", 0))
-                result["evidence"] = [expected_path, actual_path, diff_path]
-                result["message"] = f"{reason}; similarity={similarity:.6f}"
-                if not passed:
-                    result["status"] = "failed"
+                self.comparisons.submit(output, standard, actual_path, result)
         except Exception as exc:
             result["status"] = "failed"
             result["message"] = str(exc)
@@ -601,6 +733,9 @@ class JournalRunner:
             "totalEntries": len(document["entries"]),
             "outputPath": str(output), "results": [],
         }
+        owned_comparisons = self.comparisons is None
+        if owned_comparisons:
+            self.comparisons = ScreenshotComparisons()
         started = time.monotonic()
         try:
             for index, entry in enumerate(document["entries"], start=1):
@@ -627,6 +762,12 @@ class JournalRunner:
                     break
         except Exception as exc:
             summary["error"] = str(exc)
+        finally:
+            if owned_comparisons:
+                self.comparisons.close()
+                self.comparisons = None
+            else:
+                self.comparisons.track(summary)
         return summary
 
     def play(self, journal_path, validate=True, progress=None, *, restart=True, output_dir=None):
@@ -683,7 +824,10 @@ class JournalRunner:
         self._step_state = {
             "document": document, "output": output,
             "validate": validate, "index": 0, "summary": summary,
+            "ownedComparisons": self.comparisons is None,
         }
+        if self.comparisons is None:
+            self.comparisons = ScreenshotComparisons()
         self._step_path = Path(document["journalPath"])
         return document
 
@@ -716,6 +860,9 @@ class JournalRunner:
             finally:
                 self._step_state = None
                 self._step_path = None
+            if state["ownedComparisons"]:
+                self.comparisons.close()
+                self.comparisons = None
             response["summary"] = finish_result(state["summary"])
         return response
 
@@ -731,6 +878,9 @@ class JournalRunner:
         finally:
             self._step_state = None
             self._step_path = None
+        if state["ownedComparisons"]:
+            self.comparisons.close()
+            self.comparisons = None
         finish_result(state["summary"])
 
 
