@@ -16807,6 +16807,12 @@ msgstr "工具头工艺能力"
 msgid "Fiber contours around holes"
 msgstr "生成孔洞周边纤维轮廓"
 
+msgid "Allow partial hole contours"
+msgstr "允许孔轮廓分段"
+
+msgid "Allow printable open fragments when a hole contour cannot be deposited as a complete loop. When disabled, reject the complete hole contour and leave its material for the configured matrix fill. Does not change outer contour closure or ring connection seams."
+msgstr "孔轮廓无法完整铺设时，允许保留可打印的开放片段。关闭时整条拒绝，由现有基材填充工艺处理其材料区域。不改变外轮廓闭合规则及轮廓连接接缝。"
+
 msgid "Generate fiber contour loops around closed holes in the fiber region. Disabling this option keeps holes excluded from all material paths and does not change fiber infill patterns."
 msgstr "沿铺纤区域中的封闭孔洞生成纤维轮廓。关闭后，孔洞仍为不可铺设区域，不改变纤维内部填充图案。"
 
