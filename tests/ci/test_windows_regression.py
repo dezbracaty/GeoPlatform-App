@@ -1,6 +1,7 @@
 """Windows CI rejects missing, incomplete, candidate and wrong-display results."""
 import json
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import unittest
@@ -24,12 +25,17 @@ class WindowsRegressionChecks(unittest.TestCase):
         self.tools.mkdir(parents=True)
         for name in ['journal_runner.py', 'journal_execution_session.py', 'journal_display_profile.py']:
             (self.tools / name).write_text('fixture', encoding='utf-8')
+        shutil.copyfile(Path(__file__).resolve().parents[2] / 'tools/journal/session_repository.py',
+                        self.tools / 'session_repository.py')
         self.app = self.source / 'build-Release/GPlatform.exe'
         self.app.parent.mkdir()
         self.app.write_bytes(b'current deployed app')
         self.output = self.source / 'regression'
         scene = self.source / 'tests/TestAssets/scenarios/scene'
         scene.mkdir(parents=True)
+        (scene / 'events').mkdir()
+        (scene / 'events/Journal.json').write_text(
+            json.dumps(dict(formatVersion=2, entries=[])), encoding='utf-8')
         (scene / 'metadata.json').write_text(json.dumps(dict(baselineReview=dict(
             platform='Windows amd64', status='approved'))), encoding='utf-8')
         self.summary = dict(status='passed', runComplete=True, selectionScope='all',
