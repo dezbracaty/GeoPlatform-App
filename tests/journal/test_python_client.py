@@ -189,7 +189,7 @@ class JournalPythonClientCheck(unittest.TestCase):
         for case in cases:
             with self.subTest(case=case.name):
                 self.assertTrue((case / 'events/Journal.json').is_file())
-                metadata = json.loads((case / 'metadata.json').read_text())
+                metadata = json.loads((case / 'metadata.json').read_text(encoding='utf-8'))
                 self.assertEqual(metadata['id'], case.name)
 
     def test_replay_compares_full_image_exactly_despite_legacy_options(self):
