@@ -227,7 +227,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--application', type=Path, help='A 电脑上的 GPlatform 可执行文件')
     parser.add_argument('--app-root', type=Path, help='包含 tests/TestAssets 的 App 源码目录')
-    parser.add_argument('--exports', type=Path, help='A 电脑上的实际导出目录')
+    parser.add_argument('--exports', type=Path, help='可选导出目录；默认在执行电脑的系统临时目录中为每次回放创建独立目录')
     parser.add_argument('--output-root', type=Path, help='回放结果保存目录')
     parser.add_argument('--listen', default='127.0.0.1', help='本机默认127.0.0.1；局域网访问使用0.0.0.0')
     parser.add_argument('--port', type=int, default=8765, help='网页服务端口；不同于 GPlatform 的 Journal 端口')
