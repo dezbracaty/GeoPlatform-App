@@ -88,6 +88,7 @@ set(QML_FILES
     qml/dialogs/VerificationFailureDialog.qml
     qml/dialogs/SliceConfigurationErrorDialog.qml
     qml/dialogs/ThreeMfImportDialog.qml
+    qml/dialogs/ExternalDownloadDialog.qml
     qml/dialogs/ImportUnitDialog.qml
     qml/dialogs/ZoomableImageViewer.qml
     qml/dialogs/ModelDetailPopup.qml
@@ -243,6 +244,12 @@ gplatform_generate_application_module_registration(
 set(SOURCE_FILES
     src/Application/src/main.cpp
     src/Application/src/StartupCoordinator.cpp
+    src/Application/src/ExternalOpenRequest.cpp
+    src/Application/include/ExternalOpenRequest.hpp
+    src/Application/src/ExternalOpenCoordinator.cpp
+    src/Application/include/ExternalOpenCoordinator.hpp
+    src/Application/src/LocalInstanceEndpoint.cpp
+    src/Application/include/LocalInstanceEndpoint.hpp
     src/Application/include/StartupCoordinator.hpp
     src/Application/include/ApplicationModuleRegistration.hpp
     ${GENERATED_APPLICATION_MODULE_REGISTRATION}
@@ -283,6 +290,7 @@ elseif(UNIX)
     configure_file(.cmake/linux_postinst.in ${CMAKE_SOURCE_DIR}/package/DEBIAN/postinst)
     configure_file(.cmake/linux_postrm.in ${CMAKE_SOURCE_DIR}/package/DEBIAN/postrm)
     configure_file(.cmake/linux.desktop.in ${CMAKE_SOURCE_DIR}/package/opt/${PROJECT_APP_NAME}/${PROJECT_APP_NAME}.desktop)
+    configure_file(.cmake/gplatform-mime.xml.in ${CMAKE_SOURCE_DIR}/package/usr/share/mime/packages/${PROJECT_APP_NAME}.xml COPYONLY)
     qt_add_executable(${PROJECT_NAME} ${SOURCE_FILES})
 else()
     qt_add_executable(${PROJECT_NAME} ${SOURCE_FILES})

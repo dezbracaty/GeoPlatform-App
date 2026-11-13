@@ -22,6 +22,7 @@ private:
     static ApplicationHelper* m_instance;
     QQmlApplicationEngine* m_engine = nullptr;
     QStringList m_restartArguments;
+    QStringList m_restartArgumentsTemplate;
     bool m_shutdownPrepared = false;
 
 public:
@@ -45,7 +46,7 @@ public:
     static void releaseQmlWindows(QQmlEngine& engine);
 
     Q_INVOKABLE void restart() {
-        auto arguments = QCoreApplication::arguments().mid(1);
+        auto arguments = m_restartArgumentsTemplate;
         if (arguments.isEmpty()) arguments << "--restart";
         QString error;
         if (!scheduleRestart(arguments, &error))
@@ -54,6 +55,9 @@ public:
 
     // Deferred restart: main launches only after the old application is destroyed.
     bool scheduleRestart(const QStringList& arguments, QString* error);
+    void setRestartArgumentsTemplate(const QStringList& arguments) {
+        m_restartArgumentsTemplate = arguments;
+    }
     QStringList takeRestartArguments();
 
     Q_INVOKABLE void restartQmlEngine() {

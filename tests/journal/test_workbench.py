@@ -107,6 +107,77 @@ class WorkbenchTests(unittest.TestCase):
         self.assertEqual(self.w.task['state'], 'cancelled')
         self.assertTrue(all(row['status'] != 'passed' for row in self.w.state()['task']['rows']))
 
+    def test_default_exports_use_host_temp_and_isolate_repeated_single_case_runs(self):
+        self.w.cases[0]['needsExports'] = True
+        host_temp = self.root / 'host-system-temp'
+        host_temp.mkdir()
+        destinations = []
+        def main(args, **kwargs):
+            directory = Path(args[args.index('--exports') + 1])
+            self.assertEqual(directory.parent, host_temp)
+            self.assertTrue(directory.is_dir())
+            self.assertFalse((directory / 'same-name.gcode').exists())
+            (directory / 'same-name.gcode').write_text(str(len(destinations)))
+            destinations.append(directory)
+            self.summary(Path(args[args.index('--output') + 1]), planned=['a'])
+            return 0
+        with patch('journal_workbench.tempfile.gettempdir', return_value=str(host_temp)), \
+                patch('journal_workbench.run_acceptance.main', side_effect=main):
+            self.assertEqual(self.w.state()['config']['defaultExports'], str(host_temp))
+            for _ in range(2):
+                self.w.run(dict(cases=['a']))
+                self.wait()
+                self.assertEqual(self.w.task['state'], 'completed', self.w.task.get('error'))
+        self.assertNotEqual(destinations[0], destinations[1])
+        self.assertEqual((destinations[0] / 'same-name.gcode').read_text(), '0')
+        self.assertTrue(any(str(destinations[1]) in line for line in self.w.task['logs']))
+
+    def test_explicit_export_directory_overrides_default(self):
+        self.w.cases[0]['needsExports'] = True
+        custom = self.root / 'custom-exports'
+        custom.mkdir()
+        self.w.configure(dict(exports=str(custom)))
+        def main(args, **kwargs):
+            self.assertEqual(args[args.index('--exports') + 1], str(custom))
+            self.summary(Path(args[args.index('--output') + 1]))
+            return 0
+        with patch('journal_workbench.tempfile.mkdtemp') as create, \
+                patch('journal_workbench.run_acceptance.main', side_effect=main):
+            self.w.run(dict(cases=['a']))
+            self.wait()
+            create.assert_not_called()
+        self.assertEqual(self.w.task['state'], 'completed', self.w.task.get('error'))
+
+    def test_clearing_export_override_restores_automatic_default(self):
+        self.w.configure(dict(exports=str(self.root)))
+        self.w.configure(dict(exports=''))
+        self.assertEqual(self.w.state()['config']['exports'], '')
+        self.assertEqual(self.w.state()['config']['defaultExports'], tempfile.gettempdir())
+        with self.assertRaisesRegex(WorkbenchError, '导出目录不存在'):
+            self.w.configure(dict(exports=str(self.root / 'missing')))
+
+    def test_non_export_scene_does_not_allocate_temp_directory(self):
+        def main(args, **kwargs):
+            self.assertNotIn('--exports', args)
+            self.summary(Path(args[args.index('--output') + 1]))
+            return 0
+        with patch('journal_workbench.tempfile.mkdtemp') as create, \
+                patch('journal_workbench.run_acceptance.main', side_effect=main):
+            self.w.run(dict(cases=['a']))
+            self.wait()
+            create.assert_not_called()
+        self.assertEqual(self.w.task['state'], 'completed', self.w.task.get('error'))
+
+    def test_unwritable_system_temp_fails_without_starting_replay(self):
+        self.w.cases[0]['needsExports'] = True
+        with patch('journal_workbench.tempfile.mkdtemp', side_effect=PermissionError('temp is read-only')), \
+                patch('journal_workbench.run_acceptance.main') as replay:
+            self.w.run(dict(cases=['a']))
+            self.wait()
+            replay.assert_not_called()
+        self.assertEqual(self.w.task['state'], 'failed')
+        self.assertIn('temp is read-only', self.w.task['error'])
+
     def test_resume_keeps_same_batch_and_boundary_only_pauses_when_requested(self):
         paused, done = threading.Event(), threading.Event()
         def main(args, *, session, progress, between_cases):

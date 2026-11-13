@@ -26,6 +26,7 @@
 
 ## 源码与依赖
 
+- 所有本次改动先进入功能分支；涉及修改的 App、源码库及需更新的 SDK、测试资产使用同名功能分支，依赖以完整 SHA 固定。完整宿主的[统一提交与合并流程](https://github.com/dezbracaty/GPlatform/blob/feature/gplatform-ui/docs/Development/Task_Execution_Workflow.md)规定：功能分支提交推送后，workflow 固定候选执行 Mac mini 和 Windows 全量回归，审查及当前候选强制检查全部通过才允许合并；新候选不能沿用旧通过记录。独立 App 无宿主权限时仍遵循上述约束，并明确跨仓库证据缺口。
 - App、Orca 和 SDK 是不同提交边界；检查实际工作区和目标提交，未经任务授权不升级依赖指针。
 - 已授权的跨仓库提交/交付，子仓库目标提交推送成功后，及时同步本次任务涉及的父仓库 gitlink 并提交推送；开发分支引用同步不等待 CI 完成。CI 结果单独记录，正式合并/发布遵守对应验收要求。独立 App 无可访问宿主时说明该边界。
 - 完整源码宿主、独立 App、Orca 单独构建使用各自的 CMake 入口。

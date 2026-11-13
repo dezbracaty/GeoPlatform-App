@@ -374,6 +374,7 @@
   }
   function fillConfig() {
     $('config-application').value = state.config.application || ''; $('config-exports').value = state.config.exports || '';
+    $('config-exports').placeholder = '留空自动使用运行机器的临时目录：' + (state.config.defaultExports || '系统临时目录');
     $('config-assets').textContent = state.config.assetsRoot || '服务未提供资产目录'; configDirty = false;
   }
   function configure() { fillConfig(); setError('config-error', ''); openModal('config-modal', 'config-application'); }

@@ -239,6 +239,14 @@ void StartupCoordinator::initializeScene() {
     checkFrame();
 }
 
+QQuickWindow* StartupCoordinator::mainWindow() const { return m_main.data(); }
+
+void StartupCoordinator::activateMainWindow() {
+    if (!ready() || !m_main) return;
+    m_main->setWindowStates(m_main->windowStates() & ~Qt::WindowMinimized);
+    m_main->show(); m_main->raise(); m_main->requestActivate();
+}
+
 void StartupCoordinator::checkFrame() {
     if (stopped() || ready() || !m_sceneReady || !m_renderer) return;
     const QString error = m_renderer->property("renderingError").toString();

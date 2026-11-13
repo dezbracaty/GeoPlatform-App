@@ -8,6 +8,7 @@
 #include <QFile>
 #include <QDir>
 #include <QImage>
+#include <QTimer>
 #include <QtQml/qqml.h>
 #include <QtQml/QQmlEngine>
 
@@ -41,6 +42,8 @@ public:
     void pause();
     void resume();
     void cancel();
+    // Set only for a validated external request, before start().
+    void setExternalFileName(const QString& fileName) { m_externalFileName = fileName; }
 
 signals:
     void totalSizeChanged();
@@ -56,6 +59,7 @@ private slots:
     void onFinished();
 
 private:
+    friend class DownloadManager;
     QString m_id;
     QString m_name;
     QString m_url;
@@ -68,6 +72,17 @@ private:
     QNetworkReply* m_reply = nullptr;
     QFile* m_file = nullptr;
     QString m_filePath;
+    QString m_externalFileName;
+    QNetworkAccessManager* m_manager{nullptr};
+    QTimer m_timeout;
+    int m_remainingMs{600000};
+    int m_redirects{0};
+    quint64 m_generation{0};
+    bool m_terminal{false};
+    bool m_ownsFile{false};
+    void beginRequest(const QUrl& url);
+    void detachReply();
+    void finish(const QString& status, const QString& error = {});
 };
 
 class DownloadManager : public QObject {
@@ -100,6 +115,7 @@ public:
     void setDownloadPath(const QString& path);
 
     Q_INVOKABLE void downloadModel(const QJsonObject& modelData);
+    void startExternalDownload(const QString& id, const QUrl& url, const QString& fileName);
     Q_INVOKABLE DownloadItem* getDownload(const QString& id);
     Q_INVOKABLE void pauseDownload(const QString& id);
     Q_INVOKABLE void resumeDownload(const QString& id);
@@ -122,6 +138,7 @@ signals:
     void downloadStarted(const QString& id);
     void downloadCompleted(const QString& id, const QString& filePath);
     void downloadFailed(const QString& id, const QString& error);
+    void downloadCancelled(const QString& id);
     void thumbnailReady(const QString& modelId, const QString& localPath);
 
 private:
@@ -138,7 +155,8 @@ private:
     QMap<QString, QJsonObject> m_pendingModelMetadata;
 
     void fetchPolyHavenDownloadUrl(const QJsonObject& modelData);
-    void startDownload(const QString& id, const QString& name, const QString& downloadUrl);
+    void startDownload(const QString& id, const QString& name, const QString& downloadUrl,
+                       const QString& externalFileName = {});
     void saveDownloadHistory();
     void addToHistory(const QString& id, const QString& name, const QString& filePath,
                       qint64 fileSize, const QJsonObject& sourceMetadata = {});
