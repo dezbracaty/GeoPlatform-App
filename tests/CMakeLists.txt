@@ -274,7 +274,7 @@ endforeach()
 if(WIN32)
     foreach(_app_check PrintBedRelationCheck ModelWidgetRelationCheck
             ModelSurfaceColorRelationCheck ManualSupportRelationCheck
-            VtkPickIntegrationCheck FilamentOpenGLIntegrationCheck)
+            VtkPickIntegrationCheck VtkFirstFrameCameraCheck FilamentOpenGLIntegrationCheck)
         if(TEST ${_app_check})
             set_tests_properties(${_app_check} PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:GPlatform>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
