@@ -175,8 +175,8 @@ Release 薄架构配置完成后，可在所选构建目录构建 `GPlatform_dis
 `tests/startup/check_translations.py` 属于 App 自身检查；
 `tests/startup/run_window_checks.py` 在 Windows 上运行，需要显式提供 `--application` 和 `--output`，默认使用本仓库的 Journal 工具。
 模型、场景 JSON 和预期由固定版本的 `tests/TestAssets` 子模块维护。
-共享业务验收入口为 `tools/run_acceptance.py`，Python 工具和 GUI 唯一实现位于 `tools/journal/`，
-随本 App 一起更新，完整宿主和独立 App 都默认使用它。GUI 入口为 `tools/journal/journalsystem_gui.py`。
+共享业务验收入口为 `tools/run_acceptance.py`，Python 工具和网页工作台唯一实现位于 `tools/journal/`，
+随本 App 一起更新，完整宿主和独立 App 都默认使用它。网页工作台入口为 `tools/journal/journal_server.py`；执行与文件保留在服务电脑，其他电脑通过浏览器访问。
 `--journal-tools` 保留为显式开发覆盖；正常测试无需配置外部目录。
 目录、输入契约、统一报告和通过规则见 [应用验收架构](docs/acceptance.md)。
 

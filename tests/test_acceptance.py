@@ -343,6 +343,35 @@ class AcceptanceCheck(unittest.TestCase):
         manifest = read_json(output / 'screenshot_review.json')
         self.assertEqual(manifest['cases'][0]['message'], 'Background review diagnostic')
 
+    def test_batch_boundary_refreshes_saved_results_before_next_app_starts(self):
+        import run_acceptance
+        import shutil
+        from unittest.mock import patch
+        self.metadata.update(artifacts={}, checks=[])
+        self.save_metadata()
+        shutil.copytree(self.scenario, self.assets / 'scenarios/job2')
+        write_json(self.assets / 'scenarios/job2/metadata.json', dict(self.metadata, id='job2'))
+        session = SessionFixture()
+        output = self.root / 'boundary'
+        calls = []
+
+        def boundary(refresh):
+            self.assertEqual(session.calls, 1, 'Next application must not start before this boundary')
+            refresh()
+            summary = read_json(output / 'summary.json')
+            self.assertEqual([c['id'] for c in summary['cases']], ['job'])
+            self.assertFalse(summary['runComplete'])
+            calls.append('boundary')
+
+        tools = Path(__file__).resolve().parents[1] / 'tools/journal'
+        with patch('builtins.print'):
+            run_acceptance.main(['--assets', str(self.assets), '--journal-tools', str(tools),
+                '--application', str(self.application), '--cases', 'job,job2', '--output', str(output)],
+                session=session, between_cases=boundary)
+        self.assertEqual(calls, ['boundary'])
+        self.assertEqual(session.calls, 2)
+        self.assertTrue(read_json(output / 'summary.json')['runComplete'])
+
     def test_batch_prepares_each_theme_and_restores_original_settings(self):
         import configparser
         import run_acceptance

@@ -108,7 +108,7 @@ P3 的原有文件检查标为 supplementalResults，不能让缺少 DB 比较�
 
 ## 批次截图对照：辅助查看
 
-App 批次系统在正式回放之外生成 `screenshot_review.json`，由 `tools/review_results.py`
+App 批次系统在正式回放之外生成 `screenshot_review.json`，由 `tools/journal/journal_server.py` 的网页工作台
 展示每个检查点的标准图、本次图和差异提示。它属于批量回归结果查看能力，不增加 Journal
 验证方式，不把 `verify.screenshot` 改成只采集。没有标准、缺图、尺寸不兼容和未运行均明确显示。
 

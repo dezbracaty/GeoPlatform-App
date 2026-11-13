@@ -421,8 +421,9 @@ class JournalPythonClientCheck(unittest.TestCase):
         executable = Path("/Applications/Test.app/Contents/MacOS/Test").resolve()
         process = Mock(pid=123)
         process.poll.return_value = None
+        duplicate = '"pid"=123\n"LSBundlePath"="/Applications/Test.app"\n"CFBundleExecutablePath"="/Applications/Test.app/Contents/MacOS/Test"'
         cases = [
-            ["ASN:0x0-0x123: ASN:0x0-0x456:"],
+            ["ASN:0x0-0x123: ASN:0x0-0x456:", duplicate, duplicate],
             ["ASN:0x0-0x123:", '"pid"=456\n"LSBundlePath"="/Applications/Test.app"\n"CFBundleExecutablePath"="/Applications/Test.app/Contents/MacOS/Test"'],
             ["ASN:0x0-0x123:", '"pid"=123\n"LSBundlePath"="/Applications/Other.app"\n"CFBundleExecutablePath"="/Applications/Test.app/Contents/MacOS/Test"'],
             ["ASN:0x0-0x123:", '"pid"=123\n"LSBundlePath"="/Applications/Test.app"\n"CFBundleExecutablePath"="/Applications/Test.app/Contents/MacOS/Other"'],
@@ -480,7 +481,7 @@ class JournalPythonClientCheck(unittest.TestCase):
                     run.assert_not_called()
 
 
-    def test_macos_activation_rechecks_unique_identity_after_setfront(self):
+    def test_macos_activation_rechecks_owned_identity_after_setfront(self):
         from journal_execution_session import _activate_owned_macos_application
         executable = Path("/Applications/Test.app/Contents/MacOS/Test").resolve()
         process = Mock(pid=123)
@@ -488,13 +489,37 @@ class JournalPythonClientCheck(unittest.TestCase):
         identity = ('"pid"=123\n"LSBundlePath"="/Applications/Test.app"\n'
                     '"CFBundleExecutablePath"="/Applications/Test.app/Contents/MacOS/Test"\n')
         for after in ("", "ASN:0x0-0x123: ASN:0x0-0x456:"):
-            replies = ["ASN:0x0-0x123:", identity, "", after]
+            replies = ["ASN:0x0-0x123:", identity, "", after] + ([identity, identity] if after else [])
             with self.subTest(after=after), \
                     patch("journal_execution_session.sys.platform", "darwin"), \
                     patch("journal_execution_session.subprocess.run", side_effect=lambda command, **kwargs:
                           subprocess.CompletedProcess(command, 0, stdout=replies.pop(0))):
                 with self.assertRaises(RuntimeError):
                     _activate_owned_macos_application(process, executable, time.monotonic() + 10)
+
+    def test_macos_activation_selects_owned_child_while_recording_instance_stays_open(self):
+        from journal_execution_session import _activate_owned_macos_application
+        executable = Path('/Applications/Test.app/Contents/MacOS/Test')
+        process = Mock(pid=123)
+        process.poll.return_value = None
+        commands = []
+        def run(command, **kwargs):
+            commands.append(command)
+            if 'find' in command:
+                value = 'ASN:0x0-0x456: ASN:0x0-0x123:'
+            elif 'info' in command:
+                pid = 456 if command[-1] == 'ASN:0x0-0x456:' else 123
+                value = json.dumps(dict(pid=pid, LSBundlePath='/Applications/Test.app',
+                    CFBundleExecutablePath=str(executable))).replace(': ', '=')
+            else:
+                value = ''
+            return subprocess.CompletedProcess(command, 0, stdout=value)
+        with patch('journal_execution_session.sys.platform', 'darwin'), \
+                patch('journal_execution_session.subprocess.run', side_effect=run):
+            result = _activate_owned_macos_application(process, executable, time.monotonic() + 10)
+        self.assertEqual(result['pid'], 123)
+        self.assertEqual([c for c in commands if 'setfront' in c],
+            [['/usr/bin/lsappinfo', 'setfront', '#123']])
 
 
     def test_execution_retains_activation_evidence_and_original_readiness_handshake(self):
@@ -1186,107 +1211,6 @@ class JournalPythonClientCheck(unittest.TestCase):
             launch.assert_not_called()
             self.assertFalse(result["success"])
             self.assertIn("cancelled", result["error"])
-
-    @unittest.skipUnless(importlib.util.find_spec("customtkinter") and importlib.util.find_spec("PIL"),
-                         "requires optional GUI dependencies")
-    def test_gui_latest_report_is_scoped_to_selected_case_and_application(self):
-        from journalsystem_gui import JournalSystemGUI
-        gui = object.__new__(JournalSystemGUI)
-        gui.result_label = Mock()
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary).resolve()
-            result = root / "session_first/first/case_result.json"
-            result.parent.mkdir(parents=True)
-            result.write_text(json.dumps({"status": "passed"}))
-            (result.parent.parent / "summary.json").write_text(json.dumps({"status": "passed"}))
-            report = result.parent / "case_report.html"
-            report.write_text("fixture")
-            gui._playbacks = lambda: root
-            gui.selected_case = {"path": Path("first")}
-            gui._show_latest_result()
-            self.assertEqual(gui.last_report, report)
-            (result.parent.parent / "summary.json").write_text(json.dumps({
-                "status": "failed", "cleanupError": "settings restore failed"}))
-            gui._show_latest_result()
-            self.assertIn("失败", gui.result_label.configure.call_args.kwargs["text"])
-            self.assertIn("settings restore failed", gui.result_label.configure.call_args.kwargs["text"])
-            gui.selected_case = {"path": Path("second")}
-            gui._show_latest_result()
-            self.assertIsNone(gui.last_report)
-            self.assertIsNone(gui.last_output)
-            gui.selected_case = {"path": Path("first")}
-            gui._playbacks = lambda: root / "another-application"
-            gui._show_latest_result()
-            self.assertIsNone(gui.last_report)
-
-    @unittest.skipUnless(os.environ.get("JOURNAL_GUI_WIDGET_CHECK"), "requires explicitly selected Tk runtime")
-    def test_gui_two_pages_keep_offline_save_and_reconnect_safe(self):
-        import customtkinter as ctk
-        from journalsystem_gui import JournalSystemGUI
-        with tempfile.TemporaryDirectory() as temporary:
-            base = Path(temporary)
-            application = base / "test-program.exe"
-            application.write_bytes(b"fixture; never executed")
-            root = ctk.CTk()
-            root.withdraw()
-            try:
-                gui = JournalSystemGUI(root, application=application, app_root=base)
-                root.after_cancel(gui._load_timer)
-                self.assertIsNone(gui.client)  # Offline startup never connects.
-                self.assertEqual([button.cget("text") for button in gui.nav_buttons.values()], ["场景测试", "操作录制"])
-                self.assertEqual(gui.current_page, "test")
-                gui.show_page("record")
-                self.assertEqual(gui.current_page, "record")
-                self.assertEqual(str(gui.run_button.cget("state")), "disabled")
-                gui.cases = [
-                    dict(path=base / name, name=name, metadata=dict(
-                        verification=dict(requiredMethods=["db"]), acceptanceTarget="DB fixture"), error="")
-                    for name in ("导入场景", "配置场景")]
-                gui._show_cases()
-                gui.select_case(1)
-                gui.search_entry.insert(0, "配置")
-                gui._show_cases()
-                self.assertEqual(gui.selected_case["name"], "配置场景")
-                gui.search_entry.delete(0, "end")
-                gui.search_entry.insert(0, "没有这个场景")
-                gui._show_cases()
-                self.assertIsNone(gui.selected_case)
-                self.assertEqual(str(gui.run_button.cget("state")), "disabled")
-                gui.search_entry.delete(0, "end")
-                gui._show_cases()
-                self.assertEqual(gui.selected_case["name"], "导入场景")
-                client = RunnerClient(base)
-                gui.client = client
-                gui.runner = JournalRunner(client)
-                gui.runner.start_recording()
-                gui._update_controls()
-                self.assertEqual(client.calls[0], ("start", True))  # Hover/drag recording retained.
-                gui.client = None
-                gui._update_controls()
-                self.assertTrue(gui.recording)
-                self.assertEqual(str(gui.connect_button.cget("state")), "normal")
-                self.assertEqual(str(gui.stop_button.cget("state")), "disabled")
-                with patch("journal_runner.write_journal", side_effect=OSError("disk full")):
-                    with self.assertRaises(OSError):
-                        gui.runner.stop_recording({"name": "keep me"})
-                gui._update_controls()
-                self.assertTrue(gui.pending_save)
-                self.assertEqual(gui.stop_button.cget("text"), "重试保存")
-                self.assertEqual(str(gui.stop_button.cget("state")), "normal")
-                self.assertEqual(str(gui.run_button.cget("state")), "disabled")
-                with patch("journalsystem_gui.messagebox.askyesno", return_value=False):
-                    gui.close()
-                self.assertFalse(gui._closed)
-                saved = gui.runner.stop_recording()
-                self.assertTrue(saved.is_file())
-                gui._update_controls()
-                self.assertFalse(gui.pending_save)
-                self.assertEqual(json.loads((saved.parent.parent / "metadata.json").read_text(encoding="utf-8"))["name"], "keep me")
-            finally:
-                root.destroy()
-
-
-
 
     def test_named_ui_uses_existing_entry_request_without_query(self):
         client = JournalSystem()
