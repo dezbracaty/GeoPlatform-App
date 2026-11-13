@@ -24,10 +24,22 @@ Item {
     property bool localMode: false
     property int localRevision: 0
     property string localEditError: ""
-    readonly property var localRows: {
-        const revision = localRevision
-        return localMode ? SliceSettingsBridge.localProcessSettings(localModelId, localPartId) : []
+    property var localRows: []
+    function refreshLocalRows() {
+        if (!localMode) {
+            localRows = []
+            return
+        }
+        // Keep the existing local projection while the serialized backend is
+        // loading presets. A disabled editor can still receive binding updates.
+        if (SliceSettingsBridge.machinePreparationPending)
+            return
+        localRows = SliceSettingsBridge.localProcessSettings(localModelId, localPartId)
     }
+    onLocalModeChanged: refreshLocalRows()
+    onLocalModelIdChanged: refreshLocalRows()
+    onLocalPartIdChanged: refreshLocalRows()
+    onLocalRevisionChanged: refreshLocalRows()
 
     function writeLocalSetting(modelId, partId, key, value, inherit) {
         if (!localMode || !settingsEditingEnabled || !modelId
@@ -1220,12 +1232,18 @@ Item {
     }
 
     Component.onCompleted: {
+        refreshLocalRows()
         refreshContext()
         syncPresetComboSelection()
     }
 
     Connections {
         target: SliceSettingsBridge
+
+        function onMachinePreparationChanged() {
+            if (!SliceSettingsBridge.machinePreparationPending)
+                root.refreshLocalRows()
+        }
 
         function onMachineSelectionChanged() {
             root.refreshContext()

@@ -14,8 +14,11 @@
 #include "SelectionBridge.hpp"
 #include "SlicingBackend.hpp"
 #include "TransactionManager.hpp"
+#include "TaskStateNotifier.hpp"
 
 #include <QCoreApplication>
+#include <QElapsedTimer>
+#include <QFutureWatcher>
 #include <QLocale>
 #include <QPointer>
 #include <QRegularExpression>
@@ -173,14 +176,6 @@ namespace {
             minY = std::min(minY, point.y);
         }
         return {minX, minY};
-    }
-
-    bool configurationMutationBlocked(const char* operation) {
-        if (GPlatform::SlicingBackend::instance().configurationChangesAllowed()) {
-            return false;
-        }
-        LOG_WARN("SliceSettingsBridge: rejected {} while the slicing backend is busy", operation);
-        return true;
     }
 
     QString translatedSettingText(const QString& source) {
@@ -534,7 +529,20 @@ namespace {
 std::optional<GPlatform::SlicingConfigActivationResult> startupConfiguration;
 
 GPlatform::SlicingConfigActivationResult loadStartupConfiguration(libslicer::ConfigSelection selection) {
+    QElapsedTimer timer;
+    timer.start();
+    const bool profile = qEnvironmentVariableIntValue("GP_STARTUP_PROFILE") == 1;
+    qint64 previousUs = 0;
+    const auto profilePhase = [&](const char* phase) {
+        if (!profile) return;
+        const auto nowUs = timer.nsecsElapsed() / 1000;
+        LOG_INFO("[STARTUP DETAIL] function=loadStartupConfiguration phase={} detail=none durationUs={} totalUs={}",
+                 phase, nowUs - previousUs, nowUs);
+        previousUs = timer.nsecsElapsed() / 1000;
+    };
     auto& backend = GPlatform::SlicingBackend::instance();
+    LOG_INFO("[STARTUP PRESETS] backend initialized elapsedMs={}", timer.elapsed());
+    profilePhase("SlicingBackend-instance");
     if (!backend.available()) {
         GPlatform::SlicingConfigActivationResult result;
         result.diagnostics.push_back({"initialization", "slicing backend is unavailable"});
@@ -546,7 +554,7 @@ GPlatform::SlicingConfigActivationResult loadStartupConfiguration(libslicer::Con
         selection.machine_model_id = "Flashforge AD5X";
         selection.machine_variant_id = "0.4";
     }
-    const auto restore = [&backend](libslicer::ConfigSelection requested) {
+    const auto restore = [&backend, &profilePhase](libslicer::ConfigSelection requested) {
         GPlatform::SlicingConfigActivationResult result;
         if (requested.printer_preset_id.empty()) {
             const auto presets = backend.printerPresets(requested.machine_model_id, requested.machine_variant_id);
@@ -556,7 +564,9 @@ GPlatform::SlicingConfigActivationResult loadStartupConfiguration(libslicer::Con
             ? rememberedPrinterSettings(requested)
             : std::vector<std::pair<std::string, std::string>>{};
         const auto revision = backend.configurationRevision();
+        profilePhase("read-saved-selection-and-printer-settings");
         auto prepared = backend.preparePrinterSwitch(requested, revision, {}, settings);
+        profilePhase("preparePrinterSwitch");
         if (!prepared) {
             result.diagnostics = std::move(prepared.diagnostics);
             return result;
@@ -567,6 +577,7 @@ GPlatform::SlicingConfigActivationResult loadStartupConfiguration(libslicer::Con
             return result;
         }
         auto installed = lease.install(prepared.configuration);
+        profilePhase("beginProjectCommit-and-install");
         if (!installed) {
             result.diagnostics = std::move(installed.diagnostics);
             return result;
@@ -574,6 +585,7 @@ GPlatform::SlicingConfigActivationResult loadStartupConfiguration(libslicer::Con
         result.view = prepared.configuration.view();
         result.view.revision = installed.revision;
         result.success = true;
+        profilePhase("publish-config-view");
         return result;
     };
     auto result = restore(selection);
@@ -592,6 +604,7 @@ GPlatform::SlicingConfigActivationResult loadStartupConfiguration(libslicer::Con
         selection.machine_variant_id = "0.4";
         result = restore(selection);
     }
+    LOG_INFO("[STARTUP PRESETS] configuration restored totalMs={} success={}", timer.elapsed(), result.success);
     return result;
 }
 
@@ -612,6 +625,8 @@ void SliceSettingsBridge::supplyStartupConfiguration(GPlatform::SlicingConfigAct
 
 SliceSettingsBridge::SliceSettingsBridge(QObject* parent)
     : bridge::BridgeBase(parent) {
+    connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit,
+            this, &SliceSettingsBridge::stopMachinePreparation);
     auto result = startupConfiguration ? std::move(*startupConfiguration) : loadStartupConfiguration(restoredSelection());
     startupConfiguration.reset();
     if (!replaceConfig(std::move(result), false))
@@ -636,8 +651,34 @@ SliceSettingsBridge::SliceSettingsBridge(QObject* parent)
 }
 
 SliceSettingsBridge::~SliceSettingsBridge() {
+    stopMachinePreparation();
     if (m_documentListenerId)
         DocumentManager::instance()->removeChangeListener(m_documentListenerId);
+}
+
+bool SliceSettingsBridge::configurationMutationBlocked(const char* operation) const {
+    if (!m_stopping && !machinePreparationPending() &&
+        GPlatform::SlicingBackend::instance().configurationChangesAllowed()) return false;
+    LOG_WARN("SliceSettingsBridge: rejected {} while the slicing backend is busy", operation);
+    return true;
+}
+
+void SliceSettingsBridge::finishMachinePreparation() {
+    const auto task = std::exchange(m_switchReviewTask, {});
+    if (task.isEmpty()) return;
+    // This is called only after the worker has finished. Clear the temporary
+    // projection before notifying: all reentrant reads can now use the source.
+    if (m_printerSwitch) m_printerSwitch->printerCatalog.clear();
+    m_switchReview = {};
+    TaskStateNotifier::instance()->endTask(task);
+    emit machinePreparationChanged();
+}
+
+void SliceSettingsBridge::stopMachinePreparation() {
+    m_stopping = true;
+    if (m_switchReview.isRunning()) m_switchReview.waitForFinished();
+    m_printerSwitch.reset();
+    finishMachinePreparation();
 }
 
 SliceSettingsBridge* SliceSettingsBridge::instance() {
@@ -675,6 +716,7 @@ bool SliceSettingsBridge::printerPresetModified() const {
 }
 
 void SliceSettingsBridge::refreshPresetState() {
+    if (machinePreparationPending() || m_stopping) return;
     const auto active = GPlatform::SlicingBackend::instance().activeConfigView();
     if (!active) return;
     bool slotsChanged = false;
@@ -884,6 +926,8 @@ void SliceSettingsBridge::restoreCurrentPreset(const QString& tab, int filamentS
 }
 
 QVariantList SliceSettingsBridge::machineModels() const {
+    if (machinePreparationPending() && m_printerSwitch)
+        return m_printerSwitch->printerCatalog;
     QVariantList models;
     for (const auto& machine : GPlatform::SlicingBackend::instance().machineModels()) {
         QVariantList variants;
@@ -972,14 +1016,66 @@ bool SliceSettingsBridge::selectMachine(const QString& modelId, const QString& v
         pending.remembered = rememberedPrinterSettings(selection);
     }
     if (!bedType.isEmpty()) pending.remembered.emplace_back("curr_bed_type", bedType.toStdString());
-    pending.review = backend.reviewPrinterSwitch(selection);
-    if (!pending.review.diagnostics.empty()) {
-        emit settingRejected(QStringLiteral("printer"), QString::fromStdString(pending.review.diagnostics.front().message));
+    const auto revision = backend.configurationRevision();
+    pending.printerCatalog = machineModels();
+    m_printerSwitch = std::move(pending);
+    m_switchReviewTask = QStringLiteral("printer-preset-review");
+    // beginTask can synchronously close popups and refresh their catalogs.
+    // Install both the pending request and its projection before any signal.
+    TaskStateNotifier::instance()->beginTask(m_switchReviewTask, tr("Preparing printer presets…"));
+    emit machinePreparationChanged();
+    if (m_stopping || !m_printerSwitch) {
+        finishMachinePreparation();
         return false;
     }
-    if (pending.review.presets.empty()) return applyPrinterSwitch(std::move(pending));
-    m_printerSwitch = std::move(pending);
-    showPrinterSwitchDecision();
+    const auto target = m_printerSwitch->target;
+    QElapsedTimer reviewTimer;
+    reviewTimer.start();
+    const bool profile = qEnvironmentVariableIntValue("GP_STARTUP_PROFILE") == 1;
+    if (profile) LOG_INFO("[PRINTER SWITCH] preparationStarted model={} revision={}", target.machine_model_id, revision);
+    auto* watcher = new QFutureWatcher<libslicer::PrinterSwitchReview>(this);
+    connect(watcher, &QFutureWatcher<libslicer::PrinterSwitchReview>::finished, this,
+        [this, watcher, revision, reviewTimer, profile] {
+            watcher->deleteLater();
+            if (m_stopping || !m_printerSwitch) return;
+            libslicer::PrinterSwitchReview review;
+            try {
+                review = m_switchReview.result();
+            } catch (const std::exception& error) {
+                review.diagnostics.push_back({"printer_switch", error.what()});
+            } catch (...) {
+                review.diagnostics.push_back({"printer_switch", "Could not prepare printer presets"});
+            }
+            auto& backend = GPlatform::SlicingBackend::instance();
+            if (review.diagnostics.empty() && (review.revision != revision ||
+                !backend.configurationChangesAllowed() ||
+                TaskStateNotifier::instance()->taskCount() != 1 ||
+                TransactionManager::instance().isInTransaction() ||
+                backend.configurationRevision() != revision))
+                review.diagnostics.push_back({"printer_switch", "The configuration changed while preparing printer presets"});
+            if (profile) LOG_INFO("[PRINTER SWITCH] preparationFinished elapsedMs={} errors={}",
+                                  reviewTimer.elapsed(), review.diagnostics.size());
+            finishMachinePreparation();
+            if (m_stopping || !m_printerSwitch) return;
+            if (!review.diagnostics.empty()) {
+                m_printerSwitch.reset();
+                emit settingRejected(QStringLiteral("printer"), QString::fromStdString(review.diagnostics.front().message));
+                emit machineSelectionChanged();
+                return;
+            }
+            m_printerSwitch->review = std::move(review);
+            if (m_printerSwitch->review.presets.empty()) {
+                auto confirmed = std::move(*m_printerSwitch);
+                m_printerSwitch.reset();
+                applyPrinterSwitch(std::move(confirmed));
+            } else {
+                showPrinterSwitchDecision();
+            }
+        });
+    m_switchReview = QtConcurrent::run([target] {
+        return GPlatform::SlicingBackend::instance().reviewPrinterSwitch(target);
+    });
+    watcher->setFuture(m_switchReview);
     return true;
 }
 
@@ -998,7 +1094,7 @@ void SliceSettingsBridge::showPrinterSwitchDecision() {
 }
 
 QVariantMap SliceSettingsBridge::printerSwitchPresetNameStatus(const QString& name) {
-    if (!m_printerSwitch) return {};
+    if (!m_printerSwitch || machinePreparationPending() || m_stopping) return {};
     const auto& pending = *m_printerSwitch;
     const auto& preset = pending.review.presets.at(pending.decisions.size());
     const auto status = GPlatform::SlicingBackend::instance().savePrinterSwitchPreset(
@@ -1010,7 +1106,7 @@ QVariantMap SliceSettingsBridge::printerSwitchPresetNameStatus(const QString& na
 }
 
 void SliceSettingsBridge::resolvePrinterSwitch(const QString& action, const QString& saveName) {
-    if (!m_printerSwitch) return;
+    if (!m_printerSwitch || machinePreparationPending() || m_stopping) return;
     using Action = libslicer::PrinterSwitchAction;
     auto& pending = *m_printerSwitch;
     const auto& preset = pending.review.presets.at(pending.decisions.size());
@@ -1213,6 +1309,7 @@ bool SliceSettingsBridge::setFilamentColor(int slotIndex, const QColor& color) {
 }
 
 bool SliceSettingsBridge::refreshActiveConfig() {
+    if (machinePreparationPending() || m_stopping) return false;
     auto active = GPlatform::SlicingBackend::instance().activeConfigView();
     if (!active) {
         LOG_ERROR("SliceSettingsBridge: libslicer has no active configuration after project import");
@@ -1312,6 +1409,7 @@ QVariantList SliceSettingsBridge::parameterModifiers(const QString& modelId) con
 }
 
 QVariantList SliceSettingsBridge::localProcessSettings(const QString& modelId, const QString& partId) const {
+    if (machinePreparationPending() || m_stopping) return {};
     const auto target = localProcessTarget(modelId, partId);
     if (!target) return {};
     const auto base = GPlatform::SlicingBackend::instance().configSnapshot();

@@ -30,6 +30,7 @@ using Application = QGuiApplication;
 #include <chrono>
 #include <QCoreApplication>
 #include <QQmlApplicationEngine>
+#include <QtQml/qqmldebug.h>
 #include <InteractionRuntime.hpp>
 #include <RenderingBootstrap.hpp>
 #include <QQuickWindow>
@@ -77,10 +78,10 @@ Q_IMPORT_QML_PLUGIN(SmoothUIDockPlugin)
 static int runApplication(int argc, char* argv[], QString& restartExecutable,
                           QStringList& restartArguments) {
     // ========== 启动性能追踪 ==========
-    auto startTime = std::chrono::high_resolution_clock::now();
+    auto startTime = std::chrono::steady_clock::now();
     auto lastTime = startTime;
     auto logElapsed = [&lastTime, &startTime](const char* stage) {
-        auto now = std::chrono::high_resolution_clock::now();
+        auto now = std::chrono::steady_clock::now();
         auto sinceStart = std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count();
         auto sinceLast = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTime).count();
         LOG_INFO("[STARTUP TIMING] {} - elapsed: {}ms, total: {}ms", stage, sinceLast, sinceStart);
@@ -116,6 +117,16 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
         if (runtimeServicesReady) ApplicationHelper::getInstance()->prepareForExit();
     }, Qt::DirectConnection);
     logElapsed("QGuiApplication created");
+
+#if QT_CONFIG(qml_debug)
+    if (qEnvironmentVariableIntValue("GP_STARTUP_PROFILE") == 1) {
+        // Configure the connector after Qt has the real application arguments,
+        // and before either QML engine is constructed. Keep only profiling
+        // services; a listener requires an explicit -qmljsdebugger argument.
+        QQmlDebuggingEnabler::enableDebugging(false);
+        QQmlDebuggingEnabler::setServices(QQmlDebuggingEnabler::profilerServices());
+    }
+#endif
 
     // Use platform-native glyph rasterization (CoreText on macOS) for crisp
     // static UI text. SmoothUI's explicit render type is set in App.qml.
@@ -162,9 +173,11 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
 
 
     GPlatform::Rendering::configureGraphicsAfterApplication();
+    logElapsed("Graphics and interaction configured");
 
     // Load the saved locale and gettext catalogs before the splash engine.
     SettingsHelper::getInstance()->init(argv);
+    logElapsed("Settings and locale initialized");
 
     NotificationManager::initialize(app);
     auto* notificationManager = NotificationManager::instance();
@@ -213,7 +226,9 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
         notificationManager->closeDesktopNotifications();
     }, Qt::DirectConnection);
 
+    logElapsed("Desktop notifications initialized");
     AppInfo::getInstance()->initializeTranslations();
+    logElapsed("App translations initialized");
 
     StartupCoordinator startup(!startupReplayId.isEmpty());
     app.setQuitOnLastWindowClosed(false);
@@ -228,11 +243,13 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
             QCoreApplication::exit(1);
         }
     });
+    startup.startPresetPreparation();
     QQmlApplicationEngine splashEngine;
     splashEngine.rootContext()->setContextProperty("StartupState", &startup);
     splashEngine.load(QUrl("qrc:/gplatform/startup/StartupWindow.qml"));
     if (splashEngine.rootObjects().isEmpty()) return 1;
     startup.setSplash(qobject_cast<QQuickWindow*>(splashEngine.rootObjects().first()));
+    logElapsed("Splash QML created");
 
     TempDBScope applicationTheme;
     bool themeCreated = false;
@@ -252,9 +269,17 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
     JournalSystem* journal = nullptr;
 #endif
     ActionManager::getInstance()->setAdmissionPolicy(
-        [&startup](const QString& code, bool ai) { return startup.admissionError(code, ai); });
+        [&startup, &runtimeServicesReady](const QString& code, bool ai) -> QString {
+            const auto startupError = startup.admissionError(code, ai);
+            if (!startupError.isEmpty()) return startupError;
+            if (runtimeServicesReady && SliceSettingsBridge::instance()->machinePreparationPending() &&
+                code != "screenshot.capture" && code != "camera.panRotate")
+                return QCoreApplication::translate("SliceSettingsBridge", "Printer presets are being prepared. Please wait.");
+            return {};
+        });
     const auto clearAdmission = qScopeGuard([] { ActionManager::getInstance()->setAdmissionPolicy({}); });
     QObject::connect(&startup, &StartupCoordinator::bootstrapPresented, &app, [&] {
+        logElapsed("Splash first frame presented");
         startup.enqueue("Configuration", StartupCoordinator::tr("Reading configuration…"), [&] {
             startup.preparePresets([&] {
             startup.enqueue("Modules", StartupCoordinator::tr("Loading application modules…"), [&] {
@@ -299,7 +324,7 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
                         logElapsed("Menu configuration loaded");
 
                         engine.load(url);
-                        logElapsed("QML engine load started");
+                        logElapsed("QML engine load completed");
 
 #ifdef JOURNALSYSTEM_ENABLED
                         // Initialize JournalSystem for UI testing support
@@ -453,6 +478,10 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
         });
     });
 
+    QObject::connect(&startup, &StartupCoordinator::startupReady, &app, [&] {
+        logElapsed("Application ready");
+    });
+    logElapsed("Entering application event loop");
     const int exec = QGuiApplication::exec();
 
 #ifdef JOURNALSYSTEM_ENABLED

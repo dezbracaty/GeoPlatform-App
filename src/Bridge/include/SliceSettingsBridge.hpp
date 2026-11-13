@@ -40,6 +40,7 @@ class SliceSettingsBridge final : public bridge::BridgeBase {
     Q_PROPERTY(QVariantList compatibleFilamentPresets READ compatibleFilamentPresets NOTIFY presetSelectionChanged)
     Q_PROPERTY(QVariantList filamentSlots READ filamentSlots NOTIFY filamentSlotsChanged)
     Q_PROPERTY(QString configurationError READ configurationError NOTIFY configurationErrorChanged)
+    Q_PROPERTY(bool machinePreparationPending READ machinePreparationPending NOTIFY machinePreparationChanged)
     QML_ELEMENT
     QML_SINGLETON
 
@@ -126,6 +127,7 @@ public:
     QVariantList compatibleFilamentPresets() const;
     QVariantList filamentSlots() const;
     QString configurationError() const;
+    bool machinePreparationPending() const noexcept { return !m_switchReviewTask.isEmpty(); }
 
 signals:
     void hasPendingResliceChanged();
@@ -139,6 +141,7 @@ signals:
     void filamentSlotsChanged();
     void configurationErrorChanged();
     void printerSwitchDecisionRequested(const QVariantMap& preset);
+    void machinePreparationChanged();
 
 private:
     explicit SliceSettingsBridge(QObject* parent = nullptr);
@@ -146,6 +149,9 @@ private:
 
     void buildSchemaLocked();
     void refreshPresetState();
+    bool configurationMutationBlocked(const char* operation) const;
+    void finishMachinePreparation();
+    void stopMachinePreparation();
     const libslicer::SettingItem* findItemLocked(std::string_view key) const;
     bool applyChangedItemsLocked(const std::vector<libslicer::SettingItem>& changedItems);
     QVariant displayValueLocked(const libslicer::SettingItem& item,
@@ -170,10 +176,16 @@ private:
         std::vector<libslicer::PrinterSwitchDecision> decisions;
         std::vector<std::pair<std::string, std::string>> remembered;
         bool presetSaved{false};
+        // Complete GUI projection retained only while review occupies the
+        // worker, so synchronous popup-close refreshes cannot wait behind IO.
+        QVariantList printerCatalog;
     };
     void showPrinterSwitchDecision();
     bool applyPrinterSwitch(PendingPrinterSwitch&&);
     std::optional<PendingPrinterSwitch> m_printerSwitch;
+    QFuture<libslicer::PrinterSwitchReview> m_switchReview;
+    QString m_switchReviewTask;
+    bool m_stopping{false};
 
     mutable QReadWriteLock m_lock;
     libslicer::ResolvedSelection m_selection;

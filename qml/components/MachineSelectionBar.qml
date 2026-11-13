@@ -225,7 +225,15 @@ Button {
         return true
     }
 
+    function ensureDetailedSettingsPage() {
+        detailedSettingsLoader.active = true
+        return detailedSettingsLoader.item
+    }
+
     function openDetailedSettings() {
+        var page = ensureDetailedSettingsPage()
+        if (!page)
+            return false
         applyError = ""
         detailedSettingsVisible = true
         if (!selectorPopup.opened) {
@@ -233,13 +241,18 @@ Button {
             selectorPopup.open()
         }
         Qt.callLater(function() {
-            detailedSettingsPage.forceActiveFocus()
+            if (selectorPopup.opened && root.detailedSettingsVisible
+                    && detailedSettingsLoader.item === page)
+                page.forceActiveFocus()
         })
         return true
     }
 
     function openFilamentSettings() {
-        detailedSettingsPage.workspaceIndex = 1
+        var page = ensureDetailedSettingsPage()
+        if (!page)
+            return false
+        page.workspaceIndex = 1
         return openDetailedSettings()
     }
 
@@ -938,17 +951,20 @@ Button {
                     }
                 }
 
-                SlicingSettingsContent {
-                    id: detailedSettingsPage
+                Loader {
+                    id: detailedSettingsLoader
+                    active: false
                     x: root.detailedSettingsVisible ? 0 : 24
                     y: 0
                     width: parent.width
                     height: parent.height
-                    embedded: true
                     opacity: root.detailedSettingsVisible ? 1.0 : 0.0
                     visible: opacity > 0.001
                     enabled: root.detailedSettingsVisible
-                    onCloseRequested: selectorPopup.close()
+                    sourceComponent: SlicingSettingsContent {
+                        embedded: true
+                        onCloseRequested: selectorPopup.close()
+                    }
 
                     Behavior on x {
                         NumberAnimation {
@@ -992,12 +1008,18 @@ Button {
     }
 
     function openSliceSettings(params) {
+        var page = ensureDetailedSettingsPage()
+        if (!page)
+            return false
         if (params && params.workspaceIndex !== undefined)
-            detailedSettingsPage.workspaceIndex = Math.max(0, Math.min(2, params.workspaceIndex))
-        root.openDetailedSettings()
+            page.workspaceIndex = Math.max(0, Math.min(2, params.workspaceIndex))
+        if (!root.openDetailedSettings())
+            return false
         if (params && params.settingKey) {
             Qt.callLater(function() {
-                detailedSettingsPage.focusSetting(params.settingKey)
+                if (selectorPopup.opened && root.detailedSettingsVisible
+                        && detailedSettingsLoader.item === page)
+                    page.focusSetting(params.settingKey)
             })
         }
         return true

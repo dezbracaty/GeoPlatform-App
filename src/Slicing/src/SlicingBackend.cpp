@@ -170,7 +170,7 @@ SlicingBackend::SlicingBackend()
         options.resource_directory =
             (QCoreApplication::applicationDirPath() + "/resources/libslicer").toStdString();
 #endif
-        m_impl->library = libslicer::Library::open(options, &diagnostics);
+        m_impl->library = libslicer::Library::open(options, libslicer::PresetLoadingMode::OnDemand, &diagnostics);
         if (!m_impl->library) {
             return false;
         }

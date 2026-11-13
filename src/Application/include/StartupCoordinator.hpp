@@ -40,6 +40,7 @@ public:
     void setStage(const QString& stage, const QString& text);
     void enqueue(const QString& stage, const QString& text, std::function<void()> work);
     void setSplash(QQuickWindow* window);
+    void startPresetPreparation();
     void preparePresets(std::function<void()> continuation);
     QString admissionError(const QString& code, bool ai) const;
     void fail(const QString& message);
