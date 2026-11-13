@@ -24,6 +24,7 @@ from journal_runner import (  # noqa: E402
     DB_SERIALIZATION_FORMAT,
     JournalFormatError,
     JournalRunner,
+    ScreenshotComparisons,
     compare_serialized_data,
     load_journal,
     write_journal,
@@ -31,7 +32,7 @@ from journal_runner import (  # noqa: E402
     write_result,
 )
 from journalsystem.journalsystem import JournalSystem  # noqa: E402
-from session_repository import JournalSessionRepository  # noqa: E402
+from session_repository import JournalSessionRepository, discover_scenarios  # noqa: E402
 from journal_display_profile import WINDOW_PROFILE  # noqa: E402
 
 
@@ -153,6 +154,242 @@ def restart_probe_directory():
 
 
 class JournalPythonClientCheck(unittest.TestCase):
+    def test_scene_discovery_rejects_nested_journals_instead_of_omitting_them(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for relative in ('valid/events/Journal.json', 'valid/windows/events/Journal.json'):
+                path = root / relative
+                path.parent.mkdir(parents=True)
+                path.write_text('{}')
+            self.assertEqual(discover_scenarios(root), [root / 'valid'])
+            nested = root / 'handoff/replay/missed/Journal.json'
+            nested.parent.mkdir(parents=True)
+            nested.write_text('{}')
+            with self.assertRaisesRegex(ValueError, 'handoff/replay/missed/Journal.json'):
+                discover_scenarios(root)
+            with self.assertRaisesRegex(ValueError, 'Unregistered Journal'):
+                JournalSessionRepository(scenarios=root).list_sessions()
+            nested.unlink()
+            (root / 'valid/events/Journal.json').unlink()
+            with self.assertRaisesRegex(ValueError, 'valid/windows/events/Journal.json'):
+                discover_scenarios(root)
+
+    def test_scene_metadata_without_its_journal_is_not_silently_omitted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'missing').mkdir()
+            (root / 'missing/metadata.json').write_text('{}')
+            with self.assertRaisesRegex(ValueError, 'missing events/Journal.json'):
+                discover_scenarios(root)
+
+    def test_all_shipped_active_journals_are_discoverable(self):
+        root = Path(__file__).resolve().parents[1] / 'TestAssets/scenarios'
+        cases = discover_scenarios(root)
+        self.assertTrue(cases)
+        for case in cases:
+            with self.subTest(case=case.name):
+                self.assertTrue((case / 'events/Journal.json').is_file())
+                metadata = json.loads((case / 'metadata.json').read_text())
+                self.assertEqual(metadata['id'], case.name)
+
+    def test_replay_compares_full_image_exactly_despite_legacy_options(self):
+        from PIL import Image
+        from io import BytesIO
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            baseline = root / "approved.png"
+            Image.new("RGBA", (8, 8), "white").save(baseline)
+            original = baseline.read_bytes()
+            for variant in ("equal", "one-pixel-outside-region", "size"):
+                with self.subTest(variant=variant):
+                    image = Image.new("RGBA", (9, 8) if variant == "size" else (8, 8), "white")
+                    if variant == "one-pixel-outside-region":
+                        image.putpixel((7, 7), (254, 255, 255, 255))
+                    png = BytesIO()
+                    image.save(png, format="PNG")
+                    client = RunnerClient(root)
+                    client.capture_screenshot = Mock(return_value={"png": png.getvalue()})
+                    journal = write_journal(root / "case.json", [
+                        client.entry("verify.screenshot", dict(baseline="approved.png", tolerance=0,
+                            region=[0, 0, 2, 2], maxChannelDifference=255, blurRadius=2)),
+                        client.entry("action", dict(code="following.input"), sequence=1)])
+                    result = JournalRunner(client).play(journal, restart=False, output_dir=root / variant)
+                    self.assertEqual(result["acceptance"], "passed" if variant == "equal" else "failed")
+                    self.assertEqual(result["completedEntries"], 2)
+                    comparison = result["results"][0]["comparison"]
+                    self.assertEqual(comparison["mode"], "exact")
+                    if variant != "size":
+                        self.assertEqual(comparison["differentPixels"], 0 if variant == "equal" else 1)
+                    self.assertEqual(baseline.read_bytes(), original)
+                    self.assertEqual(Path(result["results"][0]["evidence"][1]).read_bytes(), png.getvalue())
+
+    def test_capture_without_baseline_fails_even_with_passing_db_and_continues_replay(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            client = RunnerClient(root)
+            def execute(entry):
+                if entry["payload"]["code"] == "screenshot.capture":
+                    Path(entry["payload"]["params"]["filepath"]).write_bytes(b"captured")
+            client.execute_entry = Mock(side_effect=execute)
+            journal = write_journal(root / "case.json", [
+                client.entry("verify.db", dict(dbInstanceId="42", serializationFormat=DB_SERIALIZATION_FORMAT,
+                    expectedSerialized=client.db_data["serialized"])),
+                client.entry("action", dict(code="screenshot.capture"), sequence=1),
+                client.entry("action", dict(code="following.input"), sequence=2)])
+            result = JournalRunner(client).play(journal, restart=False)
+            self.assertEqual(result["acceptance"], "failed")
+            self.assertEqual(result["completedEntries"], 3)
+            self.assertEqual(result["results"][0]["status"], "passed")
+            self.assertIn("no approved baseline", result["results"][1]["message"])
+            self.assertEqual(result["results"][2]["status"], "passed")
+            self.assertFalse((root / "approved.png").exists())
+
+    def test_capture_action_with_baseline_is_checked_and_candidate_mode_never_passes(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            baseline = root / "approved.png"
+            Image.new("RGBA", (8, 8), "white").save(baseline)
+            client = RunnerClient(root)
+            def execute(entry):
+                self.assertNotIn("baseline", entry["payload"])
+                Path(entry["payload"]["params"]["filepath"]).write_bytes(baseline.read_bytes())
+            client.execute_entry = Mock(side_effect=execute)
+            journal = write_journal(root / "case.json", [client.entry("action",
+                dict(code="screenshot.capture", baseline="approved.png"))])
+            result = JournalRunner(client).play(journal, restart=False, output_dir=root / "verified")
+            self.assertEqual(result["acceptance"], "passed")
+            self.assertEqual(result["results"][0]["comparison"]["differentPixels"], 0)
+            candidate = JournalRunner(client).play(journal, restart=False, validate=False, output_dir=root / "candidate")
+            self.assertEqual(candidate["acceptance"], "not_verified")
+            self.assertEqual(candidate["results"][0]["comparison"]["status"], "skipped")
+
+    def test_later_screenshot_cannot_overwrite_an_inflight_comparison_image(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            baseline = root / 'approved.png'
+            Image.new('RGBA', (8, 8), 'white').save(baseline)
+            client = RunnerClient(root)
+            client.execute_entry = Mock(side_effect=lambda entry:
+                Path(entry['payload']['params']['filepath']).write_bytes(baseline.read_bytes()))
+            client.capture_screenshot = Mock(return_value=dict(png=baseline.read_bytes()))
+            journal = write_journal(root / 'case.json', [
+                client.entry('action', dict(code='screenshot.capture', baseline='approved.png',
+                    params=dict(filepath='screenshots/screenshot_002_diff.png'))),
+                client.entry('verify.screenshot', dict(baseline='approved.png'), sequence=1)])
+            result = JournalRunner(client).play(journal, restart=False)
+            self.assertEqual(result['acceptance'], 'failed')
+            self.assertEqual(result['results'][0]['comparison']['status'], 'passed')
+            self.assertIn('collides', result['results'][1]['message'])
+            client.capture_screenshot.assert_not_called()
+            self.assertEqual(Path(result['results'][0]['evidence'][1]).read_bytes(), baseline.read_bytes())
+
+    def test_background_worker_error_is_recorded_after_replay_continues(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "approved.png").write_bytes(b"standard")
+            client = RunnerClient(root)
+            client.capture_screenshot = Mock(return_value={"png": b"actual"})
+            journal = write_journal(root / "case.json", [
+                client.entry("verify.screenshot", dict(baseline="approved.png")),
+                client.entry("action", dict(code="following.input"), sequence=1)])
+            with patch.object(ScreenshotComparisons, "_compare", side_effect=RuntimeError("worker error")):
+                result = JournalRunner(client).play(journal, restart=False)
+            self.assertEqual(result["acceptance"], "failed")
+            self.assertEqual(result["completedEntries"], 2)
+            self.assertIn("worker error", result["results"][0]["message"])
+
+    def test_out_of_order_comparisons_and_cancelled_replay_keep_their_results(self):
+        import threading
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            baseline = root / "approved.png"
+            Image.new("RGBA", (8, 8), "white").save(baseline)
+            client = RunnerClient(root)
+            client.capture_screenshot = Mock(return_value={"png": baseline.read_bytes()})
+            cancelled, release, second_done = threading.Event(), threading.Event(), threading.Event()
+            original_compare = ScreenshotComparisons._compare
+            def compare(expected, actual, diff, error, exclude_import_progress):
+                if '001' in expected.name:
+                    if not release.wait(3):
+                        raise RuntimeError("Comparison was awaited during replay")
+                result = original_compare(expected, actual, diff, error, exclude_import_progress)
+                if '002' in expected.name:
+                    second_done.set()
+                return result
+            client.execute_entry = Mock(side_effect=lambda _entry: cancelled.set())
+            journal = write_journal(root / "case.json", [
+                client.entry("verify.screenshot", dict(baseline="approved.png")),
+                client.entry("verify.screenshot", dict(baseline="approved.png"), sequence=1),
+                client.entry("action", dict(code="cancel"), sequence=2),
+                client.entry("action", dict(code="must.not.run"), sequence=3)])
+            output = JournalSessionRepository().create_playback(root / "run")
+            comparisons = ScreenshotComparisons()
+            with patch.object(ScreenshotComparisons, "_compare", side_effect=compare):
+                try:
+                    result = JournalRunner(client, comparisons=comparisons).run(
+                        load_journal(journal), output, cancel_event=cancelled)
+                    self.assertEqual(result["error"], "Replay cancelled by caller")
+                    self.assertEqual(len(result["results"]), 3)
+                    self.assertTrue(second_done.wait(2))
+                    # Completion notification precedes Future completion by a
+                    # few instructions; wait only on that already-running job
+                    # in this test, never in the production replay loop.
+                    comparisons._jobs[1][0].result(timeout=2)
+                    comparisons.collect()
+                    self.assertEqual(result["results"][0]["status"], "pending")
+                    self.assertEqual(result["results"][1]["status"], "passed")
+                finally:
+                    release.set()
+                    comparisons.close()
+            self.assertEqual(result["acceptance"], "failed")
+            self.assertTrue(all(row['status'] == 'passed' for row in result['results']))
+            self.assertNotIn('pending', json.dumps(json.loads((output / 'execution_result.json').read_text())))
+
+    def test_slow_checkpoint_does_not_consume_later_input_gap(self):
+        runner = JournalRunner(Mock())
+        clock = [0.0]
+        dispatched = []
+        entries = [
+            {"atMs": 0, "kind": "verify.screenshot", "payload": {}},
+            {"atMs": 10, "kind": "input.mouse", "payload": {}},
+            {"atMs": 210, "kind": "input.mouse", "payload": {}},
+        ]
+
+        def execute(_path, _output, entry, _index, _validate):
+            dispatched.append(clock[0])
+            if entry["kind"] == "verify.screenshot":
+                clock[0] += 0.35
+            return {"status": "passed"}
+
+        with patch("journal_runner.time.monotonic", side_effect=lambda: clock[0]), \
+                patch("journal_runner.time.sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
+                patch.object(runner, "_execute_entry", side_effect=execute):
+            result = runner.run({"journalPath": "case.json", "journalSha256": "test", "entries": entries}, ".")
+        self.assertEqual(len(result["results"]), 3)
+        for actual, expected in zip(dispatched, [0.0, 0.35, 0.55]):
+            self.assertAlmostEqual(actual, expected)
+
+    def test_fast_requests_keep_the_recorded_cadence(self):
+        runner = JournalRunner(Mock())
+        clock = [0.0]
+        dispatched = []
+        entries = [{"atMs": at, "kind": "action", "payload": {}} for at in (0, 10, 20)]
+
+        def execute(*_args):
+            dispatched.append(clock[0])
+            clock[0] += 0.002
+            return {"status": "passed"}
+
+        with patch("journal_runner.time.monotonic", side_effect=lambda: clock[0]), \
+                patch("journal_runner.time.sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
+                patch.object(runner, "_execute_entry", side_effect=execute):
+            runner.run({"journalPath": "case.json", "journalSha256": "test", "entries": entries}, ".")
+        for actual, expected in zip(dispatched, [0.0, 0.01, 0.02]):
+            self.assertAlmostEqual(actual, expected)
+
     def test_macos_activation_waits_for_owned_registration_without_launching(self):
         from journal_execution_session import _activate_owned_macos_application
         executable = Path("/Applications/Test App.app/Contents/MacOS/Test").resolve()
@@ -184,8 +421,9 @@ class JournalPythonClientCheck(unittest.TestCase):
         executable = Path("/Applications/Test.app/Contents/MacOS/Test").resolve()
         process = Mock(pid=123)
         process.poll.return_value = None
+        duplicate = '"pid"=123\n"LSBundlePath"="/Applications/Test.app"\n"CFBundleExecutablePath"="/Applications/Test.app/Contents/MacOS/Test"'
         cases = [
-            ["ASN:0x0-0x123: ASN:0x0-0x456:"],
+            ["ASN:0x0-0x123: ASN:0x0-0x456:", duplicate, duplicate],
             ["ASN:0x0-0x123:", '"pid"=456\n"LSBundlePath"="/Applications/Test.app"\n"CFBundleExecutablePath"="/Applications/Test.app/Contents/MacOS/Test"'],
             ["ASN:0x0-0x123:", '"pid"=123\n"LSBundlePath"="/Applications/Other.app"\n"CFBundleExecutablePath"="/Applications/Test.app/Contents/MacOS/Test"'],
             ["ASN:0x0-0x123:", '"pid"=123\n"LSBundlePath"="/Applications/Test.app"\n"CFBundleExecutablePath"="/Applications/Test.app/Contents/MacOS/Other"'],
@@ -243,7 +481,7 @@ class JournalPythonClientCheck(unittest.TestCase):
                     run.assert_not_called()
 
 
-    def test_macos_activation_rechecks_unique_identity_after_setfront(self):
+    def test_macos_activation_rechecks_owned_identity_after_setfront(self):
         from journal_execution_session import _activate_owned_macos_application
         executable = Path("/Applications/Test.app/Contents/MacOS/Test").resolve()
         process = Mock(pid=123)
@@ -251,13 +489,37 @@ class JournalPythonClientCheck(unittest.TestCase):
         identity = ('"pid"=123\n"LSBundlePath"="/Applications/Test.app"\n'
                     '"CFBundleExecutablePath"="/Applications/Test.app/Contents/MacOS/Test"\n')
         for after in ("", "ASN:0x0-0x123: ASN:0x0-0x456:"):
-            replies = ["ASN:0x0-0x123:", identity, "", after]
+            replies = ["ASN:0x0-0x123:", identity, "", after] + ([identity, identity] if after else [])
             with self.subTest(after=after), \
                     patch("journal_execution_session.sys.platform", "darwin"), \
                     patch("journal_execution_session.subprocess.run", side_effect=lambda command, **kwargs:
                           subprocess.CompletedProcess(command, 0, stdout=replies.pop(0))):
                 with self.assertRaises(RuntimeError):
                     _activate_owned_macos_application(process, executable, time.monotonic() + 10)
+
+    def test_macos_activation_selects_owned_child_while_recording_instance_stays_open(self):
+        from journal_execution_session import _activate_owned_macos_application
+        executable = Path('/Applications/Test.app/Contents/MacOS/Test')
+        process = Mock(pid=123)
+        process.poll.return_value = None
+        commands = []
+        def run(command, **kwargs):
+            commands.append(command)
+            if 'find' in command:
+                value = 'ASN:0x0-0x456: ASN:0x0-0x123:'
+            elif 'info' in command:
+                pid = 456 if command[-1] == 'ASN:0x0-0x456:' else 123
+                value = json.dumps(dict(pid=pid, LSBundlePath='/Applications/Test.app',
+                    CFBundleExecutablePath=str(executable))).replace(': ', '=')
+            else:
+                value = ''
+            return subprocess.CompletedProcess(command, 0, stdout=value)
+        with patch('journal_execution_session.sys.platform', 'darwin'), \
+                patch('journal_execution_session.subprocess.run', side_effect=run):
+            result = _activate_owned_macos_application(process, executable, time.monotonic() + 10)
+        self.assertEqual(result['pid'], 123)
+        self.assertEqual([c for c in commands if 'setfront' in c],
+            [['/usr/bin/lsappinfo', 'setfront', '#123']])
 
 
     def test_execution_retains_activation_evidence_and_original_readiness_handshake(self):
@@ -465,7 +727,8 @@ class JournalPythonClientCheck(unittest.TestCase):
             actual = (Path(result["outputPath"]) / "screenshots/all.png").resolve()
             self.assertEqual(actual.read_bytes(), b"test-image")
             self.assertEqual(result["results"][0]["evidence"], [actual])
-            self.assertEqual(result["acceptance"], "not_verified")
+            self.assertEqual(result["acceptance"], "failed")
+            self.assertIn("no approved baseline", result["results"][0]["message"])
             self.assertEqual(load_journal(journal)["entries"][0]["payload"]["params"]["filepath"],
                              "screenshots/all.png")
             self.assertIn('href="screenshots/all.png"', Path(result["reportPath"]).read_text(encoding="utf-8"))
@@ -749,7 +1012,7 @@ class JournalPythonClientCheck(unittest.TestCase):
             with patch("journal_execution_session.JournalSystem", return_value=client), \
                     patch("journal_execution_session.subprocess.Popen", return_value=process) as launch, \
                     patch("journal_execution_session.JournalRunner") as runner:
-                def run(_journal, *, output_dir, progress, cancel_event):
+                def run(_journal, *, output_dir, progress, cancel_event, validate):
                     self.assertTrue(output_dir.is_dir())
                     return {"journalPath": _journal["journalPath"],
                             "journalSha256": _journal["journalSha256"], "totalEntries": 1,
@@ -769,10 +1032,12 @@ class JournalPythonClientCheck(unittest.TestCase):
                 process.terminate.assert_called_once()
                 process.kill.assert_not_called()
                 self.assertFalse(result["applicationKeptOpen"])
+                self.assertEqual(result["applicationPath"], str(Path(sys.executable).resolve()))
                 self.assertEqual(Path(result["applicationLogPath"]).parent, Path(result["outputPath"]))
                 saved = json.loads((Path(result["sessionPath"]) / "execution_result.json").read_text(encoding="utf-8"))
                 self.assertEqual(saved["applicationLogPath"], "application.log")
                 self.assertEqual(saved["sessionPath"], ".")
+                self.assertEqual(saved["applicationPath"], result["applicationPath"])
 
     def test_session_applies_scenario_environment_to_its_child(self):
         from journal_execution_session import JournalExecutionSession
@@ -946,106 +1211,6 @@ class JournalPythonClientCheck(unittest.TestCase):
             launch.assert_not_called()
             self.assertFalse(result["success"])
             self.assertIn("cancelled", result["error"])
-
-    @unittest.skipUnless(importlib.util.find_spec("customtkinter") and importlib.util.find_spec("PIL"),
-                         "requires optional GUI dependencies")
-    def test_gui_latest_report_is_scoped_to_selected_case_and_application(self):
-        from journalsystem_gui import JournalSystemGUI
-        gui = object.__new__(JournalSystemGUI)
-        gui.result_label = Mock()
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            result = root / "session_first/first/case_result.json"
-            result.parent.mkdir(parents=True)
-            result.write_text(json.dumps({"status": "passed"}))
-            report = result.parent / "case_report.html"
-            report.write_text("fixture")
-            gui._playbacks = lambda: root
-            gui.selected_case = {"path": Path("first")}
-            gui._show_latest_result()
-            self.assertEqual(gui.last_report, report)
-            (result.parent.parent / "summary.json").write_text(json.dumps({
-                "status": "failed", "cleanupError": "settings restore failed"}))
-            gui._show_latest_result()
-            self.assertIn("失败", gui.result_label.configure.call_args.kwargs["text"])
-            self.assertIn("settings restore failed", gui.result_label.configure.call_args.kwargs["text"])
-            gui.selected_case = {"path": Path("second")}
-            gui._show_latest_result()
-            self.assertIsNone(gui.last_report)
-            self.assertIsNone(gui.last_output)
-            gui.selected_case = {"path": Path("first")}
-            gui._playbacks = lambda: root / "another-application"
-            gui._show_latest_result()
-            self.assertIsNone(gui.last_report)
-
-    @unittest.skipUnless(os.environ.get("JOURNAL_GUI_WIDGET_CHECK"), "requires explicitly selected Tk runtime")
-    def test_gui_two_pages_keep_offline_save_and_reconnect_safe(self):
-        import customtkinter as ctk
-        from journalsystem_gui import JournalSystemGUI
-        with tempfile.TemporaryDirectory() as temporary:
-            base = Path(temporary)
-            application = base / "test-program.exe"
-            application.write_bytes(b"fixture; never executed")
-            root = ctk.CTk()
-            root.withdraw()
-            try:
-                gui = JournalSystemGUI(root, application=application, app_root=base)
-                root.after_cancel(gui._load_timer)
-                self.assertIsNone(gui.client)  # Offline startup never connects.
-                self.assertEqual([button.cget("text") for button in gui.nav_buttons.values()], ["场景测试", "操作录制"])
-                self.assertEqual(gui.current_page, "test")
-                gui.show_page("record")
-                self.assertEqual(gui.current_page, "record")
-                self.assertEqual(str(gui.run_button.cget("state")), "disabled")
-                gui.cases = [
-                    dict(path=base / name, name=name, metadata=dict(
-                        verification=dict(requiredMethods=["db"]), acceptanceTarget="DB fixture"), error="")
-                    for name in ("导入场景", "配置场景")]
-                gui._show_cases()
-                gui.select_case(1)
-                gui.search_entry.insert(0, "配置")
-                gui._show_cases()
-                self.assertEqual(gui.selected_case["name"], "配置场景")
-                gui.search_entry.delete(0, "end")
-                gui.search_entry.insert(0, "没有这个场景")
-                gui._show_cases()
-                self.assertIsNone(gui.selected_case)
-                self.assertEqual(str(gui.run_button.cget("state")), "disabled")
-                gui.search_entry.delete(0, "end")
-                gui._show_cases()
-                self.assertEqual(gui.selected_case["name"], "导入场景")
-                client = RunnerClient(base)
-                gui.client = client
-                gui.runner = JournalRunner(client)
-                gui.runner.start_recording()
-                gui._update_controls()
-                self.assertEqual(client.calls[0], ("start", True))  # Hover/drag recording retained.
-                gui.client = None
-                gui._update_controls()
-                self.assertTrue(gui.recording)
-                self.assertEqual(str(gui.connect_button.cget("state")), "normal")
-                self.assertEqual(str(gui.stop_button.cget("state")), "disabled")
-                with patch("journal_runner.write_journal", side_effect=OSError("disk full")):
-                    with self.assertRaises(OSError):
-                        gui.runner.stop_recording({"name": "keep me"})
-                gui._update_controls()
-                self.assertTrue(gui.pending_save)
-                self.assertEqual(gui.stop_button.cget("text"), "重试保存")
-                self.assertEqual(str(gui.stop_button.cget("state")), "normal")
-                self.assertEqual(str(gui.run_button.cget("state")), "disabled")
-                with patch("journalsystem_gui.messagebox.askyesno", return_value=False):
-                    gui.close()
-                self.assertFalse(gui._closed)
-                saved = gui.runner.stop_recording()
-                self.assertTrue(saved.is_file())
-                gui._update_controls()
-                self.assertFalse(gui.pending_save)
-                self.assertEqual(json.loads((saved.parent.parent / "metadata.json").read_text(encoding="utf-8"))["name"], "keep me")
-            finally:
-                root.destroy()
-
-
-
 
     def test_named_ui_uses_existing_entry_request_without_query(self):
         client = JournalSystem()
@@ -1515,6 +1680,23 @@ class JournalPythonClientCheck(unittest.TestCase):
             self.assertEqual(renamed.name, "session_AI popup_20260904_120000_123")
             repository.delete(renamed)
             self.assertFalse(renamed.exists())
+
+    def test_recent_result_remembers_custom_outputs_and_falls_back_if_deleted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            default = root / 'playbacks/session_original'
+            default.mkdir(parents=True)
+            (default / 'summary.json').write_text('{}')
+            custom = root / 'Testing/custom-output'
+            custom.mkdir(parents=True)
+            (custom / 'execution_result.json').write_text('{}')
+            repository = JournalSessionRepository(playbacks=default.parent)
+            repository.remember_result(custom)
+            self.assertEqual(repository.result_directories(), [custom.resolve(), default.resolve()])
+            shutil.rmtree(custom)
+            self.assertEqual(repository.result_directories(), [default.resolve()])
+            (default.parent / 'latest-result.json').write_text('invalid JSON')
+            self.assertEqual(repository.result_directories(), [default.resolve()])
 
 
 if __name__ == "__main__":

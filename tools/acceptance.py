@@ -16,6 +16,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from acceptance_checks import validate_expectations, verify_job, validate_project_gcode_expectations, verify_project_gcode
+import acceptance_calibration
 from verification_methods import SUPPLEMENTAL_VALIDATORS, journal_checks, method_results, verification_plan
 from screenshot_review import snapshot_checkpoints, collect_screenshots, write_batch_report
 
@@ -161,7 +162,8 @@ def load_case(root, name, journal_loader):
                 'Standard DB file differs from the Journal expected state')
         baselines[reference['file']] = digest(baseline)
     for entry in document['entries']:
-        if entry['kind'] == 'verify.screenshot':
+        if entry['kind'] == 'verify.screenshot' or (entry['kind'] == 'action' and
+                entry['payload'].get('code') == 'screenshot.capture' and entry['payload'].get('baseline')):
             relative = entry['payload']['baseline']
             require(isinstance(relative, str) and '\\' not in relative and ':' not in relative and
                     not Path(relative).is_absolute(), 'Nonportable screenshot baseline')
@@ -189,6 +191,9 @@ def validate_check(check, artifacts, expected):
         require(isinstance(check.get('artifacts'), list) and len(check['artifacts']) == 2 and all(k in artifacts for k in check['artifacts']), 'project-gcode requires G-code and package artifacts')
         require(check['id'] in expected.get('gcodeJobs', {}), 'project-gcode requires its independent per-job expectations')
         validate_project_gcode_expectations(expected['gcodeJobs'][check['id']])
+    elif validator == 'calibration-observation':
+        require(check.get('artifacts') == [], 'Calibration records are written to the App data directory')
+        acceptance_calibration.validate_expectations(expected.get('calibrationObservations'))
 
 
 def git_identity(directory):
@@ -232,11 +237,38 @@ def final_status(execution, checks, methods):
     required = [check for check in checks if check['required']]
     if any(check['status'] == 'failed' for check in required):
         return 'failed'
+    if execution.get('acceptance') == 'pending' or any(check['status'] == 'pending' for check in required):
+        return 'pending'
     if any(check['status'] != 'passed' for check in required):
         return 'not_verified'
     if any(method['status'] == 'failed' for method in methods):
         return 'failed'
     return 'passed' if methods and all(method['status'] == 'passed' for method in methods) else 'not_verified'
+
+
+def refresh_case_comparisons(output):
+    """Fold completed executor comparisons into the existing case result."""
+    output = Path(output)
+    result = read_json(output / 'case_result.json')
+    if result.get('executionResultPath') is None:
+        return result
+    execution = read_json(output / result['executionResultPath'])
+    checks = read_json(output / 'checks.json')
+    formal = journal_checks(result['verificationPlan'], execution)
+    replacements = {check['id']: check for check in formal}
+    checks = [replacements.get(check['id'], check) for check in checks]
+    result['journalAcceptance'] = execution['acceptance']
+    result['methodResults'] = method_results(result['verificationPlan'], checks)
+    # Collection/preflight/export failures are independent of pixel comparisons.
+    if not result.get('error'):
+        result['status'] = final_status(execution, checks, result['methodResults'])
+    failed_step = next((step for step in execution.get('results', []) if step.get('status') == 'failed'), None)
+    if failed_step:
+        result['failedStep'] = {key: failed_step.get(key) for key in ['index', 'kind', 'message']}
+    else:
+        result.pop('failedStep', None)
+    write_case_result(output, result, checks)
+    return result
 
 
 def write_case_result(output, result, checks):
@@ -258,7 +290,7 @@ def write_case_result(output, result, checks):
             '<p><a href="case_result.json">Case result</a> | <a href="checks.json">Business checks</a></p>'
             '{}<table><tr><th>Check</th><th>Status</th><th>Details</th></tr>{}</table>').format(
         html.escape(result['id']), html.escape(result['status']), html.escape(result.get('scope', '')),
-        html.escape(result.get('error', '')), '<p><a href="verification_report.html">Original Journal report</a></p>'
+        html.escape(result.get('error') or result.get('screenshotReviewError', '')), '<p><a href="verification_report.html">Original Journal report</a></p>'
         if result.get('executionResultPath') else '', rows)
     (output / 'case_report.html').write_text(body + review_link, encoding='utf8')
 
@@ -291,6 +323,9 @@ def bind_deployment_resources(document, metadata, application):
     require(application is not None and isinstance(captured, str) and Path(captured).is_absolute(),
             'Deployment resources require an application and captured applicationDirectory')
     directory = Path(application).resolve().parent
+    bundled = directory.name == 'MacOS' and directory.parent.name == 'Contents'
+    resource_root = directory.parent / 'Resources' if bundled else directory / 'resources'
+    captured_root = Path(captured).parent / 'Resources' if bundled else Path(captured) / 'resources'
     replacements = []
     for relative, expected_hash in resources.items():
         require(isinstance(relative, str) and relative.startswith('resources/')
@@ -298,8 +333,9 @@ def bind_deployment_resources(document, metadata, application):
                 and not any(char in relative for char in '\\:'), 'Invalid deployment resource path')
         require(isinstance(expected_hash, str) and re.fullmatch(r'[0-9a-f]{64}', expected_hash),
                 'Invalid deployment resource SHA256')
-        resource = (directory / relative).resolve()
-        require(resource.is_relative_to(directory) and resource.is_file(),
+        suffix = Path(relative).relative_to('resources')
+        resource = (resource_root / suffix).resolve()
+        require(resource.is_relative_to(resource_root.resolve()) and resource.is_file(),
                 f'Missing deployment resource: {relative}')
         require(digest(resource) == expected_hash, f'Deployment resource hash differs: {relative}')
 
@@ -307,7 +343,7 @@ def bind_deployment_resources(document, metadata, application):
             encoded = str(value).encode('utf-8')
             return struct.pack('<Q', 11) + b'string.utf8' + struct.pack('<Q', len(encoded)) + encoded
 
-        replacements.append((relative, token(Path(captured) / relative), token(directory / relative)))
+        replacements.append((relative, token(captured_root / suffix), token(resource_root / suffix)))
     seen, changed = set(), False
     for entry in document['entries']:
         if entry['kind'] != 'verify.db':
@@ -383,7 +419,8 @@ def materialize_journal(case, output, export_root, *, capture_candidates=False, 
             params = entry['payload'].get('params', {})
             if params.get('filePath') and not Path(params['filePath']).is_absolute():
                 params['filePath'] = str((case['journal'].parent / params['filePath']).resolve())
-        elif entry['kind'] == 'verify.screenshot':
+        elif entry['kind'] == 'verify.screenshot' or (entry['kind'] == 'action' and
+                entry['payload'].get('code') == 'screenshot.capture' and entry['payload'].get('baseline')):
             baseline = entry['payload']['baseline']
             if not Path(baseline).is_absolute():
                 entry['payload']['baseline'] = str((case['journal'].parent / baseline).resolve())
@@ -397,7 +434,7 @@ def materialize_journal(case, output, export_root, *, capture_candidates=False, 
 
 
 def run_case(root, name, application, output, exports, session, journal_loader, *, review_screenshots=False,
-             environment_overrides=None, capture_candidates=False):
+             environment_overrides=None, capture_candidates=False, review_submit=None, comparisons=None):
     """Run one fresh session; preserve its report and evaluate declared business checks."""
     root, output, application = Path(root).resolve(), Path(output).resolve(), Path(application).resolve()
     if output.exists():
@@ -471,8 +508,13 @@ def run_case(root, name, application, output, exports, session, journal_loader, 
         write_case_result(output, result, checks)
         return result
     started = time.time_ns()
+    execution_completed = False
     try:
         setup = dict(environment_overrides=environment_overrides) if environment_overrides is not None else {}
+        if comparisons is not None:
+            setup['comparisons'] = comparisons
+        if capture_candidates:
+            setup['validate'] = False
         execution = session.run(runtime_journal, application=application, output_dir=output, startup_timeout=120, **setup)
         result['executionResultPath'] = 'execution_result.json'
         result['journalAcceptance'] = execution.get('acceptance')
@@ -484,7 +526,16 @@ def run_case(root, name, application, output, exports, session, journal_loader, 
                   '; '.join(execution.get('cleanupErrors', [])) or 'Journal execution or cleanup failed')
         if failed_step:
             result['failedStep'] = {key: failed_step.get(key) for key in ['index', 'kind', 'message']}
-        require(execution.get('success'), reason)
+        # Finished pixel comparisons can fail before replay returns. They are
+        # acceptance results, so still collect independently produced files.
+        steps = execution.get('results', [])
+        execution_completed = bool(execution.get('success')) or (
+            not execution.get('error') and not execution.get('cleanupErrors') and
+            len(steps) == len(case['document']['entries']) and
+            all(step.get('status') in ('passed', 'pending') or
+                (step.get('status') == 'failed' and step.get('comparison', {}).get('status') == 'failed')
+                for step in steps))
+        require(execution_completed, reason)
         require(execution.get('completedEntries') == len(case['document']['entries']), 'Journal did not complete every step')
         require(execution.get('journalSha256') == runtime_hash and digest(runtime_journal) == runtime_hash, 'Journal changed after preflight')
         require(load_case(root, name, journal_loader)['hashes'] == case['hashes'], 'Assets or expectations changed during execution')
@@ -521,6 +572,10 @@ def run_case(root, name, application, output, exports, session, journal_loader, 
                 elif check['validator'] == 'project-gcode':
                     identifiers = check['artifacts']
                     report = verify_project_gcode(archived[identifiers[0]], archived[identifiers[1]], metadata['expected']['gcodeJobs'][check['id']])
+                elif check['validator'] == 'calibration-observation':
+                    report = acceptance_calibration.verify_records(
+                        acceptance_calibration.record_directory(execution), started,
+                        metadata['expected']['calibrationObservations'], output)
                 evidence = output / 'reports' / (str(len(checks) + 1) + '-' + check['validator'] + '.json')
                 evidence.parent.mkdir(exist_ok=True)
                 write_json(evidence, report)
@@ -539,8 +594,13 @@ def run_case(root, name, application, output, exports, session, journal_loader, 
                    for c in case['verificationPlan']['checks'] if c['id'] not in done]
         result['methodResults'] = method_results(case['verificationPlan'], checks)
     result['elapsedSeconds'] = round((time.time_ns() - started) / 1e9, 2)
-    result['executionStatus'] = ('completed' if execution.get('success') and
+    result['executionStatus'] = ('completed' if execution_completed and
         execution.get('completedEntries') == len(case['document']['entries']) else 'failed')
+    if review_screenshots and review_submit is not None:
+        result['reviewStatus'] = 'processing'
+        write_case_result(output, result, checks)
+        review_submit(checkpoints, execution, output)
+        return result
     if review_screenshots:
         try:
             result['screenshotReview'] = collect_screenshots(checkpoints, execution, output)

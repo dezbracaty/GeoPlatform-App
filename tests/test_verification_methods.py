@@ -29,10 +29,14 @@ class MethodContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'exactly one'):
             verification_plan(dict(verification=dict(requiredMethods=['db','screenshot'])), dict(entries=[]))
 
-    def test_image_comparison_cannot_be_used_as_db_acceptance(self):
-        with self.assertRaisesRegex(ValueError, 'differs'):
-            verification_plan(dict(verification=dict(requiredMethods=['db'])),
-                              dict(entries=[dict(kind='verify.screenshot')]))
+    def test_images_are_required_alongside_the_primary_db_method(self):
+        plan = verification_plan(dict(verification=dict(requiredMethods=['db'])),
+                                 dict(entries=[dict(kind='verify.db'), dict(kind='verify.screenshot'),
+                                      dict(kind='action', payload=dict(code='screenshot.capture'))]))
+        self.assertEqual(plan['missingMethods'], [])
+        self.assertEqual([check['validator'] for check in plan['checks']],
+                         ['journal-db', 'journal-screenshot', 'journal-screenshot-capture'])
+        self.assertTrue(all(check['required'] for check in plan['checks']))
 
     def test_check_id_collision_rejected(self):
         with self.assertRaisesRegex(ValueError, 'collide'):

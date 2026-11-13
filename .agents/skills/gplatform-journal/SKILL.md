@@ -15,7 +15,8 @@ description: 编写或执行 GPlatform 的真实应用 Journal 验收。先明�
 
 查最接近场景的 Journal、metadata、输入资产、预期来源和当前页面/Action；不能只复制旧坐标、DB ID、延迟或截图路径。确定本次需要触发什么、观察什么，以及哪些现有断言已能覆盖。
 优先使用可复用的受控模型、独立参考和现有 JSON/runner/session/repository。增加普通场景只写声明式场景与必要资产，不为每个用例创建专属 Python 执行器、私有 RPC 或另一套报告。
-场景 metadata v3 只选择 DB 验收（db）或标准截图验收（screenshot），并用 acceptanceTarget 写清目标，遵循 docs/verification-methods.md。数据场景的截图默认仅诊断；先补标准 DB/标准截图并核对，再用已有 verify.db/verify.screenshot 重放。每个场景不单独配置验证脚本，不扩展宽泛的规则体系。
+活动回放必须统一登记为 `scenarios/<id>/events/Journal.json`；禁止在 `replay/` 等嵌套目录留下第二套入口。使用共享 `discover_scenarios()` 检查整库，不以扫描出的数量代替完整性检查；未登记 Journal 必须阻断回归。
+场景 metadata v3 只选择 DB 验收（db）或标准截图验收（screenshot），并用 acceptanceTarget 写清目标，遵循 docs/verification-methods.md。每个截图步骤都必须绑定标准并在后台按原尺寸整图逐像素比较，仅按 docs/verification-methods.md 排除统一 FPS 按钮区域及其中明确批准的3张原生导入询问动画例外，数据场景也不例外；未完成为 pending，缺标准或不一致不能通过。先补标准 DB/标准截图并核对，再用共享执行器重放。每个场景不单独配置验证脚本，不扩展宽泛的规则体系。
 已有协议能表达时直接使用；确需新观测能力时先检查现有业务/测试入口，再区分应补原生检查还是扩展正式协议。新 kind/字段必须有明确需求、实现和验证，不在场景里先编一个工具不支持的入口。
 
 ## 构造和执行
@@ -49,8 +50,9 @@ python3 tools/journal/journal_runner.py \
 
 ## 解释结果
 
-- `acceptance=passed`：执行成功且有通过的 `verify.*`。
-- `acceptance=not_verified`：执行完成但没有验收断言；不是自动验收通过。
+- `acceptance=passed`：执行成功且全部 DB／截图比较通过；截图 Action 也必须比较独立标准。
+- `acceptance=pending`：后台图片比较未完成，不能算通过。
+- `acceptance=not_verified`：执行完成但没有有效比较，或仅采集候选；不是自动验收通过。
 - `acceptance=failed`：执行、断言或清理等存在失败，保留错误。
 
 截图动作成功只证明文件生成；原生业务日志、DB、文件或独立几何检查各自支持相应结论。报告实际覆盖与剩余未验证范围，不用测试清单存在或 CLI 成功代替验收。

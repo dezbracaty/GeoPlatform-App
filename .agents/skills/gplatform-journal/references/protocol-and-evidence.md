@@ -17,6 +17,10 @@
 `journal_runner.py` 已有 `load_journal()`、比较器、`finish_result()`；`JournalExecutionSession` 负责进程/握手/清理，`session_repository.py` 负责会话目录和文件管理。只增加场景时直接使用这些能力，不再实现手工发送/调度、截图比较或报告汇总。
 测试资产需要来源、单位和独立预期即可，不添加与现有协议平行的业务查询/断言系统。扩展正式观测能力前先判断现有原生检查或断言是否足够；缺少能力时明确缺口，不能用注入状态或绕过生产入口补出“通过”。
 
+正式新进程回放已有 `GPLATFORM_JOURNAL_SESSION=1` 启动保护：不沿用用户机型／预设记忆，
+以AD5X／0.4默认配置启动，再由场景执行其切机或导入步骤。不要给所有脚本重复插入统一切机。
+已有普通进程／手动回放不自动获得该保护，须先建立并核对场景的起始状态；见 `docs/acceptance.md`。
+
 ## 文件结构
 
 ```text
@@ -46,8 +50,8 @@ Journal 顶层仅 `formatVersion: 2` 与 `entries`；每条仅 `atMs/kind/payloa
 
 ## 断言与结果
 
-`verify.db` 比较声明格式的独立 expectedSerialized，当前格式为 `transdb.cereal-portable-binary.v1`；`capture.db` 只收集数据。截图验证需要有效的独立 baseline 与合法 tolerance；截图 action 本身不是验证。
-`finish_result()` 在非空执行、无执行/清理错误且没有 failed/not_run 的基础上计算 success；存在通过的 `verify.*` 才给 `acceptance=passed`，无 verify 为 `not_verified`。
+`verify.db` 比较声明格式的独立 expectedSerialized，当前格式为 `transdb.cereal-portable-binary.v1`；`capture.db` 只收集数据。所有截图步骤都需要有效的独立 payload.baseline；verify.screenshot 与 screenshot.capture 统一在后台进行原尺寸整图逐像素比较，仅按 docs/verification-methods.md 排除统一 FPS 按钮区域及其中明确批准的3张原生导入询问动画例外；历史容差和区域不能放宽正式验收。
+`finish_result()` 在非空执行、无执行/清理错误且没有 failed/not_run 的基础上计算 success；全部正式比较通过才给 acceptance=passed；后台比较未完成为 pending，缺截图标准或图片不同为 failed，仅采集 DB 为 not_verified。
 正式 CLI 返回码：passed 为 0，执行失败为 1，执行成功但未验证为 2。保留 acceptance 与 success 的区别。
 用户要求几何/文件/业务状态验收时，结果需要相应证据。独立检查可以与 Journal 配合，但应单独说明结论范围，不能修改正式报告伪装已有内置断言。
 现有历史场景可能只有操作与截图，先评估覆盖，不因在场景目录中就视作已通过用例。

@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 try:
@@ -40,6 +41,25 @@ class VisualComparisonTests(unittest.TestCase):
         self.assertEqual(result['comparisonStatus'], 'different')
         self.assertEqual(meta['ocrStatus'], 'unavailable')
         self.assertTrue((self.root / 'view/raw-diff.png').is_file())
+
+    def test_exact_regions_skip_expensive_hints_and_keep_zero_difference_evidence(self):
+        for regions in (None, [[0, 0, 64, 96]]):
+            with self.subTest(regions=regions):
+                first = Image.new('RGB', (128, 96), 'white')
+                second = first.copy()
+                if regions:
+                    ImageDraw.Draw(second).rectangle((80, 40, 110, 70), fill='black')
+                reader = Mock(side_effect=AssertionError('Exact regions do not need OCR'))
+                with patch('screenshot_comparison._oklab', side_effect=AssertionError('No pixel differences')):
+                    result = self.compare(first, second, regions=regions, text_reader=reader)
+                reader.assert_not_called()
+                self.assertEqual(result['comparisonStatus'], 'identical')
+                self.assertEqual(result['differencePixelCount'], 0)
+                self.assertEqual(result['comparisonMetadata']['ocrStatus'], 'not_needed')
+                self.assertEqual(result['comparisonMetadata']['numericChanges'], [])
+                for name in ('diff.png', 'raw-diff.png'):
+                    with Image.open(self.root / 'view' / name) as image:
+                        self.assertEqual(image.convert('RGB').tobytes(), first.tobytes())
 
     def test_recognized_last_digit_change_has_explicit_region_even_with_few_pixels(self):
         a = Image.new('RGB', (128, 96), 'white');b = a.copy()

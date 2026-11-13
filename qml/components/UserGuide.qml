@@ -187,15 +187,21 @@ Item {
         Qt.callLater(tryReady)
     }
     function tryReady() {
-        if (phase !== "preparing") return
+        const timedOut = phase === "waiting"
+        if (phase !== "preparing" && !timedOut) return
         try {
             const item = currentStep.resolveTarget()
             if (!item || !item.visible || item.width <= 0 || item.height <= 0
                     || item.Window.window !== overlay.Window.window || !currentStep.ready()) return
-            tour.statusText = ""
+            targetUnavailable = false
             tour.busy = false
             tour.refreshTarget()
-            if (!tour.targetValid) { tour.busy = true; return }
+            if (!tour.targetValid) {
+                targetUnavailable = timedOut
+                tour.busy = !timedOut
+                return
+            }
+            tour.statusText = ""
             preparationTimeout.stop()
             phase = "showing"
             tour.focusGuide()
@@ -203,9 +209,9 @@ Item {
             unavailable(String(error))
         }
     }
-    function unavailable(reason) {
+    function unavailable(reason, waitForReady = false) {
         preparationTimeout.stop()
-        phase = "showing"
+        phase = waitForReady ? "waiting" : "showing"
         targetUnavailable = true
         tour.busy = false
         tour.statusText = currentStep.description + "\n\n" + qsTr("This control cannot currently be shown: %1\nCheck its prerequisites, continue to the next step or close the guide.").arg(reason)
@@ -278,7 +284,7 @@ Item {
     Timer {
         id: preparationTimeout
         interval: 2000
-        onTriggered: control.unavailable(qsTr("The target is hidden, unavailable or has not finished opening."))
+        onTriggered: control.unavailable(qsTr("The target is hidden, unavailable or has not finished opening."), true)
     }
     Connections {
         target: control.printHost

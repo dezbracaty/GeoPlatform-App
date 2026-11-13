@@ -47,7 +47,9 @@ def regression(source, executable, output, env, test_assets_sha):
         application_sha256=digest(executable), app_sha=text_git(source, 'rev-parse', 'HEAD'),
         assets_sha=assets_sha, journalTools={name: digest(tools / name) for name in
         ('journal_runner.py', 'journal_execution_session.py', 'journal_display_profile.py')}))
-    scenes = sorted((source / 'tests/TestAssets/scenarios').glob('*/metadata.json'))
+    sys.path.insert(0, str(tools))
+    from session_repository import discover_scenarios
+    scenes = [directory / 'metadata.json' for directory in discover_scenarios(source / 'tests/TestAssets/scenarios')]
     pending = []
     for metadata in scenes:
         declaration = json.loads(metadata.read_text(encoding='utf-8'))

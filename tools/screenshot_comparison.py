@@ -8,6 +8,7 @@ import json
 import math
 from pathlib import Path
 import re
+import shutil
 
 from screenshot_text import recognize
 
@@ -165,6 +166,22 @@ def comparison_images(expected_path, actual_path, destination, regions=None, *, 
         selected[y:y+height, x:x+width] = True
     ea, aa = np.asarray(expected), np.asarray(actual)
     raw = np.any(ea != aa, axis=2) & selected
+    if not raw.any():
+        # Exact agreement in every authored region needs no visual/text hints.
+        for name in ('raw-diff.png', 'diff.png'):
+            shutil.copyfile(destination / 'expected-view.png', destination / name)
+        metadata = dict(policyVersion=POLICY_VERSION, normalizedSize=[w, h],
+            sourceImageSizes=common['sourceImageSizes'], rawDifferencePixelCount=0,
+            reviewDifferencePixelCount=0, redPixelCount=0, amberPixelCount=0,
+            equalRecognizedTextCount=0, numericChanges=[], uncertainTextChanges=[],
+            structuralBounds=[], ocrStatus='not_needed', ocrBackend=[None, None],
+            ocrMessage='比较区域像素完全一致，无需文字辅助分析。', textDiagnostics=[])
+        (destination / 'comparison.json').write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2)+'\n', encoding='utf8')
+        return dict(common, comparisonMetadata=metadata, comparisonStatus='identical',
+            differencePixelCount=0, substantialPixelCount=0, suspectedRenderingPixelCount=0,
+            numericChanges=[], rawDiff='raw-diff.png', diff='diff.png',
+            message='比较区域像素完全一致；原始证据和自动验收结果保持不变。')
     # Composite alpha consistently for perceptual color; raw RGBA remains separately inspectable.
     white = Image.new('RGBA', expected.size, 'white')
     ec, ac = Image.alpha_composite(white, expected).convert('RGB'), Image.alpha_composite(white, actual).convert('RGB')
