@@ -15,6 +15,7 @@ target_include_directories(Model3MFIntegrationCheck PRIVATE
     ${PROJECT_SOURCE_DIR}/src/Application/include)
 target_compile_definitions(Model3MFIntegrationCheck PRIVATE
     THREE_MF_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/TestAssets/models/three_mf"
+    PRINTER_SWITCH_PROJECT="${CMAKE_CURRENT_SOURCE_DIR}/TestAssets/models/imported/printer-preset-switch/111.3mf"
     THREE_MF_MENUS="${PROJECT_SOURCE_DIR}/config/app_menus.json")
 target_link_libraries(Model3MFIntegrationCheck PRIVATE Utils Qt6::Test)
 gplatform_link_registered_modules(Model3MFIntegrationCheck)
@@ -235,6 +236,8 @@ if(GPLATFORM_CORE_SOURCE_DIR AND TARGET RendererBackendVtk)
     endif()
     add_test(NAME VtkPickIntegrationCheck COMMAND VtkPickIntegrationCheck)
     set_tests_properties(VtkPickIntegrationCheck PROPERTIES TIMEOUT 20)
+    add_test(NAME VtkFirstFrameCameraCheck COMMAND VtkPickIntegrationCheck --first-frame)
+    set_tests_properties(VtkFirstFrameCameraCheck PROPERTIES TIMEOUT 20)
 endif()
 
 if(GPLATFORM_CORE_SOURCE_DIR AND TARGET RendererBackendFilament)

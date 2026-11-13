@@ -5,6 +5,7 @@
 #include <vtkCamera.h>
 #include <vtkProperty.h>
 #include <vtkPolyDataMapper.h>
+#include <vtkPolyDataNormals.h>
 #include <vtkPolyData.h>
 #include <vtkLineSource.h>
 #include <vtkPlaneSource.h>
@@ -280,10 +281,19 @@ bool PrintBedDBSync::createFlashForgeBedModel(const PrintBedDB& printBedDB) {
     updateBedVisualGeometry(printBedDB);
     m_bedModelTransformFilter->Update();
 
+    // STLReader supplies geometry without normals. Use explicit face normals
+    // instead of the fragment derivative fallback at the bed's thin edges.
+    auto normals = vtkSmartPointer<vtkPolyDataNormals>::New();
+    normals->SetInputConnection(m_bedModelTransformFilter->GetOutputPort());
+    normals->ComputePointNormalsOff();
+    normals->ComputeCellNormalsOn();
+    normals->ConsistencyOff();
+    normals->AutoOrientNormalsOff();
+    normals->SplittingOff();
     auto mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
-    mapper->SetInputConnection(m_bedModelTransformFilter->GetOutputPort());
+    mapper->SetInputConnection(normals->GetOutputPort());
 
-    m_actor = vtkSmartPointer<vtkActor>::New();
+    if (!m_actor) m_actor = vtkSmartPointer<vtkActor>::New();
     m_actor->SetMapper(mapper);
     configureFlashForgeBedProperty(m_actor->GetProperty());
     configureOrcaHotbedShader(m_actor, printBedDB);
@@ -323,6 +333,7 @@ void PrintBedDBSync::createActor() {
     LOG_DEBUG("PrintBedDBSync::createActor - Creating Orca-style print bed actors for ID: {}", m_id.toString());
 
     const bool actorVisible = printBedDB->getVisible();
+    if (m_actor) m_actor->SetShaderProperty(vtkSmartPointer<vtkShaderProperty>::New());
 
     // ========== 1. 创建平台 Actor（基类 m_actor） ==========
     const bool hasFlashForgeModel = createFlashForgeBedModel(*printBedDB);
@@ -351,7 +362,7 @@ void PrintBedDBSync::createActor() {
         auto platformMapper = vtkSmartPointer<vtkPolyDataMapper>::New();
         platformMapper->SetInputConnection(m_platformSource->GetOutputPort());
 
-        m_actor = vtkSmartPointer<vtkActor>::New();
+        if (!m_actor) m_actor = vtkSmartPointer<vtkActor>::New();
         m_actor->SetMapper(platformMapper);
         configureBedProperty(m_actor->GetProperty());
         m_source = m_platformSource;
@@ -360,14 +371,9 @@ void PrintBedDBSync::createActor() {
                   width, height, bedZ);
     }
 
-    m_axisActors = createAxisActors();
-    for (auto& axisActor : m_axisActors) {
-        if (axisActor) {
-            axisActor->SetVisibility(actorVisible ? 1 : 0);
-            if (m_vtkRenderer) m_vtkRenderer->AddActor(axisActor);
-        }
-    }
-
+    // Draw the surface before its grid, including equal-depth edge fragments.
+    // Keep this actor's position when a resource reload replaces its mapper.
+    if (m_vtkRenderer) m_vtkRenderer->AddActor(m_actor);
     rebuildBedDecorations(*printBedDB);
 
 
@@ -566,26 +572,15 @@ void PrintBedDBSync::reloadBedVisualResources() {
             return;
         }
 
-        if (self->m_actor) {
-            self->m_vtkRenderer->RemoveActor(self->m_actor);
-        }
-        for (const auto& axisActor : self->m_axisActors) {
-            if (axisActor) {
-                self->m_vtkRenderer->RemoveActor(axisActor);
-            }
-        }
         if (self->m_printVolumeActor) {
             self->m_vtkRenderer->RemoveActor(self->m_printVolumeActor);
         }
-        self->clearBedDecorations();
 
-        self->m_actor = nullptr;
         self->m_source = nullptr;
         self->m_platformSource = nullptr;
         self->m_bedModelReader = nullptr;
         self->m_bedModelTransform = nullptr;
         self->m_bedModelTransformFilter = nullptr;
-        self->m_axisActors.clear();
         self->m_printVolumeActor = nullptr;
 
         self->createActor();
@@ -756,31 +751,6 @@ void PrintBedDBSync::updatePrintBedGeometry() {
                 configureBedProperty(printBedSync->m_actor->GetProperty());
             }
         }
-        // ========== 更新轴线 Actor ==========
-        auto removeActor = [&](vtkSmartPointer<vtkActor>& actor) {
-            if (actor && printBedSync->m_vtkRenderer) {
-                printBedSync->m_vtkRenderer->RemoveActor(actor);
-                actor = nullptr;
-            }
-        };
-
-        for (auto& axisActor : printBedSync->m_axisActors) {
-            if (axisActor && printBedSync->m_vtkRenderer) {
-                printBedSync->m_vtkRenderer->RemoveActor(axisActor);
-            }
-        }
-        printBedSync->m_axisActors.clear();
-
-        printBedSync->m_axisActors = printBedSync->createAxisActors();
-        for (auto& axisActor : printBedSync->m_axisActors) {
-            if (axisActor) {
-                axisActor->SetVisibility(printBedDB->getVisible() ? 1 : 0);
-                if (printBedSync->m_vtkRenderer) {
-                    printBedSync->m_vtkRenderer->AddActor(axisActor);
-                }
-            }
-        }
-
         // ========== 更新可打印区域 Actor ==========
         if (printBedDB->getShowBounds()) {
             auto printVolumeGeometry = printBedSync->createPrintVolumeGeometry();
@@ -1236,20 +1206,39 @@ void PrintBedDBSync::clearBedDecorations() {
 }
 
 void PrintBedDBSync::rebuildBedDecorations(const PrintBedDB& bed) {
-    clearBedDecorations();
+    const auto axes = createAxisActors();
+    if (axes.size() == m_axisActors.size()) {
+        for (std::size_t index = 0; index < axes.size(); ++index)
+            m_axisActors[index]->SetMapper(axes[index]->GetMapper());
+    } else {
+        for (const auto& actor : m_axisActors)
+            if (m_vtkRenderer) m_vtkRenderer->RemoveActor(actor);
+        m_axisActors = axes;
+        for (const auto& actor : m_axisActors)
+            if (m_vtkRenderer) m_vtkRenderer->AddActor(actor);
+    }
+    for (const auto& actor : m_axisActors)
+        actor->SetVisibility(bed.getVisible() ? 1 : 0);
     syncBedTextureActor(bed);
     const bool gridVisible = bed.getVisible() && bed.getShowGrid();
-    m_gridActor = makeGridActor(createGridGeometry(false));
-    configureGridActor(m_gridActor, false);
-    m_gridActor->SetVisibility(gridVisible ? 1 : 0);
-    m_majorGridActor = makeGridActor(createGridGeometry(true));
-    configureGridActor(m_majorGridActor, true);
-    m_majorGridActor->SetVisibility(gridVisible ? 1 : 0);
+    // Preserve render order at coincident model/grid fragments when a bed
+    // property changes. Replacing these actors made the depth-test winner
+    // depend on whether the update arrived before or after model creation.
+    const auto updateGrid = [&](vtkSmartPointer<vtkActor>& actor, bool major) {
+        auto geometry = createGridGeometry(major);
+        if (!actor) {
+            actor = makeGridActor(geometry);
+            if (m_vtkRenderer) m_vtkRenderer->AddActor(actor);
+        } else {
+            auto mapper = vtkPolyDataMapper::SafeDownCast(actor->GetMapper());
+            mapper->SetInputData(geometry);
+        }
+        configureGridActor(actor, major);
+        actor->SetVisibility(gridVisible ? 1 : 0);
+    };
+    updateGrid(m_gridActor, false);
+    updateGrid(m_majorGridActor, true);
     if (m_bedTextureActor) m_bedTextureActor->SetVisibility(bed.getVisible() ? 1 : 0);
-    if (m_vtkRenderer) {
-        m_vtkRenderer->AddActor(m_gridActor);
-        m_vtkRenderer->AddActor(m_majorGridActor);
-    }
     syncAuxiliaryTransforms();
 }
 

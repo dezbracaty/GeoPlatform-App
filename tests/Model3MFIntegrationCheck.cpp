@@ -29,6 +29,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -58,6 +59,15 @@ namespace {
 void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }
+bool waitForMachinePreparation(SliceSettingsBridge& bridge) {
+    return QTest::qWaitFor([&] { return !bridge.machinePreparationPending(); }, 15000);
+}
+bool selectMachineAndWait(SliceSettingsBridge& bridge, const QString& model, const QString& variant,
+                          const QString& bedType = {}, const QString& preset = {}) {
+    return bridge.selectMachine(model, variant, bedType, preset) && waitForMachinePreparation(bridge) &&
+        bridge.selectedMachineModelId() == model && bridge.selectedMachineVariantId() == variant &&
+        (preset.isEmpty() || bridge.selectedPrinterPresetId() == preset);
+}
 QByteArray bytes(const QString& path) {
     QFile file(path);
     require(file.open(QIODevice::ReadOnly), "Cannot read controlled 3MF fixture");
@@ -79,7 +89,7 @@ DBInstanceID configurationActivePlate() {
 }
 QString importAndWait(const QString& filename, const QString& intent,
                       const QString& action = "file.import") {
-    const auto path = QStringLiteral(THREE_MF_FIXTURES) + '/' + filename;
+    const auto path = QFileInfo(filename).isAbsolute() ? filename : QStringLiteral(THREE_MF_FIXTURES) + '/' + filename;
     const auto source = bytes(path);
     auto* actions = ActionManager::getInstance();
     QStringList warnings;
@@ -514,17 +524,28 @@ void checkPlateMaterialSynchronization() {
     std::vector<std::string> partSemantics;
     const auto parts = objects<ModelPartDB>(TypeID::MODEL_PART_DB);
     for (const auto& part : parts) partSemantics.push_back(part->getProjectSemantics());
-    require(bridge->selectMachine("P3", "0.4"), "Cannot switch imported project to P3");
-    // Check immediately, without draining the queued platform-geometry signal:
-    // material synchronization must precede publication of the new revision.
-    const auto snapshot = GPlatform::SlicingBackend::instance().configSnapshot();
-    require(snapshot && snapshot->value("filament_map") == std::optional<std::string>("1,2,3,4,5,6"),
-            "P3 did not publish its six physical material bindings");
-    for (size_t i = 0; i < beds.size(); ++i)
-        require(QJsonDocument::fromJson(QByteArray::fromStdString(beds[i]->getProjectSemantics())).object() == expected[i],
-                "Not all plate mappings were synchronized, or unrelated semantics changed");
-    for (size_t i = 0; i < parts.size(); ++i)
-        require(parts[i]->getProjectSemantics() == partSemantics[i], "Machine switch changed part/modifier settings");
+    bool publicationObserved = false, bindingsPublished = false, platesPublished = false, partsPreserved = false;
+    // Observe publication synchronously, before any queued platform-geometry
+    // update can repair missing material synchronization during the async wait.
+    const auto publication = QObject::connect(bridge, &SliceSettingsBridge::machineSelectionChanged, bridge, [&] {
+        if (publicationObserved || bridge->selectedMachineModelId() != "P3") return;
+        publicationObserved = true;
+        const auto snapshot = GPlatform::SlicingBackend::instance().configSnapshot();
+        bindingsPublished = snapshot && snapshot->value("filament_map") == std::optional<std::string>("1,2,3,4,5,6");
+        platesPublished = true;
+        for (size_t i = 0; i < beds.size(); ++i)
+            platesPublished = platesPublished &&
+                QJsonDocument::fromJson(QByteArray::fromStdString(beds[i]->getProjectSemantics())).object() == expected[i];
+        partsPreserved = true;
+        for (size_t i = 0; i < parts.size(); ++i)
+            partsPreserved = partsPreserved && parts[i]->getProjectSemantics() == partSemantics[i];
+    }, Qt::DirectConnection);
+    const auto disconnectPublication = qScopeGuard([&] { QObject::disconnect(publication); });
+    require(selectMachineAndWait(*bridge, "P3", "0.4"), "Cannot switch imported project to P3");
+    require(publicationObserved && bindingsPublished, "P3 did not publish its six physical material bindings");
+    require(platesPublished, "Not all plate mappings were synchronized, or unrelated semantics changed");
+    require(partsPreserved, "Machine switch changed part/modifier settings");
+    QObject::disconnect(publication);
     auto illegal = expected.front();
     auto illegalSettings = illegal["settings"].toObject();
     illegalSettings["filament_map"] = "7,2,3,4,5,6";
@@ -564,7 +585,7 @@ void checkPlateMaterialSynchronization() {
 
     // AD5X is single-extruder multi-material. Orca only prunes the model's
     // slot assignments on a tool count change to a non-SEMM machine.
-    require(bridge->selectMachine("Flashforge Adventurer 5M Pro", "0.4"), "Cannot switch to the single-tool fixture");
+    require(selectMachineAndWait(*bridge, "Flashforge Adventurer 5M Pro", "0.4"), "Cannot switch to the single-tool fixture");
     require(bridge->selectedMachineModelId() == "Flashforge Adventurer 5M Pro",
             "The single-tool switch did not complete");
     require(owner->getDefaultFilamentSlot() == 1 &&
@@ -591,11 +612,11 @@ void checkPlateMaterialSynchronization() {
     };
     require(singleTool && !singleTool->filament_slots.empty() && !isSavedColor(singleTool->filament_slots.front()),
             "Switch copied P3's color onto the other printer");
-    require(bridge->selectMachine("P3", "0.4"), "Cannot restore remembered P3 configuration");
+    require(selectMachineAndWait(*bridge, "P3", "0.4"), "Cannot restore remembered P3 configuration");
     const auto p3 = GPlatform::SlicingBackend::instance().activeConfigView();
     require(p3 && !p3->filament_slots.empty() && isSavedColor(p3->filament_slots.front()),
             "Returning to P3 did not restore its color");
-    require(bridge->selectMachine("Flashforge AD5X", "0.4"), "Cannot return to ordinary machine");
+    require(selectMachineAndWait(*bridge, "Flashforge AD5X", "0.4"), "Cannot return to ordinary machine");
     for (const auto& bed : beds) {
         auto semantics = QJsonDocument::fromJson(QByteArray::fromStdString(bed->getProjectSemantics())).object();
         auto settings = semantics["settings"].toObject();
@@ -616,7 +637,7 @@ void checkPlateMaterialSynchronization() {
     owner->setDefaultFilamentSlot(2);
     parts.front()->setDefaultFilamentSlot(2);
     parts.front()->setFilamentBindingMode(int(ModelFilamentBindingMode::ExplicitSlot));
-    require(bridge->selectMachine("CFSYS Alpha500 Printer", "0.4") &&
+    require(selectMachineAndWait(*bridge, "CFSYS Alpha500 Printer", "0.4") &&
             bridge->selectedMachineModelId() == "CFSYS Alpha500 Printer",
             "Cannot switch the two-slot thermoplastic palette to Alpha500");
     require(owner->getDefaultFilamentSlot() == 2 &&
@@ -631,7 +652,7 @@ void checkPlateMaterialSynchronization() {
 void checkPrinterSwitchSaveAndCancel() {
     auto* bridge = SliceSettingsBridge::instance();
     auto& backend = GPlatform::SlicingBackend::instance();
-    require(bridge->selectMachine("P3", "0.4") && bridge->selectedMachineModelId() == "P3",
+    require(selectMachineAndWait(*bridge, "P3", "0.4") && bridge->selectedMachineModelId() == "P3",
             "Cannot activate P3 for the save/cancel check");
     require(bridge->selectProcessPreset("0.20mm Standard @P3"), "Cannot select the save/cancel process baseline");
     bridge->setSetting("printable_height", 180);
@@ -646,7 +667,7 @@ void checkPrinterSwitchSaveAndCancel() {
     const auto connection = QObject::connect(bridge, &SliceSettingsBridge::printerSwitchDecisionRequested, bridge,
         [&](const QVariantMap& preset) { prompts.push_back(preset.value("name").toString()); });
     const auto disconnect = qScopeGuard([&] { QObject::disconnect(connection); });
-    require(bridge->selectMachine("Flashforge Adventurer 5M Pro", "0.4") && prompts.size() == 1,
+    require(bridge->selectMachine("Flashforge Adventurer 5M Pro", "0.4") && waitForMachinePreparation(*bridge) && prompts.size() == 1,
             "Printer switch did not ask about the edited machine");
     const QString savedName = QStringLiteral("Acceptance P3 saved before cancel");
     bridge->resolvePrinterSwitch("save", savedName);
@@ -666,7 +687,7 @@ void checkPrinterSwitchSaveAndCancel() {
             "Cancelling did not retain the saved printer and unsaved process on the source");
 
     QSettings().remove(QStringLiteral("slicing/printerPresets/P3%200.4%20nozzle"));
-    require(bridge->selectMachine("P3", "0.4", {}, "P3 0.4 nozzle") && prompts.size() == 3,
+    require(bridge->selectMachine("P3", "0.4", {}, "P3 0.4 nozzle") && waitForMachinePreparation(*bridge) && prompts.size() == 3,
             "Switching to a compatible P3 preset did not ask about the edited process");
     bridge->resolvePrinterSwitch("cancel");
     const auto compatible = backend.activeConfigView();
@@ -676,7 +697,7 @@ void checkPrinterSwitchSaveAndCancel() {
             "Switching to a compatible printer with no memory lost the edited process");
 
     bridge->setSetting("printable_height", 190);
-    require(bridge->selectMachine("P3", "0.4", {}, savedName) && prompts.size() == 4,
+    require(bridge->selectMachine("P3", "0.4", {}, savedName) && waitForMachinePreparation(*bridge) && prompts.size() == 4,
             "Switching to the overwrite target did not ask about the edited printer");
     const auto status = bridge->printerSwitchPresetNameStatus(savedName);
     require(status.value("valid").toBool() && !status.value("message").toString().isEmpty(),
@@ -692,7 +713,13 @@ void checkPrinterSwitchSaveAndCancel() {
             "The switch did not finish after the remaining decision");
 }
 
-void writeInheritedUserPresetFixture(const QString& configDirectory) {
+const auto projectCollisionName = QStringLiteral("0.20mm Standard @MyKlipper(111.3mf)");
+
+QString projectCollisionFile(const QString& configDirectory) {
+    return configDirectory + QStringLiteral("/slicer-presets/CFSYS/process/") + projectCollisionName + ".json";
+}
+
+void writeUserPresetFixtures(const QString& configDirectory) {
     const auto processDirectory = configDirectory + QStringLiteral("/slicer-presets/P3/process");
     require(QDir().mkpath(processDirectory + QStringLiteral("/base")), "Cannot create user preset fixture directory");
     const auto write = [](const QString& path, const QJsonObject& fields) {
@@ -707,11 +734,16 @@ void writeInheritedUserPresetFixture(const QString& configDirectory) {
     write(processDirectory + QStringLiteral("/Acceptance child.json"),
           {{"name", "Acceptance child"}, {"from", "User"}, {"version", "2.0.0.5"},
            {"inherits", "Acceptance root"}, {"print_settings_id", "Acceptance child"}});
+    const auto collisionPath = projectCollisionFile(configDirectory);
+    require(QDir().mkpath(QFileInfo(collisionPath).path()), "Cannot create CFSYS preset fixture directory");
+    write(collisionPath, {{"name", projectCollisionName}, {"from", "User"}, {"version", "2.0.0.5"},
+           {"inherits", "CCF&CIRON @CFSYS"}, {"print_settings_id", projectCollisionName},
+           {"initial_layer_line_width", "0.62"}});
 }
 
 void checkSavedRootUpdatesChildPreset(SliceSettingsBridge& bridge) {
     auto& backend = GPlatform::SlicingBackend::instance();
-    require(bridge.selectMachine("P3", "0.4") && bridge.selectProcessPreset("Acceptance child"),
+    require(selectMachineAndWait(bridge, "P3", "0.4") && bridge.selectProcessPreset("Acceptance child"),
             "Cannot select the original inherited user preset");
     const auto original = backend.configSnapshot();
     require(original && original->value("initial_layer_line_width") == "0.5",
@@ -723,17 +755,76 @@ void checkSavedRootUpdatesChildPreset(SliceSettingsBridge& bridge) {
     const auto connection = QObject::connect(&bridge, &SliceSettingsBridge::printerSwitchDecisionRequested, &bridge,
         [&](const QVariantMap& preset) { prompts.push_back(preset.value("name").toString()); });
     const auto disconnect = qScopeGuard([&] { QObject::disconnect(connection); });
-    require(bridge.selectMachine("Flashforge AD5X", "0.4") && prompts == QStringList{"Acceptance root"},
+    require(bridge.selectMachine("Flashforge AD5X", "0.4") && waitForMachinePreparation(bridge) && prompts == QStringList{"Acceptance root"},
             "Printer switch did not ask about the edited user root");
     bridge.resolvePrinterSwitch("save");
     require(bridge.selectedMachineModelId() == "Flashforge AD5X", "Saving the user root did not complete the switch");
-    require(bridge.selectMachine("P3", "0.4") && bridge.selectProcessPreset("Acceptance child"),
+    require(selectMachineAndWait(bridge, "P3", "0.4") && bridge.selectProcessPreset("Acceptance child"),
             "Cannot reselect the child preset in the same session");
     const auto refreshed = backend.configSnapshot();
     require(refreshed && refreshed->value("initial_layer_line_width") == "165%",
             "Cached child retained the original value after saving its root");
-    require(bridge.selectMachine("Flashforge AD5X", "0.4") && bridge.selectedMachineModelId() == "Flashforge AD5X",
+    require(selectMachineAndWait(bridge, "Flashforge AD5X", "0.4") && bridge.selectedMachineModelId() == "Flashforge AD5X",
             "Cannot return to the integration fixture printer");
+}
+
+void checkProjectPresetSaveAndReselect(SliceSettingsBridge& bridge) {
+    auto& backend = GPlatform::SlicingBackend::instance();
+    const auto path = QStringLiteral(PRINTER_SWITCH_PROJECT);
+    const auto originalFile = bytes(path);
+    const auto collisionPath = projectCollisionFile(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation));
+    const auto originalUserPreset = bytes(collisionPath);
+    importAndWait(path, "project");
+    const auto source = backend.activeConfigView();
+    const auto config = backend.configSnapshot();
+    require(source && config && config->value("initial_layer_line_width") == "180%",
+            "The original MyKlipper project was not opened with its project process");
+    const auto& selection = source->selection;
+    const auto model = QString::fromStdString(selection.machine_model_id);
+    const auto variant = QString::fromStdString(selection.machine_variant_id);
+    const auto printer = QString::fromStdString(selection.printer_preset_id);
+    const auto process = QString::fromStdString(selection.process_preset_id);
+    require(process == "0.20mm Standard @MyKlipper-1(111.3mf)",
+            "Orca did not allocate a separate name for the conflicting project process at import");
+    bridge.setSetting("initial_layer_line_width", QStringLiteral("165%"));
+    QVariantMap prompt;
+    const auto connection = QObject::connect(&bridge, &SliceSettingsBridge::printerSwitchDecisionRequested, &bridge,
+        [&](const QVariantMap& preset) { prompt = preset; });
+    const auto disconnect = qScopeGuard([&] { QObject::disconnect(connection); });
+    require(bridge.selectMachine("CFSYS Alpha500 Printer", "0.4") && waitForMachinePreparation(bridge) &&
+            prompt.value("name").toString() == process && !prompt.value("saveAs").toBool(),
+            "An existing project preset should be saved under its current name");
+    bridge.resolvePrinterSwitch("save");
+    require(bridge.selectedMachineModelId() == "CFSYS Alpha500 Printer",
+            "Saving the MyKlipper project preset did not complete the switch");
+    require(bridge.selectProcessPreset(projectCollisionName), "The installed process is unavailable on Alpha500");
+    const auto installed = backend.configSnapshot();
+    require(installed && installed->value("initial_layer_line_width") == "0.62",
+            "The installed process picked up the project edit");
+    bool projectPrinterOffered = false;
+    for (const auto& option : bridge.machineModels()) {
+        const auto machine = option.toMap();
+        if (machine.value("id").toString() != model) continue;
+        for (const auto& item : machine.value("variants").toList()) {
+            const auto nozzle = item.toMap();
+            if (nozzle.value("id").toString() == variant && nozzle.value("printerPresetId").toString() == printer)
+                projectPrinterOffered = true;
+        }
+    }
+    require(projectPrinterOffered && selectMachineAndWait(bridge, model, variant, {}, printer) &&
+            bridge.selectedMachineModelId() == model, "Cannot reselect the saved project printer");
+    const auto projectMachine = backend.activeProjectMachine();
+    require(projectMachine && projectMachine->project_local, "The reselected printer lost its project scope");
+    require(bridge.selectedProcessPresetId() == process || bridge.selectProcessPreset(process),
+            "The saved process is unavailable after reselecting its project printer");
+    const auto saved = backend.configSnapshot();
+    require(saved && saved->value("initial_layer_line_width") == "165%" && bytes(path) == originalFile &&
+            bytes(collisionPath) == originalUserPreset,
+            "The saved project process lost its edit or changed either source file");
+    importAndWait(path, "project");
+    const auto reopened = backend.configSnapshot();
+    require(reopened && reopened->value("initial_layer_line_width") == "180%",
+            "Reopening the original 3MF retained the previous project's saved process");
 }
 
 void checkP3PaletteSources() {
@@ -753,11 +844,11 @@ void checkP3PaletteSources() {
     const QString legacyGroup = "slicing/printers/P3/0.4";
     QSettings settings;
     const auto selectOther = [&] {
-        require(bridge->selectMachine("Flashforge AD5X", "0.4") &&
+        require(selectMachineAndWait(*bridge, "Flashforge AD5X", "0.4") &&
                 bridge->selectedMachineModelId() == "Flashforge AD5X", "Cannot switch from P3");
     };
     const auto selectP3 = [&] {
-        require(bridge->selectMachine("P3", "0.4") && bridge->selectedMachineModelId() == "P3",
+        require(selectMachineAndWait(*bridge, "P3", "0.4") && bridge->selectedMachineModelId() == "P3",
                 "Cannot switch to P3");
     };
     selectOther();
@@ -774,7 +865,7 @@ void checkP3PaletteSources() {
     settings.setValue(group + "/filament_colour", custom);
     selectP3();
     require(palette() == custom, "P3 overwrote a remembered same-color palette");
-    importAndWait("../../scenarios/p3_4444444_short_ring_handoff/fixtures/4444444-p3-56mm.3mf", "project");
+    importAndWait("../imported/p3-short-ring/4444444-p3-56mm.3mf", "project");
     require(palette() == "#FFFFFF;#80FF80;#0080FF;#FFAD5B;#737373;#FFFFFF",
             "Opening a P3 project replaced the project's colors with preset colors");
     require(bridge->setFilamentColor(0, QColor("#335577")), "Cannot change the opened project's first color");
@@ -787,7 +878,7 @@ void checkP3PaletteSources() {
     const auto ad5xColors = settings.value(ad5xGroup + "/filament_colour");
     require(ad5xColors.isValid(), "The AD5X preset has no remembered palette");
     const auto ad5xSlots = bridge->filamentSlots().size();
-    importAndWait("../../scenarios/printer_preset_switch_handoff/fixtures/111.3mf", "geometry");
+    importAndWait("../imported/printer-preset-switch/111.3mf", "geometry");
     require(bridge->filamentSlots().size() > ad5xSlots, "Geometry import did not exercise palette expansion");
     selectP3();
     require(settings.value(ad5xGroup + "/filament_colour") == ad5xColors,
@@ -827,13 +918,13 @@ int main(int argc,char** argv) {
     int status=0;
     try {
         require(settings.isValid(),"Cannot create isolated 3MF integration settings");
-        writeInheritedUserPresetFixture(configDirectory);
+        writeUserPresetFixtures(configDirectory);
         SettingsHelper::getInstance()->init(argv);
         registerApplicationModules();
         MenuData::getInstance()->loadMenusFromFile(QStringLiteral(THREE_MF_MENUS));
         QQmlEngine engine;
         auto* configuration=SliceSettingsBridge::instance();
-        require(configuration->selectMachine("Flashforge AD5X","0.4"),"Cannot activate the initial real slicer configuration");
+        require(selectMachineAndWait(*configuration, "Flashforge AD5X","0.4"),"Cannot activate the initial real slicer configuration");
         checkSavedRootUpdatesChildPreset(*configuration);
         auto definition=trans::TransDB::create<PrintBedTemplateDB>();
         auto bed=trans::TransDB::create<PrintBedDB>();
@@ -882,6 +973,7 @@ int main(int argc,char** argv) {
                 "Explicit geometry intent on project.open replaced the document");
         importAndWait("complete-project.3mf", "project");
         checkPrinterSwitchSaveAndCancel();
+        checkProjectPresetSaveAndReselect(*configuration);
         checkP3PaletteSources();
     } catch (const std::exception& error) {std::cerr<<error.what()<<'\n'; status=1;}
     ActionManager::getInstance()->cleanupBeforeShutdown();

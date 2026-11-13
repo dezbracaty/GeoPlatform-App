@@ -208,6 +208,12 @@ const std::vector<libslicer::MachineModelOption>& SlicingBackend::machineModels(
     return m_machineModels;
 }
 
+std::vector<libslicer::MachineModelOption> SlicingBackend::projectMachineModels() const
+{
+    if (!m_available) return {};
+    return m_impl->invoke([this] { return m_impl->library->project_machine_models(); });
+}
+
 const std::vector<libslicer::BuildPlateOption>& SlicingBackend::buildPlateOptions() const noexcept
 {
     return m_buildPlateOptions;

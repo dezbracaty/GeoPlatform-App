@@ -73,5 +73,38 @@ class ReviewModelTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'different batch'):
             ReviewBatch(self.root)
 
+    def test_single_replay_opens_without_generating_or_changing_reports(self):
+        (self.root / 'screenshot_review.json').unlink()
+        execution = dict(acceptance='failed', journalPath='/scenarios/model/events/Journal.json', results=[
+            dict(index=7, kind='verify.screenshot', status='failed',
+                 evidence=['expected', 'actual', 'diff'], message='one pixel differs',
+                 comparison=dict(mode='exact', status='failed', differentPixels=1,
+                                 excludedRegions=[dict(reason='fps', rectangle=[1260, 72, 110, 36])])),
+            dict(index=8, kind='action', actionCode='screenshot.capture', status='failed', evidence=['actual'],
+                 message='Screenshot has no approved baseline', comparison=dict(mode='exact', status='failed'))])
+        source = self.root / 'execution_result.json'
+        source.write_text(json.dumps(execution))
+        before = source.read_bytes()
+        batch = ReviewBatch(self.root)
+        self.assertEqual(batch.document['status'], 'failed')
+        self.assertEqual(len(batch.rows), 2)
+        self.assertEqual(batch.rows[0]['comparisonMetadata']['rawDifferencePixelCount'], 1)
+        self.assertEqual(batch.rows[0]['comparisonMetadata']['excludedRegions'],
+                         execution['results'][0]['comparison']['excludedRegions'])
+        self.assertEqual(batch.rows[1]['comparisonMetadata']['excludedRegions'], [])
+        self.assertEqual(batch.path(batch.rows[0], 'actual'), (self.root / 'actual').resolve())
+        self.assertIsNone(batch.path(batch.rows[1], 'expected'))
+        self.assertFalse(batch.can_review(batch.rows[0]))
+        self.assertFalse((self.root / 'screenshot_review.json').exists())
+        self.assertEqual(source.read_bytes(), before)
+
+    def test_single_case_keeps_business_failure_when_raw_replay_passed(self):
+        (self.root / 'screenshot_review.json').unlink()
+        (self.root / 'execution_result.json').write_text(json.dumps(dict(acceptance='passed', results=[])))
+        (self.root / 'case_result.json').write_text(json.dumps(dict(id='model', status='failed', error='G-code differs')))
+        batch = ReviewBatch(self.root)
+        self.assertEqual(batch.document['status'], 'failed')
+        self.assertEqual(batch.document['cases'][0]['error'], 'G-code differs')
+
 
 if __name__ == '__main__':unittest.main()

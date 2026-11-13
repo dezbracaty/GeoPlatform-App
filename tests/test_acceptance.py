@@ -4,6 +4,7 @@ import base64
 import json
 import math
 import os
+import struct
 from pathlib import Path
 import sys
 import tempfile
@@ -11,7 +12,7 @@ import unittest
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
-from acceptance import digest, final_status, read_json, run_case, write_json, materialize_journal
+from acceptance import digest, final_status, read_json, run_case, write_json, materialize_journal, bind_deployment_resources
 from acceptance_checks import verify_project_gcode, project_arc_points
 
 
@@ -40,7 +41,8 @@ class SessionFixture:
         self.writer, self.overrides, self.calls = writer, overrides or {}, 0
         self.environments = []
 
-    def run(self, journal, *, application, output_dir, startup_timeout, environment_overrides=None):
+    def run(self, journal, *, application, output_dir, startup_timeout, environment_overrides=None,
+            comparisons=None, validate=True):
         self.calls += 1
         self.environments.append(environment_overrides)
         output_dir.mkdir(parents=True)
@@ -56,6 +58,33 @@ class SessionFixture:
 
 
 class AcceptanceCheck(unittest.TestCase):
+    def test_mac_bundle_binds_only_hash_pinned_resource_token(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            bundle = (Path(temporary) / 'GPlatform.app/Contents').resolve()
+            application = bundle / 'MacOS/GPlatform'
+            application.parent.mkdir(parents=True)
+            application.touch()
+            resource = bundle / 'Resources/libslicer/bed.stl'
+            resource.parent.mkdir(parents=True)
+            resource.write_bytes(b'controlled bed geometry')
+            captured = Path('/recorded/GPlatform.app/Contents')
+            def token(path):
+                value = str(path).encode()
+                return struct.pack('<Q', 11) + b'string.utf8' + struct.pack('<Q', len(value)) + value
+            prefix, suffix = b'\x01SBDT\x00before', b'after\x00unchanged'
+            raw = prefix + token(captured / 'Resources/libslicer/bed.stl') + suffix
+            payload = dict(serializationFormat='transdb.cereal-portable-binary.v1',
+                           expectedSerialized=base64.b64encode(raw).decode())
+            document = dict(entries=[dict(kind='verify.db', payload=payload)])
+            metadata = dict(preconditions=dict(applicationDirectory=str(captured / 'MacOS')),
+                            deploymentResources={'resources/libslicer/bed.stl': digest(resource)})
+            self.assertTrue(bind_deployment_resources(document, metadata, application))
+            self.assertEqual(base64.b64decode(payload['expectedSerialized']),
+                             prefix + token(resource) + suffix)
+            resource.write_bytes(b'changed geometry')
+            with self.assertRaisesRegex(ValueError, 'resource hash differs'):
+                bind_deployment_resources(document, metadata, application)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -118,6 +147,17 @@ class AcceptanceCheck(unittest.TestCase):
         self.assertEqual(read_json(output / 'job/case_result.json')['status'], 'passed')
         self.assertTrue(read_json(output / 'summary.json')['settingsRestored'])
 
+    def test_batch_preflight_rejects_unregistered_replay_even_with_explicit_selection(self):
+        import run_acceptance
+        from unittest.mock import patch
+        journal = self.assets / 'scenarios/handoff/replay/omitted/Journal.json'
+        journal.parent.mkdir(parents=True)
+        write_json(journal, dict(formatVersion=2, entries=[]))
+        for selected in ('all', 'job'):
+            with self.subTest(selected=selected), patch('sys.stderr'), self.assertRaises(SystemExit) as raised:
+                run_acceptance.main(['--assets', str(self.assets), '--list', '--cases', selected])
+            self.assertEqual(raised.exception.code, 2)
+
     def test_batch_cancellation_stops_before_next_case_and_keeps_results(self):
         import run_acceptance
         import shutil
@@ -149,6 +189,188 @@ class AcceptanceCheck(unittest.TestCase):
         self.assertEqual([e['phase'] for e in events], ['begin', 'end'])
         manifest = read_json(output / 'screenshot_review.json')
         self.assertEqual([c['status'] for c in manifest['cases']], ['passed', 'not_run'])
+
+    def test_next_session_starts_before_background_review_finishes(self):
+        import run_acceptance
+        import shutil
+        import threading
+        from unittest.mock import patch
+        self.metadata.update(artifacts={}, checks=[])
+        self.save_metadata()
+        shutil.copytree(self.scenario, self.assets / 'scenarios/job2')
+        write_json(self.assets / 'scenarios/job2/metadata.json', dict(self.metadata, id='job2'))
+        started, release, finished = threading.Event(), threading.Event(), threading.Event()
+        observations = []
+        calls = []
+
+        def review(checkpoints, execution, output):
+            if output.name == 'job':
+                started.set()
+                if not release.wait(3):
+                    raise RuntimeError('Next session never released the review')
+                finished.set()
+            return dict(path='review/screenshots.json', pendingCount=0)
+
+        def writer():
+            calls.append(True)
+            if len(calls) == 2:
+                observations.append((started.wait(2), finished.is_set()))
+                release.set()
+
+        # The report index is independent of this scheduling barrier fixture.
+        output = self.root / 'background-batch'
+        tools = Path(__file__).resolve().parents[1] / 'tools/journal'
+        with patch('run_acceptance.collect_screenshots', side_effect=review), \
+                patch('run_acceptance.write_summary'), patch('builtins.print'):
+            code = run_acceptance.main(['--assets', str(self.assets), '--journal-tools', str(tools),
+                '--application', str(self.application), '--cases', 'all', '--output', str(output)],
+                session=SessionFixture(writer))
+        self.assertEqual(code, 0)
+        self.assertEqual(observations, [(True, False)])
+        self.assertTrue(finished.is_set())
+        for name in ('job', 'job2'):
+            self.assertEqual(read_json(output / name / 'case_result.json')['reviewStatus'], 'not_applicable')
+
+    def test_pixel_comparison_does_not_block_inputs_or_next_case_and_updates_final_results(self):
+        import run_acceptance
+        import shutil
+        import threading
+        from io import BytesIO
+        from PIL import Image
+        from unittest.mock import Mock, patch
+        tools = Path(__file__).resolve().parents[1] / 'tools/journal'
+        sys.path.insert(0, str(tools))
+        from journal_runner import JournalRunner, ScreenshotComparisons, finish_result, load_journal as formal_loader
+        self.metadata.update(artifacts={}, checks=[], verification=dict(requiredMethods=['screenshot']))
+        self.save_metadata()
+        baseline = self.assets / 'approved.png'
+        Image.new('RGBA', (8, 8), 'white').save(baseline)
+        document = dict(formatVersion=2, entries=[
+            dict(atMs=0, kind='verify.screenshot', payload=dict(baseline='../../../approved.png')),
+            dict(atMs=0, kind='action', payload=dict(code='following.input')),
+            dict(atMs=0, kind='verify.screenshot', payload=dict(baseline='../../../approved.png'))])
+        write_json(self.scenario / 'events/Journal.json', document)
+        shutil.copytree(self.scenario, self.assets / 'scenarios/job2')
+        write_json(self.assets / 'scenarios/job2/metadata.json', dict(self.metadata, id='job2'))
+        started = [threading.Event(), threading.Event()]
+        release = threading.Event()
+        self.addCleanup(release.set)
+        observations = []
+        original_compare = ScreenshotComparisons._compare
+
+        def compare(expected, actual, diff, error, exclude_import_progress):
+            if expected.parent.parent.name == 'job':
+                started[0 if '001' in expected.name else 1].set()
+                if not release.wait(3):
+                    raise RuntimeError('Foreground waited for image comparison')
+            return original_compare(expected, actual, diff, error, exclude_import_progress)
+
+        output = self.root / 'pixel-batch'
+        class ReplaySession:
+            def run(inner, journal, *, output_dir, comparisons, **kwargs):
+                if output_dir.name == 'job2':
+                    observations.append((all(event.wait(2) for event in started),
+                        read_json(output / 'job/case_result.json')['status']))
+                    release.set()
+                (output_dir / 'screenshots').mkdir(parents=True)
+                (output_dir / 'reports').mkdir()
+                client = Mock()
+                image = Image.new('RGBA', (8, 8), 'white')
+                if output_dir.name == 'job':
+                    image.putpixel((7, 7), (254, 255, 255, 255))
+                png = BytesIO()
+                image.save(png, format='PNG')
+                client.capture_screenshot.return_value = dict(png=png.getvalue())
+                execution = JournalRunner(client, comparisons=comparisons).run(formal_loader(journal), output_dir)
+                self.assertEqual(client.execute_entry.call_count, 1)
+                return finish_result(execution)
+
+        with patch.object(ScreenshotComparisons, '_compare', side_effect=compare), \
+                patch('run_acceptance.collect_screenshots', return_value=dict(pendingCount=0)), patch('builtins.print'):
+            code = run_acceptance.main(['--assets', str(self.assets), '--journal-tools', str(tools),
+                '--application', str(self.application), '--cases', 'all', '--output', str(output)], session=ReplaySession())
+        self.assertEqual(observations, [(True, 'pending')])
+        self.assertEqual(code, 1)
+        summary = read_json(output / 'summary.json')
+        self.assertEqual([case['status'] for case in summary['cases']], ['failed', 'passed'])
+        for name, status, differences in [('job', 'failed', 1), ('job2', 'passed', 0)]:
+            case = read_json(output / name / 'case_result.json')
+            self.assertEqual(case['status'], status)
+            execution = read_json(output / name / 'execution_result.json')
+            self.assertEqual(execution['completedEntries'], 3)
+            for index in (0, 2):
+                self.assertEqual(execution['results'][index]['comparison']['differentPixels'], differences)
+                self.assertEqual(execution['results'][index]['status'], status)
+
+    def test_cancelled_batch_drains_review_and_keeps_background_errors(self):
+        import run_acceptance
+        import shutil
+        import threading
+        from unittest.mock import patch
+        self.metadata.update(artifacts={}, checks=[])
+        self.save_metadata()
+        shutil.copytree(self.scenario, self.assets / 'scenarios/job2')
+        write_json(self.assets / 'scenarios/job2/metadata.json', dict(self.metadata, id='job2'))
+        started, release = threading.Event(), threading.Event()
+        session = SessionFixture()
+        session.cancel_event = threading.Event()
+
+        def review(*_args):
+            started.set()
+            if not release.wait(3):
+                raise RuntimeError('Review was awaited before case completion')
+            raise RuntimeError('Background review diagnostic')
+
+        def progress(event):
+            if event['phase'] == 'end':
+                self.assertTrue(started.wait(2))
+                session.cancel_event.set()
+                release.set()
+
+        tools = Path(__file__).resolve().parents[1] / 'tools/journal'
+        output = self.root / 'background-error'
+        with patch('run_acceptance.collect_screenshots', side_effect=review), patch('builtins.print'):
+            code = run_acceptance.main(['--assets', str(self.assets), '--journal-tools', str(tools),
+                '--application', str(self.application), '--cases', 'all', '--output', str(output)],
+                session=session, progress=progress)
+        self.assertEqual(code, 1)
+        self.assertEqual(session.calls, 1)
+        self.assertTrue(read_json(output / 'summary.json')['cancelled'])
+        result = read_json(output / 'job/case_result.json')
+        self.assertEqual(result['status'], 'passed')
+        self.assertEqual(result['reviewStatus'], 'failed')
+        self.assertEqual(result['screenshotReviewError'], 'Background review diagnostic')
+        manifest = read_json(output / 'screenshot_review.json')
+        self.assertEqual(manifest['cases'][0]['message'], 'Background review diagnostic')
+
+    def test_batch_boundary_refreshes_saved_results_before_next_app_starts(self):
+        import run_acceptance
+        import shutil
+        from unittest.mock import patch
+        self.metadata.update(artifacts={}, checks=[])
+        self.save_metadata()
+        shutil.copytree(self.scenario, self.assets / 'scenarios/job2')
+        write_json(self.assets / 'scenarios/job2/metadata.json', dict(self.metadata, id='job2'))
+        session = SessionFixture()
+        output = self.root / 'boundary'
+        calls = []
+
+        def boundary(refresh):
+            self.assertEqual(session.calls, 1, 'Next application must not start before this boundary')
+            refresh()
+            summary = read_json(output / 'summary.json')
+            self.assertEqual([c['id'] for c in summary['cases']], ['job'])
+            self.assertFalse(summary['runComplete'])
+            calls.append('boundary')
+
+        tools = Path(__file__).resolve().parents[1] / 'tools/journal'
+        with patch('builtins.print'):
+            run_acceptance.main(['--assets', str(self.assets), '--journal-tools', str(tools),
+                '--application', str(self.application), '--cases', 'job,job2', '--output', str(output)],
+                session=session, between_cases=boundary)
+        self.assertEqual(calls, ['boundary'])
+        self.assertEqual(session.calls, 2)
+        self.assertTrue(read_json(output / 'summary.json')['runComplete'])
 
     def test_batch_prepares_each_theme_and_restores_original_settings(self):
         import configparser
@@ -212,6 +434,14 @@ class AcceptanceCheck(unittest.TestCase):
             archived = self.root/'result'/artifact['path']
             self.assertTrue(archived.is_file())
             self.assertEqual(digest(archived), artifact['sha256'])
+        # Re-evaluating a previously failed image must remove the stale
+        # failure summary as well as update the final status.
+        from acceptance import refresh_case_comparisons
+        result['failedStep'] = dict(index=1, kind='verify.screenshot', message='Old pixel difference')
+        write_json(self.root/'result/case_result.json', result)
+        refreshed = refresh_case_comparisons(self.root/'result')
+        self.assertEqual(refreshed['status'], 'passed')
+        self.assertNotIn('failedStep', refreshed)
 
     def test_batch_exports_with_identical_names_are_isolated_and_archived(self):
         import run_acceptance
@@ -274,6 +504,27 @@ class AcceptanceCheck(unittest.TestCase):
         self.assertEqual(self.run_job(SessionFixture(self.writer))['status'], 'failed')
         check = next(c for c in read_json(self.root/'result/checks.json') if c['validator']=='gcode-job')
         self.assertIn('expected T2', check['message'])
+
+    def test_finished_pixel_failure_still_collects_files_and_fails_acceptance(self):
+        from PIL import Image
+        baseline = self.assets / 'approved.png'
+        Image.new('RGBA', (8, 8), 'white').save(baseline)
+        journal = self.scenario / 'events/Journal.json'
+        document = read_json(journal)
+        document['entries'].append(dict(atMs=2, kind='verify.screenshot',
+            payload=dict(baseline='../../../approved.png')))
+        write_json(journal, document)
+        session = SessionFixture(self.writer, dict(success=False, acceptance='failed', results=[
+            dict(index=1, kind='action', status='passed'),
+            dict(index=2, kind='verify.db', status='passed'),
+            dict(index=3, kind='verify.screenshot', status='failed',
+                 comparison=dict(status='failed', differentPixels=1))]))
+        result = self.run_job(session)
+        self.assertEqual(result['executionStatus'], 'completed')
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['journalAcceptance'], 'failed')
+        self.assertEqual(result['supplementalResults'][0]['status'], 'passed')
+        self.assertTrue((self.root/'result/artifacts/job.gcode').is_file())
 
     def test_old_valid_artifacts_cannot_pass(self):
         self.writer()
@@ -472,6 +723,7 @@ class AcceptanceCheck(unittest.TestCase):
         result = self.run_job(SessionFixture())
         self.assertEqual(result['status'], 'not_verified')
         self.assertEqual(result['verificationPlan']['missingMethods'], ['screenshot'])
+        self.assertEqual(result['methodResults'][0]['status'], 'not_verified')
 
     def test_visual_comparison_uses_formal_assertion_and_tracks_baseline(self):
         for field in ['checks', 'artifacts', 'expected']:
@@ -484,7 +736,7 @@ class AcceptanceCheck(unittest.TestCase):
         write_json(self.scenario/'events/Journal.json', dict(formatVersion=2, entries=[
             dict(atMs=0, kind='verify.screenshot', payload=dict(baseline='../../../baselines/approved.png', tolerance=.99))]))
         result = self.run_job(SessionFixture(overrides=dict(acceptance='passed', results=[
-            dict(index=1, kind='verify.screenshot', status='passed')
+            dict(index=1, kind='verify.screenshot', status='passed', comparison=dict(status='passed'))
         ])))
         self.assertEqual(result['status'], 'passed')
         self.assertEqual(result['provenance']['inputs']['baselines'], {'baselines/approved.png': digest(baseline)})

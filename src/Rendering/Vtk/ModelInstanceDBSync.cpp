@@ -30,6 +30,7 @@
 #include <vtkPoints.h>
 #include <vtkPolyData.h>
 #include <vtkPolyDataMapper.h>
+#include <vtkPolyDataNormals.h>
 #include <vtkProperty.h>
 #include <vtkRenderer.h>
 #include <vtkTransform.h>
@@ -129,6 +130,23 @@ ModelInstanceDBSync::materialForPart(DBInstanceID partId) const {
 }
 
 namespace {
+
+void setMapperMesh(vtkPolyDataMapper* mapper, vtkPolyData* data) {
+    if (data->GetPointData()->GetNormals() || data->GetCellData()->GetNormals()) {
+        mapper->SetInputData(data);
+        return;
+    }
+    // Preserve flat faces without the GPU derivative fallback, which has
+    // undefined normals when adjacent fragments are missing at triangle edges.
+    auto normals = vtkSmartPointer<vtkPolyDataNormals>::New();
+    normals->SetInputData(data);
+    normals->ComputePointNormalsOff();
+    normals->ComputeCellNormalsOn();
+    normals->ConsistencyOff();
+    normals->AutoOrientNormalsOff();
+    normals->SplittingOff();
+    mapper->SetInputConnection(normals->GetOutputPort());
+}
 
 vtkSmartPointer<vtkTransform> vtkTransformFor(
     const Transform::Matrix4& matrix) {
@@ -280,7 +298,7 @@ void ModelInstanceDBSync::rebuildParts() {
         auto geometry = mesh->read();
         if (!geometry) continue;
         auto mapper = vtkSmartPointer<vtkPolyDataMapper>::New();
-        mapper->SetInputData(
+        setMapperMesh(mapper,
             const_cast<vtkPolyData*>(&geometry.polyData()));
         mapper->ScalarVisibilityOff();
         auto actor = vtkSmartPointer<vtkActor>::New();
@@ -468,7 +486,7 @@ void ModelInstanceDBSync::updatePartGeometry(DBInstanceID partId) {
     auto geometry = mesh->read();
     if (!geometry) return;
     clearSurfaceColorPresentation(partId);
-    found->mapper->SetInputData(
+    setMapperMesh(found->mapper,
         const_cast<vtkPolyData*>(&geometry.polyData()));
     found->mapper->Modified();
     found->geometry = std::move(geometry);
@@ -840,7 +858,7 @@ void ModelInstanceDBSync::clearSurfaceColorPresentation(DBInstanceID partId) {
     if (part && mesh && mesh->isValid()) {
         auto geometry = mesh->read();
         if (geometry) {
-            presentation->mapper->SetInputData(
+            setMapperMesh(presentation->mapper,
                 const_cast<vtkPolyData*>(&geometry.polyData()));
             presentation->geometry = std::move(geometry);
         }

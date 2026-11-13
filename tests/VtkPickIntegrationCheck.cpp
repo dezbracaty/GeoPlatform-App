@@ -37,6 +37,7 @@ public:
 int main(int argc, char** argv) {
     GPlatform::Rendering::registerAppRendering();
     QGuiApplication app(argc, argv);
+    const bool firstFrameOnly = app.arguments().contains("--first-frame");
     GPlatform::Rendering::registerVtkBackendModule();
 
     QSurfaceFormat format;
@@ -80,13 +81,16 @@ int main(int argc, char** argv) {
     if (!cubeGraph) return 15;
     const auto cube = cubeGraph.instance;
     auto camera = trans::TransDB::create<CameraDB>();
-    camera->setPosition(Vector3(0.0f, -4.0f, 3.0f));
-    camera->setTarget(Vector3(0.0f, 0.0f, 0.0f));
+    // A translated marker is outside VTK's default camera. The first frame
+    // must already use the document camera, without a second frame to repair it.
+    const float focusX = firstFrameOnly ? 100.0f : 0.0f;
+    camera->setPosition(Vector3(focusX, -4.0f, 3.0f));
+    camera->setTarget(Vector3(focusX, 0.0f, 0.0f));
     camera->setUpVector(Vector3(0.0f, 0.0f, 1.0f));
 
     TempDBScope hintScope;
     auto hint = hintScope.create<SnapPreviewDB>();
-    hint->setPreview(DBInstanceID(4343), {{{-1, 0, 0}, {1, 0, 0}}});
+    hint->setPreview(DBInstanceID(4343), {{{focusX - 1, 0, 0}, {focusX + 1, 0, 0}}});
     hint->setVisible(true);
     // A solid green candidate lies fully inside the cube. It must be hidden
     // normally and visible when the owner requests an Orca-style gizmo pass.
@@ -184,6 +188,17 @@ int main(int argc, char** argv) {
             renderThread->frameExchange()->release({frame->frameId, std::make_shared<ReadbackCompleted>()});
             renderThread->wakeFrameProgress();
             renderThread->onFrameAcquired();
+            if (firstFrameOnly) {
+                if (frame->frameId != 1) {
+                    std::cerr << "First-frame check missed frame 1\n";
+                    finish(17);
+                    return;
+                }
+                if (!hintVisible)
+                    std::cerr << "First published frame did not use the document camera\n";
+                finish(hintVisible ? 0 : 16);
+                return;
+            }
             if (previewPhase != 0) {
                 if (previewPhase == 1 && !hintVisible) {
                     // Owner changes must take effect without recreating the DB.

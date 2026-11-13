@@ -7,10 +7,11 @@ import os
 from pathlib import Path
 import sys
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
-from acceptance import load_case, run_case, write_summary
+from acceptance import load_case, run_case, refresh_case_comparisons, write_case_result, write_summary
 from verification_methods import METHODS, SUPPLEMENTAL_VALIDATORS, VALIDATORS
-from screenshot_review import checkpoint_declarations
+from screenshot_review import checkpoint_declarations, collect_screenshots
 
 
 def regression_environment():
@@ -36,6 +37,7 @@ def update_run_summary(summary):
         runComplete=len(cases) == len(planned), notRunCases=[name for name in planned if name not in {c['id'] for c in cases}])
     statuses = [case['status'] for case in cases]
     summary['status'] = ('failed' if 'failed' in statuses else 'blocked' if 'blocked' in statuses else
+                         'pending' if 'pending' in statuses else
                          'not_verified' if not summary['runComplete'] or 'not_verified' in statuses else 'passed')
 
 
@@ -59,7 +61,7 @@ def prepare_theme(settings, theme):
 
 
 
-def main(argv=None, *, session=None, progress=None):
+def main(argv=None, *, session=None, progress=None, between_cases=None):
     app_root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, help='Complete host source (compatibility entry)')
@@ -91,7 +93,12 @@ def main(argv=None, *, session=None, progress=None):
     sys.path.insert(0, str(args.journal_tools.resolve()))
     from journal_runner import load_journal
     from journal_execution_session import JournalExecutionSession
-    names = sorted(p.parent.parent.name for p in (args.assets / 'scenarios').glob('*/events/Journal.json'))
+    from journal_runner import ScreenshotComparisons
+    from session_repository import JournalSessionRepository, discover_scenarios
+    try:
+        names = [directory.name for directory in discover_scenarios(args.assets / 'scenarios')]
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.list:
         try:
             listed = select_cases(names, args.cases or 'all', exclude=args.exclude)
@@ -145,6 +152,52 @@ def main(argv=None, *, session=None, progress=None):
                 settings.write_bytes(backup)
             else:
                 settings.unlink(missing_ok=True)
+    reviews = ThreadPoolExecutor(max_workers=1, thread_name_prefix='journal-review')
+    comparisons = ScreenshotComparisons()
+    pending_reviews = []
+    waiting_reviews = []
+
+    def submit_review(checkpoints, execution, case_output):
+        waiting_reviews.append((checkpoints, execution, case_output))
+
+    def finish_comparisons(changed):
+        for case in summary['cases']:
+            case_output = output / case['id']
+            if str(case_output) in changed:
+                case['status'] = refresh_case_comparisons(case_output)['status']
+        update_run_summary(summary)
+
+    def finish_reviews():
+        changed = False
+        for request in waiting_reviews[:]:
+            checkpoints, execution, case_output = request
+            if any(step.get('status') == 'pending' for step in execution.get('results', [])):
+                continue
+            pending_reviews.append((case_output, reviews.submit(
+                collect_screenshots, checkpoints, execution, case_output)))
+            waiting_reviews.remove(request)
+        for case_output, future in pending_reviews[:]:
+            if not future.done():
+                continue
+            result = json.loads((case_output / 'case_result.json').read_text(encoding='utf-8'))
+            try:
+                result['screenshotReview'] = future.result()
+                result['reviewStatus'] = 'pending' if result['screenshotReview']['pendingCount'] else 'not_applicable'
+            except Exception as exc:
+                result.update(reviewStatus='failed', screenshotReviewError=str(exc))
+            checks = json.loads((case_output / 'checks.json').read_text(encoding='utf-8'))
+            write_case_result(case_output, result, checks)
+            pending_reviews.remove((case_output, future))
+            changed = True
+        return changed
+
+    def refresh_pending():
+        changed = comparisons.collect()
+        finish_comparisons(changed)
+        reviews_changed = finish_reviews()
+        if changed or reviews_changed:
+            write_summary(output, summary)
+
     try:
         for case_index, name in enumerate(selected, 1):
             if session is not None and getattr(session, 'cancel_event', None) is not None and session.cancel_event.is_set():
@@ -163,13 +216,18 @@ def main(argv=None, *, session=None, progress=None):
             result = run_case(args.assets, name, args.application, output / name, case_exports,
                               session if session is not None else JournalExecutionSession(), load_journal,
                               review_screenshots=True, environment_overrides=environment,
+                              review_submit=submit_review, comparisons=comparisons,
                               **(dict(capture_candidates=True) if args.capture_candidates else {}))
             summary['cases'].append(dict(id=name, status=result['status'], result=f'{name}/case_result.json'))
-            update_run_summary(summary)
+            finish_comparisons(comparisons.collect())
+            finish_reviews()
             write_summary(output, summary)
-            print('END ' + name + ': ' + result['status'], flush=True)
+            status = summary['cases'][-1]['status']
+            print('END ' + name + ': ' + status, flush=True)
             if progress:
-                progress(dict(case=name, index=case_index, total=len(selected), phase='end', status=result['status']))
+                progress(dict(case=name, index=case_index, total=len(selected), phase='end', status=status))
+            if between_cases is not None and case_index < len(selected):
+                between_cases(refresh_pending)
     except Exception as exc:
         summary.update(status='failed', error=str(exc))
     finally:
@@ -178,7 +236,22 @@ def main(argv=None, *, session=None, progress=None):
             summary['settingsRestored'] = settings is not None
         except OSError as exc:
             summary.update(status='failed', cleanupError=str(exc))
+        try:
+            finish_comparisons(comparisons.close())
+            finish_reviews()
+            reviews.shutdown(wait=True)
+            finish_reviews()
+        except Exception as exc:
+            summary.update(status='failed', screenshotReviewError=str(exc))
+        finally:
+            reviews.shutdown(wait=True)
+        if summary.get('error') or summary.get('cleanupError'):
+            summary['status'] = 'failed'
         write_summary(output, summary)
+        try:
+            JournalSessionRepository(playbacks=JournalSessionRepository.default_paths(args.application)['playbacks']).remember_result(output)
+        except OSError as exc:
+            print(f'无法记录最近结果入口：{exc}', file=sys.stderr)
     return 0 if summary['status'] == 'passed' else 1 if summary['status'] in {'failed', 'blocked'} else 2
 
 

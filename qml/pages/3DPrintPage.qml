@@ -243,7 +243,7 @@ ContentPage {
                 text: qsTr("Save")
                 ToolTip.visible: hovered && enabled
                 ToolTip.delay: Theme.tooltipDelay
-                ToolTip.text: qsTr("Save changes to a user preset for the current printer, then continue switching.")
+                ToolTip.text: qsTr("Save the preset changes, then continue switching.")
                 onClicked: {
                     if (presetSwitch.preset.saveAs) {
                         presetName.text = presetSwitch.preset.name + " - " + qsTr("Copy")

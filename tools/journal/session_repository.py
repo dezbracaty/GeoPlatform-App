@@ -8,6 +8,32 @@ from datetime import datetime
 from pathlib import Path
 
 
+def discover_scenarios(directory):
+    """Return every canonical scene and reject Journals the batch would omit."""
+    root = Path(directory)
+    journals = sorted(root.rglob('Journal.json'))
+    cases, misplaced = [], []
+    for journal in journals:
+        parts = journal.relative_to(root).parts
+        if (len(parts) == 3 and parts[1:] == ('events', 'Journal.json') and
+                re.fullmatch('[a-z0-9][a-z0-9_-]*', parts[0])):
+            cases.append(journal.parent.parent)
+        elif (len(parts) == 4 and parts[1:] == ('windows', 'events', 'Journal.json') and
+              (root / parts[0] / 'events/Journal.json').is_file()):
+            # Retained Windows recordings are historical baselines of the same
+            # scene, not another active regression entry on Mac mini.
+            continue
+        else:
+            misplaced.append(journal.relative_to(root).as_posix())
+    for metadata in root.glob('*/metadata.json'):
+        if not (metadata.parent / 'events/Journal.json').is_file():
+            misplaced.append(metadata.relative_to(root).as_posix() + ' (missing events/Journal.json)')
+    if misplaced:
+        raise ValueError('Unregistered Journal scenarios; use scenarios/<id>/events/Journal.json: ' +
+                         ', '.join(misplaced))
+    return cases
+
+
 class JournalSessionRepository:
     """Filesystem operations for Journal sessions, independent of Tk widgets."""
 
@@ -33,11 +59,42 @@ class JournalSessionRepository:
         self.recordings = Path(recordings)
         self.playbacks = Path(playbacks)
 
+    def remember_result(self, output):
+        """Remember explicit CLI outputs as well as default session directories."""
+        if self.playbacks is None:
+            return
+        self.playbacks.mkdir(parents=True, exist_ok=True)
+        path = self.playbacks / 'latest-result.json'
+        temporary = path.with_name(f'.latest-result-{uuid.uuid4().hex}.tmp')
+        try:
+            temporary.write_text(json.dumps(dict(outputPath=str(Path(output).resolve()))) + '\n', encoding='utf8')
+            os.replace(temporary, path)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+
+    def result_directories(self):
+        if self.playbacks is None:
+            return []
+        recent = []
+        try:
+            path = Path(json.loads((self.playbacks / 'latest-result.json').read_text(encoding='utf8'))['outputPath'])
+            if path.is_dir():
+                recent.append(path.resolve())
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        files = list(self.playbacks.glob('*/summary.json')) + list(self.playbacks.glob('*/execution_result.json'))
+        for path in sorted(files, key=lambda p: p.stat().st_mtime, reverse=True):
+            if path.parent.resolve() not in recent:
+                recent.append(path.parent.resolve())
+        return recent
+
     def list_sessions(self):
         sessions = []
         for root, session_type in (
             (self.recordings, "录制"), (self.playbacks, "回放"), (self.scenarios, "场景")):
-            paths = set(root.glob("*" if session_type == "场景" else "session_*")) if root and root.is_dir() else set()
+            paths = (set(discover_scenarios(root) if session_type == '场景' else root.glob('session_*'))
+                     if root and root.is_dir() else set())
             if session_type == "场景":
                 paths.update(self.external_scenarios)
             for path in sorted(paths):

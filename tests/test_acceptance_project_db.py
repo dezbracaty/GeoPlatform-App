@@ -1,6 +1,7 @@
 """3MF samples retain their bytes; behavior coverage and formal gates stay explicit."""
 import hashlib
 import copy
+import base64
 import json
 from pathlib import Path
 import sys
@@ -102,16 +103,22 @@ class ProjectDbAssetsTests(unittest.TestCase):
                 journal = metadata_path.parent / 'events/Journal.json'
                 entries = json.loads(journal.read_text(encoding="utf-8"))['entries']
                 method, = metadata['verification']['requiredMethods']
-                assertions = [e for e in entries if e['kind'] == 'verify.' + method]
+                plan = verification_plan(metadata, {'entries': entries})
+                indices = {i for check in plan['checks'] if check['required']
+                           for i in check.get('entryIndices', [])}
                 self.assertEqual(row['metadata'], metadata_path.relative_to(ASSETS).as_posix())
                 self.assertEqual(row['type'], method)
-                self.assertEqual(row['checkpoints'], len(assertions))
-                if method == 'db':
-                    used = {(ASSETS / item['file']).resolve()
-                            for item in metadata['dbBaselines']}
-                else:
-                    used = {(journal.parent / e['payload']['baseline']).resolve()
-                            for e in assertions}
+                self.assertEqual(row['checkpoints'], len(indices))
+                db_baselines = metadata.get('dbBaselines', [])
+                self.assertEqual({item['entryIndex'] for item in db_baselines},
+                                 {i for i in indices if entries[i - 1]['kind'] == 'verify.db'})
+                used = {(ASSETS / item['file']).resolve() for item in db_baselines}
+                for item in db_baselines:
+                    payload = entries[item['entryIndex'] - 1]['payload']
+                    self.assertEqual(base64.b64decode(payload['expectedSerialized'], validate=True),
+                                     (ASSETS / item['file']).read_bytes())
+                used.update((journal.parent / entries[i - 1]['payload']['baseline']).resolve()
+                            for i in indices if entries[i - 1]['kind'] != 'verify.db')
                 self.assertEqual(used, {(ASSETS / item['path']).resolve()
                                         for item in row['files']})
                 for item in row['files']:
