@@ -185,6 +185,12 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
         return 1;
     }
 
+#ifdef JOURNALSYSTEM_ENABLED
+    // Own replay input before any splash/main window can receive native events.
+    // Providers and listening are still configured only when startup is ready.
+    auto* journal = new JournalSystem(&app);
+    journal->setStartupReplayId(startupReplayId);
+#endif
 
     GPlatform::Rendering::configureGraphicsAfterApplication();
 
@@ -285,9 +291,6 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
     });
     engine.addImportPath(":/qt/qml");
     engine.rootContext()->setContextProperty("StartupState", &startup);
-#ifdef JOURNALSYSTEM_ENABLED
-    JournalSystem* journal = nullptr;
-#endif
     ActionManager::getInstance()->setAdmissionPolicy(
         [&startup](const QString& code, bool ai) { return startup.admissionError(code, ai); });
     const auto clearAdmission = qScopeGuard([] { ActionManager::getInstance()->setAdmissionPolicy({}); });
@@ -339,8 +342,7 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
                         logElapsed("QML engine load started");
 
 #ifdef JOURNALSYSTEM_ENABLED
-                        // Initialize JournalSystem for UI testing support
-                        journal = new JournalSystem(&app);
+                        // Bind the early-created service to the ready application.
                         AppInfo::getInstance()->setJournalService(journal);
                         // AI TESTING POLICY: AI agents MUST NOT directly call
                         // journal.entry.execute / JournalSystem.execute_entry to test the app.
@@ -438,7 +440,6 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
                             startup.fail(StartupCoordinator::tr("Invalid Journal port"));
                             return;
                         }
-                        journal->setStartupReplayId(startupReplayId);
                         journal->setReplayPreparationHandler([args, journal](const QString& replayId, QString& error) {
                             QStringList nextArguments;
                             for (int i = 1; i < args.size(); ++i) {

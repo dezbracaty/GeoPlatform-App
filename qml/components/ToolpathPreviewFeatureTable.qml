@@ -153,7 +153,7 @@ Item {
             }
             CheckBox {
                 id: allToggle
-                objectName: "slicing.preview.legendAll"
+                objectName: root.objectName + ".legendAll"
                 Layout.preferredWidth: root.displayWidth
                 Layout.minimumWidth: root.displayWidth
                 Layout.maximumWidth: root.displayWidth
@@ -172,7 +172,7 @@ Item {
 
         ListView {
             id: featureList
-            objectName: "slicing.preview.legendList"
+            objectName: root.objectName + ".legendList"
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
@@ -181,7 +181,7 @@ Item {
             delegate: Rectangle {
                 required property var modelData
                 required property int index
-                objectName: "slicing.preview.legendRow." + modelData.id
+                objectName: root.objectName + ".legendRow." + modelData.id
                 width: featureList.width
                 height: 34
                 radius: PrintWorkspaceStyle.controlRadius
@@ -270,7 +270,7 @@ Item {
                         color: Theme.of(root).res.textFillColorPrimary
                     }
                     CheckBox {
-                        objectName: "slicing.preview.legendToggle." + modelData.id
+                        objectName: root.objectName + ".legendToggle." + modelData.id
                         Layout.preferredWidth: root.displayWidth
                         Layout.minimumWidth: root.displayWidth
                         Layout.maximumWidth: root.displayWidth

@@ -117,12 +117,35 @@ class ScreenshotRegionTest(unittest.TestCase):
                         comparison = step['comparison']
                         self.assertEqual(comparison['differentPixels'], int(outside))
                         self.assertEqual(comparison['excludedRegions'], [dict(reason='fps',
-                            rectangle=[1260*dpr, 72*dpr, 110*dpr, 36*dpr])])
+                            rectangle=[1260*dpr, (78 if sys.platform == 'win32' else 72)*dpr,
+                                       110*dpr, 36*dpr])])
                         self.assertEqual(comparison['comparedPixels'],
                                          (1382*954 - 110*36) * dpr*dpr)
                         self.assertEqual(Path(step['evidence'][0]).read_bytes(), original)
                         self.assertEqual(Path(step['evidence'][1]).read_bytes(), png)
                     self.assertEqual(baseline.read_bytes(), original)
+
+    def test_windows_fps_shadow_uses_native_offset_without_growing_exclusion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            baseline = root / 'expected.png'
+            Image.new('RGBA', (1382, 954), 'white').save(baseline)
+            for platform, point, expected_pass in [
+                    ('win32', (1279, 109), True),  # observed Windows lower button edge
+                    ('darwin', (1279, 109), False),
+                    ('win32', (1279, 74), False),  # no longer inside the moved footprint
+                    ('darwin', (1279, 74), True),
+                    ('win32', (1279, 114), False),
+                    ('win32', (1370, 100), False),
+                    ('win32', (1259, 100), False)]:
+                with self.subTest(platform=platform, point=point), patch('journal_runner.sys.platform', platform):
+                    actual = Image.new('RGBA', (1382, 954), 'white')
+                    actual.putpixel(point, (254, 255, 255, 255))
+                    data = BytesIO(); actual.save(data, format='PNG'); details = {}
+                    result = compare_screenshots(baseline, data.getvalue(), 1.0,
+                        root / 'diff.png', exclude_fps=True, details=details)
+                    self.assertEqual(result[0], expected_pass)
+                    self.assertEqual(details['comparedPixels'], 1382*954 - 110*36)
 
     def test_fps_exclusion_never_hides_size_mismatch_or_other_windows(self):
         with tempfile.TemporaryDirectory() as directory:

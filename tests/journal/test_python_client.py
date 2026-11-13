@@ -189,7 +189,7 @@ class JournalPythonClientCheck(unittest.TestCase):
         for case in cases:
             with self.subTest(case=case.name):
                 self.assertTrue((case / 'events/Journal.json').is_file())
-                metadata = json.loads((case / 'metadata.json').read_text())
+                metadata = json.loads((case / 'metadata.json').read_text(encoding='utf-8'))
                 self.assertEqual(metadata['id'], case.name)
 
     def test_replay_compares_full_image_exactly_despite_legacy_options(self):
@@ -499,7 +499,7 @@ class JournalPythonClientCheck(unittest.TestCase):
 
     def test_macos_activation_selects_owned_child_while_recording_instance_stays_open(self):
         from journal_execution_session import _activate_owned_macos_application
-        executable = Path('/Applications/Test.app/Contents/MacOS/Test')
+        executable = Path('/Applications/Test.app/Contents/MacOS/Test').resolve()
         process = Mock(pid=123)
         process.poll.return_value = None
         commands = []

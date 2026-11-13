@@ -67,7 +67,7 @@ class AcceptanceCheck(unittest.TestCase):
             resource = bundle / 'Resources/libslicer/bed.stl'
             resource.parent.mkdir(parents=True)
             resource.write_bytes(b'controlled bed geometry')
-            captured = Path('/recorded/GPlatform.app/Contents')
+            captured = (Path(temporary) / 'recorded/GPlatform.app/Contents').resolve()
             def token(path):
                 value = str(path).encode()
                 return struct.pack('<Q', 11) + b'string.utf8' + struct.pack('<Q', len(value)) + value
