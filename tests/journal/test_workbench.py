@@ -3,7 +3,9 @@ import hashlib
 import http.client
 import io
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import threading
@@ -171,11 +173,23 @@ class WorkbenchTests(unittest.TestCase):
     def test_evidence_cannot_escape_registered_run_even_via_symlink(self):
         output = self.root / 'run'
         output.mkdir()
-        secret = self.root / 'private.txt'
+        private = self.root / 'private'
+        private.mkdir()
+        secret = private / 'private.txt'
         secret.write_text('private')
-        (output / 'escape').symlink_to(secret)
+        escape = output / 'escape'
+        try:
+            escape.symlink_to(private, target_is_directory=True)
+        except OSError as error:
+            if os.name != 'nt' or getattr(error, 'winerror', None) != 1314:
+                raise
+            # Directory junctions exercise the same real path escape on Windows
+            # without requiring the symbolic-link privilege.
+            subprocess.run(['cmd', '/c', 'mklink', '/J', str(escape), str(private)],
+                           check=True, capture_output=True)
         identifier = self.w._register_run(output)
-        for path in ('../private.txt', str(secret), 'escape', '..\\private.txt'):
+        for path in ('../private/private.txt', str(secret), 'escape/private.txt',
+                     '..\\private\\private.txt'):
             with self.assertRaises((WorkbenchError, FileNotFoundError)):
                 self.w.artifact(identifier, path)
         with self.assertRaises(FileNotFoundError):
