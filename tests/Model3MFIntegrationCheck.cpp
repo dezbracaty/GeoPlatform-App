@@ -66,7 +66,7 @@ bool selectMachineAndWait(SliceSettingsBridge& bridge, const QString& model, con
                           const QString& bedType = {}, const QString& preset = {}) {
     return bridge.selectMachine(model, variant, bedType, preset) && waitForMachinePreparation(bridge) &&
         bridge.selectedMachineModelId() == model && bridge.selectedMachineVariantId() == variant &&
-        (preset.isEmpty() || bridge.selectedPrinterPresetId() == preset);
+        (preset.isEmpty() || bridge.selectedMachine().value("printerPresetId").toString() == preset);
 }
 QByteArray bytes(const QString& path) {
     QFile file(path);

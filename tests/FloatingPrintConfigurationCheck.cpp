@@ -40,6 +40,12 @@ namespace {
 void require(bool ok, const char* message) {
     if (!ok) throw std::runtime_error(message);
 }
+void waitForMachine(SliceSettingsBridge* settings, const QString& model) {
+    require(QTest::qWaitFor([&] {
+        return !settings->machinePreparationPending() && settings->selectedMachineModelId() == model &&
+            settings->selectedMachineVariantId() == "0.4";
+    }, 15000), "Accepted machine selection did not finish");
+}
 void logGeometry(const char* phase, const QQuickWindow& window, const QQuickItem& bounds,
                  const QQuickItem& panel) {
     const auto rect = [](const QRectF& value) {
@@ -86,6 +92,12 @@ QQuickItem* find(QQuickItem* parent, const QString& name) {
     for (auto* child : parent->childItems())
         if (auto* result = find(child, name)) return result;
     return nullptr;
+}
+QList<QQuickItem*> findAll(QQuickItem* parent, const QString& name) {
+    QList<QQuickItem*> result;
+    if (parent->objectName() == name) result.push_back(parent);
+    for (auto* child : parent->childItems()) result.append(findAll(child, name));
+    return result;
 }
 void click(QQuickWindow& window, QQuickItem* root, const QString& name) {
     // Finish pending layout before resolving coordinates. A native window may
@@ -221,6 +233,7 @@ int main(int argc, char** argv) {
             // Use the production full editor: a genuinely invalid switch edit must
             // restore its checked state without a revision change or a schema reload.
             require(settings->selectMachine("CFSYS Alpha500 Printer", "0.4"), "Cannot activate rejection fixture");
+            waitForMachine(settings, "CFSYS Alpha500 Printer");
             settings->setSetting("toolchange_z_lift", 10.0);
             settings->markCurrentAsSliced();
             const auto rejectedBefore = GPlatform::SlicingBackend::instance().configSnapshot();
@@ -268,8 +281,8 @@ int main(int argc, char** argv) {
                 "Popup is unavailable in the actual interaction viewport");
         auto* editor = find(panel, "print.configuration.editor");
         require(editor, "Missing native process editor");
-        // The retained machine popup and floating editor coexist in the real UI.
-        // Hidden controls must still have distinct names for strict Journal lookup.
+        // The machine editor is created on first detailed open, then retained.
+        // Its controls must have distinct names even after the popup is hidden.
         QQmlComponent machineComponent(&engine, QUrl::fromLocalFile(QStringLiteral(POPUP_QML_ROOT "/components/MachineSelectionBar.qml")));
         require(machineComponent.isReady(), qPrintable(machineComponent.errorString()));
         std::unique_ptr<QObject> machineObject(machineComponent.create());
@@ -279,8 +292,12 @@ int main(int argc, char** argv) {
         machine->setParentItem(window.contentItem());
         machine->setVisible(false);
         QCoreApplication::processEvents();
+        auto* machinePopup = machineObject->findChild<QObject*>("machineSelectorPopup");
+        require(machinePopup, "Missing machine popup");
+        auto* machineContent = machinePopup->property("contentItem").value<QQuickItem*>();
+        require(machineContent, "Missing machine popup content");
         const auto verifyAutomationNames = [&] {
-            const auto retained = machineObject->findChildren<QQuickItem*>("machineSelectorSettingsSearchField");
+            const auto retained = findAll(machineContent, "machineSelectorSettingsSearchField");
             const auto floating = object->findChildren<QQuickItem*>("print.configuration.machineSelectorSettingsSearchField");
             require(retained.size() == 1 && floating.size() == 1,
                     "Reused settings editors do not have independent automation names");
@@ -289,14 +306,37 @@ int main(int argc, char** argv) {
                 if (!(name.startsWith("machineSelector") || name.startsWith("sliceSetting")
                       || name.startsWith("fiberTool") || name.startsWith("fiberSwap")
                       || name.startsWith("filament") || name.startsWith("print.configuration"))) continue;
-                require(machineObject->findChildren<QQuickItem*>(item->objectName()).isEmpty(),
+                require(findAll(machineContent, item->objectName()).isEmpty(),
                         qPrintable("Duplicate editor automation name: " + item->objectName()));
             }
         };
-        verifyAutomationNames();
+        require(findAll(machineContent, "machineSelectorSettingsSearchField").isEmpty(),
+                "Hidden machine details were eagerly constructed");
         machine->setVisible(true);
+        click(window, machine, "machineSelectorButton");
+        require(QTest::qWaitFor([&] {
+            return machinePopup->property("opened").toBool() &&
+                std::abs(machinePopup->property("width").toDouble() - machinePopup->property("preferredWidth").toDouble()) < 1 &&
+                std::abs(machinePopup->property("height").toDouble() - machinePopup->property("preferredHeight").toDouble()) < 1;
+        }, 2000), "Machine popup did not finish its opening layout");
+        click(window, window.contentItem(), "machineSelectorSlicingParametersButton");
+        const bool detailsReady = QTest::qWaitFor([&] {
+            return machine->property("detailedSettingsVisible").toBool() &&
+                findAll(machineContent, "machineSelectorSettingsSearchField").size() == 1;
+        }, 2000);
+        require(detailsReady, qPrintable(QString("Detailed machine editor unavailable: requested=%1, searchCount=%2")
+            .arg(machine->property("detailedSettingsVisible").toBool())
+            .arg(findAll(machineContent, "machineSelectorSettingsSearchField").size())));
         verifyAutomationNames();
+        auto* retainedSearch = find(machineContent, "machineSelectorSettingsSearchField");
+        require(QMetaObject::invokeMethod(machinePopup, "close"), "Cannot close the machine popup");
+        require(QTest::qWaitFor([&] { return !machinePopup->property("visible").toBool(); }, 2000),
+                "Machine popup did not finish closing");
         machine->setVisible(false);
+        QCoreApplication::processEvents();
+        verifyAutomationNames();
+        require(find(machineContent, "machineSelectorSettingsSearchField") == retainedSearch,
+                "Closing machine settings replaced its retained editor");
         const auto before = trans::serializeState(*config);
         const auto configBefore = GPlatform::SlicingBackend::instance().configSnapshot();
         verifyCompleteProcessParameters(settings, editor, false);
@@ -383,12 +423,14 @@ int main(int argc, char** argv) {
         require(GPlatform::SlicingBackend::instance().configSnapshot()->values() == beforeDrag->values(),
                 "Dragging or outside click changed slicing configuration");
         require(settings->selectMachine("CFSYS Alpha500 Printer", "0.4"), "Cannot activate actual continuous-fiber machine");
+        waitForMachine(settings, "CFSYS Alpha500 Printer");
         require(panel->property("fiberCapable").toBool(), "Fiber machine did not expose its process category");
         const auto fiberBefore = GPlatform::SlicingBackend::instance().configSnapshot();
         verifyCompleteProcessParameters(settings, editor, true);
         require(GPlatform::SlicingBackend::instance().configSnapshot()->values() == fiberBefore->values(),
                 "Browsing complete fiber parameter categories changed the slicing configuration");
         require(settings->selectMachine("P3", "0.4"), "Cannot activate P3");
+        waitForMachine(settings, "P3");
         require(panel->property("fiberCapable").toBool(), "Mixed-capability P3 tools hid the fiber settings");
         for (int tool = 0; tool < 6; ++tool) {
             require(settings->selectFilamentPresetForSlot(tool, "CFSYS CCF"),

@@ -261,6 +261,7 @@ ApplicationWindow {
   __ACCEPTED__
  }
  QtObject { id: previewPage; property var workspaceContent: centralFragment }
+ function ensureWorkspacePage(name) { return previewPage }
  GlobalPrintCommandBar {
   id: bar; objectName: "bar"
   anchors.centerIn: parent
