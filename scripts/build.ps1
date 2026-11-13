@@ -20,7 +20,7 @@ if ($BuildDirectory) { $BuildDirectory = [System.IO.Path]::GetFullPath($BuildDir
 $result = 0
 Push-Location $projectRoot
 try {
-    $cmakeTool = Get-Command $CMake -CommandType Application -ErrorAction SilentlyContinue
+    $cmakeTool = Get-Command $CMake -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $cmakeTool) { throw "CMake was not found: $CMake. Install CMake >= 3.24 on PATH or pass -CMake <executable>." }
     $cmakePath = $cmakeTool.Source
     if ($VsRoot -or -not $env:VSCMD_VER -or $env:VSCMD_ARG_TGT_ARCH -ne $Architecture) {
