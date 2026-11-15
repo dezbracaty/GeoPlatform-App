@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="model/stl"><comment>STL model</comment><glob pattern="*.stl"/></mime-type>
+  <mime-type type="model/3mf"><comment>3MF project</comment><glob pattern="*.3mf"/></mime-type>
+  <mime-type type="text/x.gcode"><comment>G-code toolpath</comment><sub-class-of type="text/plain"/><glob pattern="*.gcode"/></mime-type>
+</mime-info>
