@@ -19,6 +19,10 @@ description: 导出、检查或验证 GPlatform SDK 与独立 App 消费。先�
 先查 SDK export、`publish_sdk.py`、`cmake/source_inputs.py`、`GPlatformSDKConsumer.cmake` 和现有部署/CI 调用链，确认现有能力是否已经覆盖。复用清单生成、来源检查、锁、暂存/替换及运行库部署，不另写逐文件复制、校验或发布脚本。
 确有接口/资源缺口时在拥有它的导出或消费位置补齐必要契约，并验证两端；局部交付问题不默认扩大为 SDK 布局迁移、兼容框架或跨仓库历史改造。
 
+## MR 源码回归与独立消费的区别
+
+主仓 MR 按 `gplatform-mr-delivery` 从完整源码构建，不要求开发者在提交 MR 前生成或推送新 SDK。Mac mini 与 Windows 固定平台回归都通过后，由 workflow 使用同一源码 SHA 生产、校验并更新同名临时 SDK 分支，保留本技能中的来源、清单、载荷和槽位校验。SDK 不自动回写正在验收的 App／主仓指针；后续独立 App 消费更新仍按 SDK → App → 宿主的依赖顺序处理。
+
 ## 执行方法
 
 1. 生产：用匹配的薄架构 preset 构建完整宿主的标准目标，核对 `sdk-export/settings.json`、导出清单与产物来源。
