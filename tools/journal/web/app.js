@@ -3,8 +3,8 @@
 
   const $ = id => document.getElementById(id);
   const esc = value => String(value == null ? '' : value).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
-  const labels = {idle: '未开始', waiting: '待回放', queued: '待回放', running: '回放中', replaying: '回放中', comparing: '比较中', processing: '处理中', pending: '比较未完成', identical: '一致', different: '不同', unavailable: '证据不可用', passed: '通过', failed: '失败', error: '错误', not_verified: '未验证', not_run: '未运行', blocked: '准备阻塞', incomplete: '不完整', cancelling: '正在停止', cancelled: '已中止', canceled: '已中止', skipped: '未运行', paused: '已暂停', completed: '执行完成', accepted: '已接受候选', defect: '已确认缺陷'};
-  const symbols = {running: '▶', replaying: '▶', comparing: '◌', processing: '◌', pending: '◌', passed: '✓', failed: '!', error: '!', blocked: '!', cancelled: '−', canceled: '−', incomplete: '−'};
+  const labels = {idle: '未开始', waiting: '待回放', queued: '待回放', running: '回放中', replaying: '回放中', comparing: '比较中', processing: '处理中', pending: '比较未完成', identical: '一致', different: '不同', unavailable: '证据不可用', passed_after_recheck: '复测通过', passed: '通过', failed: '失败', error: '错误', not_verified: '未验证', not_run: '未运行', blocked: '准备阻塞', incomplete: '不完整', cancelling: '正在停止', cancelled: '已中止', canceled: '已中止', skipped: '未运行', paused: '已暂停', completed: '执行完成', accepted: '已接受候选', defect: '已确认缺陷'};
+  const symbols = {passed_after_recheck: '✓', running: '▶', replaying: '▶', comparing: '◌', processing: '◌', pending: '◌', passed: '✓', failed: '!', error: '!', blocked: '!', cancelled: '−', canceled: '−', incomplete: '−'};
   let state = {config: {}, cases: [], task: {}, recording: {}, records: [], history: []};
   let page = 'library', authenticated = false, online = false, booted = false, authBlocked = false;
   let selected = new Set(), expanded = null, query = '', viewedRun = null, result = null, resultError = '';
@@ -23,6 +23,7 @@
     const raw = typeof value === 'string' ? value : value && (value.status || value.acceptance || value.automaticStatus);
     return String(raw || 'not_verified').toLowerCase();
   };
+  const displayStatus = item => statusOf(item) === 'passed' && item.outcome === 'passed_after_recheck' ? item.outcome : statusOf(item);
   const titleOf = status => labels[statusOf(status)] || String(status || '未验证');
   const passed = item => statusOf(item) === 'passed';
   const failed = item => ['failed', 'error'].includes(statusOf(item));
@@ -135,6 +136,9 @@
     $('record-live-nav').hidden = !recording.active;
     $('record-live-duration').textContent = duration(recording.startedAt ? Date.now() / 1000 - Number(recording.startedAt) : 0);
     disable('config-save', busy('config') || taskBusy() || recordingBusy() || !online);
+    disable('parallelism', taskBusy() || recordingBusy() || !online);
+    $('review-each').disabled = Number($('parallelism').value) > 1;
+    if ($('review-each').disabled) $('review-each').checked = false;
     renderCases(); renderRecorder(); renderHistory();
     if (page === 'run') renderRun();
   }
@@ -142,7 +146,7 @@
     const rows = visibleCases(), valid = rows.filter(c => !c.error);
     patch('case-list', rows.map(c => {
       const latest = statusOf(c.latestStatus), chosen = selected.has(String(c.id));
-      return '<tr class="case-row ' + (chosen ? 'selected ' : '') + (c.error ? 'invalid' : '') + '"><td><input type="checkbox" data-select="' + esc(c.id) + '" aria-label="勾选 ' + esc(c.name || c.id) + '" ' + (chosen ? 'checked ' : '') + (c.error ? 'disabled' : '') + '></td><td><button class="case-title" data-expand="' + esc(c.id) + '" aria-expanded="' + (expanded === String(c.id)) + '">' + esc(c.name || c.id) + '</button><div class="case-id">' + esc(c.id) + '</div>' + (c.error ? '<div class="case-error">' + esc(c.error) + '</div>' : '') + '</td><td class="method-col"><span class="method">' + esc(c.method || '未提供') + '</span></td><td class="result-col"><span class="result ' + (latest === 'passed' ? 'pass' : failed(latest) ? 'fail' : 'muted') + '">' + (symbols[latest] || '○') + ' ' + esc(titleOf(latest)) + '</span></td><td><button class="row-arrow" data-expand="' + esc(c.id) + '" aria-label="查看 ' + esc(c.name || c.id) + ' 详情">' + (expanded === String(c.id) ? '⌄' : '›') + '</button></td></tr>' + (expanded === String(c.id) ? '<tr class="details-row"><td colspan="5"><div class="details-content"><p>' + esc(c.description || '此场景未提供说明。') + '</p><span>' + esc(c.checkpointCount == null ? '检查点数量未提供' : c.checkpointCount + ' 个检查点') + '</span></div></td></tr>' : '');
+      return '<tr class="case-row ' + (chosen ? 'selected ' : '') + (c.error ? 'invalid' : '') + '"><td><input type="checkbox" data-select="' + esc(c.id) + '" aria-label="勾选 ' + esc(c.name || c.id) + '" ' + (chosen ? 'checked ' : '') + (c.error ? 'disabled' : '') + '></td><td><button class="case-title" data-expand="' + esc(c.id) + '" aria-expanded="' + (expanded === String(c.id)) + '">' + esc(c.name || c.id) + '</button><div class="case-id">' + esc(c.id) + '</div>' + (c.error ? '<div class="case-error">' + esc(c.error) + '</div>' : '') + '</td><td class="method-col"><span class="method">' + esc(c.method || '未提供') + '</span></td><td class="result-col"><span class="result ' + (latest === 'passed' ? 'pass' : failed(latest) ? 'fail' : 'muted') + '">' + (symbols[latest] || '○') + ' ' + esc(titleOf(displayStatus({status: latest, outcome: c.latestOutcome}))) + '</span></td><td><button class="row-arrow" data-expand="' + esc(c.id) + '" aria-label="查看 ' + esc(c.name || c.id) + ' 详情">' + (expanded === String(c.id) ? '⌄' : '›') + '</button></td></tr>' + (expanded === String(c.id) ? '<tr class="details-row"><td colspan="5"><div class="details-content"><p>' + esc(c.description || '此场景未提供说明。') + '</p><span>' + esc(c.checkpointCount == null ? '检查点数量未提供' : c.checkpointCount + ' 个检查点') + '</span></div></td></tr>' : '');
     }).join('') || '<tr><td colspan="5" class="empty-search">' + (array(state.cases).length ? '没有匹配的场景。' : '没有可用场景，请检查服务的资产目录。') + '</td></tr>');
     $('case-total').textContent = array(state.cases).length + ' 项';
     $('selection-count').textContent = '已选 ' + selected.size + ' 项'; $('start-count').textContent = selected.size;
@@ -164,8 +168,8 @@
     const task = state.task || {};
     const history = array(state.history).find(h => String(h.id) === String(viewedRun));
     array(currentTaskViewed() ? task.plannedCases : history && history.plannedCases).forEach(i => add(i, 'waiting'));
-    if (currentTaskViewed()) array(task.rows).forEach(i => add(i));
     array(result && result.cases).forEach(i => add(i));
+    if (currentTaskViewed()) array(task.rows).forEach(i => add(i));
     array(result && result.checkpoints).forEach(cp => {
       const id = cp.case == null || cp.case === '' ? '__recording__' : String(cp.case);
       if (!byId.has(id)) byId.set(id, {id, status: 'not_verified'});
@@ -214,6 +218,17 @@
     else if (stopped) { headline = '本次回放已停止'; subtitle = '已完成结果保留；未运行和未完成项不会计为通过。'; }
     else if (stateStatus === 'pending' || array(result && result.checkpoints).some(cp => checkpointStatus(cp) === 'pending')) { headline = '执行结束，比较尚未完成'; subtitle = '待比较项不会计为通过；结果会自动更新。'; }
     if (isCurrent && task.kind === 'replay') subtitle += ' 录制诊断不等于正式场景验收。';
+    if (running && Number(task.parallelism) > 1 && task.state === 'running') {
+      const active = array(task.rows).filter(r => r.status === 'running');
+      headline = '并行回放 · ' + active.length + ' / ' + task.parallelism;
+      subtitle = active.map(r => (caseById(r.id)?.name || r.id) + (r.totalSteps ? ' · ' + r.step + '/' + r.totalSteps : '')).join('；') || '正在比较或准备下一组';
+    }
+    if (running && task.stage === 'serial-recheck' && task.state === 'running') {
+      headline = '失败场景串行复测';
+      subtitle = (task.case ? (caseById(task.case)?.name || task.case) : '') + (task.totalSteps ? ' · 步骤 ' + task.step + '/' + task.totalSteps : '');
+    }
+    const rechecked = rows.filter(r => r.outcome === 'passed_after_recheck').length;
+    if (!running && rechecked) subtitle += ' 其中 ' + rechecked + ' 项复测通过，首轮失败证据已保留。';
     $('live-title').textContent = headline; $('live-subtitle').textContent = subtitle;
     $('live-symbol').textContent = running ? task.state === 'paused' ? 'Ⅱ' : '▶' : stopped ? '−' : symbols[stateStatus] || '○';
     $('pause-run').hidden = !running || task.kind === 'replay' || task.state === 'cancelling'; $('pause-run').textContent = task.state === 'paused' ? '继续回放' : task.pauseAfterEach ? '逐项暂停已开启' : '本项后暂停';
@@ -227,7 +242,7 @@
     if (!rows.some(r => String(r.id) === inspected)) { inspected = rows[0] ? String(rows[0].id) : null; checkpointId = null; }
     patch('queue-list', rows.map((r, index) => {
       const id = String(r.id), status = statusOf(r), name = caseById(id)?.name || r.name || (id === '__recording__' ? '录制检查点' : id);
-      return '<button class="queue-item ' + (id === inspected ? 'inspected' : '') + '" data-inspect="' + esc(id) + '" data-status="' + esc(status) + '" aria-pressed="' + (id === inspected) + '"><span class="queue-symbol">' + (symbols[status] || '○') + '</span><span><span class="queue-name">' + esc(name) + '</span><span class="queue-caption"><span>' + esc(titleOf(status)) + '</span><span>' + String(index + 1).padStart(2, '0') + '</span></span></span></button>';
+      return '<button class="queue-item ' + (id === inspected ? 'inspected' : '') + '" data-inspect="' + esc(id) + '" data-status="' + esc(status) + '" aria-pressed="' + (id === inspected) + '"><span class="queue-symbol">' + (symbols[status] || '○') + '</span><span><span class="queue-name">' + esc(name) + '</span><span class="queue-caption"><span>' + esc(titleOf(displayStatus(r))) + '</span><span>' + String(index + 1).padStart(2, '0') + '</span></span></span></button>';
     }).join('') || '<div class="record-point-empty">暂时没有场景结果。</div>');
     $('follow-current').hidden = !running || !task.case;
     $('run-log').textContent = array(isCurrent ? task.logs : result && result.logs).map(line => typeof line === 'string' ? line : json(line)).join('\n');
@@ -242,7 +257,7 @@
     const row = resultRows().find(r => String(r.id) === inspected), cps = checkpointsFor(inspected);
     const name = inspected === '__recording__' ? '录制检查点' : caseById(inspected)?.name || row?.name || inspected || '选择一个场景';
     $('evidence-title').textContent = name; $('evidence-id').textContent = inspected && inspected !== '__recording__' ? inspected : '';
-    const rowStatus = row ? statusOf(row) : 'not_verified'; $('evidence-status').textContent = titleOf(rowStatus); $('evidence-status').className = 'status-pill ' + rowStatus;
+    const rowStatus = row ? statusOf(row) : 'not_verified'; $('evidence-status').textContent = titleOf(displayStatus(row)); $('evidence-status').className = 'status-pill ' + rowStatus;
     if (!cps.some(cp => String(cp.id) === checkpointId)) { checkpointId = String((cps.find(cp => failed(checkpointStatus(cp))) || cps[0] || {}).id || ''); }
     patch('checkpoint-list', cps.map((cp, index) => {
       const status = checkpointStatus(cp);
@@ -330,6 +345,7 @@
     const ids = new Set(state.cases.filter(c => !c.error).map(c => String(c.id))); selected = new Set([...selected].filter(id => ids.has(id)));
     if (!configDirty && $('config-modal').hidden) fillConfig();
     if (!booted) {
+      $('parallelism').value = state.config.parallelism;
       booted = true;
       if (taskBusy() && replayTask() && resultIdForTask()) { viewedRun = resultIdForTask(); showPage('run'); }
       else if (taskBusy() && !replayTask()) showPage('record');
@@ -368,7 +384,8 @@
   }
   async function startRun(ids) {
     if (!ids.length || taskBusy() || recordingBusy()) return;
-    const response = await command('run', '/api/run', {cases: ids, pauseAfterEach: $('review-each').checked});
+    if (!$('parallelism').reportValidity()) return;
+    const response = await command('run', '/api/run', {cases: ids, pauseAfterEach: $('review-each').checked, parallelism: Number($('parallelism').value)});
     if (!response) return;
     try { await refreshState(); await viewRun(resultIdForTask()); } catch (error) { toast(error.message); }
   }
@@ -432,6 +449,7 @@
   $('clear-selection').onclick = () => { selected.clear(); renderCases(); }; $('start-run').onclick = () => startRun([...selected]);
   $('queue-list').onclick = event => { const button = event.target.closest('[data-inspect]'); if (button) inspect(button.dataset.inspect); };
   $('checkpoint-list').onclick = event => { const button = event.target.closest('[data-point]'); if (button) { checkpointId = button.dataset.point; imageMode = 'pair'; renderEvidence(); } };
+  $('parallelism').onchange = () => render();
   $('pause-run').onclick = async () => { const resume = state.task.state === 'paused'; await command(resume ? 'resume' : 'pause', resume ? '/api/resume' : '/api/pause'); await poll(); };
   $('stop-run').onclick = async () => { await command('cancel', '/api/cancel'); await poll(); };
   $('retry-run').onclick = () => startRun(resultRows().filter(failed).map(r => String(r.id)).filter(id => caseById(id)));

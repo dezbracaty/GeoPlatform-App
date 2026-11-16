@@ -58,8 +58,8 @@ def _macos_bundle_instance(bundle, deadline, expected_pid):
     return owned[0] if owned else None
 
 
-def _activate_owned_macos_application(process, executable, deadline):
-    """Activate only this session's already registered .app child by exact PID."""
+def _identify_owned_macos_application(process, executable, deadline):
+    """Identify the registered .app child without changing desktop focus."""
     if (sys.platform != "darwin" or executable.parent.name != "MacOS" or
             executable.parent.parent.name != "Contents" or
             executable.parent.parent.parent.suffix != ".app"):
@@ -82,13 +82,7 @@ def _activate_owned_macos_application(process, executable, deadline):
             break
         time.sleep(min(0.05, max(0, deadline - time.monotonic())))
     check(identity)
-    # Unlike `open -a`, setfront cannot launch a replacement if the child exits
-    # between identity verification and activation. It addresses only this PID.
-    subprocess.run(["/usr/bin/lsappinfo", "setfront", "#" + str(process.pid)],
-                   check=True, capture_output=True, text=True,
-                   timeout=max(0.01, min(2, deadline - time.monotonic())))
-    check(_macos_bundle_instance(bundle, deadline, process.pid))
-    return {"mechanism": "LaunchServices.setfront", "pid": process.pid,
+    return {"mechanism": "LaunchServices.identity", "pid": process.pid,
             "bundlePath": str(bundle)}
 
 
@@ -169,6 +163,10 @@ class JournalExecutionSession:
                 if environment_overrides is not None:
                     result["environmentOverrides"] = dict(environment_overrides)
                 environment["GPLATFORM_JOURNAL_SESSION"] = "1"
+                if sys.platform == "darwin":
+                    # Cocoa activates a newly launched Qt app before its windows
+                    # are ready, independently of WindowDoesNotAcceptFocus.
+                    environment["QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM"] = "1"
                 # The app owns its Journal location. Buffer startup output until
                 # journal.paths is available; never guess it from the caller's cwd.
                 stream = tempfile.NamedTemporaryFile(mode="wb", prefix="journal-startup-", suffix=".log", delete=False)
@@ -190,9 +188,9 @@ class JournalExecutionSession:
                         time.sleep(min(0.05, max(0, deadline-time.monotonic())))
                 else:
                     raise TimeoutError(f"Application startup timed out: {last_error}")
-                activation = _activate_owned_macos_application(process, executable, deadline)
+                activation = _identify_owned_macos_application(process, executable, deadline)
                 if activation is not None:
-                    emit(f"已激活本会话的 macOS 测试实例，PID {process.pid}")
+                    emit(f"已核对本会话的 macOS 测试实例，PID {process.pid}（不改变前台）")
                 response = client.request("journal.replay.begin", {
                     "replayId": replay_id, "resume": True, "windowProfile": WINDOW_PROFILE},
                     timeout=min(3.0, max(0.01, deadline-time.monotonic())))
@@ -220,7 +218,7 @@ class JournalExecutionSession:
             result["windowProfile"] = WINDOW_PROFILE
             result["actualWindow"] = actual_window
             if activation is not None:
-                result["applicationActivation"] = activation
+                result["applicationRegistration"] = activation
             if handshake:
                 client.end_replay()
                 handshake = False

@@ -121,7 +121,7 @@ class AcceptanceCheck(unittest.TestCase):
     def writer(self):
         print_files(self.exports)
 
-    def test_cli_shared_session_keeps_business_checks_and_restores_settings(self):
+    def test_cli_keeps_business_checks_and_does_not_revert_application_settings(self):
         import run_acceptance
         from unittest.mock import patch
         settings = self.root / 'GPlatform.ini'
@@ -143,9 +143,9 @@ class AcceptanceCheck(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(session.calls, 1)
         self.assertEqual(session.environments, [run_acceptance.regression_environment()])
-        self.assertEqual(settings.read_bytes(), b'original settings')
+        self.assertEqual(settings.read_bytes(), b'changed by application')
         self.assertEqual(read_json(output / 'job/case_result.json')['status'], 'passed')
-        self.assertTrue(read_json(output / 'summary.json')['settingsRestored'])
+        self.assertNotIn('settingsRestored', read_json(output / 'summary.json'))
 
     def test_batch_preflight_rejects_unregistered_replay_even_with_explicit_selection(self):
         import run_acceptance
@@ -372,7 +372,7 @@ class AcceptanceCheck(unittest.TestCase):
         self.assertEqual(session.calls, 2)
         self.assertTrue(read_json(output / 'summary.json')['runComplete'])
 
-    def test_batch_prepares_each_theme_and_restores_original_settings(self):
+    def test_batch_prepares_themes_without_discarding_application_changes(self):
         import configparser
         import run_acceptance
         import shutil
@@ -388,11 +388,14 @@ class AcceptanceCheck(unittest.TestCase):
         observed = []
         def writer():
             config = configparser.ConfigParser()
+            config.optionxform = str
             config.read(settings)
             observed.append(config['General']['darkMode'])
             self.assertEqual(config['General']['locale'], 'zh_CN')
             self.assertEqual(config['importFile']['sortKey'], 'name')
-            settings.write_bytes(b'changed by application')
+            config['General']['applicationChanged'] = '1'
+            with settings.open('w') as stream:
+                config.write(stream)
         tools = Path(__file__).resolve().parents[1] / 'tools/journal'
         with patch('builtins.print'):
             code = run_acceptance.main(['--assets', str(self.assets), '--journal-tools', str(tools),
@@ -401,9 +404,13 @@ class AcceptanceCheck(unittest.TestCase):
                 session=SessionFixture(writer))
         self.assertEqual(code, 0)
         self.assertEqual(observed, ['0', '1'])
-        self.assertEqual(settings.read_bytes(), original)
+        config = configparser.ConfigParser()
+        config.read(settings)
+        self.assertEqual(config['General']['darkMode'], '1')
+        self.assertEqual(config['General']['applicationChanged'], '1')
+        self.assertEqual(config['General']['locale'], 'zh_CN')
 
-    def test_failed_replay_removes_settings_created_only_for_the_test(self):
+    def test_failed_replay_does_not_delete_app_settings(self):
         import run_acceptance
         from unittest.mock import patch
         self.metadata.update(artifacts={}, checks=[], preconditions={'theme': 'light'})
@@ -419,7 +426,488 @@ class AcceptanceCheck(unittest.TestCase):
                 '--settings-file', str(settings), '--output', str(self.root / 'failed-theme')],
                 session=SessionFixture(writer))
         self.assertEqual(code, 1)
-        self.assertFalse(settings.exists())
+        self.assertTrue(settings.exists())
+        self.assertIn('darkMode = 0', settings.read_text())
+
+    def test_matching_theme_does_not_rewrite_shared_settings(self):
+        import run_acceptance
+        settings = self.root / 'GPlatform.ini'
+        original = b'; retain application-owned bytes\r\n[General]\r\ndarkMode=0\r\nlocale=zh_CN\r\n'
+        settings.write_bytes(original)
+        run_acceptance.prepare_theme(settings, 'light')
+        self.assertEqual(settings.read_bytes(), original)
+
+    def test_missing_program_is_reported_as_preparation_blocker(self):
+        import run_acceptance
+        from unittest.mock import patch
+        self.application.unlink()
+        output = self.root / 'missing-program'
+        instance = SessionFixture()
+        with patch('builtins.print'):
+            code = run_acceptance.main(['--assets', str(self.assets), '--application', str(self.application),
+                '--cases', 'job', '--output', str(output), '--settings-file', str(self.root / 'settings.ini')],
+                session=instance)
+        self.assertEqual(code, 1)
+        self.assertEqual(instance.calls, 0)
+        self.assertEqual(read_json(output / 'summary.json')['status'], 'blocked')
+        self.assertEqual(read_json(output / 'job/case_result.json')['status'], 'blocked')
+
+    def test_serial_case_reports_link_to_actual_batch_directory(self):
+        import run_acceptance
+        import re
+        from unittest.mock import patch
+        self.metadata.update(artifacts={}, checks=[])
+        self.save_metadata()
+        instances = []
+        def factory(name):
+            instance = SessionFixture(overrides=dict(success=False, acceptance='failed') if not instances else {})
+            instances.append(instance)
+            return instance
+        output = self.root / 'return-links'
+        with patch('builtins.print'):
+            code = run_acceptance.main(['--assets', str(self.assets), '--application', str(self.application),
+                '--cases', 'job', '--recheck-failed-serial', '--output', str(output)], session_factory=factory)
+        self.assertEqual(code, 0)
+        for directory in (output / 'job', output / 'serial-recheck/job'):
+            html = (directory / 'case_report.html').read_text()
+            link = re.search(r'<a href="([^"]+)">批次结果索引</a>', html)
+            self.assertIsNotNone(link)
+            self.assertEqual((directory / link[1]).resolve(), (output / 'report.html').resolve())
+            self.assertTrue((directory / link[1]).is_file())
+
+    def test_parallel_scheduler_refills_slot_before_slow_peer_finishes(self):
+        import run_acceptance
+        import shutil
+        import threading
+        from unittest.mock import patch
+        self.metadata.update(artifacts={}, checks=[])
+        self.save_metadata()
+        for name in ('job2', 'job3', 'job4'):
+            shutil.copytree(self.scenario, self.assets / 'scenarios' / name)
+            write_json(self.assets / 'scenarios' / name / 'metadata.json', dict(self.metadata, id=name))
+        started = threading.Barrier(3, timeout=3)
+        release = threading.Event()
+        lock = threading.Lock()
+        active = set()
+        peak, observations = [], []
+        def factory(name):
+            def writer():
+                with lock:
+                    active.add(name)
+                    peak.append(len(active))
+                try:
+                    if name != 'job4':
+                        started.wait()
+                    if name == 'job':
+                        self.assertTrue(release.wait(3), 'Free slot was not refilled while a peer remained active')
+                    elif name == 'job4':
+                        with lock:
+                            observations.append('job' in active)
+                        release.set()
+                finally:
+                    with lock:
+                        active.remove(name)
+            return SessionFixture(writer)
+        output = self.root / 'refill'
+        with patch('builtins.print'):
+            code = run_acceptance.main(['--assets', str(self.assets), '--application', str(self.application),
+                '--cases', 'all', '--jobs', '3', '--output', str(output)], session_factory=factory)
+        self.assertEqual(code, 0, read_json(output / 'summary.json'))
+        self.assertEqual(max(peak), 3)
+        self.assertEqual(observations, [True])
+
+    def test_rolling_scheduler_drains_before_pause_cancel_or_cleanup_stop(self):
+        import run_acceptance
+        import shutil
+        import threading
+        from unittest.mock import patch
+        self.metadata.update(artifacts={}, checks=[])
+        self.save_metadata()
+        for name in ('job2', 'job3'):
+            shutil.copytree(self.scenario, self.assets / 'scenarios' / name)
+            write_json(self.assets / 'scenarios' / name / 'metadata.json', dict(self.metadata, id=name))
+        for mode in ('pause', 'cancel', 'cleanup'):
+            with self.subTest(mode=mode):
+                barrier = threading.Barrier(2, timeout=3)
+                release, pause, boundary_seen = threading.Event(), threading.Event(), threading.Event()
+                lock = threading.Lock()
+                active, created = set(), []
+                control = SessionFixture()
+                control.cancel_event = threading.Event()
+                def factory(name):
+                    created.append(name)
+                    def writer():
+                        with lock:
+                            active.add(name)
+                        try:
+                            if name in ('job', 'job2'):
+                                barrier.wait()
+                            if name == 'job':
+                                self.assertTrue(release.wait(3))
+                            if name == 'job3' and mode == 'pause':
+                                self.assertTrue(boundary_seen.is_set())
+                        finally:
+                            with lock:
+                                active.remove(name)
+                    return SessionFixture(writer, overrides=dict(success=False, acceptance='failed',
+                        cleanupErrors=['owned process remained']) if mode == 'cleanup' and name == 'job2' else {})
+                def progress(event):
+                    if event['phase'] == 'end' and event['case'] == 'job2':
+                        if mode == 'pause':
+                            pause.set()
+                        if mode == 'cancel':
+                            control.cancel_event.set()
+                        release.set()
+                def boundary(refresh):
+                    if pause.is_set():
+                        with lock:
+                            self.assertFalse(active)
+                        self.assertNotIn('job3', created)
+                        boundary_seen.set()
+                        pause.clear()
+                        refresh()
+                output = self.root / ('rolling-' + mode)
+                with patch('builtins.print'):
+                    code = run_acceptance.main(['--assets', str(self.assets), '--application', str(self.application),
+                        '--cases', 'all', '--jobs', '2', '--recheck-failed-serial', '--output', str(output)],
+                        session=control, session_factory=factory, progress=progress,
+                        between_cases=boundary, pause_requested=pause.is_set)
+                summary = read_json(output / 'summary.json')
+                self.assertEqual(code, 0 if mode == 'pause' else 1, summary)
+                if mode == 'pause':
+                    self.assertTrue(boundary_seen.is_set())
+                    self.assertEqual(set(created), {'job', 'job2', 'job3'})
+                else:
+                    self.assertEqual(set(created), {'job', 'job2'})
+                    self.assertEqual(summary['notRunCases'], ['job3'])
+                    self.assertEqual(len(summary['cases']), 2, 'Completed peer evidence was discarded')
+
+    def test_comparison_collection_defers_outputs_with_active_replay_writers(self):
+        from concurrent.futures import wait
+        from PIL import Image
+        from journal_runner import ScreenshotComparisons
+        comparisons = ScreenshotComparisons()
+        self.addCleanup(comparisons.close)
+        baseline = self.root / 'approved.png'
+        Image.new('RGBA', (8, 8), 'white').save(baseline)
+        steps, outputs = [], []
+        for name in ('finished', 'active'):
+            output = self.root / name
+            (output / 'screenshots').mkdir(parents=True)
+            actual = output / 'screenshots/actual.png'
+            Image.new('RGBA', (8, 8), 'white').save(actual)
+            prepared = comparisons.prepare(self.root / 'Journal.json', output, dict(baseline='approved.png'), 1, actual)
+            step = {}
+            comparisons.submit(output, prepared, actual, step)
+            steps.append(step)
+            outputs.append(str(output.resolve()))
+        wait([job[0] for job in comparisons._jobs])
+        self.assertEqual(comparisons.collect(outputs={outputs[0]}), {outputs[0]})
+        self.assertEqual(steps[0]['status'], 'passed')
+        self.assertEqual(steps[1]['status'], 'pending', 'A live replay result was mutated by the batch owner')
+        self.assertEqual(comparisons.collect(outputs=set(outputs)), {outputs[1]})
+        self.assertEqual(steps[1]['status'], 'passed')
+
+    def test_parallel_batch_uses_three_independent_sessions_and_complete_summary(self):
+        import run_acceptance
+        import shutil
+        import threading
+        from unittest.mock import patch
+        self.metadata.update(artifacts={}, checks=[])
+        self.save_metadata()
+        clone = self.assets / 'scenarios/job2'
+        shutil.copytree(self.scenario, clone)
+        write_json(clone / 'metadata.json', dict(self.metadata, id='job2'))
+        shutil.copytree(self.scenario, self.assets / 'scenarios/job3')
+        write_json(self.assets / 'scenarios/job3/metadata.json', dict(self.metadata, id='job3'))
+        barrier = threading.Barrier(3, timeout=5)
+        sessions = []
+        def factory(name):
+            instance = SessionFixture(lambda: barrier.wait())
+            sessions.append(instance)
+            return instance
+        output = self.root / 'parallel'
+        with patch('builtins.print'):
+            code = run_acceptance.main(['--assets', str(self.assets), '--application', str(self.application),
+                '--cases', 'all', '--jobs', '3', '--output', str(output)], session_factory=factory)
+        self.assertEqual(code, 0, read_json(output / 'summary.json'))
+        self.assertEqual(len(sessions), 3)
+        self.assertIsNot(sessions[0], sessions[1])
+        summary = read_json(output / 'summary.json')
+        self.assertTrue(summary['runComplete'])
+        self.assertEqual(summary['completedCaseCount'], 3)
+        self.assertEqual([c['id'] for c in summary['cases']], ['job', 'job2', 'job3'])
+        self.assertEqual([c['status'] for c in summary['cases']], ['passed', 'passed', 'passed'])
+
+    def test_non_main_window_input_does_not_reduce_concurrency(self):
+        import run_acceptance
+        import shutil
+        import threading
+        import time
+        from unittest.mock import patch
+        self.metadata.update(artifacts={}, checks=[])
+        self.save_metadata()
+        clone = self.assets / 'scenarios/job2'
+        shutil.copytree(self.scenario, clone)
+        write_json(clone / 'metadata.json', dict(self.metadata, id='job2'))
+        journal = self.scenario / 'events/Journal.json'
+        document = read_json(journal)
+        document['entries'].insert(0, dict(atMs=0, kind='input.mouse', payload=dict(
+            window=dict(objectName='smoothui.fileBrowser'), event='press', button=1, buttons=1)))
+        write_json(journal, document)
+        lock = threading.Lock()
+        active, peak = [0], [0]
+        barrier = threading.Barrier(2, timeout=5)
+        def writer():
+            with lock:
+                active[0] += 1
+                peak[0] = max(peak[0], active[0])
+            barrier.wait()
+            with lock:
+                active[0] -= 1
+        output = self.root / 'non-main-parallel'
+        with patch('builtins.print'):
+            code = run_acceptance.main(['--assets', str(self.assets), '--application', str(self.application),
+                '--cases', 'all', '--jobs', '2', '--output', str(output)],
+                session_factory=lambda name: SessionFixture(writer))
+        self.assertEqual(code, 0, read_json(output / 'summary.json'))
+        self.assertEqual(peak[0], 2)
+        self.assertEqual(read_json(output / 'summary.json')['completedCaseCount'], 2)
+
+    def test_serial_recheck_runs_only_failed_cases_once_and_preserves_both_reports(self):
+        import run_acceptance
+        import shutil
+        import collections
+        from unittest.mock import patch
+        self.metadata.update(artifacts={}, checks=[])
+        self.save_metadata()
+        for name in ('job2', 'job3'):
+            shutil.copytree(self.scenario, self.assets / 'scenarios' / name)
+            write_json(self.assets / 'scenarios' / name / 'metadata.json', dict(self.metadata, id=name))
+        counts = collections.Counter()
+        output = self.root / 'recheck'
+        def factory(name):
+            counts[name] += 1
+            if counts[name] > 1:
+                self.assertEqual(counts['job3'], 1, 'Recheck started before initial replay drained')
+                self.assertEqual(read_json(output / 'job/case_result.json')['status'], 'failed')
+            failed = name == 'job2' or (name == 'job' and counts[name] == 1)
+            return SessionFixture(overrides=dict(success=not failed, acceptance='failed' if failed else 'passed',
+                error='controlled failure') if failed else {})
+        events = []
+        with patch('builtins.print'):
+            code = run_acceptance.main(['--assets', str(self.assets), '--application', str(self.application),
+                '--cases', 'all', '--jobs', '3', '--recheck-failed-serial', '--output', str(output)],
+                session_factory=factory, progress=events.append)
+        summary = read_json(output / 'summary.json')
+        self.assertEqual(code, 1, summary)
+        self.assertEqual(dict(counts), dict(job=2, job2=2, job3=1))
+        self.assertEqual(summary['initialFailedCases'], ['job', 'job2'])
+        self.assertEqual(summary['recheckPassedCount'], 1)
+        self.assertEqual(summary['completedCaseCount'], 3)
+        self.assertTrue(summary['runComplete'])
+        recovered = summary['cases'][0]
+        self.assertEqual(recovered['status'], 'passed')
+        self.assertEqual(recovered['outcome'], 'passed_after_recheck')
+        self.assertEqual([a['status'] for a in recovered['attempts']], ['failed', 'passed'])
+        self.assertEqual([a['parallelism'] for a in recovered['attempts']], [3, 1])
+        self.assertEqual(read_json(output / 'job/case_result.json')['status'], 'failed')
+        self.assertEqual(read_json(output / recovered['result'])['status'], 'passed')
+        self.assertEqual([e['case'] for e in events if e.get('stage') == 'serial-recheck' and e['phase'] == 'begin'], ['job', 'job2'])
+        from review_model import ReviewBatch
+        document = ReviewBatch(output).document
+        self.assertEqual(document['cases'][0]['result'], recovered['result'])
+        self.assertIn('serial-recheck/job/case_report.html', (output / 'report.html').read_text())
+
+    def test_serial_recheck_waits_for_pixels_and_keeps_both_image_attempts(self):
+        import run_acceptance
+        import threading
+        from io import BytesIO
+        from PIL import Image
+        from unittest.mock import Mock, patch
+        from journal_runner import JournalRunner, ScreenshotComparisons, finish_result, load_journal as formal_loader
+        self.metadata.update(artifacts={}, checks=[], verification=dict(requiredMethods=['screenshot']))
+        self.save_metadata()
+        Image.new('RGBA', (8, 8), 'white').save(self.assets / 'approved.png')
+        write_json(self.scenario / 'events/Journal.json', dict(formatVersion=2, entries=[
+            dict(atMs=0, kind='verify.screenshot', payload=dict(baseline='../../../approved.png'))]))
+        released, completed = threading.Event(), threading.Event()
+        original_compare = ScreenshotComparisons._compare
+        output = self.root / 'pending-recheck'
+        attempts = []
+        def compare(expected, actual, *args):
+            if 'serial-recheck' not in str(actual):
+                self.assertTrue(released.wait(3), 'Comparison must run behind replay')
+            result = original_compare(expected, actual, *args)
+            completed.set()
+            return result
+        class ReplaySession:
+            def run(inner, journal, *, output_dir, comparisons, **kwargs):
+                serial = 'serial-recheck' in output_dir.parts
+                if serial:
+                    self.assertTrue(completed.is_set())
+                    self.assertEqual(read_json(output / 'job/case_result.json')['status'], 'failed')
+                attempts.append(serial)
+                (output_dir / 'screenshots').mkdir(parents=True)
+                (output_dir / 'reports').mkdir()
+                image = Image.new('RGBA', (8, 8), 'white' if serial else 'black')
+                png = BytesIO()
+                image.save(png, format='PNG')
+                client = Mock()
+                client.capture_screenshot.return_value = dict(png=png.getvalue())
+                return finish_result(JournalRunner(client, comparisons=comparisons).run(formal_loader(journal), output_dir))
+        def progress(event):
+            if event['phase'] == 'end' and event['stage'] == 'initial':
+                self.assertEqual(read_json(output / 'job/case_result.json')['status'], 'pending')
+                released.set()
+        with patch.object(ScreenshotComparisons, '_compare', side_effect=compare), patch('builtins.print'):
+            code = run_acceptance.main(['--assets', str(self.assets), '--application', str(self.application),
+                '--cases', 'job', '--jobs', '3', '--recheck-failed-serial', '--output', str(output)],
+                session_factory=lambda _: ReplaySession(), progress=progress)
+        self.assertEqual(code, 0, read_json(output / 'summary.json'))
+        self.assertEqual(attempts, [False, True])
+        summary = read_json(output / 'summary.json')
+        self.assertEqual(summary['recheckPassedCount'], 1)
+        manifest = read_json(output / 'screenshot_review.json')
+        rows = manifest['checkpoints']
+        self.assertEqual(len(rows), 2)
+        self.assertNotEqual(rows[0]['id'], rows[1]['id'])
+        self.assertEqual([r['executionStatus'] for r in rows], ['failed', 'passed'])
+        self.assertEqual([r['attemptStage'] for r in rows], ['initial', 'serial-recheck'])
+        self.assertTrue(all((output / r['actual']).is_file() for r in rows))
+
+    def test_changed_program_prevents_serial_recheck(self):
+        import run_acceptance
+        from unittest.mock import patch
+        self.metadata.update(artifacts={}, checks=[])
+        self.save_metadata()
+        instance = SessionFixture(overrides=dict(success=False, acceptance='failed'))
+        def progress(event):
+            if event['phase'] == 'end':
+                self.application.write_bytes(b'changed program')
+        output = self.root / 'changed-program'
+        with patch('builtins.print'):
+            code = run_acceptance.main(['--assets', str(self.assets), '--application', str(self.application),
+                '--cases', 'job', '--recheck-failed-serial', '--output', str(output)],
+                session=instance, progress=progress)
+        self.assertEqual(code, 1)
+        self.assertEqual(instance.calls, 1)
+        self.assertIn('changed before serial recheck', read_json(output / 'summary.json')['error'])
+        self.assertFalse((output / 'serial-recheck').exists())
+
+    def test_changed_deployed_library_prevents_serial_recheck(self):
+        import run_acceptance
+        from unittest.mock import patch
+        self.metadata.update(artifacts={}, checks=[])
+        self.save_metadata()
+        library = self.application.parent / 'liblibslicer.dylib'
+        library.write_bytes(b'original runtime library')
+        instance = SessionFixture(overrides=dict(success=False, acceptance='failed'))
+        def progress(event):
+            if event['phase'] == 'end':
+                library.write_bytes(b'changed runtime library')
+        output = self.root / 'changed-library'
+        with patch('builtins.print'):
+            code = run_acceptance.main(['--assets', str(self.assets), '--application', str(self.application),
+                '--cases', 'job', '--recheck-failed-serial', '--output', str(output)],
+                session=instance, progress=progress)
+        self.assertEqual(code, 1)
+        self.assertEqual(instance.calls, 1)
+        self.assertIn('changed before serial recheck', read_json(output / 'summary.json')['error'])
+
+    def test_fallback_report_links_both_attempts(self):
+        from acceptance import write_summary
+        from unittest.mock import patch
+        output = self.root / 'fallback-report'
+        output.mkdir()
+        summary = dict(status='passed', plannedCases=['job'], cases=[dict(id='job', status='passed',
+            outcome='passed_after_recheck', result='serial-recheck/job/case_result.json', attempts=[
+                dict(stage='initial', result='job/case_result.json', status='failed'),
+                dict(stage='serial-recheck', result='serial-recheck/job/case_result.json', status='passed')])])
+        with patch('acceptance.write_batch_report', side_effect=OSError('report unavailable')):
+            write_summary(output, summary)
+        html = (output / 'report.html').read_text()
+        self.assertIn('href="job/case_report.html"', html)
+        self.assertIn('href="serial-recheck/job/case_report.html"', html)
+        self.assertIn('复测通过', html)
+
+    def test_attempt_report_urls_use_forward_slashes_on_windows(self):
+        from pathlib import PureWindowsPath
+        from unittest.mock import patch
+        from screenshot_review import write_batch_report
+        output = self.root / 'windows-report-urls'
+        output.mkdir()
+        attempts = [dict(stage='initial', result='job/case_result.json'),
+                    dict(stage='serial-recheck', result='serial-recheck/job/case_result.json')]
+        for attempt in attempts:
+            path = output / attempt['result']
+            path.parent.mkdir(parents=True)
+            write_json(path, dict(status='passed'))
+        summary = dict(status='passed', plannedCases=['job'], cases=[dict(id='job', status='passed',
+            result=attempts[-1]['result'], attempts=attempts)])
+        # Filesystem I/O stays on the host; URL formatting uses Windows Path semantics.
+        def report_path(value):
+            return PureWindowsPath(value) if isinstance(value, str) and value.endswith('case_result.json') else Path(value)
+        with patch('screenshot_review.Path', side_effect=report_path):
+            write_batch_report(output, summary)
+        html = (output / 'report.html').read_text()
+        self.assertIn('href="job/case_report.html"', html)
+        self.assertIn('href="serial-recheck/job/case_report.html"', html)
+        self.assertNotIn('%5C', html)
+
+    def test_failed_worker_still_records_completed_peer(self):
+        import run_acceptance
+        import shutil
+        from unittest.mock import patch
+        self.metadata.update(artifacts={}, checks=[])
+        self.save_metadata()
+        shutil.copytree(self.scenario, self.assets / 'scenarios/job2')
+        write_json(self.assets / 'scenarios/job2/metadata.json', dict(self.metadata, id='job2'))
+        def factory(name):
+            if name == 'job':
+                raise RuntimeError('worker startup failed')
+            return SessionFixture()
+        output = self.root / 'peer-failure'
+        with patch('builtins.print'):
+            code = run_acceptance.main(['--assets', str(self.assets), '--application', str(self.application),
+                '--cases', 'all', '--jobs', '3', '--recheck-failed-serial', '--output', str(output)],
+                session_factory=factory)
+        summary = read_json(output / 'summary.json')
+        self.assertEqual(code, 1)
+        self.assertEqual(summary['notRunCases'], ['job'])
+        self.assertEqual(summary['cases'][0]['id'], 'job2')
+        self.assertEqual(summary['cases'][0]['status'], 'passed')
+        self.assertEqual(summary['error'], 'worker startup failed')
+
+    def test_cancelled_or_unclean_batch_does_not_start_serial_recheck(self):
+        import run_acceptance
+        import threading
+        from unittest.mock import patch
+        self.metadata.update(artifacts={}, checks=[])
+        self.save_metadata()
+        for mode in ('cancel', 'cleanup'):
+            with self.subTest(mode=mode):
+                control = SessionFixture()
+                control.cancel_event = threading.Event()
+                instances = []
+                def factory(name):
+                    instance = SessionFixture(overrides=dict(success=False, acceptance='failed',
+                        cleanupErrors=['owned process did not exit']) if mode == 'cleanup' else dict(success=False, acceptance='failed'))
+                    instances.append(instance)
+                    return instance
+                def progress(event):
+                    if mode == 'cancel' and event['phase'] == 'end':
+                        control.cancel_event.set()
+                output = self.root / mode
+                with patch('builtins.print'):
+                    code = run_acceptance.main(['--assets', str(self.assets), '--application', str(self.application),
+                        '--cases', 'job', '--recheck-failed-serial', '--output', str(output)],
+                        session=control, session_factory=factory, progress=progress)
+                self.assertEqual(code, 1)
+                self.assertEqual(len(instances), 1)
+                self.assertFalse((output / 'serial-recheck').exists())
+                summary = read_json(output / 'summary.json')
+                self.assertTrue(summary.get('cancelled') if mode == 'cancel' else summary.get('cleanupError'))
 
     def test_pass_archives_real_files_and_preserves_original_acceptance(self):
         result = self.run_job(SessionFixture(self.writer))

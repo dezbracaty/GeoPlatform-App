@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import time
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -317,6 +318,7 @@ class ScreenshotComparisons:
         self._jobs = []
         self._summaries = {}
         self._paths = set()
+        self._submission_lock = threading.Lock()
 
     @staticmethod
     def _compare(expected, actual, diff, preparation_error, exclude_import_progress):
@@ -340,9 +342,10 @@ class ScreenshotComparisons:
         expected = output / "screenshots" / f"screenshot_{index:03d}_expected.png"
         diff = output / "screenshots" / f"screenshot_{index:03d}_diff.png"
         paths = {path.resolve() for path in (expected, actual, diff)}
-        if len(paths) != 3 or self._paths.intersection(paths):
-            raise ValueError("Screenshot output collides with pending comparison evidence")
-        self._paths.update(paths)
+        with self._submission_lock:
+            if len(paths) != 3 or self._paths.intersection(paths):
+                raise ValueError("Screenshot output collides with pending comparison evidence")
+            self._paths.update(paths)
         error = None
         exclude_import_progress = False
         try:
@@ -363,31 +366,39 @@ class ScreenshotComparisons:
         result.update(status="pending", message="Screenshot comparison queued",
                       comparison=dict(status="pending", mode="exact"), evidence=[actual])
         future = self._executor.submit(self._compare, expected, actual, diff, error, exclude_import_progress)
-        self._jobs.append((future, result, str(output.resolve())))
+        with self._submission_lock:
+            self._jobs.append((future, result, str(output.resolve())))
 
     def track(self, summary):
         if any(step.get("status") == "pending" for step in summary["results"]):
-            self._summaries[str(Path(summary["outputPath"]).resolve())] = summary
+            with self._submission_lock:
+                self._summaries[str(Path(summary["outputPath"]).resolve())] = summary
 
-    def collect(self):
-        """Apply completed work without waiting; return changed execution outputs."""
+    def collect(self, outputs=None):
+        """Apply completed comparisons only for outputs whose replay writer has ended."""
         changed = set()
-        for job in self._jobs[:]:
+        with self._submission_lock:
+            jobs = self._jobs[:]
+        for job in jobs:
             future, result, output = job
-            if not future.done():
+            if (outputs is not None and output not in outputs) or not future.done():
                 continue
             try:
                 result.update(future.result())
             except Exception as exc:
                 result.update(status="failed", message=f"Screenshot worker failed: {exc}",
                               comparison=dict(status="failed", mode="exact", error=str(exc)))
-            self._jobs.remove(job)
+            with self._submission_lock:
+                self._jobs.remove(job)
             changed.add(output)
         for output in changed:
-            if output in self._summaries:
-                finish_result(self._summaries[output])
-                if not any(step.get("status") == "pending" for step in self._summaries[output]["results"]):
-                    del self._summaries[output]
+            with self._submission_lock:
+                summary = self._summaries.get(output)
+            if summary is not None:
+                finish_result(summary)
+                if not any(step.get("status") == "pending" for step in summary["results"]):
+                    with self._submission_lock:
+                        self._summaries.pop(output, None)
         return changed
 
     def close(self):

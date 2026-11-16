@@ -151,7 +151,8 @@ QImage ScreenshotHandler::captureApplicationWindow() {
     // Activate before grabbing either surface, so the first capture and later
     // comparisons use the same foreground/focus state. Screen-backed capture
     // can also include another application's pixels while we are inactive.
-    if (QGuiApplication::applicationState() != Qt::ApplicationActive) {
+    if (!quickWindow->flags().testFlag(Qt::WindowDoesNotAcceptFocus) &&
+        QGuiApplication::applicationState() != Qt::ApplicationActive) {
         quickWindow->raise();
         quickWindow->requestActivate();
 

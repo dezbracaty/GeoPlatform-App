@@ -72,6 +72,8 @@ metadata v3 声明 `id/name/testPurpose/scope/inputs/unverifiedScopes/verificati
 5. 按固定注册表调用公共检查器，并汇总每类必需方法的结果；metadata 不能提供任意脚本或 shell 命令。
 6. 输出每项检查、场景最终结论与批次汇总。每次输出目录必须是新目录。
 
+Journal Web Server 默认并行数为3，可通过`--parallelism`或批次启动前的网页输入配置正整数。首轮全部回放、比较、清理完成后，仅对失败场景完整串行复测一次；不按窗口名强制串行。两轮分别保存在`<run>/<id>`与`<run>/serial-recheck/<id>`，汇总中的`attempts`保留每轮原始结果，`result`指向最后一次结果。复测通过仍保留首轮失败，另标`outcome=passed_after_recheck`；`recheckPassedCount`独立统计。准备阻塞、pending、取消不作为复测失败项，清理失败或程序、部署依赖、输入/标准变化时停止后续执行。CLI 定点默认仍为串行，需显式`--recheck-failed-serial`启用复测。
+
 公共检查器 `gcode-job` 参数化检查层数、立方体尺寸、喷头高度段、耗材、多喷头配置、裙边/擦料塔、
 打印区、温度等待、挤出截面积和包内外 G-code 一致性，作为既有专项检查单独记录，不满足 DB 或截图验收。
 DB 与截图验收分别复用正式 `verify.db` 与 `verify.screenshot`，入口自动纳入方法结果。
@@ -210,7 +212,7 @@ Journal 默认录制和回放使用 1382×954 逻辑窗口，保留系统原生 
 2764×1908 像素。会话结束恢复原窗口大小、限制及显示状态；窗口放不下时明确失败。
 默认不强制 DPR=1，也不通过缩放补偿重启程序。既有基线的 DPR 不作为启动时强制设置。
 批次入口在每个场景启动前按 `preconditions.theme`（`light`／`dark`）准备现有 App INI 的
-`darkMode` 配置；结束、失败或取消后按原始字节恢复，原先不存在的 INI 会删除。
+`darkMode` 配置；已有相同值时不重写。执行器不备份、恢复或删除 INI，应用保存的配置继续保留。
 Windows/macOS 自动定位该 INI，其他平台使用 `--settings-file`。这是 App 验收侧的环境准备，
 不增加 Journal 主题协议，也不修改系统主题。
 正式截图验收仍比较原始图像，尺寸不同会失败；对照窗口的派生图可跨已知 DPR 展示，

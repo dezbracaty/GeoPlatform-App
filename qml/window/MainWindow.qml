@@ -22,6 +22,8 @@ FramelessWindow {
     minimumWidth: 1200
     minimumHeight: 700
     visible: true
+    flags: Qt.Window | (Qt.platform.os === "osx" && StartupState.replayMode
+                        ? Qt.WindowDoesNotAcceptFocus : 0)
     title: qsTr("GPlatform")
     // On Windows, reserve the app bar above the navigation/AI row.
     // Other platforms retain their existing native-title-bar integration.

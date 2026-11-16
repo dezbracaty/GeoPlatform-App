@@ -390,14 +390,14 @@ class JournalPythonClientCheck(unittest.TestCase):
         for actual, expected in zip(dispatched, [0.0, 0.01, 0.02]):
             self.assertAlmostEqual(actual, expected)
 
-    def test_macos_activation_waits_for_owned_registration_without_launching(self):
-        from journal_execution_session import _activate_owned_macos_application
+    def test_macos_registration_waits_for_owned_registration_without_launching(self):
+        from journal_execution_session import _identify_owned_macos_application
         executable = Path("/Applications/Test App.app/Contents/MacOS/Test").resolve()
         process = Mock(pid=123)
         process.poll.return_value = None
         identity = ('{ "CFBundleExecutablePath"="/Applications/Test App.app/Contents/MacOS/Test", '
                     '"LSASN"=ASN:0x0-0x123:, "LSBundlePath"="/Applications/Test App.app", "pid"=123 }\n---\n')
-        replies = ["", "ASN:0x0-0x123:", identity, "", "ASN:0x0-0x123:", identity]
+        replies = ["", "ASN:0x0-0x123:", identity]
         commands = []
         def run(command, **kwargs):
             commands.append(command)
@@ -406,18 +406,17 @@ class JournalPythonClientCheck(unittest.TestCase):
                 patch("journal_execution_session.subprocess.run", side_effect=run), \
                 patch("journal_execution_session.subprocess.Popen") as launch, \
                 patch("journal_execution_session.time.sleep"):
-            result = _activate_owned_macos_application(process, executable, time.monotonic() + 10)
+            result = _identify_owned_macos_application(process, executable, time.monotonic() + 10)
         self.assertEqual(result["pid"], 123)
-        self.assertEqual(result["mechanism"], "LaunchServices.setfront")
-        self.assertEqual([c for c in commands if "setfront" in c],
-                         [["/usr/bin/lsappinfo", "setfront", "#123"]])
+        self.assertEqual(result["mechanism"], "LaunchServices.identity")
+        self.assertFalse(any("setfront" in c for c in commands))
         self.assertTrue(all(c[0] == "/usr/bin/lsappinfo" for c in commands))
         self.assertTrue(all("-all" in c for c in commands if "info" in c))
         launch.assert_not_called()
 
 
-    def test_macos_activation_rejects_ambiguous_or_wrong_identity_before_activation(self):
-        from journal_execution_session import _activate_owned_macos_application
+    def test_macos_registration_rejects_ambiguous_or_wrong_identity_before_activation(self):
+        from journal_execution_session import _identify_owned_macos_application
         executable = Path("/Applications/Test.app/Contents/MacOS/Test").resolve()
         process = Mock(pid=123)
         process.poll.return_value = None
@@ -438,15 +437,15 @@ class JournalPythonClientCheck(unittest.TestCase):
                 with patch("journal_execution_session.sys.platform", "darwin"), \
                         patch("journal_execution_session.subprocess.run", side_effect=run):
                     with self.assertRaises(RuntimeError):
-                        _activate_owned_macos_application(process, executable, time.monotonic() + 10)
+                        _identify_owned_macos_application(process, executable, time.monotonic() + 10)
 
 
-    def test_macos_activation_child_exit_or_timeout_never_launches_replacement(self):
-        from journal_execution_session import _activate_owned_macos_application
+    def test_macos_registration_child_exit_or_timeout_never_launches_replacement(self):
+        from journal_execution_session import _identify_owned_macos_application
         executable = Path("/Applications/Test.app/Contents/MacOS/Test").resolve()
         identity = ('"pid"=123\n"LSBundlePath"="/Applications/Test.app"\n'
                     '"CFBundleExecutablePath"="/Applications/Test.app/Contents/MacOS/Test"\n')
-        for polls in ([5], [None, 5], [None, None, 5]):
+        for polls in ([5], [None, 5]):
             with self.subTest(polls=polls):
                 process = Mock(pid=123)
                 process.poll.side_effect = polls
@@ -458,47 +457,31 @@ class JournalPythonClientCheck(unittest.TestCase):
                 with patch("journal_execution_session.sys.platform", "darwin"), \
                         patch("journal_execution_session.subprocess.run", side_effect=run):
                     with self.assertRaises(RuntimeError):
-                        _activate_owned_macos_application(process, executable, time.monotonic() + 10)
+                        _identify_owned_macos_application(process, executable, time.monotonic() + 10)
                 self.assertTrue(all(c[0] == "/usr/bin/lsappinfo" for c in commands))
         process = Mock(pid=123)
         process.poll.return_value = None
         with patch("journal_execution_session.sys.platform", "darwin"), \
                 patch("journal_execution_session.subprocess.run") as run:
             with self.assertRaises(TimeoutError):
-                _activate_owned_macos_application(process, executable, time.monotonic() - 1)
+                _identify_owned_macos_application(process, executable, time.monotonic() - 1)
             run.assert_not_called()
 
 
-    def test_activation_leaves_other_platforms_and_unbundled_executables_unchanged(self):
-        from journal_execution_session import _activate_owned_macos_application
+    def test_registration_leaves_other_platforms_and_unbundled_executables_unchanged(self):
+        from journal_execution_session import _identify_owned_macos_application
         for platform, executable in [("linux", "/tmp/Test.app/Contents/MacOS/Test"),
                                      ("win32", "/tmp/Test.app/Contents/MacOS/Test"),
                                      ("darwin", "/tmp/Test")]:
             with self.subTest(platform=platform):
                 with patch("journal_execution_session.sys.platform", platform), \
                         patch("journal_execution_session.subprocess.run") as run:
-                    self.assertIsNone(_activate_owned_macos_application(Mock(), Path(executable), 0))
+                    self.assertIsNone(_identify_owned_macos_application(Mock(), Path(executable), 0))
                     run.assert_not_called()
 
 
-    def test_macos_activation_rechecks_owned_identity_after_setfront(self):
-        from journal_execution_session import _activate_owned_macos_application
-        executable = Path("/Applications/Test.app/Contents/MacOS/Test").resolve()
-        process = Mock(pid=123)
-        process.poll.return_value = None
-        identity = ('"pid"=123\n"LSBundlePath"="/Applications/Test.app"\n'
-                    '"CFBundleExecutablePath"="/Applications/Test.app/Contents/MacOS/Test"\n')
-        for after in ("", "ASN:0x0-0x123: ASN:0x0-0x456:"):
-            replies = ["ASN:0x0-0x123:", identity, "", after] + ([identity, identity] if after else [])
-            with self.subTest(after=after), \
-                    patch("journal_execution_session.sys.platform", "darwin"), \
-                    patch("journal_execution_session.subprocess.run", side_effect=lambda command, **kwargs:
-                          subprocess.CompletedProcess(command, 0, stdout=replies.pop(0))):
-                with self.assertRaises(RuntimeError):
-                    _activate_owned_macos_application(process, executable, time.monotonic() + 10)
-
-    def test_macos_activation_selects_owned_child_while_recording_instance_stays_open(self):
-        from journal_execution_session import _activate_owned_macos_application
+    def test_macos_registration_selects_owned_child_while_recording_instance_stays_open(self):
+        from journal_execution_session import _identify_owned_macos_application
         executable = Path('/Applications/Test.app/Contents/MacOS/Test').resolve()
         process = Mock(pid=123)
         process.poll.return_value = None
@@ -516,13 +499,12 @@ class JournalPythonClientCheck(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0, stdout=value)
         with patch('journal_execution_session.sys.platform', 'darwin'), \
                 patch('journal_execution_session.subprocess.run', side_effect=run):
-            result = _activate_owned_macos_application(process, executable, time.monotonic() + 10)
+            result = _identify_owned_macos_application(process, executable, time.monotonic() + 10)
         self.assertEqual(result['pid'], 123)
-        self.assertEqual([c for c in commands if 'setfront' in c],
-            [['/usr/bin/lsappinfo', 'setfront', '#123']])
+        self.assertFalse(any('setfront' in c for c in commands))
 
 
-    def test_execution_retains_activation_evidence_and_original_readiness_handshake(self):
+    def test_execution_retains_registration_evidence_and_original_readiness_handshake(self):
         from journal_execution_session import JournalExecutionSession
         with tempfile.TemporaryDirectory() as temporary:
             client = RunnerClient(temporary)
@@ -534,14 +516,14 @@ class JournalPythonClientCheck(unittest.TestCase):
             process = Mock(pid=123, returncode=None)
             process.poll.return_value = None
             process.wait.side_effect = lambda **kwargs: setattr(process.poll, "return_value", -15)
-            activation = {"mechanism": "LaunchServices.setfront", "pid": 123}
+            activation = {"mechanism": "LaunchServices.identity", "pid": 123}
             with patch("journal_execution_session.JournalSystem", return_value=client), \
                     patch("journal_execution_session.subprocess.Popen", return_value=process), \
-                    patch("journal_execution_session._activate_owned_macos_application", return_value=activation):
+                    patch("journal_execution_session._identify_owned_macos_application", return_value=activation):
                 result = JournalExecutionSession().run(journal, application=sys.executable)
-            self.assertEqual(result["applicationActivation"], activation)
+            self.assertEqual(result["applicationRegistration"], activation)
             saved = json.loads((Path(result["outputPath"]) / "execution_result.json").read_text(encoding="utf-8"))
-            self.assertEqual(saved["applicationActivation"], activation)
+            self.assertEqual(saved["applicationRegistration"], activation)
             self.assertEqual(client.request.call_args.args[0], "journal.replay.begin")
             self.assertTrue(result["success"])
 
@@ -1026,6 +1008,9 @@ class JournalPythonClientCheck(unittest.TestCase):
                 self.assertIn("--journal-replay-id", command)
                 self.assertEqual(launch.call_args.kwargs["env"]["GPLATFORM_JOURNAL_SESSION"],
                                  "1")
+                if sys.platform == "darwin":
+                    self.assertEqual(launch.call_args.kwargs["env"][
+                        "QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM"], "1")
                 self.assertTrue(client.request.call_args.args[1]["resume"])
                 client.begin_replay.assert_not_called()
                 runner.return_value.play.assert_not_called()

@@ -7,6 +7,7 @@ import hashlib
 import html
 import inspect
 import json
+import os
 import re
 import shutil
 import struct
@@ -284,7 +285,12 @@ def write_case_result(output, result, checks):
     rows += ''.join('<tr><td>Method: {}</td><td>{}</td><td>{}</td></tr>'.format(
         html.escape(method['method']), html.escape(method['status']), html.escape(', '.join(method['checkIds'])))
         for method in result.get('methodResults', []))
-    review_link = '<p><a href="../report.html">批次结果索引</a> | <a href="review/screenshots.json">截图证据清单</a></p>' if result.get('screenshotReview') else ''
+    review_links = []
+    if result.get('batchReportPath'):
+        review_links.append('<a href="{}">批次结果索引</a>'.format(quote(result['batchReportPath'])))
+    if result.get('screenshotReview'):
+        review_links.append('<a href="review/screenshots.json">截图证据清单</a>')
+    review_link = '<p>' + ' | '.join(review_links) + '</p>' if review_links else ''
     body = ('<!doctype html><meta charset="utf-8"><title>Application acceptance</title>'
             '<h1>{}</h1><p>Status: {} | Scope: {}</p><p>{}</p>'
             '<p><a href="case_result.json">Case result</a> | <a href="checks.json">Business checks</a></p>'
@@ -301,8 +307,13 @@ def write_summary(output, summary):
     except Exception as exc:
         summary['screenshotReviewError'] = str(exc)
         # Auxiliary image processing must not remove the original batch report.
-        rows = ''.join('<tr><td><a href="{}/case_report.html">{}</a></td><td>{}</td></tr>'.format(
-            quote(case['id'], safe=''), html.escape(case['id']), html.escape(case['status']))
+        rows = ''.join('<tr><td>{}</td><td>{}</td><td>{}</td></tr>'.format(
+            html.escape(case['id']),
+            '复测通过' if case.get('outcome') == 'passed_after_recheck' else html.escape(case['status']),
+            ' · '.join('<a href="{}">{}</a>'.format(
+                quote(Path(attempt['result']).with_name('case_report.html').as_posix()),
+                '串行复测' if attempt.get('stage') == 'serial-recheck' else '首轮')
+                for attempt in case.get('attempts', [dict(result=case.get('result', case['id'] + '/case_result.json'))])))
             for case in summary['cases'])
         (output / 'report.html').write_text(
             '<!doctype html><meta charset="utf-8"><title>Acceptance summary</title>'
@@ -434,7 +445,7 @@ def materialize_journal(case, output, export_root, *, capture_candidates=False, 
 
 
 def run_case(root, name, application, output, exports, session, journal_loader, *, review_screenshots=False,
-             environment_overrides=None, capture_candidates=False, review_submit=None, comparisons=None):
+             environment_overrides=None, capture_candidates=False, review_submit=None, comparisons=None, batch_report=None):
     """Run one fresh session; preserve its report and evaluate declared business checks."""
     root, output, application = Path(root).resolve(), Path(output).resolve(), Path(application).resolve()
     if output.exists():
@@ -442,6 +453,8 @@ def run_case(root, name, application, output, exports, session, journal_loader, 
     result = dict(schemaVersion=3, id=name, status='blocked', scope='', executionResultPath=None,
                   provenance=dict(assets=git_identity(root), applicationPath=str(application)), unverifiedScopes=[],
                   verificationPlan=None, methodResults=[])
+    if batch_report is not None:
+        result['batchReportPath'] = Path(os.path.relpath(Path(batch_report).resolve(), output)).as_posix()
     if capture_candidates:
         result['candidateCollection'] = True
     checks = []
