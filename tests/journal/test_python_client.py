@@ -531,7 +531,7 @@ class JournalPythonClientCheck(unittest.TestCase):
             client.disconnect = Mock()
             client.request = Mock(side_effect=lambda method, params, **kwargs:
                                   {"status": "ready", "replayId": params["replayId"]})
-            process = Mock(returncode=None)
+            process = Mock(pid=123, returncode=None)
             process.poll.return_value = None
             process.wait.side_effect = lambda **kwargs: setattr(process.poll, "return_value", -15)
             activation = {"mechanism": "LaunchServices.setfront", "pid": 123}
@@ -587,7 +587,7 @@ class JournalPythonClientCheck(unittest.TestCase):
             client.request = Mock(side_effect=lambda method, params, **kwargs:
                                   {"status": "ready", "replayId": params["replayId"]})
             client.end_replay = Mock(side_effect=ConnectionError("cleanup failed"))
-            process = Mock(returncode=None)
+            process = Mock(pid=123, returncode=None)
             process.poll.return_value = None
             process.wait.side_effect = lambda **kwargs: setattr(process.poll, "return_value", -15)
             with patch("journal_execution_session.JournalSystem", return_value=client), \
@@ -616,7 +616,7 @@ class JournalPythonClientCheck(unittest.TestCase):
                 client.disconnect = Mock()
                 client.request = Mock(side_effect=lambda method, params, **kwargs:
                                       {"status": "ready", "replayId": params["replayId"]})
-                process = Mock(returncode=None)
+                process = Mock(pid=123, returncode=None)
                 process.poll.return_value = None
                 process.wait.side_effect = lambda **kwargs: setattr(process.poll, "return_value", -15)
                 clock = [0]
@@ -1006,7 +1006,7 @@ class JournalPythonClientCheck(unittest.TestCase):
             client.paths.return_value = {"recordings": str(Path(temporary) / "recordings"),
                                          "playbacks": str(Path(temporary) / "playbacks")}
             client.request.side_effect = lambda method, params, **kwargs: {"status": "ready", "replayId": params["replayId"]}
-            process = Mock(returncode=None)
+            process = Mock(pid=123, returncode=None)
             process.poll.return_value = None
             process.wait.side_effect = lambda **kwargs: setattr(process.poll, "return_value", -15)
             with patch("journal_execution_session.JournalSystem", return_value=client), \
@@ -1038,6 +1038,8 @@ class JournalPythonClientCheck(unittest.TestCase):
                 self.assertEqual(saved["applicationLogPath"], "application.log")
                 self.assertEqual(saved["sessionPath"], ".")
                 self.assertEqual(saved["applicationPath"], result["applicationPath"])
+                self.assertEqual(result["applicationPid"], 123)
+                self.assertEqual(saved["applicationPid"], 123)
 
     def test_session_applies_scenario_environment_to_its_child(self):
         from journal_execution_session import JournalExecutionSession
@@ -1060,7 +1062,7 @@ class JournalPythonClientCheck(unittest.TestCase):
             }
             client.request.side_effect = lambda method, params, **kwargs: {
                 "status": "ready", "replayId": params["replayId"]}
-            process = Mock(returncode=None)
+            process = Mock(pid=123, returncode=None)
             process.poll.return_value = None
             process.wait.side_effect = lambda **kwargs: setattr(
                 process.poll, "return_value", -15)
@@ -1122,7 +1124,7 @@ class JournalPythonClientCheck(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             journal = write_journal(Path(temporary) / "case.json", [
                 JournalSystem.entry("action", {"code": "existing.action"})])
-            process = Mock(returncode=7)
+            process = Mock(pid=123, returncode=7)
             process.poll.return_value = 7
             def launch(*args, stdout, **kwargs):
                 stdout.write(b"startup failed\n")
@@ -1166,7 +1168,7 @@ class JournalPythonClientCheck(unittest.TestCase):
             client.disconnect = Mock()
             client.request = Mock(side_effect=lambda method, params, **kwargs:
                                   {"status": "ready", "replayId": params["replayId"]})
-            process = Mock(returncode=None)
+            process = Mock(pid=123, returncode=None)
             process.poll.return_value = None
             process.wait.side_effect = lambda **kwargs: setattr(process.poll, "return_value", -15)
             timers = []

@@ -235,6 +235,7 @@ class JournalExecutionSession:
                     result.setdefault("cleanupErrors", []).append(str(exc))
             client.disconnect()
             if process is not None:
+                result["applicationPid"] = process.pid
                 result["applicationExitCode"] = process.poll()
                 if process.returncode is not None:
                     result.update(success=False, acceptance="failed",

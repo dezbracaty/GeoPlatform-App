@@ -575,7 +575,8 @@ def run_case(root, name, application, output, exports, session, journal_loader, 
                 elif check['validator'] == 'calibration-observation':
                     report = acceptance_calibration.verify_records(
                         acceptance_calibration.record_directory(execution), started,
-                        metadata['expected']['calibrationObservations'], output)
+                        metadata['expected']['calibrationObservations'], output,
+                        application_pid=execution.get('applicationPid'))
                 evidence = output / 'reports' / (str(len(checks) + 1) + '-' + check['validator'] + '.json')
                 evidence.parent.mkdir(exist_ok=True)
                 write_json(evidence, report)
