@@ -107,6 +107,10 @@ QString ScreenshotHandler::generateScreenshotPath(const QString& description) co
 }
 
 QImage ScreenshotHandler::captureApplicationWindow() {
+    // Dispatch already-ready UI updates without waiting or accepting new input
+    // or Journal socket requests. Callbacks may close windows, so select below.
+    QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents |
+                                   QEventLoop::ExcludeSocketNotifiers);
     // allWindows().first() is not stable once Dock popups or dialogs exist.
     // The main application window is the largest visible top-level Quick
     // window; transient windows remain part of the native surface capture.

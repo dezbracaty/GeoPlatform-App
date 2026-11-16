@@ -22,7 +22,7 @@ FramelessWindow {
     minimumWidth: 1200
     minimumHeight: 700
     visible: true
-    flags: Qt.Window | (Qt.platform.os === "osx" && StartupState.replayMode
+    flags: Qt.Window | (Qt.platform.os === "osx" && StartupState.backgroundReplay
                         ? Qt.WindowDoesNotAcceptFocus : 0)
     title: qsTr("GPlatform")
     // On Windows, reserve the app bar above the navigation/AI row.
@@ -159,6 +159,7 @@ FramelessWindow {
 
     NotificationOverlay {
         id: notification_overlay
+        objectName: "gplatform.notificationOverlay"
         // Parameter editing uses a modal Popup on the Controls overlay. Keep
         // rejection messages visible above that popup, not behind its content.
         parent: Overlay.overlay

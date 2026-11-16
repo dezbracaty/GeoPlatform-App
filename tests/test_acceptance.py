@@ -685,6 +685,7 @@ class AcceptanceCheck(unittest.TestCase):
             shutil.copytree(self.scenario, self.assets / 'scenarios' / name)
             write_json(self.assets / 'scenarios' / name / 'metadata.json', dict(self.metadata, id=name))
         counts = collections.Counter()
+        instances = []
         output = self.root / 'recheck'
         def factory(name):
             counts[name] += 1
@@ -692,13 +693,19 @@ class AcceptanceCheck(unittest.TestCase):
                 self.assertEqual(counts['job3'], 1, 'Recheck started before initial replay drained')
                 self.assertEqual(read_json(output / 'job/case_result.json')['status'], 'failed')
             failed = name == 'job2' or (name == 'job' and counts[name] == 1)
-            return SessionFixture(overrides=dict(success=not failed, acceptance='failed' if failed else 'passed',
+            instance = SessionFixture(overrides=dict(success=not failed, acceptance='failed' if failed else 'passed',
                 error='controlled failure') if failed else {})
+            instances.append((counts[name], instance))
+            return instance
         events = []
-        with patch('builtins.print'):
+        with patch('builtins.print'), patch('run_acceptance.sys.platform', 'darwin'):
             code = run_acceptance.main(['--assets', str(self.assets), '--application', str(self.application),
                 '--cases', 'all', '--jobs', '3', '--recheck-failed-serial', '--output', str(output)],
                 session_factory=factory, progress=events.append)
+        for attempt, instance in instances:
+            self.assertEqual(instance.environments, [dict(
+                QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM='1' if attempt == 1 else '0')])
+        self.assertEqual(len({id(instance.environments[0]) for _, instance in instances}), 5)
         summary = read_json(output / 'summary.json')
         self.assertEqual(code, 1, summary)
         self.assertEqual(dict(counts), dict(job=2, job2=2, job3=1))

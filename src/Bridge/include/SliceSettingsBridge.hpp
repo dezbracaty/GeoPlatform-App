@@ -58,7 +58,7 @@ public:
         const std::vector<libslicer::FilamentSlotInfo>&);
     void installCommittedConfiguration(PreparedConfiguration&&,
         std::optional<bool> projectPalette = std::nullopt) noexcept;
-    void publishCommittedConfiguration();
+    void publishCommittedConfiguration(bool machineChanged = true);
     // Capture persisted selection on the GUI thread, load only backend data in
     // a worker, then supply the result before module registration constructs us.
     static QFuture<GPlatform::SlicingConfigActivationResult> prepareStartupConfiguration();

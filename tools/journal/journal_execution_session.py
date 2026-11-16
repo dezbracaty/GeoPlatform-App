@@ -58,8 +58,8 @@ def _macos_bundle_instance(bundle, deadline, expected_pid):
     return owned[0] if owned else None
 
 
-def _identify_owned_macos_application(process, executable, deadline):
-    """Identify the registered .app child without changing desktop focus."""
+def _identify_owned_macos_application(process, executable, deadline, *, activate=False):
+    """Verify the owned child; only serial replay may activate its exact PID."""
     if (sys.platform != "darwin" or executable.parent.name != "MacOS" or
             executable.parent.parent.name != "Contents" or
             executable.parent.parent.parent.suffix != ".app"):
@@ -82,7 +82,13 @@ def _identify_owned_macos_application(process, executable, deadline):
             break
         time.sleep(min(0.05, max(0, deadline - time.monotonic())))
     check(identity)
-    return {"mechanism": "LaunchServices.identity", "pid": process.pid,
+    if activate:
+        # setfront targets an existing PID and cannot launch a replacement child.
+        subprocess.run(["/usr/bin/lsappinfo", "setfront", "#" + str(process.pid)],
+                       check=True, capture_output=True, text=True,
+                       timeout=max(0.01, min(2, deadline - time.monotonic())))
+        check(_macos_bundle_instance(bundle, deadline, process.pid))
+    return {"mechanism": "LaunchServices.setfront" if activate else "LaunchServices.identity", "pid": process.pid,
             "bundlePath": str(bundle)}
 
 
@@ -164,9 +170,15 @@ class JournalExecutionSession:
                     result["environmentOverrides"] = dict(environment_overrides)
                 environment["GPLATFORM_JOURNAL_SESSION"] = "1"
                 if sys.platform == "darwin":
-                    # Cocoa activates a newly launched Qt app before its windows
-                    # are ready, independently of WindowDoesNotAcceptFocus.
-                    environment["QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM"] = "1"
+                    # Ignore ambient/scenario focus settings: the batch owns
+                    # whether this child may activate the shared desktop.
+                    background = (environment_overrides or {}).get(
+                        "QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM") == "1"
+                    if background:
+                        environment["QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM"] = "1"
+                    else:
+                        # Cocoa tests emptiness, so even "0" would disable activation.
+                        environment.pop("QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM", None)
                 # The app owns its Journal location. Buffer startup output until
                 # journal.paths is available; never guess it from the caller's cwd.
                 stream = tempfile.NamedTemporaryFile(mode="wb", prefix="journal-startup-", suffix=".log", delete=False)
@@ -188,9 +200,10 @@ class JournalExecutionSession:
                         time.sleep(min(0.05, max(0, deadline-time.monotonic())))
                 else:
                     raise TimeoutError(f"Application startup timed out: {last_error}")
-                activation = _identify_owned_macos_application(process, executable, deadline)
+                activation = _identify_owned_macos_application(process, executable, deadline,
+                    activate=environment.get("QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM") != "1")
                 if activation is not None:
-                    emit(f"已核对本会话的 macOS 测试实例，PID {process.pid}（不改变前台）")
+                    emit(f"已核对本会话的 macOS 测试实例，PID {process.pid}，{activation['mechanism']}")
                 response = client.request("journal.replay.begin", {
                     "replayId": replay_id, "resume": True, "windowProfile": WINDOW_PROFILE},
                     timeout=min(3.0, max(0.01, deadline-time.monotonic())))
@@ -219,7 +232,7 @@ class JournalExecutionSession:
             result["actualWindow"] = actual_window
             if activation is not None:
                 result["applicationRegistration"] = activation
-            if handshake:
+            if handshake and client.client is not None:
                 client.end_replay()
                 handshake = False
         except Exception as exc:
@@ -227,10 +240,16 @@ class JournalExecutionSession:
             emit(f"测试失败：{exc}")
         finally:
             if handshake:
-                try:
-                    client.end_replay()
-                except Exception as exc:
-                    result.setdefault("cleanupErrors", []).append(str(exc))
+                if client.client is None and process is not None and not keep_app:
+                    # An interrupted opt-in probe closes its partial stream.
+                    # The owned child is still terminated/waited below; there
+                    # is no live connection on which to restore replay state.
+                    result["replayCleanup"] = "owned-process-termination"
+                else:
+                    try:
+                        client.end_replay()
+                    except Exception as exc:
+                        result.setdefault("cleanupErrors", []).append(str(exc))
             client.disconnect()
             if process is not None:
                 result["applicationPid"] = process.pid

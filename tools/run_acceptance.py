@@ -23,10 +23,12 @@ def validate_parallelism(value):
     return value
 
 
-def regression_environment():
-    """App owns its Windows regression policy; other platforms keep native defaults."""
+def regression_environment(*, background=False):
+    """Keep parallel Mac children in the background; serial replay uses native focus."""
     if sys.platform == 'win32':
         return dict(QT_ENABLE_HIGHDPI_SCALING='0', QT_SCALE_FACTOR='1', QT_FONT_DPI='96')
+    if sys.platform == 'darwin':
+        return dict(QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM='1' if background else '0')
     return None
 
 
@@ -151,7 +153,7 @@ def main(argv=None, *, session=None, session_factory=None, progress=None, betwee
                    selectionScope='all' if args.cases == 'all' and selected == names else 'explicit')
     if args.capture_candidates:
         summary['candidateCollection'] = True
-    environment = regression_environment()
+    environment = regression_environment(background=args.jobs > 1)
     if environment is not None:
         summary['environmentOverrides'] = environment
     update_run_summary(summary)
@@ -220,7 +222,7 @@ def main(argv=None, *, session=None, session_factory=None, progress=None, betwee
         if changed or reviews_changed:
             write_summary(output, summary)
 
-    def execute_case(case_index, name, stage):
+    def execute_case(case_index, name, stage, jobs):
         if session is not None and getattr(session, 'cancel_event', None) is not None and session.cancel_event.is_set():
             raise InterruptedError('Replay cancelled by caller')
         if progress:
@@ -235,7 +237,7 @@ def main(argv=None, *, session=None, session_factory=None, progress=None, betwee
         instance = session_factory(name) if session_factory else session if session is not None else JournalExecutionSession()
         return run_case(args.assets, name, args.application, case_output, case_exports,
                           instance, load_journal,
-                          review_screenshots=True, environment_overrides=environment,
+                          review_screenshots=True, environment_overrides=regression_environment(background=jobs > 1),
                           review_submit=submit_review, comparisons=comparisons, batch_report=output / 'report.html',
                           **(dict(capture_candidates=True) if args.capture_candidates else {}))
 
@@ -300,7 +302,7 @@ def main(argv=None, *, session=None, session_factory=None, progress=None, betwee
                                 sorted(original['provenance']['deployedDependencies'], key=lambda d: d['path']) or
                                 load_case(args.assets, name, load_journal)['hashes'] != original['provenance']['inputs']):
                             raise RuntimeError('Program or scenario inputs changed before serial recheck: ' + name)
-                    futures[replays.submit(execute_case, selected.index(name) + 1, name, stage)] = name
+                    futures[replays.submit(execute_case, selected.index(name) + 1, name, stage, jobs)] = name
                     index += 1
                 if not futures:
                     check_cancelled()

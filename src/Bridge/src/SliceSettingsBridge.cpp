@@ -521,8 +521,9 @@ void SliceSettingsBridge::installCommittedConfiguration(
     m_configurationError.clear();
 }
 
-void SliceSettingsBridge::publishCommittedConfiguration() {
-    emit settingsChanged(); emit schemaChanged(); emit machineSelectionChanged();
+void SliceSettingsBridge::publishCommittedConfiguration(bool machineChanged) {
+    emit settingsChanged(); emit schemaChanged();
+    if (machineChanged) emit machineSelectionChanged();
     emit presetSelectionChanged(); emit filamentSlotsChanged(); emit hasPendingResliceChanged();
     emit configurationErrorChanged();
 }
@@ -1805,8 +1806,12 @@ bool SliceSettingsBridge::replaceConfig(GPlatform::SlicingConfigActivationResult
         return false;
     }
     auto prepared = prepareConfiguration(std::move(result.view), GPlatform::SlicingBackend::instance().activeProjectMachine());
+    bool machineChanged = false;
     {
         QReadLocker locker(&m_lock);
+        machineChanged = m_selection.machine_model_id != prepared.view.selection.machine_model_id ||
+            m_selection.machine_variant_id != prepared.view.selection.machine_variant_id ||
+            m_projectMachine != prepared.machine;
         if (synchronizePlateMaterials) {
             bool domainChanged = m_selection.machine_model_id != prepared.view.selection.machine_model_id ||
                 m_selection.machine_variant_id != prepared.view.selection.machine_variant_id ||
@@ -1859,7 +1864,7 @@ bool SliceSettingsBridge::replaceConfig(GPlatform::SlicingConfigActivationResult
     if (!prepared.projectLocal) persistSelection(prepared.view.selection, true, {}, !m_projectPalette);
     installCommittedConfiguration(std::move(prepared));
     if (!markPending) { QWriteLocker locker(&m_lock); m_hasPendingReslice = false; }
-    publishCommittedConfiguration();
+    publishCommittedConfiguration(machineChanged);
     return true;
 }
 

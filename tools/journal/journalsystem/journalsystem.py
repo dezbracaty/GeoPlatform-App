@@ -39,14 +39,39 @@ class JournalSystem:
                 self.client = None
                 self._buffer.clear()
 
-    def _receive_frame(self, timeout=None):
+    def _receive_frame(self, timeout=None, *, cancel_event=None, deadline=None):
         if self.client is None:
             raise ConnectionError("Journal client is not connected")
         previous_timeout = self.client.gettimeout()
+        # Opt-in readiness requests use one absolute deadline even when the
+        # peer fragments its header/body. Ordinary requests keep their policy.
+        if deadline is None and cancel_event is not None and timeout is not None:
+            deadline = time.monotonic() + timeout
+
+        def receive():
+            while True:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise InterruptedError("Replay cancelled by caller")
+                remaining = deadline - time.monotonic() if deadline is not None else timeout
+                if deadline is not None and remaining <= 0:
+                    raise TimeoutError("Journal request deadline exceeded")
+                self.client.settimeout(min(0.1, remaining) if cancel_event is not None and remaining is not None else timeout)
+                try:
+                    chunk = self.client.recv(4096)
+                except socket.timeout:
+                    if cancel_event is None:
+                        raise
+                    continue
+                if cancel_event is not None and cancel_event.is_set():
+                    raise InterruptedError("Replay cancelled by caller")
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise TimeoutError("Journal request deadline exceeded")
+                return chunk
+
         try:
             self.client.settimeout(timeout)
             while b":" not in self._buffer:
-                chunk = self.client.recv(4096)
+                chunk = receive()
                 if not chunk:
                     raise ConnectionError("Journal connection closed")
                 self._buffer.extend(chunk)
@@ -59,7 +84,7 @@ class JournalSystem:
                 raise RuntimeError("Invalid Journal frame length")
             del self._buffer[:separator + 1]
             while len(self._buffer) < length:
-                chunk = self.client.recv(4096)
+                chunk = receive()
                 if not chunk:
                     raise ConnectionError("Journal connection closed")
                 self._buffer.extend(chunk)
@@ -70,7 +95,7 @@ class JournalSystem:
             if self.client is not None:
                 self.client.settimeout(previous_timeout)
 
-    def request(self, method, params=None, timeout=None):
+    def request(self, method, params=None, timeout=None, *, cancel_event=None):
         if timeout is None:
             timeout = self._request_timeout
         if self.client is None:
@@ -79,7 +104,11 @@ class JournalSystem:
             raise ValueError("method must be a non-empty string")
         if params is not None and not isinstance(params, dict):
             raise TypeError("params must be a dict")
+        deadline = (time.monotonic() + timeout
+                    if cancel_event is not None and timeout is not None else None)
         with self._lock:
+            if cancel_event is not None and cancel_event.is_set():
+                raise InterruptedError("Replay cancelled by caller")
             request_id = self._next_request_id
             self._next_request_id += 1
             request = {
@@ -89,8 +118,37 @@ class JournalSystem:
             }
             payload = json.dumps(
                 request, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-            self.client.sendall(str(len(payload)).encode("ascii") + b":" + payload)
-            response = json.loads(self._receive_frame(timeout).decode("utf-8"))
+            framed = str(len(payload)).encode("ascii") + b":" + payload
+            previous_timeout = self.client.gettimeout()
+            try:
+                if cancel_event is None:
+                    self.client.sendall(framed)
+                else:
+                    offset = 0
+                    while offset < len(framed):
+                        if cancel_event.is_set():
+                            raise InterruptedError("Replay cancelled by caller")
+                        remaining = deadline - time.monotonic() if deadline is not None else None
+                        if remaining is not None and remaining <= 0:
+                            raise TimeoutError("Journal request deadline exceeded")
+                        self.client.settimeout(min(0.1, remaining) if remaining is not None else 0.1)
+                        try:
+                            sent = self.client.send(framed[offset:])
+                        except socket.timeout:
+                            continue
+                        if not sent:
+                            raise ConnectionError("Journal connection closed while sending")
+                        offset += sent
+                response = json.loads(self._receive_frame(timeout, cancel_event=cancel_event,
+                                                          deadline=deadline).decode("utf-8"))
+            except Exception:
+                if cancel_event is not None:
+                    # Never reuse a stream with an uncertain partial response.
+                    self.disconnect()
+                raise
+            finally:
+                if self.client is not None:
+                    self.client.settimeout(previous_timeout)
             if response.get("requestId") != request_id:
                 raise RuntimeError(
                     f"Journal response id mismatch: expected {request_id}, "

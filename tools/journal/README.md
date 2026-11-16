@@ -161,8 +161,52 @@ CLI 连接已有实例回放时，仍使用 `journal.replay.begin` 及 replayId 
 
 主动编写的场景统一放在 `tests/TestAssets/scenarios/`，不再给每个场景配专用 Python 脚本。
 `capture.db`（dbInstanceId）只保存原始完整序列化字节，不作为验证 Action 发给 C++。
-UI 操作不使用属性断言或查询接口；命名目标找不到或输入派发失败，该条目直接失败并停止执行。
+UI 操作不使用业务属性断言或查询接口；默认命名目标找不到或输入派发失败，该条目直接失败并停止执行。
 无验证条目的场景明确标为 not_verified，不把“取到了数据”当作业务正确。
+
+仅当后续真实输入依赖异步界面出现时，可在该条 `input.mouse/input.key/input.wheel`
+的 payload 中显式设置 `readyTimeoutMs`（1–300000 的整数，且必须有命名 target）。
+这是共享 Python 文件执行器的选项，发送输入前从副本移除，默认没有等待。
+执行器先确认当前连接 `system.version` 的 `capabilities.namedInputReadiness` 严格为 true；
+旧程序或不匹配 SDK 在任何探测、输入派发前清晰失败，不能降级重试。
+随后仅通过原 `journal.entry.execute` 的 `checkOnly:true` 请求选项复用目标解析及可输入条件，
+不发送事件、不执行 Action、不追加录制、不读取业务数据。不存在、隐藏、禁用或空几何返回
+`ready:false`；非法输入和歧义目标立即报错。能力查询、分段收包、探测与轮询共享有限单调截止时间，
+等待可取消；超时、取消或通信错误不会发送真实输入。就绪后只派发一次，派发时仍重新检查目标，
+若目标已消失则失败，不循环重发。该等待耗时平移回放时钟，保留后续原 `atMs` 间隔。
+报告中的 `inputReadiness.waitSeconds/probeCount` 及 `startedAt/readyAt/dispatchRequestedAt`
+只是等待与实际输入请求时刻的工具证据，不是业务完成时间；业务成功仍由原 DB、截图及文件检查验证。
+异步取消、负向场景不添加此选项，其原语义保持不变。
+
+需要等待明确的观察前置条件时，仅 `verify.screenshot` 和 `verify.db` 可显式添加：
+
+```json
+"uiReady": {
+  "timeoutMs": 60000,
+  "targets": [
+    {"target": "slicing.preview.viewSelector", "state": "input-ready"},
+    {"target": "gplatform.notificationOverlay", "state": "hidden"}
+  ]
+}
+```
+
+`timeoutMs` 同样为 1–300000 的整数；可指定 `window:{"objectName":"..."}`，默认使用统一回放主窗口。
+此能力先严格确认 `namedTargetVisibility:true`，再用原 `journal.entry.execute` 的
+`checkOnly:true, observeTarget:{target,window}` 纯描述分支查询，不包含 entry/event，也不构造假输入。
+每轮核对全部目标；`hidden` 必须目标确实存在且不可见，禁用、空几何或低透明度不等于隐藏，
+`hidden` 的目标缺失、歧义及非法描述不能成为成功。这些条件不查询任意属性或业务状态。
+复用同一绝对期限、取消及断流处理，等待耗时记入 `uiReadiness` 并平移后续回放时间。
+条件满足后仍只捕获一次并执行原整图比较，不重试截图以寻找匹配帧；能力不匹配时零探测、零捕获。
+该例只表示预览控件可输入及指定 Overlay 隐藏，不表示切片业务成功、没有警告或其他通知全部消失。
+未标注的截图和其他场景保持原语义。
+
+正常用户提交会卸载控件时，可显式选择第三种状态 `absent`（控件不再存在，
+隐藏或禁用但仍存在均不满足）。文件必须在该观察之前含有同一明确
+`window.objectName`、同一 `target` 的真实命名 mouse/key/wheel 输入；缺少该依据、
+不同窗口或未限定窗口的输入均拒绝加载。共享执行器遇到该输入失败会立即停止，
+因此不能以拼错从未出现的目标作为完成条件。该条件仅表示控件生命周期结束，
+不保证业务成功；随后 `verify.db` 只读取一次完整原始字节并照原标准比较，
+不循环读 DB 等待 expected 相同。取消、超时或能力不匹配时零 DB 读取。
 
 只需要保存截图时，JSON 直接使用已有 `action`，code 为 `screenshot.capture`，
 params 例如 `{"filepath":"screenshots/all.png","notify":false}`，不新增截图 Action 或条目类型。
