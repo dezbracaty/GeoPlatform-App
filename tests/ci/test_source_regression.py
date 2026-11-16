@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -87,6 +88,25 @@ class SourceMRRegression(unittest.TestCase):
             build.assert_not_called()
             self.assertEqual(json.loads((output/'source-regression.json').read_text())['status'],'failed')
 
+    def test_optional_review_dependencies_do_not_block_regression_admission(self):
+        blocker = '''
+import importlib.abc, sys
+class NoOptionalPackages(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] in ('numpy', 'jsonschema'):
+            raise ModuleNotFoundError(fullname)
+sys.meta_path.insert(0, NoOptionalPackages())
+'''
+        def admission(args, **kwargs):
+            subprocess.run([args[0], '-c', blocker + args[2]], check=True, env=kwargs['env'],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with patch.object(controller, 'run', side_effect=admission), \
+                 patch.object(controller, 'machine_lock', side_effect=RuntimeError('admission passed')):
+                with self.assertRaisesRegex(RuntimeError, 'admission passed'):
+                    controller.regress(root, 'macos', 'a'*40, 'd'*40, root/'evidence')
+
     def test_compile_failure_stops_before_gui_and_retains_failure_evidence(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); output = root/'evidence'
@@ -108,6 +128,20 @@ class SourceMRRegression(unittest.TestCase):
             root=Path(temporary); output=root/'evidence'; executable=root/'app'; executable.write_bytes(b'executable')
             def run(args, **kwargs):
                 if '-c' in args and args[2] == controller.APP_REGRESSION:
+                    # App owns its Git credentials. Applying App's real helper
+                    # to the child environment must produce exactly one header.
+                    spec = importlib.util.spec_from_file_location('app_git_common',
+                        Path(__file__).resolve().parents[2] / 'scripts/ci/common.py')
+                    common = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(common)
+                    with patch.dict(os.environ, kwargs['env'], clear=True):
+                        child_git_env = common.git_env()
+                    headers = subprocess.run(['git', 'config', '--get-all',
+                        'http.https://github.com/.extraheader'], env=child_git_env,
+                        check=True, capture_output=True, text=True).stdout.splitlines()
+                    self.assertEqual(len(headers), 1)
+                    self.assertEqual(child_git_env['GIT_CONFIG_VALUE_0'], 'lf')
+                    self.assertEqual(kwargs['env']['GPLATFORM_SOURCE_TOKEN'], 'test-only-token')
                     (output/'journal-receipt.json').write_text(json.dumps(
                         {'status':'passed','assets_sha':'d'*40,'expected_cases':['one','two']}))
                     directory=output/'journals/run'; directory.mkdir(parents=True)
@@ -115,7 +149,10 @@ class SourceMRRegression(unittest.TestCase):
                         {'status':'passed','runComplete':True,'selectionScope':'all',
                          'plannedCases':['one','two'],'completedCaseCount':2,
                          'cases':[{'id':'one','status':'passed'},{'id':'two','status':'passed'}]}))
-            with patch.object(controller, 'machine_lock', return_value=contextlib.nullcontext()), \
+            with patch.dict(os.environ, {'GPLATFORM_SOURCE_TOKEN':'test-only-token',
+                    'GITHUB_ACTIONS':'false', 'GIT_CONFIG_COUNT':'1',
+                    'GIT_CONFIG_KEY_0':'core.eol', 'GIT_CONFIG_VALUE_0':'lf'}), \
+                 patch.object(controller, 'machine_lock', return_value=contextlib.nullcontext()), \
                  patch.object(controller, 'prepare_cached_source'), patch.object(controller, 'init_source_submodules'), \
                  patch.object(controller, 'text_git', return_value='b'*40), \
                  patch.object(controller, 'run', side_effect=run), \
