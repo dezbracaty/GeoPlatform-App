@@ -707,6 +707,21 @@ libslicer::ProjectReadResult SlicingBackend::readProject(const libslicer::Projec
     });
 }
 
+libslicer::ProjectWriteResult SlicingBackend::writeProject(const libslicer::ProjectWriteRequest& request,
+    const libslicer::SliceCallbacks& callbacks) const {
+    if (!m_available) return {};
+    auto wrapped = callbacks;
+    wrapped.is_cancelled = [impl = m_impl.get(), cancelled = callbacks.is_cancelled] {
+        return impl->shutdownRequested.load(std::memory_order_acquire) || (cancelled && cancelled());
+    };
+    {
+        std::lock_guard<std::mutex> lock(m_impl->configurationAdmissionMutex);
+        m_impl->activeLongJobs.fetch_add(1, std::memory_order_release);
+    }
+    LongJobCompletionGuard completion(m_impl->activeLongJobs);
+    return m_impl->invoke([this, request, wrapped] { return m_impl->library->write_project(request, wrapped); });
+}
+
 std::optional<libslicer::ProjectMachine> SlicingBackend::activeProjectMachine() const {
     if (!m_available) return std::nullopt;
     return m_impl->invoke([this] { return m_impl->library->active_project_machine(); });

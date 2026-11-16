@@ -1,4 +1,6 @@
 #include "ProjectImportHandler.hpp"
+#include "ModelFileController.hpp"
+#include <FiberMaskDB.hpp>
 #include "InteractionRegistration.hpp"
 #include "AIDescriptorHelper.hpp"
 #include "ModelCreationUtil.hpp"
@@ -183,7 +185,8 @@ PreparedPart preparePart(const libslicer::ProjectPart& source, int order) {
     output.info.orderIndex = order;
     output.info.defaultFilamentSlot = std::max(1, source.default_filament_slot);
     output.info.filamentBindingMode = source.explicit_filament_binding
-        ? ModelFilamentBindingMode::ExplicitSlot : ModelFilamentBindingMode::InheritObject;
+        ? ModelFilamentBindingMode::ExplicitSlot : source.inherit_project_filament
+        ? ModelFilamentBindingMode::InheritProjectDefault : ModelFilamentBindingMode::InheritObject;
     switch (source.role) {
         case libslicer::ProjectPartRole::Model: output.info.role = ModelPartRole::Model; break;
         case libslicer::ProjectPartRole::NegativeVolume: output.info.role = ModelPartRole::NegativeVolume; break;
@@ -521,11 +524,23 @@ void ProjectImportHandler::commit() {
                         {placement,bed ? bed->getDBInstanceID() : DBInstanceID{},instance.printable,int(created.size()),config->getDBInstanceID()},&error);
                     if (!output) throw std::runtime_error(error.empty() ? "Cannot construct project instance" : error);
                     output->setDisplayName(instance.name.empty() ? source.name : instance.name);
+                    for (std::size_t index=0;index<instance.fiber_masks.size();++index) {
+                        const auto& input=instance.fiber_masks[index];
+                        auto mask=trans::TransDB::create<FiberMaskDB>();
+                        if (!document->attachOwnedChild(output->getDBInstanceID(),mask->getDBInstanceID(),FiberMaskDB::kOwnerRelation))
+                            throw std::runtime_error("Cannot attach saved fiber mask");
+                        mask->setDisplayName(input.name);mask->setShape(int(input.shape));
+                        mask->setDimensions(Vector3(float(input.dimensions_mm[0]),float(input.dimensions_mm[1]),float(input.dimensions_mm[2])));
+                        mask->setTransform(transform(input.mask_to_object));mask->setEnabled(input.enabled);mask->setOrder(int(index));
+                        QJsonObject overrides;
+                        for (const auto& [key,value]:input.settings) overrides.insert(text(key),text(value));
+                        mask->setParameterOverridesJson(QJsonDocument(overrides).toJson(QJsonDocument::Compact).toStdString());
+                    }
                     created.push_back(QString::number(output->getDBInstanceID().getValue()));
                 }
             }
             if (opening) {
-                config->setDefaultFilamentSlot(1);
+                config->setDefaultFilamentSlot(m_candidate.scene->default_filament_slot);
                 config->setActivePrintBedDBId(firstBed->getDBInstanceID());
                 for (const auto& old : oldObjects)
                     if (!document->unregisterDBInstance(old->getDBInstanceID())) throw std::runtime_error("Cannot remove the previous project graph");
@@ -571,6 +586,7 @@ void ProjectImportHandler::commit() {
                 transaction.commit(); // Finish the moved-from current transaction.
             }
             durable = true;
+            if (opening) ModelFileController::instance()->setProjectPath(m_path);
             m_completion.insert("objectIds",created);
             if (!created.empty()) { m_completion.insert("objectId",created.front()); m_completion.insert("modelId",created.front()); }
             if (configurationChanged)

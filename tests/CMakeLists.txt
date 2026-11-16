@@ -27,6 +27,8 @@ qt_add_resources(Model3MFIntegrationCheck "project_i18n"
     PREFIX "/" BASE "${PROJECT_BINARY_DIR}" FILES ${_project_catalogs})
 add_dependencies(Model3MFIntegrationCheck gplatform_i18n_mo)
 add_test(NAME Model3MFIntegrationCheck COMMAND Model3MFIntegrationCheck)
+add_test(NAME ModelFileExportCheck COMMAND Model3MFIntegrationCheck --model-file-export)
+set_tests_properties(ModelFileExportCheck PROPERTIES TIMEOUT 90)
 set_tests_properties(Model3MFIntegrationCheck PROPERTIES TIMEOUT 90)
 
 add_executable(ProjectDocumentContractCheck ProjectDocumentContractCheck.cpp)
@@ -38,7 +40,7 @@ add_test(NAME ProjectDocumentContractCheck COMMAND ProjectDocumentContractCheck)
 set_tests_properties(ProjectDocumentContractCheck PROPERTIES TIMEOUT 30)
 
 if(WIN32)
-    set_tests_properties(Model3MFIntegrationCheck ProjectDocumentContractCheck PROPERTIES
+    set_tests_properties(Model3MFIntegrationCheck ModelFileExportCheck ProjectDocumentContractCheck PROPERTIES
         ENVIRONMENT_MODIFICATION
         "PATH=path_list_prepend:$<TARGET_FILE_DIR:GPlatform>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 endif()

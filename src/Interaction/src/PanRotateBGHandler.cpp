@@ -200,7 +200,7 @@ bool PanRotateBGHandler::onMouseReleaseEvent(QMouseEvent* event) {
         !exceedsDragThreshold(m_gesture->pointerStart, event->position());
     endCurrentOperation();
     if (showMenu) {
-        QuickActionController::getInstance()->handleRightClick(event->position());
+        QuickActionController::getInstance()->handleRightClickForView(event->position(), inputViewId());
     }
     return true;
 }

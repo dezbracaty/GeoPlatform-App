@@ -160,6 +160,15 @@ Item {
             Global.starter.chooseStl({})
             return
         }
+        if (actionCode === "file.save" || actionCode === "file.saveAs") {
+            Global.starter.exportModels("project", "3mf", false, actionCode === "file.saveAs")
+            return
+        }
+        var exportAction = /^model\.export\.(selection|plate|owner)\.(stl|3mf|stlIndividual)\.choose$/.exec(actionCode)
+        if (exportAction) {
+            Global.starter.exportModels(exportAction[1], exportAction[2] === "3mf" ? "3mf" : "stl", exportAction[2] === "stlIndividual", false)
+            return
+        }
         if (actionCode === "slice.settings") {
             root.openSliceSettings({})
             return

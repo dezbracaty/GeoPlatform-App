@@ -14,8 +14,13 @@
               "iconSource": "graph_Folder", "displayMode": "TextBesideIcon",
               "items": [
                 {"text": "New...", "iconSource": "graph_Add", "actionCode": "file.new", "enabled": true},
-                {"text": "Open...", "iconSource": "graph_OpenFile", "actionCode": "model.import.choose", "enabled": true},
-                {"text": "Save", "iconSource": "graph_Save", "actionCode": "file.save", "enabled": true},
+                {"text": "Import Models…", "iconSource": "graph_Import", "actionCode": "model.import.choose", "enabled": true},
+                {"text": "Open Project…", "iconSource": "graph_OpenFile", "actionCode": "project.open.choose", "enabled": true},
+                {"text": "Save Project", "iconSource": "graph_Save", "actionCode": "file.save", "enabled": true},
+                {"text": "Save Project As…", "iconSource": "graph_Save", "actionCode": "file.saveAs", "enabled": true},
+                {"separator": true},
+                {"text": "Export Selected Models", "isMenu": true, "iconSource": "graph_Export", "items": [{"text": "STL…", "iconSource": "graph_Export", "actionCode": "model.export.selection.stl.choose", "enabled": true}, {"text": "3MF…", "iconSource": "graph_Export", "actionCode": "model.export.selection.3mf.choose", "enabled": true}]},
+                {"text": "Export Current Plate", "isMenu": true, "iconSource": "graph_Export", "items": [{"text": "STL…", "iconSource": "graph_Export", "actionCode": "model.export.plate.stl.choose", "enabled": true}, {"text": "3MF…", "iconSource": "graph_Export", "actionCode": "model.export.plate.3mf.choose", "enabled": true}]},
                 {"separator": true},
                 {"text": "Quit", "iconSource": "graph_Cancel", "actionCode": "file.quit", "enabled": true}
               ]
@@ -71,12 +76,10 @@
         "NoSelection": {
           "description": "无选择上下文菜单",
           "items": [
-            {
-              "text": "导入文件",
-              "iconSource": "graph_Import",
-              "actionCode": "model.import.choose",
-              "enabled": true
-            },
+            {"text": "Import Models…", "iconSource": "graph_Import", "actionCode": "model.import.choose", "enabled": true},
+            {"text": "Export Current Plate as STL…", "iconSource": "graph_Export", "actionCode": "model.export.plate.stl.choose", "enabled": true},
+            {"text": "Export Current Plate as 3MF…", "iconSource": "graph_Export", "actionCode": "model.export.plate.3mf.choose", "enabled": true},
+            {"separator": true},
             {
               "text": "创建基础模型",
               "iconSource": "graph_Add",
@@ -162,6 +165,9 @@
             {
               "separator": true
             },
+            {"text": "Export as STL…", "iconSource": "graph_Export", "actionCode": "model.export.selection.stl.choose", "enabled": true},
+            {"text": "Export as 3MF…", "iconSource": "graph_Export", "actionCode": "model.export.selection.3mf.choose", "enabled": true},
+            {"separator": true},
             {
               "text": "聚焦到模型",
               "iconSource": "graph_Bullseye",
@@ -212,12 +218,23 @@
             {
               "separator": true
             },
+            {"text": "Export as Single STL…", "iconSource": "graph_Export", "actionCode": "model.export.selection.stl.choose", "enabled": true},
+            {"text": "Export as Separate STL Files…", "iconSource": "graph_Export", "actionCode": "model.export.selection.stlIndividual.choose", "enabled": true},
+            {"text": "Export as 3MF…", "iconSource": "graph_Export", "actionCode": "model.export.selection.3mf.choose", "enabled": true},
+            {"separator": true},
             {
               "text": "聚焦到选中",
               "iconSource": "graph_Bullseye",
               "actionCode": "camera.reset",
               "enabled": true
             }
+          ]
+        },
+        "ModelPart": {
+          "description": "Part target: explicitly export the owning model",
+          "items": [
+            {"text": "Export Owning Model as STL…", "iconSource": "graph_Export", "actionCode": "model.export.owner.stl.choose", "enabled": true},
+            {"text": "Export Owning Model as 3MF…", "iconSource": "graph_Export", "actionCode": "model.export.owner.3mf.choose", "enabled": true}
           ]
         }
       }

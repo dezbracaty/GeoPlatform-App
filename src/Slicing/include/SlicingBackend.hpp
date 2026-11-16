@@ -96,6 +96,8 @@ public:
     libslicer::ProjectReadResult readProject(const libslicer::ProjectReadRequest&,
         const libslicer::SliceCallbacks& = {},
         const libslicer::ProjectDecisionCallback& = {}) const;
+    libslicer::ProjectWriteResult writeProject(const libslicer::ProjectWriteRequest&,
+        const libslicer::SliceCallbacks& = {}) const;
     std::optional<libslicer::ProjectMachine> activeProjectMachine() const;
     ProjectCommitLease beginProjectCommit(std::uint64_t expectedRevision);
 
