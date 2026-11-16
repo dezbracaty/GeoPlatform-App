@@ -113,6 +113,58 @@ def load_application_environment(journal_path):
     return environment
 
 
+def _windows_priority_class(process, value=None):
+    """Use the owned Popen handle; never identify a process by name or a new PID."""
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    if value is None:
+        query = kernel.GetPriorityClass
+        query.argtypes = [wintypes.HANDLE]
+        query.restype = wintypes.DWORD
+        value = query(int(process._handle))
+        if not value:
+            raise ctypes.WinError(ctypes.get_last_error())
+    else:
+        update = kernel.SetPriorityClass
+        update.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        update.restype = wintypes.BOOL
+        if not update(int(process._handle), value):
+            raise ctypes.WinError(ctypes.get_last_error())
+    return value
+
+
+def _terminate_owned_application(process, result):
+    # A BelowNormal launcher passes its class to children. Under parallel load,
+    # low-priority Ready threads can delay even TerminateProcess completion.
+    # Normalize only this exiting child, without changing replay scheduling.
+    original = None
+    if sys.platform == "win32":
+        evidence = result.setdefault("applicationTerminationPriority", {})
+        try:
+            current = _windows_priority_class(process)
+            evidence["originalClass"] = current
+            if current in (0x40, 0x4000):  # IDLE, BELOW_NORMAL
+                _windows_priority_class(process, 0x20)  # NORMAL; never HIGH/REALTIME
+                original = current
+                evidence["temporaryClass"] = 0x20
+        except Exception as exc:
+            # Priority adjustment is best effort; the existing termination and
+            # its strict five-second exit check still run and retain failures.
+            evidence["error"] = str(exc)
+    try:
+        process.terminate()
+        process.wait(timeout=5)
+    finally:
+        if original is not None and process.poll() is None:
+            try:
+                _windows_priority_class(process, original)
+                evidence["restoredClass"] = original
+            except Exception as exc:
+                result.setdefault("cleanupErrors", []).append(
+                    f"Owned process priority restoration: {exc}")
+
+
 class JournalExecutionSession:
     def __init__(self, *, cancel_event=None, progress=None, log=None):
         self.cancel_event = cancel_event
@@ -253,18 +305,18 @@ class JournalExecutionSession:
             client.disconnect()
             if process is not None:
                 result["applicationPid"] = process.pid
-                result["applicationExitCode"] = process.poll()
+                process.poll()
                 if process.returncode is not None:
                     result.update(success=False, acceptance="failed",
                                   error=f"Test application exited unexpectedly: {process.returncode}")
                 elif not keep_app:
                     # Only this session's child process. Never search/kill user PIDs.
                     try:
-                        process.terminate()
-                        process.wait(timeout=5)
+                        _terminate_owned_application(process, result)
                     except (OSError, subprocess.TimeoutExpired) as exc:
                         result.setdefault("cleanupErrors", []).append(str(exc))
-                result["applicationKeptOpen"] = process.poll() is None
+                result["applicationExitCode"] = process.poll()
+                result["applicationKeptOpen"] = result["applicationExitCode"] is None
             if not output_ready:
                 try:
                     if output is None:
