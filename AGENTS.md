@@ -4,6 +4,13 @@
 
 下文 `APP_ROOT` 指包含本文件、`src/`、`qml/` 和 `CMakeLists.txt` 的目录；`HOST_ROOT` 仅指同时包含该 App、`Core/` 和 `cmake/sdk/` 的完整源码宿主。独立 App 不假定存在 `HOST_ROOT`。
 
+## 远端排障
+
+- 远端构建、运行和回归故障直接通过 SSH 登录目标机器检查、修正和定点验证。
+- 禁止通过 Git 提交、推送或修改、触发 workflow 向远端下发诊断命令；禁止用反复触发 workflow 代替机器上的排障。
+- SSH 不通时检查地址、路由、端口与 SSH 服务，如实报告连接证据，不改用 workflow 执行诊断。已有流水线结果只作为原始失败证据，不能代替机器检查。
+- 正式 workflow 只用于已授权的最终候选验收。
+
 ## 技能选择
 
 - 所有代码变更先读取 `.agents/skills/gplatform-bugfix/SKILL.md`，执行其中的修改范围检查点；bug 修复与回归处理同时执行完整的问题定位与验证流程，再按涉及模块组合下列技能。
