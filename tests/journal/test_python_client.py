@@ -68,6 +68,67 @@ def frame(document):
     return str(len(payload)).encode("ascii") + b":" + payload
 
 
+class JournalTransportRecoveryCheck(unittest.TestCase):
+    def client_with(self, chunks=()):
+        wire = FakeSocket(chunks)
+        wire.close = Mock()
+        client = JournalSystem()
+        client.client = wire
+        return client, wire
+
+    def test_default_timeout_does_not_allow_cleanup_to_read_late_reply(self):
+        client, wire = self.client_with()
+        wire.recv = Mock(side_effect=[socket.timeout("timed out"),
+            frame({"requestId": 1, "success": True, "result": {}})])
+        with self.assertRaises(TimeoutError):
+            client.request("journal.entry.execute", timeout=.01)
+        sent = bytes(wire.sent)
+        self.assertIsNone(client.client)
+        self.assertEqual(client._buffer, bytearray())
+        wire.close.assert_called_once()
+        with self.assertRaises(ConnectionError):
+            client.request("journal.replay.end")
+        self.assertEqual(bytes(wire.sent), sent)
+        self.assertEqual(wire.recv.call_count, 1)
+
+    def test_default_partial_or_invalid_frames_close_uncertain_stream(self):
+        for chunks in ([b"12:{", b""], [b"bad:frame"], [b"1:{"], [b"1:\xff"],
+                       [frame([])], [frame({"requestId": 99, "success": True, "result": {}})]):
+            with self.subTest(chunks=chunks):
+                client, wire = self.client_with(chunks)
+                with self.assertRaises((ConnectionError, RuntimeError, ValueError, UnicodeError)):
+                    client.request("system.version")
+                self.assertIsNone(client.client)
+                self.assertEqual(client._buffer, bytearray())
+                wire.close.assert_called_once()
+
+    def test_default_send_error_closes_connection(self):
+        client, wire = self.client_with()
+        wire.sendall = Mock(side_effect=OSError("send failed after partial write"))
+        with self.assertRaises(OSError):
+            client.request("system.version")
+        self.assertIsNone(client.client)
+        wire.close.assert_called_once()
+
+    def test_complete_business_rejection_preserves_next_request(self):
+        client, wire = self.client_with([
+            frame({"requestId": 1, "success": False, "error": "UI target not found"}),
+            frame({"requestId": 2, "success": True, "result": {"ready": True}})])
+        with self.assertRaisesRegex(RuntimeError, "UI target not found"):
+            client.request("journal.entry.execute")
+        self.assertIs(client.client, wire)
+        self.assertEqual(client.request("system.version"), {"ready": True})
+        wire.close.assert_not_called()
+
+    def test_local_serialization_failure_does_not_close_unsent_request(self):
+        client, wire = self.client_with()
+        with self.assertRaises(TypeError):
+            client.request("system.version", {"invalid": object()})
+        self.assertIs(client.client, wire)
+        self.assertEqual(wire.sent, bytearray())
+        wire.close.assert_not_called()
+
+
 class RunnerClient:
     def __init__(self, root):
         self.client = object()
@@ -790,10 +851,10 @@ class JournalPythonClientCheck(unittest.TestCase):
 
     def test_serial_activation_only_targets_verified_owned_pid_and_rechecks_identity(self):
         from journal_execution_session import _identify_owned_macos_application
-        executable = Path('/Applications/Test.app/Contents/MacOS/Test')
+        executable = Path('/Applications/Test.app/Contents/MacOS/Test').resolve()
         process = Mock(pid=123)
         process.poll.return_value = None
-        identity = dict(pid=123, LSBundlePath='/Applications/Test.app',
+        identity = dict(pid=123, LSBundlePath=str(executable.parent.parent.parent),
                         CFBundleExecutablePath=str(executable))
         for final in (identity, dict(identity, pid=456)):
             with self.subTest(final=final), \

@@ -227,6 +227,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--application', type=Path, help='A 电脑上的 GPlatform 可执行文件')
     parser.add_argument('--app-root', type=Path, help='包含 tests/TestAssets 的 App 源码目录')
+    parser.add_argument('--assets', type=Path, help='显式测试资产目录，默认使用 App 的 tests/TestAssets')
     parser.add_argument('--exports', type=Path, help='可选导出目录；默认在执行电脑的系统临时目录中为每次回放创建独立目录')
     parser.add_argument('--output-root', type=Path, help='回放结果保存目录')
     parser.add_argument('--parallelism', type=int, default=DEFAULT_PARALLELISM, help='默认同时回放的场景数（正整数，默认3）')
@@ -241,8 +242,11 @@ def main(argv=None):
         parser.error(str(exc))
     if args.parallelism < 1:
         parser.error('并行数量必须为正整数')
-    workbench = JournalWorkbench(args.application, args.app_root, args.exports, output_root=args.output_root,
-                                 parallelism=args.parallelism)
+    try:
+        workbench = JournalWorkbench(args.application, args.app_root, args.exports, assets=args.assets,
+                                     output_root=args.output_root, parallelism=args.parallelism)
+    except WorkbenchError as exc:
+        parser.error(str(exc))
     # Only one workbench may own this application/session repository at a time.
     lock_path = workbench.repository.recordings / '.workbench.lock'
     lock_path.parent.mkdir(parents=True, exist_ok=True)

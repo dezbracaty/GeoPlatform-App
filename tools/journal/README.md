@@ -21,7 +21,7 @@ python3 tools/journal/journal_server.py --application /path/to/GPlatform --liste
 
 B 打开 `http://A的局域网IP:8765` 并输入 A 终端显示的连接码。服务端口默认8765，应用 Journal 端口默认9999，两者独立。所有页面使用同一个 A 端工作台。只在可信局域网使用 HTTP；跨不可信网络时通过 SSH 隧道或受保护的 HTTPS 入口访问，不直接公开端口。连接码不写入 URL 或网页本地存储。登录后使用独立的长随机会话凭证，刷新网页保持登录；同一IP连续输错5次暂停登录60秒，已登录会话不受影响。短连接码只用于登录，不作为Bearer凭证。默认每次启动重新生成，也可通过 `GPLATFORM_WORKBENCH_TOKEN` 指定6位数字连接码（保留前导零）。
 
-工作台提供“场景库”“回放记录”“录制”。设置中的程序与导出目录均为 A 上的路径。场景来源为服务启动指定的 App `tests/TestAssets`，网页不编辑标准。勾选决定本次批次，搜索只筛选显示，启动后队列固定。
+工作台提供“场景库”“回放记录”“录制”。设置中的程序与导出目录均为 A 上的路径。场景默认来源为服务启动指定的 App `tests/TestAssets`；需要使用独立平台资产时，通过 `--assets <目录>` 显式指定，实际目录显示在服务状态并写入正式报告的 `assetsRoot`。网页不编辑标准。勾选决定本次批次，搜索只筛选显示，启动后队列固定。
 
 导出目录默认无需配置：工作台使用执行电脑 A 的 Python `tempfile` 系统临时目录（macOS 通常为 `$TMPDIR`，Windows 为 `%TEMP%`，Linux 通常为 `/tmp`），为每次需要导出的回放创建独立的 `gplatform-journal-exports-*` 目录，具体路径记录在本次任务日志中。批次内的同名文件继续由正式执行器按场景隔离。可用 `--exports` 或网页设置显式指定 A 上已有的目录；清空设置即恢复默认临时目录。正式报告照常归档声明产物；原始临时导出文件保留供诊断，也可能被系统临时文件清理机制清除。
 
@@ -288,6 +288,7 @@ App 正式场景还在执行结果外生成 `case_result.json`、`case_report.ht
 ```text
 --application FILE   A 电脑上的实际可执行文件
 --app-root DIR       提供统一验收入口与测试资产的 App 源码目录
+--assets DIR         显式测试资产目录，默认使用 App 的 tests/TestAssets
 --exports DIR        A 电脑上 App 实际导出目录
 --output-root DIR    回放结果保存目录，默认沿用应用目录
 --listen ADDRESS     网页监听地址，默认127.0.0.1；局域网用0.0.0.0

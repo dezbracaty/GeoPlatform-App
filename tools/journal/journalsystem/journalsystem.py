@@ -141,18 +141,20 @@ class JournalSystem:
                         offset += sent
                 response = json.loads(self._receive_frame(timeout, cancel_event=cancel_event,
                                                           deadline=deadline).decode("utf-8"))
+                if not isinstance(response, dict):
+                    raise RuntimeError("Journal response must be an object")
+                if response.get("requestId") != request_id:
+                    raise RuntimeError(
+                        f"Journal response id mismatch: expected {request_id}, "
+                        f"got {response.get('requestId')}")
             except Exception:
-                if cancel_event is not None:
-                    # Never reuse a stream with an uncertain partial response.
-                    self.disconnect()
+                # A default request can also time out partway through a frame.
+                # Never let cleanup consume its delayed reply as a new response.
+                self.disconnect()
                 raise
             finally:
                 if self.client is not None:
                     self.client.settimeout(previous_timeout)
-            if response.get("requestId") != request_id:
-                raise RuntimeError(
-                    f"Journal response id mismatch: expected {request_id}, "
-                    f"got {response.get('requestId')}")
             if not response.get("success", False):
                 raise RuntimeError(response.get("error", "Journal request failed"))
             result = response.get("result", {})

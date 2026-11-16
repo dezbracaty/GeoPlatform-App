@@ -39,6 +39,14 @@ class ConnectionCodeTests(unittest.TestCase):
         self.assertEqual(error.exception.code, 2)
         create.assert_not_called()
 
+    def test_cli_passes_explicit_assets_to_workbench(self):
+        with patch('journal_server.JournalWorkbench', side_effect=WorkbenchError('stop before serving')) as create, \
+                patch('sys.stderr', new_callable=io.StringIO):
+            with self.assertRaises(SystemExit) as error:
+                server_main(['--assets', 'platform-assets', '--no-browser'])
+        self.assertEqual(error.exception.code, 2)
+        self.assertEqual(create.call_args.kwargs['assets'], Path('platform-assets'))
+
 
 class WorkbenchTests(unittest.TestCase):
     def setUp(self):
@@ -90,6 +98,39 @@ class WorkbenchTests(unittest.TestCase):
         state = self.w.state()
         self.assertEqual(state['task']['state'], 'completed')
         self.assertEqual([r['id'] for r in state['task']['rows']], ['b', 'a'])
+
+    def test_explicit_assets_are_used_for_discovery_execution_and_report(self):
+        assets = self.root / 'windows-assets'
+        scenario = assets / 'scenarios/a'
+        (scenario / 'events').mkdir(parents=True)
+        (assets / 'catalog.json').write_text('{}')
+        (scenario / 'metadata.json').write_text(json.dumps(dict(name='Windows A', acceptanceTarget='platform fixture')))
+        (scenario / 'events/Journal.json').write_text('{"formatVersion":2,"entries":[]}')
+        case = dict(metadata=dict(verification=dict(requiredMethods=['db'])), verificationPlan=dict(checks=[]), hashes={})
+        with patch('journal_workbench.run_acceptance.load_case', return_value=case) as load:
+            self.w = JournalWorkbench(self.program, self.root / 'App', assets=assets,
+                                      output_root=self.root / 'runs', parallelism=1)
+        load.assert_called_once()
+        self.assertEqual(load.call_args.args[:2], (assets, 'a'))
+        self.assertEqual(self.w.repository.scenarios, assets / 'scenarios')
+        self.assertEqual(self.w.state()['config']['assetsRoot'], str(assets))
+        observed = []
+        def main(args, **kwargs):
+            observed.extend(args)
+            self.summary(Path(args[args.index('--output') + 1]), planned=['a'], cases=[dict(id='a', status='passed')])
+            return 0
+        with patch('journal_workbench.run_acceptance.main', side_effect=main):
+            self.w.run(dict(cases=['a']))
+            self.wait()
+        self.assertEqual(observed[observed.index('--assets') + 1], str(assets))
+        summary = json.loads(next((self.root / 'runs').glob('*/summary.json')).read_text())
+        self.assertEqual(summary['assetsRoot'], str(assets))
+
+    def test_assets_default_stays_in_app_and_explicit_invalid_directory_fails(self):
+        self.assertEqual(self.w.assets, self.root / 'App/tests/TestAssets')
+        for assets in (self.root / 'missing', self.root):
+            with self.subTest(assets=assets), self.assertRaises(WorkbenchError):
+                JournalWorkbench(self.program, self.root / 'App', assets=assets)
 
     def test_pause_refreshes_background_comparisons_and_cancel_wakes_boundary(self):
         refreshed = threading.Event()

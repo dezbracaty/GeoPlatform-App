@@ -29,10 +29,12 @@ class WorkbenchError(ValueError):
 
 
 class JournalWorkbench:
-    def __init__(self, application=None, app_root=None, exports=None, *, output_root=None, parallelism=DEFAULT_PARALLELISM):
+    def __init__(self, application=None, app_root=None, exports=None, *, assets=None, output_root=None, parallelism=DEFAULT_PARALLELISM):
         self.parallelism = run_acceptance.validate_parallelism(parallelism)
         self.app_root = Path(app_root or TOOLS.parents[1]).resolve()
-        self.assets = self.app_root / 'tests/TestAssets'
+        self.assets = Path(assets).resolve() if assets is not None else self.app_root / 'tests/TestAssets'
+        if assets is not None and (not (self.assets / 'catalog.json').is_file() or not (self.assets / 'scenarios').is_dir()):
+            raise WorkbenchError('资产目录必须包含 catalog.json 和 scenarios')
         self.application = str(Path(application).resolve()) if application else ''
         self.exports = str(Path(exports).resolve()) if exports else ''
         defaults = JournalSessionRepository.default_paths(self.application or '.')
