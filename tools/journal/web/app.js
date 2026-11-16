@@ -164,8 +164,8 @@
     const task = state.task || {};
     const history = array(state.history).find(h => String(h.id) === String(viewedRun));
     array(currentTaskViewed() ? task.plannedCases : history && history.plannedCases).forEach(i => add(i, 'waiting'));
-    if (currentTaskViewed()) array(task.rows).forEach(i => add(i));
     array(result && result.cases).forEach(i => add(i));
+    if (currentTaskViewed()) array(task.rows).forEach(i => add(i));
     array(result && result.checkpoints).forEach(cp => {
       const id = cp.case == null || cp.case === '' ? '__recording__' : String(cp.case);
       if (!byId.has(id)) byId.set(id, {id, status: 'not_verified'});
@@ -210,13 +210,17 @@
     let headline = titleOf(stateStatus), subtitle = running ? '浏览器断开后，服务器仍会继续执行。' : '结果以自动验收与比较状态为准。';
     if (running && task.state === 'cancelling') { headline = '正在停止并清理应用'; subtitle = '请等待清理结束，期间不会启动新任务。'; }
     else if (running && task.state === 'paused') { headline = '已暂停，可以查看结果'; subtitle = '继续后执行下一项；当前查看的结果不会自动切换。'; }
-    else if (running) { headline = (task.kind === 'replay' ? '正在回放检查' : '正在回放') + (task.case ? ' · ' + (caseById(task.case)?.name || task.case) : ''); subtitle = (task.caseIndex ? '场景 ' + task.caseIndex + ' / ' + total + ' · ' : '') + (task.totalSteps ? '步骤 ' + (task.step || 0) + ' / ' + task.totalSteps : '等待执行状态'); }
+    else if (running) {
+      const active = array(task.activeCases);
+      headline = task.attempt === 'serial-retry' ? '正在串行复跑失败场景' : active.length > 1 ? '正在并行回放 · ' + active.length + ' 个场景' : task.kind === 'replay' ? '正在回放检查' : '正在回放';
+      subtitle = active.length ? active.map(id => caseById(id)?.name || id).join(' · ') + '；已完成 ' + (task.completedCount || 0) + ' / ' + total : (task.caseIndex ? '场景 ' + task.caseIndex + ' / ' + total + ' · ' : '') + (task.totalSteps ? '步骤 ' + (task.step || 0) + ' / ' + task.totalSteps : '等待执行状态');
+    }
     else if (stopped) { headline = '本次回放已停止'; subtitle = '已完成结果保留；未运行和未完成项不会计为通过。'; }
     else if (stateStatus === 'pending' || array(result && result.checkpoints).some(cp => checkpointStatus(cp) === 'pending')) { headline = '执行结束，比较尚未完成'; subtitle = '待比较项不会计为通过；结果会自动更新。'; }
     if (isCurrent && task.kind === 'replay') subtitle += ' 录制诊断不等于正式场景验收。';
     $('live-title').textContent = headline; $('live-subtitle').textContent = subtitle;
     $('live-symbol').textContent = running ? task.state === 'paused' ? 'Ⅱ' : '▶' : stopped ? '−' : symbols[stateStatus] || '○';
-    $('pause-run').hidden = !running || task.kind === 'replay' || task.state === 'cancelling'; $('pause-run').textContent = task.state === 'paused' ? '继续回放' : task.pauseAfterEach ? '逐项暂停已开启' : '本项后暂停';
+    $('pause-run').hidden = !running || task.kind === 'replay' || task.state === 'cancelling'; $('pause-run').textContent = task.state === 'paused' ? '继续回放' : task.pauseAfterEach ? '逐项暂停已开启' : '当前场景完成后暂停';
     disable('pause-run', busy('pause') || busy('resume') || !online || (task.state !== 'paused' && task.pauseAfterEach));
     $('stop-run').hidden = !running; disable('stop-run', busy('cancel') || !online || task.state === 'cancelling');
     $('retry-run').hidden = !nFailed || taskBusy() || (isCurrent && task.kind === 'replay'); disable('retry-run', recordingBusy() || busy('run') || !online);
@@ -227,7 +231,8 @@
     if (!rows.some(r => String(r.id) === inspected)) { inspected = rows[0] ? String(rows[0].id) : null; checkpointId = null; }
     patch('queue-list', rows.map((r, index) => {
       const id = String(r.id), status = statusOf(r), name = caseById(id)?.name || r.name || (id === '__recording__' ? '录制检查点' : id);
-      return '<button class="queue-item ' + (id === inspected ? 'inspected' : '') + '" data-inspect="' + esc(id) + '" data-status="' + esc(status) + '" aria-pressed="' + (id === inspected) + '"><span class="queue-symbol">' + (symbols[status] || '○') + '</span><span><span class="queue-name">' + esc(name) + '</span><span class="queue-caption"><span>' + esc(titleOf(status)) + '</span><span>' + String(index + 1).padStart(2, '0') + '</span></span></span></button>';
+      const label = array(r.attempts).length > 1 ? (passed(r) ? '串行复跑通过（首次失败已保留）' : '串行复跑仍失败') : titleOf(status);
+      return '<button class="queue-item ' + (id === inspected ? 'inspected' : '') + '" data-inspect="' + esc(id) + '" data-status="' + esc(status) + '" aria-pressed="' + (id === inspected) + '"><span class="queue-symbol">' + (symbols[status] || '○') + '</span><span><span class="queue-name">' + esc(name) + '</span><span class="queue-caption"><span>' + esc(label) + '</span><span>' + String(index + 1).padStart(2, '0') + '</span></span></span></button>';
     }).join('') || '<div class="record-point-empty">暂时没有场景结果。</div>');
     $('follow-current').hidden = !running || !task.case;
     $('run-log').textContent = array(isCurrent ? task.logs : result && result.logs).map(line => typeof line === 'string' ? line : json(line)).join('\n');

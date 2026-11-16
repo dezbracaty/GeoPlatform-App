@@ -121,6 +121,243 @@ class AcceptanceCheck(unittest.TestCase):
     def writer(self):
         print_files(self.exports)
 
+    def prepare_batch(self, count=3):
+        import shutil
+        self.metadata.update(artifacts={}, checks=[])
+        self.save_metadata()
+        names = ['job'] + ['job' + str(index) for index in range(2, count + 1)]
+        for name in names[1:]:
+            directory = self.assets / 'scenarios' / name
+            shutil.copytree(self.scenario, directory)
+            write_json(directory / 'metadata.json', dict(self.metadata, id=name))
+        return names, ['--assets', str(self.assets), '--application', str(self.application),
+                       '--cases', 'all', '--output', str(self.root / 'parallel-batch')]
+
+    def test_default_batch_runs_three_sessions_with_rolling_refill(self):
+        import run_acceptance
+        import threading
+        from unittest.mock import patch
+        names, args = self.prepare_batch(4)
+        barrier = threading.Barrier(3)
+        fourth_started = threading.Event()
+        lock = threading.Lock()
+        active = set()
+        peaks = []
+        instances = []
+        class ConcurrentSession(SessionFixture):
+            def run(inner, journal, **kwargs):
+                name = kwargs['output_dir'].name
+                with lock:
+                    active.add(name)
+                    peaks.append(len(active))
+                try:
+                    if name in names[:3]:
+                        barrier.wait(timeout=4)
+                        if name != names[0]:
+                            self.assertTrue(fourth_started.wait(4), 'A free slot must refill before the other sessions end')
+                    else:
+                        fourth_started.set()
+                    return super().run(journal, **kwargs)
+                finally:
+                    with lock:
+                        active.remove(name)
+        def factory(name):
+            instance = ConcurrentSession()
+            instances.append(instance)
+            return instance
+        with patch('builtins.print'):
+            code = run_acceptance.main(args, session_factory=factory)
+        self.assertEqual(code, 0)
+        self.assertEqual(max(peaks), 3)
+        self.assertEqual(len({id(instance) for instance in instances}), 4)
+        summary = read_json(self.root / 'parallel-batch/summary.json')
+        self.assertEqual(summary['parallelWorkers'], 3)
+        self.assertEqual([row['id'] for row in summary['cases']], names)
+        self.assertEqual(summary['serialRetriedCases'], [])
+
+    def test_failed_parallel_case_retries_serially_after_all_evidence_and_keeps_both_attempts(self):
+        import run_acceptance
+        import threading
+        from unittest.mock import patch
+        names, args = self.prepare_batch()
+        barrier = threading.Barrier(3)
+        active = set()
+        lock = threading.Lock()
+        reviewed = set()
+        calls = []
+        original_review = run_acceptance.collect_screenshots
+        class RetriedSession(SessionFixture):
+            def run(inner, journal, **kwargs):
+                directory = kwargs['output_dir']
+                serial = directory.parent.name == '.serial-retry'
+                with lock:
+                    if serial:
+                        self.assertEqual(active, set())
+                        self.assertEqual(reviewed, set(names))
+                    active.add(directory.name)
+                    calls.append((directory.name, serial))
+                try:
+                    if not serial:
+                        barrier.wait(timeout=4)
+                    if directory.name == 'job' and not serial:
+                        inner.overrides = dict(success=False, acceptance='failed', error='original parallel failure')
+                    return super().run(journal, **kwargs)
+                finally:
+                    with lock:
+                        active.remove(directory.name)
+        def review(checkpoints, execution, output):
+            result = original_review(checkpoints, execution, output)
+            with lock:
+                reviewed.add(output.name)
+            return result
+        with patch('builtins.print'), patch('run_acceptance.collect_screenshots', side_effect=review):
+            code = run_acceptance.main(args, session_factory=lambda _: RetriedSession())
+        self.assertEqual(code, 0)
+        self.assertEqual(calls.count(('job', False)), 1)
+        self.assertEqual(calls.count(('job', True)), 1)
+        self.assertEqual(len(calls), 4)
+        root = self.root / 'parallel-batch'
+        first = read_json(root / '.parallel-failures/job/execution_result.json')
+        self.assertEqual(first['error'], 'original parallel failure')
+        summary = read_json(root / 'summary.json')
+        self.assertEqual(summary['serialRetriedCases'], ['job'])
+        self.assertEqual([a['status'] for a in summary['cases'][0]['attempts']], ['failed', 'passed'])
+        self.assertEqual(read_json(root / 'job/case_result.json')['status'], 'passed')
+
+    def test_failed_serial_retry_remains_failed_and_is_not_repeated(self):
+        import run_acceptance
+        from unittest.mock import patch
+        _, args = self.prepare_batch()
+        calls = []
+        def factory(name):
+            calls.append(name)
+            return SessionFixture(overrides=dict(success=False, acceptance='failed', error='persistent failure')
+                                  if name == 'job' else {})
+        with patch('builtins.print'):
+            code = run_acceptance.main(args, session_factory=factory)
+        summary = read_json(self.root / 'parallel-batch/summary.json')
+        self.assertEqual(code, 1)
+        self.assertEqual(calls.count('job'), 2)
+        self.assertEqual(summary['status'], 'failed')
+        self.assertEqual([a['status'] for a in summary['cases'][0]['attempts']], ['failed', 'failed'])
+
+    def test_cancelled_parallel_batch_does_not_start_queued_cases_or_retry(self):
+        import run_acceptance
+        import threading
+        from unittest.mock import patch
+        names, args = self.prepare_batch(4)
+        barrier = threading.Barrier(3)
+        cancelled = threading.Event()
+        calls = []
+        class CancelledSession(SessionFixture):
+            def run(inner, journal, **kwargs):
+                calls.append(kwargs['output_dir'].name)
+                barrier.wait(timeout=4)
+                cancelled.set()
+                return super().run(journal, **kwargs)
+        with patch('builtins.print'):
+            code = run_acceptance.main(args, session_factory=lambda _: CancelledSession(), cancel_event=cancelled)
+        summary = read_json(self.root / 'parallel-batch/summary.json')
+        self.assertEqual(code, 1)
+        self.assertEqual(set(calls), set(names[:3]))
+        self.assertTrue(summary['cancelled'])
+        self.assertEqual(summary['notRunCases'], ['job4'])
+        self.assertEqual(summary['serialRetriedCases'], [])
+
+    def test_parallel_pause_drains_current_sessions_before_starting_more(self):
+        import run_acceptance
+        import threading
+        from unittest.mock import patch
+        names, args = self.prepare_batch(4)
+        barrier = threading.Barrier(3)
+        paused = threading.Event()
+        lock = threading.Lock()
+        active = set()
+        calls, boundaries = [], []
+        class PausedSession(SessionFixture):
+            def run(inner, journal, **kwargs):
+                name = kwargs['output_dir'].name
+                with lock:
+                    active.add(name)
+                    calls.append(name)
+                try:
+                    if name in names[:3]:
+                        paused.set()
+                        barrier.wait(timeout=4)
+                    return super().run(journal, **kwargs)
+                finally:
+                    with lock:
+                        active.remove(name)
+        def boundary(refresh):
+            with lock:
+                self.assertFalse(active)
+                self.assertNotIn('job4', calls)
+            refresh()
+            boundaries.append(True)
+            paused.clear()
+        with patch('builtins.print'):
+            code = run_acceptance.main(args, session_factory=lambda _: PausedSession(),
+                pause_requested=paused.is_set, between_cases=boundary)
+        self.assertEqual(code, 0)
+        self.assertEqual(boundaries, [True])
+        self.assertEqual(set(calls), set(names))
+
+    def test_failed_app_cleanup_blocks_serial_retry(self):
+        import run_acceptance
+        from unittest.mock import patch
+        _, args = self.prepare_batch()
+        calls = []
+        def factory(name):
+            calls.append(name)
+            return SessionFixture(overrides=dict(success=False, acceptance='failed',
+                applicationKeptOpen=True, error='test child did not stop') if name == 'job' else {})
+        with patch('builtins.print'):
+            code = run_acceptance.main(args, session_factory=factory)
+        summary = read_json(self.root / 'parallel-batch/summary.json')
+        self.assertEqual(code, 1)
+        self.assertEqual(calls.count('job'), 1)
+        self.assertIn('still open', summary['error'])
+        self.assertFalse(summary['serialRetriedCases'])
+
+    def test_pause_requested_at_parallel_completion_precedes_serial_retry(self):
+        import run_acceptance
+        import threading
+        from unittest.mock import patch
+        _, args = self.prepare_batch()
+        paused = threading.Event()
+        calls, boundaries = [], []
+        def factory(name):
+            calls.append(name)
+            return SessionFixture(overrides=dict(success=False, acceptance='failed', error='first attempt')
+                                  if name == 'job' and calls.count(name) == 1 else {})
+        def progress(event):
+            if event['phase'] == 'end' and event['attempt'] == 'parallel' and not event['activeCases']:
+                paused.set()
+        def boundary(refresh):
+            self.assertEqual(len(calls), 3)
+            boundaries.append(True)
+            paused.clear()
+            refresh()
+        with patch('builtins.print'):
+            code = run_acceptance.main(args, session_factory=factory, progress=progress,
+                pause_requested=paused.is_set, between_cases=boundary)
+        self.assertEqual(code, 0)
+        self.assertEqual(boundaries, [True])
+        self.assertEqual(calls.count('job'), 2)
+
+    def test_keyboard_interrupt_cancels_batch_without_reporting_pass(self):
+        import run_acceptance
+        from unittest.mock import patch
+        _, args = self.prepare_batch(1)
+        def interrupt():
+            raise KeyboardInterrupt()
+        with patch('builtins.print'):
+            code = run_acceptance.main(args, session_factory=lambda _: SessionFixture(writer=interrupt))
+        summary = read_json(self.root / 'parallel-batch/summary.json')
+        self.assertEqual(code, 1)
+        self.assertTrue(summary['cancelled'])
+        self.assertEqual(summary['status'], 'failed')
+
     def test_cli_shared_session_keeps_business_checks_and_restores_settings(self):
         import run_acceptance
         from unittest.mock import patch
@@ -372,51 +609,47 @@ class AcceptanceCheck(unittest.TestCase):
         self.assertEqual(session.calls, 2)
         self.assertTrue(read_json(output / 'summary.json')['runComplete'])
 
-    def test_batch_prepares_each_theme_and_restores_original_settings(self):
-        import configparser
+    def test_batch_does_not_change_machine_settings_between_cases(self):
         import run_acceptance
         import shutil
         from unittest.mock import patch
-        self.metadata.update(artifacts={}, checks=[], preconditions={'theme': 'light'})
+        self.metadata.update(artifacts={}, checks=[])
         self.save_metadata()
         clone = self.assets / 'scenarios/job2'
         shutil.copytree(self.scenario, clone)
-        write_json(clone / 'metadata.json', dict(self.metadata, id='job2', preconditions={'theme': 'dark'}))
+        write_json(clone / 'metadata.json', dict(self.metadata, id='job2'))
         settings = self.root / 'GPlatform.ini'
-        original = b'; preserve exact original bytes\r\n[General]\r\ndarkMode=2\r\nlocale=zh_CN\r\n[importFile]\r\nsortKey=name\r\n'
+        original = b'; preserve exact original bytes\r\n[General]\r\nlocale=zh_CN\r\n'
         settings.write_bytes(original)
         observed = []
         def writer():
-            config = configparser.ConfigParser()
-            config.read(settings)
-            observed.append(config['General']['darkMode'])
-            self.assertEqual(config['General']['locale'], 'zh_CN')
-            self.assertEqual(config['importFile']['sortKey'], 'name')
+            observed.append(settings.read_bytes())
             settings.write_bytes(b'changed by application')
         tools = Path(__file__).resolve().parents[1] / 'tools/journal'
         with patch('builtins.print'):
             code = run_acceptance.main(['--assets', str(self.assets), '--journal-tools', str(tools),
                 '--application', str(self.application), '--cases', 'all',
-                '--settings-file', str(settings), '--output', str(self.root / 'themed-batch')],
+                '--settings-file', str(settings), '--output', str(self.root / 'machine-settings-batch')],
                 session=SessionFixture(writer))
         self.assertEqual(code, 0)
-        self.assertEqual(observed, ['0', '1'])
+        self.assertEqual(observed, [original, b'changed by application'])
         self.assertEqual(settings.read_bytes(), original)
 
     def test_failed_replay_removes_settings_created_only_for_the_test(self):
         import run_acceptance
         from unittest.mock import patch
-        self.metadata.update(artifacts={}, checks=[], preconditions={'theme': 'light'})
+        self.metadata.update(artifacts={}, checks=[])
         self.save_metadata()
         settings = self.root / 'new-profile/GPlatform.ini'
         def writer():
-            self.assertIn('darkMode = 0', settings.read_text())
+            settings.parent.mkdir()
+            settings.write_bytes(b'created by application')
             raise RuntimeError('application startup failed')
         tools = Path(__file__).resolve().parents[1] / 'tools/journal'
         with patch('builtins.print'):
             code = run_acceptance.main(['--assets', str(self.assets), '--journal-tools', str(tools),
                 '--application', str(self.application), '--cases', 'job',
-                '--settings-file', str(settings), '--output', str(self.root / 'failed-theme')],
+                '--settings-file', str(settings), '--output', str(self.root / 'failed-startup')],
                 session=SessionFixture(writer))
         self.assertEqual(code, 1)
         self.assertFalse(settings.exists())

@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Run versioned App acceptance assets through JournalSystem and business checks."""
 import argparse
-import configparser
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
+import threading
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
 from acceptance import load_case, run_case, refresh_case_comparisons, write_case_result, write_summary
 from verification_methods import METHODS, SUPPLEMENTAL_VALIDATORS, VALIDATORS
@@ -41,27 +42,8 @@ def update_run_summary(summary):
                          'not_verified' if not summary['runComplete'] or 'not_verified' in statuses else 'passed')
 
 
-def prepare_theme(settings, theme):
-    """Use the same persisted preference as SettingsHelper before launching the App."""
-    if theme is None:
-        return
-    if theme not in ('light', 'dark'):
-        raise ValueError('Scenario theme must be light or dark')
-    if settings is None:
-        raise ValueError('Scenario theme requires --settings-file on this platform')
-    config = configparser.ConfigParser(interpolation=None)
-    config.optionxform = str
-    config.read(settings, encoding='utf-8')
-    if not config.has_section('General'):
-        config.add_section('General')
-    config.set('General', 'darkMode', '0' if theme == 'light' else '1')
-    settings.parent.mkdir(parents=True, exist_ok=True)
-    with settings.open('w', encoding='utf-8') as stream:
-        config.write(stream)
-
-
-
-def main(argv=None, *, session=None, progress=None, between_cases=None):
+def main(argv=None, *, session=None, session_factory=None, cancel_event=None,
+         progress=None, between_cases=None, pause_requested=None):
     app_root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, help='Complete host source (compatibility entry)')
@@ -73,12 +55,15 @@ def main(argv=None, *, session=None, progress=None, between_cases=None):
     parser.add_argument('--application', type=Path)
     parser.add_argument('--cases', help='Comma-separated IDs, or all; defaults to all for --list, otherwise p3_height_color_export')
     parser.add_argument('--exclude', default='')
+    parser.add_argument('--jobs', type=int, default=3, help='Concurrent App instances; default 3')
     parser.add_argument('--capture-candidates', action='store_true',
                         help='Capture DB/screenshots at existing checkpoints for review; never adopts standards or passes formal acceptance')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--exports', type=Path, help='Actual App export directory; files must be generated in this run')
-    parser.add_argument('--settings-file', type=Path, help='App INI to restore between cases (Windows default is detected)')
+    parser.add_argument('--settings-file', type=Path, help='App INI to restore after the entire batch')
     args = parser.parse_args(argv)
+    if args.jobs < 1:
+        parser.error('--jobs must be positive')
     if args.list_methods:
         print(json.dumps(dict(schemaVersion=2, methods=METHODS, validators=VALIDATORS,
                               supplementalChecks=SUPPLEMENTAL_VALIDATORS), ensure_ascii=True, indent=2))
@@ -124,7 +109,10 @@ def main(argv=None, *, session=None, progress=None, between_cases=None):
         parser.error(str(exc))
     output = (args.output or Path('test-results/app-acceptance') / datetime.now().strftime('%Y%m%d_%H%M%S_%f')).resolve()
     output.mkdir(parents=True, exist_ok=False)
+    workers = min(args.jobs, len(selected)) if session is None else 1
+    cancel_event = cancel_event or getattr(session, 'cancel_event', None) or threading.Event()
     summary = dict(schemaVersion=1, status='not_verified', plannedCases=selected, cases=[],
+                   parallelWorkers=workers, runningCases=[], serialRetriedCases=[],
                    applicationPath=str(args.application.resolve()), assetsRoot=str(args.assets.resolve()),
                    selectionScope='all' if args.cases == 'all' and selected == names else 'explicit')
     if args.capture_candidates:
@@ -153,12 +141,9 @@ def main(argv=None, *, session=None, progress=None, between_cases=None):
             else:
                 settings.unlink(missing_ok=True)
     reviews = ThreadPoolExecutor(max_workers=1, thread_name_prefix='journal-review')
-    comparisons = ScreenshotComparisons()
+    comparisons = {}
     pending_reviews = []
     waiting_reviews = []
-
-    def submit_review(checkpoints, execution, case_output):
-        waiting_reviews.append((checkpoints, execution, case_output))
 
     def finish_comparisons(changed):
         for case in summary['cases']:
@@ -192,42 +177,157 @@ def main(argv=None, *, session=None, progress=None, between_cases=None):
         return changed
 
     def refresh_pending():
-        changed = comparisons.collect()
+        changed = set()
+        for comparison in comparisons.values():
+            changed.update(comparison.collect())
         finish_comparisons(changed)
         reviews_changed = finish_reviews()
         if changed or reviews_changed:
             write_summary(output, summary)
 
-    try:
-        for case_index, name in enumerate(selected, 1):
-            if session is not None and getattr(session, 'cancel_event', None) is not None and session.cancel_event.is_set():
-                summary['cancelled'] = True
-                raise InterruptedError('Replay cancelled by caller')
-            if progress:
-                progress(dict(case=name, index=case_index, total=len(selected), phase='begin'))
-            restore_settings()
-            metadata = json.loads((args.assets / 'scenarios' / name / 'metadata.json').read_text(encoding='utf-8'))
-            prepare_theme(settings, metadata.get('preconditions', {}).get('theme'))
-            print('BEGIN ' + name, flush=True)
-            case_exports = args.exports
-            if args.exports is not None and len(selected) > 1:
-                case_exports = args.exports / output.name / name
-                case_exports.mkdir(parents=True, exist_ok=False)
-            result = run_case(args.assets, name, args.application, output / name, case_exports,
-                              session if session is not None else JournalExecutionSession(), load_journal,
+    def notify(name, phase, *, status=None, attempt=None):
+        attempt = attempt or ('parallel' if workers > 1 else 'serial')
+        print(('BEGIN ' if phase == 'begin' else 'END ') + name +
+              (': ' + status if status else '') + ' [' + attempt + ']', flush=True)
+        if progress:
+            event = dict(case=name, index=selected.index(name) + 1, total=len(selected), phase=phase,
+                         completedCount=len(summary['cases']), activeCases=summary['runningCases'][:], attempt=attempt)
+            if status is not None:
+                event['status'] = status
+            progress(event)
+
+    def execute(name, destination, *, retry=False):
+        case_exports = args.exports
+        if args.exports is not None and (len(selected) > 1 or retry):
+            case_exports = args.exports / output.name
+            if retry:
+                case_exports /= '.serial-retry'
+            case_exports /= name
+            case_exports.mkdir(parents=True, exist_ok=False)
+        replay = (session_factory(name) if session_factory else session if session is not None else
+                  JournalExecutionSession(cancel_event=cancel_event))
+        comparison = ScreenshotComparisons()
+        review = []
+        try:
+            result = run_case(args.assets, name, args.application, destination, case_exports, replay, load_journal,
                               review_screenshots=True, environment_overrides=environment,
-                              review_submit=submit_review, comparisons=comparisons,
+                              review_submit=lambda *request: review.append(request), comparisons=comparison,
                               **(dict(capture_candidates=True) if args.capture_candidates else {}))
-            summary['cases'].append(dict(id=name, status=result['status'], result=f'{name}/case_result.json'))
-            finish_comparisons(comparisons.collect())
-            finish_reviews()
-            write_summary(output, summary)
-            status = summary['cases'][-1]['status']
-            print('END ' + name + ': ' + status, flush=True)
-            if progress:
-                progress(dict(case=name, index=case_index, total=len(selected), phase='end', status=status))
-            if between_cases is not None and case_index < len(selected):
+        finally:
+            # Replay is over; pixel workers may finish while the next App starts.
+            changed = comparison.close(wait=False)
+        return result, comparison, review, changed
+
+    def drain_evidence():
+        changed = set()
+        for comparison in comparisons.values():
+            changed.update(comparison.close())
+        finish_comparisons(changed)
+        finish_reviews()
+        for _, future in pending_reviews:
+            try:
+                future.result()
+            except Exception:
+                pass  # finish_reviews records the diagnostic on its owning case.
+        finish_reviews()
+
+    try:
+        next_index = 0
+        active = {}
+        write_summary(output, summary)
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix='journal-replay') as replays:
+            try:
+                while active or next_index < len(selected):
+                    if cancel_event.is_set():
+                        summary['cancelled'] = True
+                        if not active:
+                            break
+                    should_pause = pause_requested is not None and pause_requested()
+                    if not active and between_cases is not None and next_index and next_index < len(selected):
+                        between_cases(refresh_pending)
+                        should_pause = False
+                    while (next_index < len(selected) and len(active) < workers
+                           and not cancel_event.is_set() and not should_pause):
+                        name = selected[next_index]
+                        next_index += 1
+                        summary['runningCases'].append(name)
+                        notify(name, 'begin')
+                        active[replays.submit(execute, name, output / name)] = name
+                    if not active:
+                        break
+                    done, _ = wait(active, timeout=.1, return_when=FIRST_COMPLETED)
+                    for future in sorted(done, key=lambda value: selected.index(active[value])):
+                        name = active.pop(future)
+                        result, comparison, review, changed = future.result()
+                        comparisons[name] = comparison
+                        waiting_reviews.extend(review)
+                        summary['runningCases'].remove(name)
+                        summary['cases'].append(dict(id=name, status=result['status'], result=f'{name}/case_result.json'))
+                        summary['cases'].sort(key=lambda row: selected.index(row['id']))
+                        finish_comparisons(changed)
+                        refresh_pending()
+                        write_summary(output, summary)
+                        status = next(row['status'] for row in summary['cases'] if row['id'] == name)
+                        notify(name, 'end', status=status)
+            except BaseException:
+                cancel_event.set()
+                raise
+        drain_evidence()
+        # Retry only after every parallel App and its image work have finished.
+        for row in summary['cases']:
+            execution = output / row['id'] / 'execution_result.json'
+            if execution.is_file() and json.loads(execution.read_text(encoding='utf-8')).get('applicationKeptOpen'):
+                raise RuntimeError('An owned test application is still open; serial retry cannot start')
+        failed = [row for row in summary['cases'] if row['status'] == 'failed'] if workers > 1 else []
+        for row in failed:
+            if cancel_event.is_set():
+                summary['cancelled'] = True
+                break
+            if between_cases is not None and pause_requested is not None and pause_requested():
                 between_cases(refresh_pending)
+                if cancel_event.is_set():
+                    summary['cancelled'] = True
+                    break
+            name = row['id']
+            summary['runningCases'] = [name]
+            notify(name, 'begin', attempt='serial-retry')
+            retry_output = output / '.serial-retry' / name
+            result, comparison, review, _ = execute(name, retry_output, retry=True)
+            comparison.close()
+            if result.get('executionResultPath'):
+                result = refresh_case_comparisons(retry_output)
+            waiting_reviews.extend(review)
+            finish_reviews()
+            for directory, future in pending_reviews:
+                if directory == retry_output:
+                    try:
+                        future.result()
+                    except Exception:
+                        pass
+            finish_reviews()
+            result = json.loads((retry_output / 'case_result.json').read_text(encoding='utf-8'))
+            archived = output / '.parallel-failures' / name
+            archived.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(output / name, archived)
+            shutil.move(retry_output, output / name)
+            attempts = [dict(mode='parallel', status=row['status'],
+                             result=f'.parallel-failures/{name}/case_result.json'),
+                        dict(mode='serial', status=result['status'], result=f'{name}/case_result.json')]
+            row.update(status=result['status'], attempts=attempts)
+            result['attempts'] = attempts
+            write_case_result(output / name, result,
+                              json.loads((output / name / 'checks.json').read_text(encoding='utf-8')))
+            summary['serialRetriedCases'].append(name)
+            summary['runningCases'] = []
+            update_run_summary(summary)
+            write_summary(output, summary)
+            notify(name, 'end', status=row['status'], attempt='serial-retry')
+        if cancel_event.is_set():
+            summary['cancelled'] = True
+            raise InterruptedError('Replay cancelled by caller')
+    except KeyboardInterrupt:
+        cancel_event.set()
+        summary.update(status='failed', cancelled=True, error='Replay cancelled by caller')
     except Exception as exc:
         summary.update(status='failed', error=str(exc))
     finally:
@@ -237,7 +337,7 @@ def main(argv=None, *, session=None, progress=None, between_cases=None):
         except OSError as exc:
             summary.update(status='failed', cleanupError=str(exc))
         try:
-            finish_comparisons(comparisons.close())
+            drain_evidence()
             finish_reviews()
             reviews.shutdown(wait=True)
             finish_reviews()

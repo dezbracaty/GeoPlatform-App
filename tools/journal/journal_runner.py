@@ -390,9 +390,9 @@ class ScreenshotComparisons:
                     del self._summaries[output]
         return changed
 
-    def close(self):
+    def close(self, *, wait=True):
         """The batch/standalone owner calls this only after replay has ended."""
-        self._executor.shutdown(wait=True)
+        self._executor.shutdown(wait=wait)
         return self.collect()
 
 
