@@ -77,6 +77,16 @@ class SourceMRRegression(unittest.TestCase):
                 controller.verify_inventory(summary, ['one','two'])
         with self.assertRaises(RuntimeError): controller.verify_inventory(valid, [])
 
+    def test_missing_runtime_dependency_fails_before_build_instead_of_skipping(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary); output=root/'evidence'
+            with patch.object(controller, 'run', side_effect=RuntimeError('Pillow missing')), \
+                 patch.object(controller, 'build_host') as build:
+                with self.assertRaisesRegex(RuntimeError, 'Pillow missing'):
+                    controller.regress(root, 'macos', 'a'*40, 'd'*40, output)
+            build.assert_not_called()
+            self.assertEqual(json.loads((output/'source-regression.json').read_text())['status'],'failed')
+
     def test_compile_failure_stops_before_gui_and_retains_failure_evidence(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); output = root/'evidence'
@@ -87,7 +97,7 @@ class SourceMRRegression(unittest.TestCase):
                  patch.object(controller, 'build_host', side_effect=RuntimeError('compiler failed')):
                 with self.assertRaisesRegex(RuntimeError, 'compiler failed'):
                     controller.regress(root, 'macos', 'a'*40, 'd'*40, output)
-            self.assertEqual(run.call_count, 1)  # controller contracts only; no GUI execution
+            self.assertEqual(run.call_count, 2)  # dependency admission and controller contracts; no GUI execution
             evidence = json.loads((output/'source-regression.json').read_text())
             self.assertEqual(evidence['status'], 'failed')
             self.assertIn('compiler failed', evidence['error'])
@@ -97,7 +107,7 @@ class SourceMRRegression(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary); output=root/'evidence'; executable=root/'app'; executable.write_bytes(b'executable')
             def run(args, **kwargs):
-                if '-c' in args:
+                if '-c' in args and args[2] == controller.APP_REGRESSION:
                     (output/'journal-receipt.json').write_text(json.dumps(
                         {'status':'passed','assets_sha':'d'*40,'expected_cases':['one','two']}))
                     directory=output/'journals/run'; directory.mkdir(parents=True)
@@ -120,7 +130,7 @@ class SourceMRRegression(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary); output=root/'evidence'; executable=root/'app'; executable.write_bytes(b'executable')
             def run(args, **kwargs):
-                if '-c' in args:
+                if '-c' in args and args[2] == controller.APP_REGRESSION:
                     (output/'journal-receipt.json').write_text(json.dumps({'status':'passed','assets_sha':'f'*40}))
             with patch.object(controller, 'machine_lock', return_value=contextlib.nullcontext()), \
                  patch.object(controller, 'prepare_cached_source'), patch.object(controller, 'init_source_submodules'), \
