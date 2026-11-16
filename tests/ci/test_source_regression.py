@@ -127,6 +127,9 @@ sys.meta_path.insert(0, NoOptionalPackages())
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary); output=root/'evidence'; executable=root/'app'; executable.write_bytes(b'executable')
             def run(args, **kwargs):
+                if args[1:4] == ['-m', 'unittest', 'discover']:
+                    self.assertEqual(kwargs['env']['GIT_CONFIG_COUNT'], '1')
+                    self.assertEqual(kwargs['env']['GPLATFORM_CI_CONTROL_ROOT'], str(CONTROL.resolve()))
                 if '-c' in args and args[2] == controller.APP_REGRESSION:
                     # App owns its Git credentials. Applying App's real helper
                     # to the child environment must produce exactly one header.
