@@ -68,12 +68,14 @@ class WorkbenchTests(unittest.TestCase):
 
     def test_selected_batch_uses_formal_entry_and_browser_disconnection_does_not_cancel(self):
         entered, release = threading.Event(), threading.Event()
-        def main(args, *, session, progress, between_cases):
+        def main(args, *, session_factory, cancel_event, pause_requested, progress, between_cases):
             self.assertEqual(args[args.index('--cases') + 1], 'b,a')
             progress(dict(case='b', index=1, total=2, phase='begin'))
             entered.set()
             release.wait(2)
-            self.assertFalse(session.cancel_event.is_set())
+            self.assertFalse(cancel_event.is_set())
+            self.assertEqual(args[args.index('--jobs') + 1], '3')
+            self.assertIsNot(session_factory('a'), session_factory('b'))
             output = Path(args[args.index('--output') + 1])
             self.summary(output, cases=[dict(id='b', status='passed'), dict(id='a', status='passed')])
             return 0
@@ -93,9 +95,10 @@ class WorkbenchTests(unittest.TestCase):
 
     def test_pause_refreshes_background_comparisons_and_cancel_wakes_boundary(self):
         refreshed = threading.Event()
-        def main(args, *, session, progress, between_cases):
+        def main(args, *, session_factory, cancel_event, pause_requested, progress, between_cases):
             between_cases(refreshed.set)
-            self.assertTrue(session.cancel_event.is_set())
+            self.assertTrue(cancel_event.is_set())
+            self.assertEqual(args[args.index('--jobs') + 1], '1')
             self.summary(Path(args[args.index('--output') + 1]), status='not_verified')
             return 2
         with patch('journal_workbench.run_acceptance.main', side_effect=main):
@@ -106,6 +109,24 @@ class WorkbenchTests(unittest.TestCase):
             self.wait()
         self.assertEqual(self.w.task['state'], 'cancelled')
         self.assertTrue(all(row['status'] != 'passed' for row in self.w.state()['task']['rows']))
+
+    def test_task_rows_show_all_active_cases_and_serial_retry_evidence(self):
+        self.w.task.update(state='running', plannedCases=['a', 'b'], activeCases=['a', 'b'],
+                           caseProgress={'a':dict(step=4, totalSteps=10)})
+        rows = self.w.state()['task']['rows']
+        self.assertEqual([row['status'] for row in rows], ['running', 'running'])
+        self.assertEqual(rows[0]['step'], 4)
+
+    def test_selecting_every_case_keeps_full_inventory_scope(self):
+        def main(args, **kwargs):
+            self.assertEqual(args[args.index('--cases') + 1], 'all')
+            self.assertEqual(args[args.index('--jobs') + 1], '3')
+            self.summary(Path(args[args.index('--output') + 1]))
+            return 0
+        with patch('journal_workbench.run_acceptance.main', side_effect=main):
+            self.w.run(dict(cases=['a', 'b']))
+            self.wait()
+        self.assertEqual(self.w.task['state'], 'completed')
 
     def test_default_exports_use_host_temp_and_isolate_repeated_single_case_runs(self):
         self.w.cases[0]['needsExports'] = True
@@ -180,7 +201,7 @@ class WorkbenchTests(unittest.TestCase):
 
     def test_resume_keeps_same_batch_and_boundary_only_pauses_when_requested(self):
         paused, done = threading.Event(), threading.Event()
-        def main(args, *, session, progress, between_cases):
+        def main(args, *, session_factory, cancel_event, pause_requested, progress, between_cases):
             between_cases(paused.set)
             done.set()
             self.summary(Path(args[args.index('--output') + 1]))

@@ -208,10 +208,17 @@ class JournalWorkbench:
         task['rows'] = []
         for name in planned:
             status = by_id.get(name, {}).get('status')
-            if status is None:
-                status = ('running' if name == task.get('case') and task['state'] in ('running', 'cancelling') else
-                    'not_run' if task['state'] in ('completed', 'cancelled', 'failed') else 'waiting')
-            task['rows'].append(dict(id=name, status=status))
+            active = task.get('activeCases', [task.get('case')])
+            if name in active and task['state'] in ('running', 'cancelling'):
+                status = 'running'
+            elif status is None:
+                status = 'not_run' if task['state'] in ('completed', 'cancelled', 'failed') else 'waiting'
+            row = dict(id=name, status=status)
+            if name in task.get('caseProgress', {}):
+                row.update(task['caseProgress'][name])
+            if by_id.get(name, {}).get('attempts'):
+                row['attempts'] = by_id[name]['attempts']
+            task['rows'].append(row)
 
     def state(self):
         history, records = self._history(), self._records()
@@ -247,10 +254,12 @@ class JournalWorkbench:
                     sessionId=self.identity(self.runner.session_path) if self.runner and self.runner.session_path else None,
                     checkpoints=copy.deepcopy(self.record_points), connectionError=self.connection_error))
 
-    def _session(self):
+    def _session(self, case=None):
         def progress(index, total, entry):
             with self.lock:
                 self.task.update(step=index, totalSteps=total, stepKind=entry['kind'])
+                if case is not None:
+                    self.task.setdefault('caseProgress', {})[case] = dict(step=index, totalSteps=total, stepKind=entry['kind'])
         return JournalExecutionSession(cancel_event=self.cancel_event, progress=progress, log=self.log)
 
     def run(self, data):
@@ -271,10 +280,16 @@ class JournalWorkbench:
         output = self.repository.playbacks / ('session_' + time.strftime('%Y%m%d_%H%M%S') + '_' + uuid.uuid4().hex[:8])
         identifier = self._register_run(output)
         args = ['--assets', str(self.assets), '--application', self.application,
-            '--cases', ','.join(ids), '--output', str(output)]
+            '--cases', 'all' if ids == list(known) else ','.join(ids), '--output', str(output),
+            '--jobs', '1' if pause_each else '3']
         def progress(event):
             with self.lock:
                 self.task.update(case=event['case'], caseIndex=event['index'], total=event['total'])
+                if 'activeCases' in event:
+                    self.task['activeCases'] = event['activeCases']
+                if 'completedCount' in event:
+                    self.task['completedCount'] = event['completedCount']
+                self.task['attempt'] = event.get('attempt', 'parallel')
                 if event['phase'] == 'begin':
                     self.task.update(step=0, totalSteps=0)
             self.log(event['phase'] + ' ' + event['case'] + ' ' + event.get('status', ''))
@@ -298,7 +313,9 @@ class JournalWorkbench:
             run_args = args + ['--exports', export_directory] if export_directory else args
             if export_directory:
                 self.log('本次导出目录：' + export_directory)
-            code = run_acceptance.main(run_args, session=self._session(), progress=progress, between_cases=boundary)
+            code = run_acceptance.main(run_args, session_factory=self._session,
+                cancel_event=self.cancel_event, pause_requested=lambda: self.pause_requested,
+                progress=progress, between_cases=boundary)
             summary = json.loads((output / 'summary.json').read_text(encoding='utf8'))
             with self.lock:
                 self.task['summary'] = summary
