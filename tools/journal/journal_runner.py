@@ -257,7 +257,10 @@ def compare_screenshots(expected_path, actual_png, tolerance, diff_path, region=
         logical_width, logical_height = WINDOW_PROFILE['logicalSize']
         scale = expected.width / logical_width
         if round(logical_height * scale) == expected.height:
-            areas = [('fps', (1260, 72, 1370, 108))] if exclude_fps else []
+            # The Windows title/command area is six logical pixels taller.
+            # Keep the same compact-button footprint on each native layout.
+            fps_top = 78 if sys.platform == 'win32' else 72
+            areas = [('fps', (1260, fps_top, 1370, fps_top + 36))] if exclude_fps else []
             if exclude_import_progress and expected.size == (1382, 954):
                 # GlobalPrintCommandBar.taskContent: rotating 16px icon and
                 # the 300x5 indeterminate content, excluding its status label.

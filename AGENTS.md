@@ -4,6 +4,13 @@
 
 下文 `APP_ROOT` 指包含本文件、`src/`、`qml/` 和 `CMakeLists.txt` 的目录；`HOST_ROOT` 仅指同时包含该 App、`Core/` 和 `cmake/sdk/` 的完整源码宿主。独立 App 不假定存在 `HOST_ROOT`。
 
+## 远端排障
+
+- 远端构建、运行和回归故障直接通过 SSH 登录目标机器检查、修正和定点验证。
+- 禁止通过 Git 提交、推送或修改、触发 workflow 向远端下发诊断命令；禁止用反复触发 workflow 代替机器上的排障。
+- SSH 不通时检查地址、路由、端口与 SSH 服务，如实报告连接证据，不改用 workflow 执行诊断。已有流水线结果只作为原始失败证据，不能代替机器检查。
+- 正式 workflow 只用于已授权的最终候选验收。
+
 ## 技能选择
 
 - 所有代码变更先读取 `.agents/skills/gplatform-bugfix/SKILL.md`，执行其中的修改范围检查点；bug 修复与回归处理同时执行完整的问题定位与验证流程，再按涉及模块组合下列技能。
@@ -27,7 +34,7 @@
 
 ## 源码与依赖
 
-- 跨仓批次在各仓同名临时分支交付；本批代码和新增测试不直接提交 main，PR 目标按本次约定确定。新增测试不要求先在目标平台跑过才允许提交。完整流程与既有回归资产边界见 `docs/mr-regression-workflow.md`。
+- 所有本次改动先进入功能分支；涉及修改的 App、源码库及需更新的 SDK、测试资产使用同名功能分支，依赖以完整 SHA 固定。完整宿主的[统一提交与合并流程](https://github.com/dezbracaty/GPlatform/blob/feature/gplatform-ui/docs/Development/Task_Execution_Workflow.md)规定：功能分支提交推送后，workflow 固定候选执行 Mac mini 和 Windows 全量回归，审查及当前候选强制检查全部通过才允许合并；新候选不能沿用旧通过记录。独立 App 无宿主权限时仍遵循上述约束，并明确跨仓库证据缺口。
 - App、Orca 和 SDK 是不同提交边界；检查实际工作区和目标提交，未经任务授权不升级依赖指针。
 - 已授权的跨仓库提交/交付，子仓库目标提交推送成功后，及时同步本次任务涉及的父仓库 gitlink 并提交推送；开发分支引用同步不等待 CI 完成。CI 结果单独记录，正式合并/发布遵守对应验收要求。独立 App 无可访问宿主时说明该边界。
 - 完整源码宿主、独立 App、Orca 单独构建使用各自的 CMake 入口。

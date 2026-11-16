@@ -96,7 +96,7 @@ void FileImportHandler::onEnter(std::shared_ptr<ActionContext> context) {
     }
 
     auto* manager = ActionManager::getInstance();
-    const QVariantMap importOutcome = manager->invokeActionWithReceipt(importer, params);
+    const QVariantMap importOutcome = manager->invokeTrackedAction(importer, params);
     const bool accepted = importOutcome.value("accepted").toBool() && importOutcome.value("success").toBool();
     // Keep the original receipt, including its pending/error information.
     context->setResult(QVariantMap{{"importAction", importer},

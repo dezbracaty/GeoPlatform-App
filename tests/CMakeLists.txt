@@ -1,5 +1,32 @@
 find_package(Qt6 REQUIRED COMPONENTS Test)
 
+add_executable(TrackedImportCompletionCheck TrackedImportCompletionCheck.cpp)
+target_link_libraries(TrackedImportCompletionCheck PRIVATE BaseInteraction Qt6::Gui)
+add_test(NAME TrackedImportCompletionCheck COMMAND TrackedImportCompletionCheck)
+set_tests_properties(TrackedImportCompletionCheck PROPERTIES TIMEOUT 10)
+
+add_executable(ExternalOpenRequestCheck ExternalOpenRequestCheck.cpp
+    ../src/Application/src/ExternalOpenRequest.cpp)
+target_include_directories(ExternalOpenRequestCheck PRIVATE
+    ../src/Application/include ../src/Interaction/include)
+target_link_libraries(ExternalOpenRequestCheck PRIVATE Qt6::Core)
+add_test(NAME ExternalOpenRequestCheck COMMAND ExternalOpenRequestCheck)
+
+add_executable(LocalInstanceEndpointCheck LocalInstanceEndpointCheck.cpp
+    ../src/Application/src/LocalInstanceEndpoint.cpp
+    ../src/Application/include/LocalInstanceEndpoint.hpp
+    ../src/Application/src/ExternalOpenRequest.cpp)
+target_include_directories(LocalInstanceEndpointCheck PRIVATE
+    ../src/Application/include ../src/Interaction/include)
+target_link_libraries(LocalInstanceEndpointCheck PRIVATE Qt6::Core Qt6::Network)
+add_test(NAME LocalInstanceEndpointCheck COMMAND LocalInstanceEndpointCheck)
+set_tests_properties(LocalInstanceEndpointCheck PROPERTIES TIMEOUT 30)
+
+add_executable(ExternalDownloadCheck ExternalDownloadCheck.cpp)
+target_link_libraries(ExternalDownloadCheck PRIVATE GPlatform::Services Qt6::Test Qt6::Network)
+add_test(NAME ExternalDownloadCheck COMMAND ExternalDownloadCheck)
+set_tests_properties(ExternalDownloadCheck PROPERTIES TIMEOUT 15)
+
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     add_test(NAME JournalPythonClientCheck
@@ -38,7 +65,8 @@ add_test(NAME ProjectDocumentContractCheck COMMAND ProjectDocumentContractCheck)
 set_tests_properties(ProjectDocumentContractCheck PROPERTIES TIMEOUT 30)
 
 if(WIN32)
-    set_tests_properties(Model3MFIntegrationCheck ProjectDocumentContractCheck PROPERTIES
+    set_tests_properties(Model3MFIntegrationCheck ProjectDocumentContractCheck
+        TrackedImportCompletionCheck ExternalOpenRequestCheck LocalInstanceEndpointCheck ExternalDownloadCheck PROPERTIES
         ENVIRONMENT_MODIFICATION
         "PATH=path_list_prepend:$<TARGET_FILE_DIR:GPlatform>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 endif()

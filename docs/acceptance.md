@@ -38,8 +38,9 @@ metadata v3 声明 `id/name/testPurpose/scope/inputs/unverifiedScopes/verificati
 有自动产物检查的场景还声明 `artifacts/checks/expected`，格式见资产仓库 `schemas/scenario.schema.json`。
 
 校准的保存/采纳结果可声明必需的 `calibration-observation` 补充检查，`artifacts` 为 `[]`，
-独立预期放在 `expected.calibrationObservations`。执行器只读取本次运行开始后由应用生成的
-校准记录，核对任务身份、参数、观察值、目标材料及采纳状态，并归档到结果的
+独立预期放在 `expected.calibrationObservations`。执行器按记录和执行结果中的 `applicationPid`
+核对创建进程，只读取本次运行开始后由该进程生成的校准记录；缺少进程身份时不能验收。
+随后核对任务身份、参数、观察值、目标材料及采纳状态，并归档到结果的
 `artifacts/calibration/`。每轮预期对应一份新记录；旧记录不能使保存操作通过。
 完成弹窗中的记录文件名包含随机 UUID，不适合固定像素标准；保留保存输入，关闭该弹窗后
 拍摄稳定的后续界面，保存结果由记录检查验证。其余截图仍须整图精确比较。

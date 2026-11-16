@@ -21,6 +21,9 @@ REGISTER_INTERACTION_ACTION(ScreenshotHandler, "screenshot.capture")
 #include <QThread>
 #include <QWindow>
 #include <QImage>
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#endif
 
 #include "Foundation/Log.h"
 
@@ -130,7 +133,21 @@ QImage ScreenshotHandler::captureApplicationWindow() {
 
     QImage screenshot;
     QString captureMethod;
+    const bool activeBeforeCapture =
+        QGuiApplication::applicationState() == Qt::ApplicationActive;
 
+#ifdef Q_OS_WIN
+    const auto foregroundProcessId = [] {
+        DWORD processId = 0;
+        GetWindowThreadProcessId(GetForegroundWindow(), &processId);
+        return static_cast<quint32>(processId);
+    };
+    const auto foregroundProcessBeforeCapture = foregroundProcessId();
+    // Capture this window's render target without changing desktop focus or
+    // falling back to pixels composited from an overlapping application.
+    screenshot = quickWindow->grabWindow();
+    captureMethod = QStringLiteral("QQuickWindow::grabWindow");
+#else
     // Activate before grabbing either surface, so the first capture and later
     // comparisons use the same foreground/focus state. Screen-backed capture
     // can also include another application's pixels while we are inactive.
@@ -147,7 +164,7 @@ QImage ScreenshotHandler::captureApplicationWindow() {
         }
     }
 
-#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
+#ifdef Q_OS_MACOS
     // Read the application's rendered frame rather than desktop composition,
     // which can include unrelated windows or macOS window animations.
     screenshot = quickWindow->grabWindow();
@@ -176,15 +193,23 @@ QImage ScreenshotHandler::captureApplicationWindow() {
         // Cropping that image to the logical QSize discards the right and bottom of the UI; keep the
         // physical-pixel image intact just like QScreen::grabWindow().
     }
+#endif
 
     if (screenshot.isNull()) {
-        LOG_ERROR("ScreenshotHandler: both native and QQuickWindow capture failed");
+        LOG_ERROR("ScreenshotHandler: application window capture failed");
         return {};
     }
 
-    LOG_INFO("ScreenshotHandler: method={} window={}x{} image={}x{} dpr={}",
+    LOG_INFO("ScreenshotHandler: method={} window={}x{} image={}x{} dpr={} activeBefore={} activeAfter={}",
              captureMethod.toStdString(), quickWindow->width(), quickWindow->height(),
-             screenshot.width(), screenshot.height(), quickWindow->devicePixelRatio());
+             screenshot.width(), screenshot.height(), quickWindow->devicePixelRatio(),
+             activeBeforeCapture,
+             QGuiApplication::applicationState() == Qt::ApplicationActive);
+#ifdef Q_OS_WIN
+    LOG_INFO("ScreenshotHandler: nativeForegroundBefore={} nativeForegroundAfter={} applicationPid={}",
+             foregroundProcessBeforeCapture, foregroundProcessId(),
+             QCoreApplication::applicationPid());
+#endif
 
     return screenshot;
 }

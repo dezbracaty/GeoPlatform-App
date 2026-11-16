@@ -1,5 +1,9 @@
 #include "AppInfo.h"
 #include "StartupCoordinator.hpp"
+#include "ExternalOpenRequest.hpp"
+#include "ExternalOpenCoordinator.hpp"
+#include "LocalInstanceEndpoint.hpp"
+#include <QDir>
 #include "SliceSettingsBridge.hpp"
 #include "SlicingPreviewBridge.hpp"
 #include <QQmlContext>
@@ -111,6 +115,26 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
 
     // 2. Create Qt application
     Application app(argc, argv);
+    const auto startupInputs = parseStartupInputs(app.arguments(), QDir::currentPath());
+    LocalInstanceEndpoint desktopEndpoint;
+    ExternalOpenCoordinator externalOpen(startupInputs.dedicatedJournal);
+    QString externalStartupError = startupInputs.errors.join('\n');
+    if (startupInputs.dedicatedJournal && !externalStartupError.isEmpty()) {
+        LOG_ERROR("Invalid dedicated Journal inputs: {}", externalStartupError.toStdString());
+        return 1;
+    }
+    ApplicationHelper::getInstance()->setRestartArgumentsTemplate(startupInputs.restartArguments);
+    if (!startupInputs.dedicatedJournal && externalStartupError.isEmpty()) {
+        const auto result = desktopEndpoint.startOrForward(startupInputs.requests,
+            [&externalOpen](const QVector<ExternalOpenRequest>& requests, QString& error) {
+                return externalOpen.enqueue(requests, error);
+            }, externalStartupError);
+        if (result == LocalInstanceEndpoint::StartResult::Forwarded) return 0;
+        if (result == LocalInstanceEndpoint::StartResult::Primary)
+            externalOpen.enqueue(startupInputs.requests, externalStartupError);
+        QObject::connect(&desktopEndpoint, &LocalInstanceEndpoint::activationRequested,
+                         &externalOpen, &ExternalOpenCoordinator::activate);
+    }
     bool runtimeServicesReady = false;
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [&runtimeServicesReady] {
         if (runtimeServicesReady) ApplicationHelper::getInstance()->prepareForExit();
@@ -152,7 +176,8 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
 #endif
 
     // Get command line arguments
-    QStringList args = app.arguments();
+    QStringList args{app.arguments().front()};
+    args.append(startupInputs.restartArguments);
     const int replayIdIndex = args.indexOf(QStringLiteral("--journal-replay-id"));
     const QString startupReplayId = replayIdIndex >= 0 ? args.value(replayIdIndex + 1) : QString();
     if (replayIdIndex >= 0 && (startupReplayId.isEmpty() || startupReplayId.startsWith("--"))) {
@@ -160,6 +185,12 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
         return 1;
     }
 
+#ifdef JOURNALSYSTEM_ENABLED
+    // Own replay input before any splash/main window can receive native events.
+    // Providers and listening are still configured only when startup is ready.
+    auto* journal = new JournalSystem(&app);
+    journal->setStartupReplayId(startupReplayId);
+#endif
 
     GPlatform::Rendering::configureGraphicsAfterApplication();
 
@@ -233,6 +264,16 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
     splashEngine.load(QUrl("qrc:/gplatform/startup/StartupWindow.qml"));
     if (splashEngine.rootObjects().isEmpty()) return 1;
     startup.setSplash(qobject_cast<QQuickWindow*>(splashEngine.rootObjects().first()));
+    if (!externalStartupError.isEmpty()) {
+        externalOpen.stop();
+        desktopEndpoint.stop();
+        startup.fail(externalStartupError);
+        const int result = app.exec();
+        restartArguments = ApplicationHelper::getInstance()->takeRestartArguments();
+        if (!restartArguments.isEmpty() && result == 0)
+            restartExecutable = QCoreApplication::applicationFilePath();
+        return result;
+    }
 
     TempDBScope applicationTheme;
     bool themeCreated = false;
@@ -243,14 +284,13 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
         }
     });
     QQmlApplicationEngine engine;
+    externalOpen.initialize(&startup, &engine,
+                            startupInputs.dedicatedJournal ? nullptr : &desktopEndpoint);
     const auto cleanupQmlWindows = qScopeGuard([&engine] {
         ApplicationHelper::releaseQmlWindows(engine);
     });
     engine.addImportPath(":/qt/qml");
     engine.rootContext()->setContextProperty("StartupState", &startup);
-#ifdef JOURNALSYSTEM_ENABLED
-    JournalSystem* journal = nullptr;
-#endif
     ActionManager::getInstance()->setAdmissionPolicy(
         [&startup](const QString& code, bool ai) { return startup.admissionError(code, ai); });
     const auto clearAdmission = qScopeGuard([] { ActionManager::getInstance()->setAdmissionPolicy({}); });
@@ -302,8 +342,7 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
                         logElapsed("QML engine load started");
 
 #ifdef JOURNALSYSTEM_ENABLED
-                        // Initialize JournalSystem for UI testing support
-                        journal = new JournalSystem(&app);
+                        // Bind the early-created service to the ready application.
                         AppInfo::getInstance()->setJournalService(journal);
                         // AI TESTING POLICY: AI agents MUST NOT directly call
                         // journal.entry.execute / JournalSystem.execute_entry to test the app.
@@ -401,7 +440,6 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
                             startup.fail(StartupCoordinator::tr("Invalid Journal port"));
                             return;
                         }
-                        journal->setStartupReplayId(startupReplayId);
                         journal->setReplayPreparationHandler([args, journal](const QString& replayId, QString& error) {
                             QStringList nextArguments;
                             for (int i = 1; i < args.size(); ++i) {

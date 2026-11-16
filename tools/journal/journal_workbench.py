@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import socket
 import sys
+import tempfile
 import threading
 import time
 from urllib.parse import urlencode
@@ -236,6 +237,7 @@ class JournalWorkbench:
                     except (OSError, ValueError, KeyError):
                         continue
             return dict(config=dict(application=self.application, exports=self.exports,
+                defaultExports=tempfile.gettempdir(),
                 assetsRoot=str(self.assets), machine=socket.gethostname(), recordPort=self.record_port),
                 cases=cases, task=task, records=records, history=history,
                 recording=dict(connected=bool(self.client and self.client.client),
@@ -261,8 +263,8 @@ class JournalWorkbench:
             raise WorkbenchError('所选场景准备阻塞，请先查看场景详情')
         if not self.application or not Path(self.application).is_file():
             raise WorkbenchError('请先配置 A 电脑的 GPlatform 可执行文件')
-        if any(known[c]['needsExports'] for c in ids) and not self.exports:
-            raise WorkbenchError('所选场景需要配置 A 电脑的实际导出目录')
+        needs_exports = any(known[c]['needsExports'] for c in ids)
+        exports = self.exports
         pause_each = data.get('pauseAfterEach', False)
         if not isinstance(pause_each, bool):
             raise WorkbenchError('pauseAfterEach 必须为布尔值')
@@ -270,8 +272,6 @@ class JournalWorkbench:
         identifier = self._register_run(output)
         args = ['--assets', str(self.assets), '--application', self.application,
             '--cases', ','.join(ids), '--output', str(output)]
-        if self.exports:
-            args += ['--exports', self.exports]
         def progress(event):
             with self.lock:
                 self.task.update(case=event['case'], caseIndex=event['index'], total=event['total'])
@@ -292,7 +292,13 @@ class JournalWorkbench:
                         return
                     self.condition.wait(timeout=.25)
         def operation():
-            code = run_acceptance.main(args, session=self._session(), progress=progress, between_cases=boundary)
+            export_directory = exports
+            if needs_exports and not export_directory:
+                export_directory = tempfile.mkdtemp(prefix='gplatform-journal-exports-')
+            run_args = args + ['--exports', export_directory] if export_directory else args
+            if export_directory:
+                self.log('本次导出目录：' + export_directory)
+            code = run_acceptance.main(run_args, session=self._session(), progress=progress, between_cases=boundary)
             summary = json.loads((output / 'summary.json').read_text(encoding='utf8'))
             with self.lock:
                 self.task['summary'] = summary

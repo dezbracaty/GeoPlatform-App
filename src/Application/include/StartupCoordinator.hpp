@@ -44,6 +44,8 @@ public:
     QString admissionError(const QString& code, bool ai) const;
     void fail(const QString& message);
     void beginShutdown();
+    QQuickWindow* mainWindow() const;
+    void activateMainWindow();
     Q_INVOKABLE void attachMainWindow(QObject* window);
     Q_INVOKABLE void attachWorkspace(QObject* renderer);
     Q_INVOKABLE void requestExit();
