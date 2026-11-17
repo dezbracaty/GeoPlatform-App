@@ -8,6 +8,7 @@ Window {
     height: 480
     visible: true
     flags: Qt.Tool | Qt.FramelessWindowHint
+           | (Qt.platform.os === "osx" && StartupState.backgroundReplay ? Qt.WindowDoesNotAcceptFocus : 0)
     title: "GPlatform"
     color: "#f4f6f8"
     x: Screen.virtualX + (Screen.width - width) / 2

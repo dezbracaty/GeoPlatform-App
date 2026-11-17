@@ -49,8 +49,10 @@ DB 检查点沿用 `verify.db`，格式为 `transdb.cereal-portable-binary.v1`�
 路径相对源 Journal。Action 的 baseline 仅由 Python 执行器消费，不发给 App。
 未绑定标准的截图不能通过，也不会自动把本次图片变成标准。
 
-正式回放统一比较原尺寸整图的 RGBA 像素，默认仅排除右上角收起状态的 FPS 按钮区域；下述明确批准的3张动画图另有局部例外，参与比较的任一像素不同即失败。
-统一 1382×954 逻辑窗口的排除框为 `[1260, 72, 110, 36]`，包含按钮宽度变化及阴影，按原生 DPR 映射到物理像素。
+正式回放统一比较原尺寸整图的 RGBA 像素，默认仅排除右上角收起状态的 FPS 按钮区域；下述明确批准的导入询问动画图另有局部例外，参与比较的任一像素不同即失败。
+1382×954 逻辑窗口的 FPS 排除框在 macOS/Linux 为 `[1260, 72, 110, 36]`，
+Windows 为 `[1260, 78, 110, 36]`：Windows 标题和命令区域高 6 个逻辑像素，因此同一按钮整体下移。
+两者排除面积相同，均包含按钮宽度变化及阴影，按原生 DPR 映射到物理像素。
 其他尺寸的窗口截图不隐式排除；FPS 展开详情不属于排除范围，窗口尺寸不一致仍失败。
 原始标准图与实际图不修改；结果记录排除框和参与比较的像素数，diff 只标记参与校验的差异。
 
@@ -59,7 +61,8 @@ DB 检查点沿用 `verify.db`，格式为 `transdb.cereal-portable-binary.v1`�
 `three_mf_target2_geometry/native-options.png`（均位于 `baselines/screenshots/`）。
 除 FPS 外，仅排除底部旋转图标 `[736,894,24,24]` 和不定进度内容 `[766,913,300,5]`。
 范围依据 `GlobalPrintCommandBar.qml` 的16px旋转图标完整包络和300×5进度内容；不包含状态文字和进度背景上下缘。
-共享比较器按以上三条资产路径固定识别，不接受任意屏蔽框；其他阶段、Windows、其他尺寸/DPR不采用此例外。
+Windows omits these animated import-question screenshots; native choice inputs and final-state checks remain.
+共享比较器按上述平台和资产路径固定识别，不接受任意屏蔽框；其他阶段、其他尺寸/DPR不采用此例外。
 弹窗文案、按钮、焦点、警告、模型及其余画面继续精确比较，不增加等待、不改变动画或产品行为。
 
 历史 `region/regions`、`tolerance`、`maxChannelDifference`、`blurRadius` 字段仍可读取，

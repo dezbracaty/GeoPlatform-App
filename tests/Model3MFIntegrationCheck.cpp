@@ -37,6 +37,7 @@
 #include <QColor>
 #include <QQmlEngine>
 #include <QScopeGuard>
+#include <QSignalSpy>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -904,6 +905,44 @@ void checkP3PaletteSources() {
     std::cout << "P3 colors: defaults, legacy mapping, explicit memory, import isolation and startup fallback\n";
 }
 
+void checkConfigurationNotifications() {
+    auto* bridge = SliceSettingsBridge::instance();
+    const auto decision = QObject::connect(bridge, &SliceSettingsBridge::printerSwitchDecisionRequested,
+        bridge, [bridge](const QVariantMap&) { bridge->resolvePrinterSwitch("discard"); });
+    const auto disconnect = qScopeGuard([&] { QObject::disconnect(decision); });
+    require(bridge->selectMachine("P3", "0.4") && bridge->selectedMachineModelId() == "P3",
+            "Cannot activate P3 for configuration notifications");
+    const auto active = GPlatform::SlicingBackend::instance().activeConfigView();
+    require(active && active->selection.machine_model_id == "P3", "Backend did not activate P3");
+    const auto before = bridge->filamentSlots();
+    require(before.size() == 6, "Material notification fixture requires six slots");
+    const auto machine = bridge->selectedMachine();
+    const QString target = before[4].toMap().value("presetId").toString() == "CFSYS CCF"
+        ? "CFSYS PLA" : "CFSYS CCF";
+    QSignalSpy machineChanges(bridge, &SliceSettingsBridge::machineSelectionChanged);
+    QSignalSpy filamentChanges(bridge, &SliceSettingsBridge::filamentSlotsChanged);
+    require(bridge->selectFilamentPresetForSlot(4, target), "Cannot change the non-first material slot");
+    const auto after = bridge->filamentSlots();
+    require(after.size() == 6 && after[4].toMap().value("presetId").toString() == target,
+            "Material preset did not reach the selected non-first slot");
+    const auto configs = objects<GPlatform::SlicingConfigDB>(TypeID::SLICING_CONFIG_DB);
+    require(configs.size() == 1 && configs.front()->getFilaments().size() == 6 &&
+            configs.front()->getFilaments()[4].presetId == target.toStdString(),
+            "Material preset did not reach the real six-slot configuration DB");
+    require(bridge->selectedMachine() == machine, "Material selection changed the machine metadata");
+    require(machineChanges.isEmpty(), "Material selection incorrectly notified a machine change");
+    require(!filamentChanges.isEmpty(), "Material selection omitted its material notification");
+    require(bridge->selectMachine("Flashforge AD5X", "0.4") &&
+            bridge->selectedMachineModelId() == "Flashforge AD5X" && !machineChanges.isEmpty(),
+            "Actual machine switch omitted its notification");
+    importAndWait("complete-project.3mf", "project");
+    const auto projectMachine = bridge->selectedMachine();
+    machineChanges.clear();
+    importAndWait("complete-project.3mf", "project");
+    require(bridge->selectedMachine() == projectMachine && !machineChanges.isEmpty(),
+            "Same-machine complete project restore omitted its machine notification");
+}
+
 int main(int argc,char** argv) {
     qputenv("QT_QPA_PLATFORM","offscreen");
     QStandardPaths::setTestModeEnabled(true);
@@ -975,6 +1014,7 @@ int main(int argc,char** argv) {
         checkPrinterSwitchSaveAndCancel();
         checkProjectPresetSaveAndReselect(*configuration);
         checkP3PaletteSources();
+        checkConfigurationNotifications();
     } catch (const std::exception& error) {std::cerr<<error.what()<<'\n'; status=1;}
     ActionManager::getInstance()->cleanupBeforeShutdown();
     ActionHandlerRegistry::instance().clearCache();

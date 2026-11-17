@@ -186,6 +186,40 @@ class AppSDKChecks(unittest.TestCase):
 
 
 class WindowsEntryChecks(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'nt' and shutil.which('pwsh'), 'Windows native build entry')
+    def test_native_entry_selects_first_cmake_on_path_and_honors_explicit_path(self):
+        entry = Path(__file__).resolve().parents[2] / 'scripts/build.ps1'
+        with tempfile.TemporaryDirectory(prefix='App CMake selection ') as temporary:
+            root = Path(temporary)
+            log = root / 'calls.txt'
+            tools = []
+            for name in ('first', 'second'):
+                directory = root / name
+                directory.mkdir()
+                tool = directory / 'ci-cmake.cmd'
+                # Record native invocations without configuring or compiling a fixture project.
+                tool.write_text(f'@echo {name} %*>>"%CI_CMAKE_CALLS%"\n@exit /b 0\n')
+                tools.append(tool)
+            env = dict(os.environ, CI_CMAKE_CALLS=str(log),
+                       PATH=os.pathsep.join([str(tool.parent) for tool in tools] + [os.environ['PATH']]))
+            for command, selected in [('ci-cmake.cmd', 'first'), (str(tools[1]), 'second')]:
+                with self.subTest(command=command):
+                    log.unlink(missing_ok=True)
+                    result = subprocess.run(['pwsh', '-NoProfile', '-File', str(entry),
+                                             '-CMake', command, '-Targets', 'GPlatform'],
+                                            env=env, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(log.read_text().splitlines(),
+                                     [f'{selected} --preset release',
+                                      f'{selected} --build --preset release --target GPlatform'])
+            log.unlink()
+            result = subprocess.run(['pwsh', '-NoProfile', '-File', str(entry),
+                                     '-CMake', str(root / 'missing-cmake.exe')],
+                                    env=env, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('CMake was not found', result.stderr)
+            self.assertFalse(log.exists())
+
     def test_cmake_arguments_and_paths_are_environment_data(self):
         source = Path('/source with spaces')
         arguments = ['-DNAME=value with spaces', '-DGPLATFORM_BUILD_SDK_CHECKS=ON']

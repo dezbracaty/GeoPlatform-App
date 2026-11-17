@@ -95,7 +95,7 @@ class DisplayProfileCheck(unittest.TestCase):
                 process.wait.side_effect = lambda process=process, **kwargs: setattr(
                     process.poll, "return_value", -15)
             with patch("journal_execution_session.JournalSystem", return_value=client), \
-                    patch("journal_execution_session._activate_owned_macos_application", return_value=None), \
+                    patch("journal_execution_session._identify_owned_macos_application", return_value=None), \
                     patch("journal_execution_session.subprocess.Popen", side_effect=processes) as launch:
                 result = JournalExecutionSession().run(journal, application=sys.executable,
                                                        output_dir=root / "result")

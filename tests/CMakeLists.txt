@@ -1,5 +1,32 @@
 find_package(Qt6 REQUIRED COMPONENTS Test)
 
+add_executable(TrackedImportCompletionCheck TrackedImportCompletionCheck.cpp)
+target_link_libraries(TrackedImportCompletionCheck PRIVATE BaseInteraction Qt6::Gui)
+add_test(NAME TrackedImportCompletionCheck COMMAND TrackedImportCompletionCheck)
+set_tests_properties(TrackedImportCompletionCheck PROPERTIES TIMEOUT 10)
+
+add_executable(ExternalOpenRequestCheck ExternalOpenRequestCheck.cpp
+    ../src/Application/src/ExternalOpenRequest.cpp)
+target_include_directories(ExternalOpenRequestCheck PRIVATE
+    ../src/Application/include ../src/Interaction/include)
+target_link_libraries(ExternalOpenRequestCheck PRIVATE Qt6::Core)
+add_test(NAME ExternalOpenRequestCheck COMMAND ExternalOpenRequestCheck)
+
+add_executable(LocalInstanceEndpointCheck LocalInstanceEndpointCheck.cpp
+    ../src/Application/src/LocalInstanceEndpoint.cpp
+    ../src/Application/include/LocalInstanceEndpoint.hpp
+    ../src/Application/src/ExternalOpenRequest.cpp)
+target_include_directories(LocalInstanceEndpointCheck PRIVATE
+    ../src/Application/include ../src/Interaction/include)
+target_link_libraries(LocalInstanceEndpointCheck PRIVATE Qt6::Core Qt6::Network)
+add_test(NAME LocalInstanceEndpointCheck COMMAND LocalInstanceEndpointCheck)
+set_tests_properties(LocalInstanceEndpointCheck PROPERTIES TIMEOUT 30)
+
+add_executable(ExternalDownloadCheck ExternalDownloadCheck.cpp)
+target_link_libraries(ExternalDownloadCheck PRIVATE GPlatform::Services Qt6::Test Qt6::Network)
+add_test(NAME ExternalDownloadCheck COMMAND ExternalDownloadCheck)
+set_tests_properties(ExternalDownloadCheck PROPERTIES TIMEOUT 15)
+
 find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
     add_test(NAME JournalPythonClientCheck
@@ -26,6 +53,16 @@ set_source_files_properties(${_project_catalogs} PROPERTIES GENERATED TRUE)
 qt_add_resources(Model3MFIntegrationCheck "project_i18n"
     PREFIX "/" BASE "${PROJECT_BINARY_DIR}" FILES ${_project_catalogs})
 add_dependencies(Model3MFIntegrationCheck gplatform_i18n_mo)
+if(WIN32 AND GPLATFORM_ENABLE_LIBSLICER)
+    # The production backend resolves presets relative to this test executable.
+    add_custom_target(gplatform_app_test_libslicer_resources
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            "${LIBSLICER_RESOURCE_DIR}"
+            "$<TARGET_FILE_DIR:Model3MFIntegrationCheck>/resources/libslicer"
+        COMMENT "Deploying libslicer resources for App integration checks"
+        VERBATIM)
+    add_dependencies(Model3MFIntegrationCheck gplatform_app_test_libslicer_resources)
+endif()
 add_test(NAME Model3MFIntegrationCheck COMMAND Model3MFIntegrationCheck)
 set_tests_properties(Model3MFIntegrationCheck PROPERTIES TIMEOUT 90)
 
@@ -38,7 +75,8 @@ add_test(NAME ProjectDocumentContractCheck COMMAND ProjectDocumentContractCheck)
 set_tests_properties(ProjectDocumentContractCheck PROPERTIES TIMEOUT 30)
 
 if(WIN32)
-    set_tests_properties(Model3MFIntegrationCheck ProjectDocumentContractCheck PROPERTIES
+    set_tests_properties(Model3MFIntegrationCheck ProjectDocumentContractCheck
+        TrackedImportCompletionCheck ExternalOpenRequestCheck LocalInstanceEndpointCheck ExternalDownloadCheck PROPERTIES
         ENVIRONMENT_MODIFICATION
         "PATH=path_list_prepend:$<TARGET_FILE_DIR:GPlatform>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
 endif()
@@ -61,6 +99,15 @@ target_include_directories(FloatingPrintConfigurationCheck PRIVATE
 gplatform_link_registered_modules(FloatingPrintConfigurationCheck)
 target_link_libraries(FloatingPrintConfigurationCheck PRIVATE Qt6::Test Qt6::QuickControls2
     SmoothUIplugin SmoothUIControlsplugin SmoothUIImplplugin)
+if(GPLATFORM_CORE_SOURCE_DIR AND TARGET Render)
+    # Preserve the source-host navigator/capture fixture without exposing
+    # renderer implementation headers to the independent SDK consumer.
+    target_compile_definitions(FloatingPrintConfigurationCheck PRIVATE
+        GPLATFORM_TEST_RENDER_HOST_COMPONENTS=1)
+    target_include_directories(FloatingPrintConfigurationCheck PRIVATE
+        ${GPLATFORM_CORE_SOURCE_DIR}/src/Render/components)
+    target_link_libraries(FloatingPrintConfigurationCheck PRIVATE Render)
+endif()
 set(_floating_catalogs
     "${PROJECT_BINARY_DIR}/i18n/zh_CN/gplatform.mo"
     "${PROJECT_BINARY_DIR}/i18n/zh_CN/libslicer.mo")

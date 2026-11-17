@@ -45,6 +45,10 @@ public:
     QVariantMap invokeActionWithReceipt(const QString& actionCode,
                                        const QVariantMap& params = {},
                                        const QVariantMap& metadata = {});
+    // Finite native operations: completion is published after handler cleanup.
+    QVariantMap invokeTrackedAction(const QString& actionCode,
+                                    const QVariantMap& params = {},
+                                    const QVariantMap& metadata = {});
 
     // AI-facing APIs
     Q_INVOKABLE QVariantList listActionsForAI();
@@ -147,5 +151,13 @@ private:
     // Last action outcome snapshot (used by AI sequence receipt).
     QVariantMap m_lastActionOutcome;
     qulonglong m_lastActionOutcomeSeq = 0;
-    QHash<QString, QVariantMap> m_pendingInvocations;
+    struct PendingInvocation {
+        QVariantMap data;
+        HandlerPtr handler;
+        std::shared_ptr<ActionContext> context;
+        quint64 generation{0};
+        bool native{false};
+    };
+    QHash<QString, PendingInvocation> m_pendingInvocations;
+    QHash<IActionHandlerBase*, quint64> m_handlerGenerations;
 };
