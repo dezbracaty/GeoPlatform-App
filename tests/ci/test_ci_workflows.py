@@ -79,7 +79,7 @@ class Workflows(unittest.TestCase):
             self.assertEqual(set(load(path)['on']['workflow_dispatch']['inputs']),keys)
 
     def test_defaults_choices_and_reusable_inputs_match_the_maintained_document(self):
-        document = (APP / 'docs/ci.md').read_text()
+        document = (APP / 'docs/ci.md').read_text(encoding='utf-8')
         for title, filename in [('Build SDK', 'build-sdk.yml'), ('Run Regression', 'run-regression.yml'),
                                 ('Build Installer', 'build-installer.yml')]:
             section = document.split('## ' + title + '\n', 1)[1].split('\n## ', 1)[0]
