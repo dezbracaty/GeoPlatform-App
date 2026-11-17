@@ -152,11 +152,6 @@ if(WIN32)
         ENVIRONMENT_MODIFICATION
         "PATH=path_list_prepend:$<TARGET_FILE_DIR:GPlatform>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     if(GPLATFORM_ENABLE_LIBSLICER)
-        add_custom_target(gplatform_app_test_libslicer_resources
-            COMMAND "${CMAKE_COMMAND}" -E copy_directory
-                "${LIBSLICER_RESOURCE_DIR}"
-                "$<TARGET_FILE_DIR:FloatingPrintConfigurationCheck>/resources/libslicer"
-            VERBATIM)
         add_dependencies(FloatingPrintConfigurationCheck gplatform_app_test_libslicer_resources)
     endif()
 endif()
