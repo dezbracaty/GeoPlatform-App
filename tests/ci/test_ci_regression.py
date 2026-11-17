@@ -13,6 +13,96 @@ from native_regression import build_environment, command, comparison_verdict, ph
 
 
 class RegressionTests(unittest.TestCase):
+    def test_windows_native_ctest_resolves_runtime_before_provenance_exists(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        import native_child as child
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            build = root / 'native-build'
+            build.mkdir()
+            dependencies = {}
+            directories = []
+            for key, filename, location in [
+                    ('OpenCASCADE_DIR', 'TKernel.dll', 'lib/cmake/occt'),
+                    ('GMP_LIBRARY', 'libgmp-10.dll', 'lib/libgmp-10.lib')]:
+                prefix = root / key / 'install-Release'
+                (prefix / 'bin').mkdir(parents=True)
+                (prefix / 'bin' / filename).write_bytes(b'path fixture; never loaded')
+                dependencies[key] = str(prefix / location)
+                directories.append(str(prefix / 'bin'))
+            base = dict(PATH='unrelated-sdk-runtime', UNCHANGED='value')
+            cache = Mock(return_value=dependencies)
+            process = Mock()
+            process.wait.return_value = 0
+            with patch.object(child, 'os', SimpleNamespace(name='nt', environ=base)), \
+                 patch.object(child.subprocess, 'Popen', return_value=process) as spawn:
+                child.attached_build(['ctest.exe', '--test-dir', str(build)], root / 'test.log',
+                                     10, env=base, cache_values=cache)
+            cache.assert_called_once_with(build / 'CMakeCache.txt')
+            self.assertEqual(spawn.call_args.kwargs['env']['PATH'],
+                             os.pathsep.join(directories + [base['PATH']]))
+            self.assertEqual(spawn.call_args.kwargs['env']['UNCHANGED'], 'value')
+            self.assertEqual(base['PATH'], 'unrelated-sdk-runtime')
+            self.assertFalse((build.parent / 'provenance.json').exists())
+
+            # Invalid or ambiguous configured dependencies fail before launching
+            # the check instead of borrowing an unrelated DLL from PATH.
+            for condition in ('missing-key', 'missing-dll', 'ambiguous-dll'):
+                with self.subTest(condition=condition):
+                    fixture = dict(dependencies)
+                    if condition == 'missing-key':
+                        del fixture['GMP_LIBRARY']
+                    elif condition == 'missing-dll':
+                        (root / 'GMP_LIBRARY/install-Release/bin/libgmp-10.dll').unlink()
+                    else:
+                        other = root / 'OpenCASCADE_DIR/install-Release/other'
+                        other.mkdir()
+                        (other / 'TKernel.dll').write_bytes(b'ambiguous')
+                    with patch.object(child, 'os', SimpleNamespace(name='nt', environ=base)), \
+                         patch.object(child.subprocess, 'Popen') as spawn:
+                        with self.assertRaises(RuntimeError):
+                            child.attached_build(['ctest', '--test-dir', str(build)], root / 'bad.log',
+                                                 10, cache_values=Mock(return_value=fixture))
+                    spawn.assert_not_called()
+
+    def test_native_non_ctest_and_mac_commands_keep_the_original_environment(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        import native_child as child
+        with tempfile.TemporaryDirectory() as temporary:
+            for system, command in [('nt', ['cmake', '--preset', 'release']),
+                                    ('nt', ['cmake', '--build', '--preset', 'release']),
+                                    ('posix', ['ctest', '--test-dir', temporary])]:
+                for env in (None, {'PATH': 'original'}):
+                    with self.subTest(system=system, command=command, env=env):
+                        process = Mock()
+                        process.wait.return_value = 0
+                        cache = Mock()
+                        with patch.object(child, 'os', SimpleNamespace(name=system)), \
+                             patch.object(child.subprocess, 'Popen', return_value=process) as spawn:
+                            child.attached_build(command, Path(temporary) / 'test.log', 10,
+                                                 env=env, cache_values=cache)
+                        self.assertIs(spawn.call_args.kwargs['env'], env)
+                        cache.assert_not_called()
+
+    def test_native_child_uses_the_selected_builders_cache_reader(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        import native_child as child
+        builder = SimpleNamespace(cache_values=Mock(), main=Mock(return_value=0))
+        with tempfile.TemporaryDirectory() as temporary, \
+             patch.dict(sys.modules, {'build_orca_candidate_probe': builder}), \
+             patch.object(sys, 'argv', ['native_child', 'native', '--source', temporary, '--jobs', '16']):
+            original_path = list(sys.path)
+            try:
+                self.assertEqual(child.main(), 0)
+            finally:
+                sys.path[:] = original_path
+        self.assertIs(builder.run.func, child.attached_build)
+        self.assertIs(builder.run.keywords['cache_values'], builder.cache_values)
+        builder.main.assert_called_once_with(['--jobs', '16'])
+
     def test_native_ctest_uses_the_same_python_as_driver_admission(self):
         import native_regression as regression
         with tempfile.TemporaryDirectory() as temporary:
@@ -247,7 +337,9 @@ class RegressionTests(unittest.TestCase):
             child = "import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(60)"
             worker = f"import subprocess,sys,time;from pathlib import Path;p=subprocess.Popen([sys.executable,'-c',{child!r}]);Path({str(root/'pid')!r}).write_text(str(p.pid));time.sleep(60)"
             (root/'scripts/build_orca_candidate_probe.py').write_text(
-                f"import sys\nfrom pathlib import Path\ndef main(argv):\n run([sys.executable,'-c',{worker!r}],Path({str(root/'native.log')!r}),60)\n")
+                "import sys\nfrom pathlib import Path\n"
+                "def cache_values(path):\n raise AssertionError('POSIX compile must not resolve DLLs')\n"
+                f"def main(argv):\n run([sys.executable,'-c',{worker!r}],Path({str(root/'native.log')!r}),60)\n")
             with self.assertRaises(TimeoutError):
                 command([sys.executable, Path(__file__).resolve().parents[2]/'scripts/ci/native_child.py',
                          'native', '--source', root], root, None, root/'wrapper.log', timeout=1)

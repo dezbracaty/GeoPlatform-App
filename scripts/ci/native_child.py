@@ -1,5 +1,6 @@
-"""Own a test subtree; the maintained native builder stays intact."""
+"""Own a test subtree and its runtime; the native builder stays intact."""
 import argparse
+from functools import partial
 import json
 import os
 from pathlib import Path
@@ -7,9 +8,15 @@ import subprocess
 import sys
 
 
-def attached_build(command, log, timeout, env=None):
+def attached_build(command, log, timeout, env=None, *, cache_values=None):
     # The supervising native_regression.py created this child's process group. Keep
     # CMake/Ninja in it so cancelling the wrapper also cancels the compiler tree.
+    if os.name == 'nt' and Path(str(command[0])).stem.lower() == 'ctest':
+        from native_regression import windows_native_environment
+        build = Path(command[command.index('--test-dir') + 1])
+        env = windows_native_environment(
+            {'dependencyCacheValues': cache_values(build / 'CMakeCache.txt')},
+            env if env is not None else os.environ)
     print('RUN ' + json.dumps(list(map(str, command))), flush=True)
     with Path(log).open('w', encoding='utf-8') as stream:
         process = subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT, env=env)
@@ -35,9 +42,9 @@ def main():
     source = args.source.resolve()
     sys.path.insert(0, str(source / 'scripts'))
     import build_orca_candidate_probe as builder
-    # Only process supervision/logging changes. The builder still owns its
-    # compiler arguments, adapter, sources, hashes and provenance contracts.
-    builder.run = attached_build
+    # The builder owns compilation, sources and provenance. Its CTest runs
+    # before provenance exists, so resolve runtime DLLs from that build's cache.
+    builder.run = partial(attached_build, cache_values=builder.cache_values)
     return builder.main(rest)
 
 

@@ -141,7 +141,7 @@ FramelessWindow {
 
     InfoBarManager {
         id: infobar_manager
-        target: window.contentItem
+        target: infobar_layer
         messageMaximumWidth: 380
     }
 
@@ -422,4 +422,13 @@ FramelessWindow {
 
     // Create alias for the loader
     property alias dialog_verification_failure: dialog_verification_failure_loader
+
+    Item {
+        id: infobar_layer
+        objectName: "gplatform.infoBarOverlay"
+        parent: window.contentItem
+        anchors.fill: parent
+        z: 65535
+        visible: children.length > 0
+    }
 }
