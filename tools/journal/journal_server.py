@@ -19,7 +19,7 @@ import time
 from urllib.parse import parse_qs, urlsplit
 import webbrowser
 
-from journal_workbench import JournalWorkbench, WorkbenchError
+from journal_workbench import JournalWorkbench, WorkbenchError, DEFAULT_PARALLELISM
 
 WEB = Path(__file__).resolve().parent / 'web'
 
@@ -227,8 +227,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--application', type=Path, help='A 电脑上的 GPlatform 可执行文件')
     parser.add_argument('--app-root', type=Path, help='包含 tests/TestAssets 的 App 源码目录')
-    parser.add_argument('--exports', type=Path, help='A 电脑上的实际导出目录')
+    parser.add_argument('--assets', type=Path, help='显式测试资产目录，默认使用 App 的 tests/TestAssets')
+    parser.add_argument('--exports', type=Path, help='可选导出目录；默认在执行电脑的系统临时目录中为每次回放创建独立目录')
     parser.add_argument('--output-root', type=Path, help='回放结果保存目录')
+    parser.add_argument('--parallelism', type=int, default=DEFAULT_PARALLELISM, help='默认同时回放的场景数（正整数，默认3）')
     parser.add_argument('--listen', default='127.0.0.1', help='本机默认127.0.0.1；局域网访问使用0.0.0.0')
     parser.add_argument('--port', type=int, default=8765, help='网页服务端口；不同于 GPlatform 的 Journal 端口')
     parser.add_argument('--token', default=os.environ.get('GPLATFORM_WORKBENCH_TOKEN'), help='6位数字连接码，默认每次随机生成')
@@ -238,7 +240,13 @@ def main(argv=None):
         token = connection_code(args.token)
     except ValueError as exc:
         parser.error(str(exc))
-    workbench = JournalWorkbench(args.application, args.app_root, args.exports, output_root=args.output_root)
+    if args.parallelism < 1:
+        parser.error('并行数量必须为正整数')
+    try:
+        workbench = JournalWorkbench(args.application, args.app_root, args.exports, assets=args.assets,
+                                     output_root=args.output_root, parallelism=args.parallelism)
+    except WorkbenchError as exc:
+        parser.error(str(exc))
     # Only one workbench may own this application/session repository at a time.
     lock_path = workbench.repository.recordings / '.workbench.lock'
     lock_path.parent.mkdir(parents=True, exist_ok=True)

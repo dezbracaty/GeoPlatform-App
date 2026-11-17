@@ -37,16 +37,26 @@ def _matches(actual, expected):
     return type(actual) is type(expected) and actual == expected
 
 
-def verify_records(directory, started_ns, expected, output):
+def verify_records(directory, started_ns, expected, output, *, application_pid):
     validate_expectations(expected)
+    if type(application_pid) is not int or application_pid <= 0:
+        raise ValueError('Calibration observation requires the owning application PID')
     directory, output = Path(directory), Path(output)
-    files = sorted(path for path in directory.glob('*.json') if path.stat().st_mtime_ns >= started_ns)
+    # The persistent directory is shared by App instances. Freshness alone does
+    # not identify which process produced a record during concurrent playback.
+    files = []
+    for path in sorted(directory.glob('*.json')):
+        if path.stat().st_mtime_ns < started_ns:
+            continue
+        raw = path.read_bytes()
+        record = json.loads(raw)
+        if (type(record.get('applicationPid')) is int and
+                record['applicationPid'] == application_pid):
+            files.append((path, raw, record))
     if len(files) != len(expected):
         raise ValueError(f'Expected {len(expected)} new calibration records; found {len(files)}')
     remaining, evidence = list(expected), []
-    for path in files:
-        raw = path.read_bytes()
-        record = json.loads(raw)
+    for path, raw, record in files:
         if (str(UUID(path.stem)) != path.stem or record.get('task') != path.stem
                 or record.get('version') != 2):
             raise ValueError(f'Calibration record identity/version differs: {path.name}')

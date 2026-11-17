@@ -21,13 +21,15 @@ class CalibrationRecordTest(unittest.TestCase):
         self.directory.mkdir()
         self.output = Path(self.temporary.name) / 'result'
         self.started = time.time_ns()
+        self.application_pid = 123
         self.expected = dict(mode=6, applied=True, materialSlot=0,
                              parameters=dict(start='230', end='220', step='5'),
                              observation=dict(observed=True, value='220'))
 
     def write(self, **updates):
         record = copy.deepcopy(self.expected)
-        record.update(version=2, task=str(uuid4()), configurationRevision=1, appliedRevision=2)
+        record.update(version=2, task=str(uuid4()), configurationRevision=1, appliedRevision=2,
+                      applicationPid=self.application_pid)
         record.update(updates)
         path = self.directory / (record['task'] + '.json')
         path.write_text(json.dumps(record))
@@ -35,7 +37,8 @@ class CalibrationRecordTest(unittest.TestCase):
         return path
 
     def verify(self):
-        return verify_records(self.directory, self.started, [self.expected], self.output)
+        return verify_records(self.directory, self.started, [self.expected], self.output,
+                              application_pid=self.application_pid)
 
     def test_fresh_record_is_archived_and_uuid_is_not_a_fixed_expectation(self):
         path = self.write()
@@ -64,6 +67,27 @@ class CalibrationRecordTest(unittest.TestCase):
         self.write(); self.write()
         with self.assertRaisesRegex(ValueError, 'found 2'):
             self.verify()
+
+    def test_concurrent_record_is_not_collected_even_when_expectations_match(self):
+        other = self.write(applicationPid=456)
+        own = self.write()
+        report = self.verify()
+        self.assertEqual(len(report['records']), 1)
+        self.assertEqual((self.output / report['records'][0]['path']).name, own.name)
+        self.assertFalse((self.output / 'artifacts/calibration' / other.name).exists())
+
+    def test_foreign_or_unowned_record_cannot_satisfy_save(self):
+        for owner in (456, None, True):
+            with self.subTest(owner=owner):
+                self.write(applicationPid=owner)
+                with self.assertRaisesRegex(ValueError, 'found 0'):
+                    self.verify()
+
+    def test_missing_process_identity_cannot_fall_back_to_time_only(self):
+        self.write()
+        with self.assertRaisesRegex(ValueError, 'owning application PID'):
+            verify_records(self.directory, self.started, [self.expected], self.output,
+                           application_pid=None)
 
     def test_flow_observation_must_belong_to_the_saved_task(self):
         self.expected['mode'] = 5

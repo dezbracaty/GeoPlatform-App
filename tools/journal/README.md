@@ -21,9 +21,11 @@ python3 tools/journal/journal_server.py --application /path/to/GPlatform --liste
 
 B 打开 `http://A的局域网IP:8765` 并输入 A 终端显示的连接码。服务端口默认8765，应用 Journal 端口默认9999，两者独立。所有页面使用同一个 A 端工作台。只在可信局域网使用 HTTP；跨不可信网络时通过 SSH 隧道或受保护的 HTTPS 入口访问，不直接公开端口。连接码不写入 URL 或网页本地存储。登录后使用独立的长随机会话凭证，刷新网页保持登录；同一IP连续输错5次暂停登录60秒，已登录会话不受影响。短连接码只用于登录，不作为Bearer凭证。默认每次启动重新生成，也可通过 `GPLATFORM_WORKBENCH_TOKEN` 指定6位数字连接码（保留前导零）。
 
-工作台提供“场景库”“回放记录”“录制”。设置中的程序与导出目录均为 A 上的路径。场景来源为服务启动指定的 App `tests/TestAssets`，网页不编辑标准。勾选决定本次批次，搜索只筛选显示，启动后队列固定。
+工作台提供“场景库”“回放记录”“录制”。设置中的程序与导出目录均为 A 上的路径。场景默认来源为服务启动指定的 App `tests/TestAssets`；需要使用独立平台资产时，通过 `--assets <目录>` 显式指定，实际目录显示在服务状态并写入正式报告的 `assetsRoot`。网页不编辑标准。勾选决定本次批次，搜索只筛选显示，启动后队列固定。
 
-服务调用唯一正式入口 `tools/run_acceptance.py`，复用独立实例启动、业务验收、后台整图比较、配置恢复与清理。逐项暂停发生在应用清理后的场景边界；暂停时后台比较继续，点击继续执行下一项。停止保留已完成结果，未运行及未完成项不能通过。录制、待重试保存、回放和配置修改互斥。
+导出目录默认无需配置：工作台使用执行电脑 A 的 Python `tempfile` 系统临时目录（macOS 通常为 `$TMPDIR`，Windows 为 `%TEMP%`，Linux 通常为 `/tmp`），为每次需要导出的回放创建独立的 `gplatform-journal-exports-*` 目录，具体路径记录在本次任务日志中。批次内的同名文件继续由正式执行器按场景隔离。可用 `--exports` 或网页设置显式指定 A 上已有的目录；清空设置即恢复默认临时目录。正式报告照常归档声明产物；原始临时导出文件保留供诊断，也可能被系统临时文件清理机制清除。
+
+服务调用唯一正式入口 `tools/run_acceptance.py`，复用独立实例启动、业务验收、后台整图比较和进程清理。场景共用既有数据；执行器仅准备声明的主题，不备份、恢复或删除 App INI，不覆盖应用正常保存的配置。 Server通过`--parallelism`设置默认并行数，默认3；网页从服务读取该默认值，可在启动批次前指定正整数，批次启动后固定。每个实例复用同一套资产，独立连接、进程及结果目录。不按窗口名称或对话框类型强制串行。首轮全部回放、比较和清理完成后，对失败场景完整串行复测一次；准备阻塞、pending与取消不当作可重试失败，清理失败阻止后续启动。首轮保留原场景目录，复测存入`serial-recheck/<场景>`，每个场景的`attempts`保留两次结果路径；最终状态来自实际最后一次结果，串行通过另标“复测通过”，不覆盖首轮失败。程序、场景输入或标准发生变化时停止复测。逐项暂停查看使用串行；同主题场景有空位即补充下一个；并行时暂停会停止补位并等待当前运行实例结束，取消会通知当前各实例并阻止后续任务。逐项暂停发生在应用清理后的场景边界；暂停时后台比较继续，点击继续执行下一项。停止保留已完成结果，未运行及未完成项不能通过。录制、待重试保存、回放和配置修改互斥。
 
 回放记录统一展示截图、完整原始 DB 字节比较和产物证据；图片支持并排、本次、原始差异及原尺寸同步缩放拖动。自动结论直接读取正式报告，人工备注单独保存为 `review-decisions.json`，不能改写自动通过或失败。历史记录按当前程序路径与资产目录筛选；场景列表中的最近结果还核对实际程序哈希及场景输入哈希。
 
@@ -45,9 +47,8 @@ python3 tools/journal/journal_runner.py \
 
 输出目录必须不存在；省略 --app 则仅连接已有实例，默认端口 9999，不负责其退出。
 macOS 的 `.app/Contents/MacOS/` 子程序启动后，中间层等待 LaunchServices 注册，核对本会话
-子 PID、bundle 和可执行路径，从同 bundle 的注册实例中精确选取本会话 PID，再用 `lsappinfo setfront #PID` 激活已有
-进程。它不会用 `open -a` 启动替代实例；身份不符、子进程退出或注册超时按普通启动失败保存诊断。
-激活仍须通过应用原有 Ready 和 replayId 握手；连接已有应用及 Windows/Linux 启动流程保持不变。
+子 PID、bundle 和可执行路径，从同 bundle 的注册实例中精确识别本会话 PID；仅核对身份，不调用 `setfront` 改变前台。它不会用 `open -a` 启动替代实例；身份不符、子进程退出或注册超时按普通启动失败保存诊断。
+实例仍须通过应用原有 Ready 和 replayId 握手；连接已有应用及 Windows/Linux 启动流程保持不变。
 省略 `--output` 时，从应用的 `journal.paths` 读取 `playbacks`，保存到该目录下的
 `session_<时间>_<唯一标识>/`，不依赖运行脚本时的工作目录，也不写入源码目录。
 `journal.paths` 的目录规则：录制使用系统应用数据目录；回放不分 Debug/Release，统一使用
@@ -160,8 +161,52 @@ CLI 连接已有实例回放时，仍使用 `journal.replay.begin` 及 replayId 
 
 主动编写的场景统一放在 `tests/TestAssets/scenarios/`，不再给每个场景配专用 Python 脚本。
 `capture.db`（dbInstanceId）只保存原始完整序列化字节，不作为验证 Action 发给 C++。
-UI 操作不使用属性断言或查询接口；命名目标找不到或输入派发失败，该条目直接失败并停止执行。
+UI 操作不使用业务属性断言或查询接口；默认命名目标找不到或输入派发失败，该条目直接失败并停止执行。
 无验证条目的场景明确标为 not_verified，不把“取到了数据”当作业务正确。
+
+仅当后续真实输入依赖异步界面出现时，可在该条 `input.mouse/input.key/input.wheel`
+的 payload 中显式设置 `readyTimeoutMs`（1–300000 的整数，且必须有命名 target）。
+这是共享 Python 文件执行器的选项，发送输入前从副本移除，默认没有等待。
+执行器先确认当前连接 `system.version` 的 `capabilities.namedInputReadiness` 严格为 true；
+旧程序或不匹配 SDK 在任何探测、输入派发前清晰失败，不能降级重试。
+随后仅通过原 `journal.entry.execute` 的 `checkOnly:true` 请求选项复用目标解析及可输入条件，
+不发送事件、不执行 Action、不追加录制、不读取业务数据。不存在、隐藏、禁用或空几何返回
+`ready:false`；非法输入和歧义目标立即报错。能力查询、分段收包、探测与轮询共享有限单调截止时间，
+等待可取消；超时、取消或通信错误不会发送真实输入。就绪后只派发一次，派发时仍重新检查目标，
+若目标已消失则失败，不循环重发。该等待耗时平移回放时钟，保留后续原 `atMs` 间隔。
+报告中的 `inputReadiness.waitSeconds/probeCount` 及 `startedAt/readyAt/dispatchRequestedAt`
+只是等待与实际输入请求时刻的工具证据，不是业务完成时间；业务成功仍由原 DB、截图及文件检查验证。
+异步取消、负向场景不添加此选项，其原语义保持不变。
+
+需要等待明确的观察前置条件时，仅 `verify.screenshot` 和 `verify.db` 可显式添加：
+
+```json
+"uiReady": {
+  "timeoutMs": 60000,
+  "targets": [
+    {"target": "slicing.preview.viewSelector", "state": "input-ready"},
+    {"target": "gplatform.notificationOverlay", "state": "hidden"}
+  ]
+}
+```
+
+`timeoutMs` 同样为 1–300000 的整数；可指定 `window:{"objectName":"..."}`，默认使用统一回放主窗口。
+此能力先严格确认 `namedTargetVisibility:true`，再用原 `journal.entry.execute` 的
+`checkOnly:true, observeTarget:{target,window}` 纯描述分支查询，不包含 entry/event，也不构造假输入。
+每轮核对全部目标；`hidden` 必须目标确实存在且不可见，禁用、空几何或低透明度不等于隐藏，
+`hidden` 的目标缺失、歧义及非法描述不能成为成功。这些条件不查询任意属性或业务状态。
+复用同一绝对期限、取消及断流处理，等待耗时记入 `uiReadiness` 并平移后续回放时间。
+条件满足后仍只捕获一次并执行原整图比较，不重试截图以寻找匹配帧；能力不匹配时零探测、零捕获。
+该例只表示预览控件可输入及指定 Overlay 隐藏，不表示切片业务成功、没有警告或其他通知全部消失。
+未标注的截图和其他场景保持原语义。
+
+正常用户提交会卸载控件时，可显式选择第三种状态 `absent`（控件不再存在，
+隐藏或禁用但仍存在均不满足）。文件必须在该观察之前含有同一明确
+`window.objectName`、同一 `target` 的真实命名 mouse/key/wheel 输入；缺少该依据、
+不同窗口或未限定窗口的输入均拒绝加载。共享执行器遇到该输入失败会立即停止，
+因此不能以拼错从未出现的目标作为完成条件。该条件仅表示控件生命周期结束，
+不保证业务成功；随后 `verify.db` 只读取一次完整原始字节并照原标准比较，
+不循环读 DB 等待 expected 相同。取消、超时或能力不匹配时零 DB 读取。
 
 只需要保存截图时，JSON 直接使用已有 `action`，code 为 `screenshot.capture`，
 params 例如 `{"filepath":"screenshots/all.png","notify":false}`，不新增截图 Action 或条目类型。
@@ -243,6 +288,7 @@ App 正式场景还在执行结果外生成 `case_result.json`、`case_report.ht
 ```text
 --application FILE   A 电脑上的实际可执行文件
 --app-root DIR       提供统一验收入口与测试资产的 App 源码目录
+--assets DIR         显式测试资产目录，默认使用 App 的 tests/TestAssets
 --exports DIR        A 电脑上 App 实际导出目录
 --output-root DIR    回放结果保存目录，默认沿用应用目录
 --listen ADDRESS     网页监听地址，默认127.0.0.1；局域网用0.0.0.0

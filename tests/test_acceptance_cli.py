@@ -13,7 +13,10 @@ class SelectionTests(unittest.TestCase):
         with patch('run_acceptance.sys.platform', 'win32'):
             self.assertEqual(regression_environment(), dict(
                 QT_ENABLE_HIGHDPI_SCALING='0', QT_SCALE_FACTOR='1', QT_FONT_DPI='96'))
-        for platform in ('darwin', 'linux'):
+        with patch('run_acceptance.sys.platform', 'darwin'):
+            self.assertEqual(regression_environment(), dict(QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM='0'))
+            self.assertEqual(regression_environment(background=True), dict(QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM='1'))
+        for platform in ('linux',):
             with self.subTest(platform=platform), patch('run_acceptance.sys.platform', platform):
                 self.assertIsNone(regression_environment())
 

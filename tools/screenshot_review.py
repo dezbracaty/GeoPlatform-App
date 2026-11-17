@@ -138,42 +138,57 @@ def write_batch_report(output, summary):
     rows, cases = [], []
     for name in summary['plannedCases']:
         case = results.get(name, {})
-        result_path = output / name / 'case_result.json'
+        relative = case.get('result', f'{name}/case_result.json')
+        result_path = (output / relative).resolve()
+        if not result_path.is_relative_to(output):
+            raise ValueError('Case result escapes the batch directory')
         result = json.loads(result_path.read_text(encoding='utf8')) if result_path.is_file() else {}
-        cases.append(dict(id=name, status=case.get('status', 'not_run'),
+        cases.append(dict(id=name, status=case.get('status', 'not_run'), outcome=case.get('outcome'),
+                          attempts=case.get('attempts', []),
                           executionStatus=result.get('executionStatus', 'not_started'),
-                          result=f'{name}/case_result.json' if result else None,
+                          result=relative if result else None,
                           message=result.get('error') or result.get('screenshotReviewError', ''), methodResults=result.get('methodResults', [])))
-        review = result.get('screenshotReview')
-        if review:
-            path = (output / name / review['path']).resolve()
-            if not path.is_relative_to(output):
-                raise ValueError('Screenshot review manifest escapes the batch directory')
-            checkpoints = json.loads(path.read_text(encoding='utf8'))['checkpoints']
-        else:
-            processing = result.get('reviewStatus') == 'processing'
-            execution = {}
-            if processing:
-                execution = {step['index']: step for step in json.loads(
-                    (output / name / 'execution_result.json').read_text(encoding='utf8')).get('results', [])}
-            checkpoints = [dict(item, executionStatus='not_run', comparisonStatus='not_run',
-                                reviewStatus='not_applicable', message=result.get('error') or result.get('screenshotReviewError') or '场景未执行')
-                           for item in summary.get('screenshotCheckpoints', {}).get(name, [])]
-            if processing:
-                for checkpoint in checkpoints:
-                    checkpoint.update(executionStatus=execution.get(checkpoint['index'], {}).get('status', 'not_run'),
-                                      comparisonStatus='processing', message='截图辅助报告后台生成中')
-        for checkpoint in checkpoints:
-            row = dict(checkpoint, case=name)
-            row['id'] = hashlib.sha256(json.dumps([name, row['index'], row.get('baselineSha256'),
-                row.get('actualSha256')], separators=(',', ':')).encode()).hexdigest()
-            for key in ('expected', 'actual', 'expectedView', 'actualView', 'diff', 'rawDiff'):
-                if row.get(key):
-                    path = (output / name / row[key]).resolve()
-                    if not path.is_relative_to(output):
-                        raise ValueError('Screenshot image escapes the batch directory')
-                    row[key] = path.relative_to(output).as_posix()
-            rows.append(row)
+        attempts = case.get('attempts') or [dict(result=relative)]
+        for attempt in attempts:
+            attempt_path = (output / attempt['result']).resolve()
+            if not attempt_path.is_relative_to(output):
+                raise ValueError('Attempt result escapes the batch directory')
+            directory = attempt_path.parent
+            result = json.loads(attempt_path.read_text(encoding='utf8')) if attempt_path.is_file() else {}
+            review = result.get('screenshotReview')
+            if review:
+                path = (directory / review['path']).resolve()
+                if not path.is_relative_to(output):
+                    raise ValueError('Screenshot review manifest escapes the batch directory')
+                checkpoints = json.loads(path.read_text(encoding='utf8'))['checkpoints']
+            else:
+                processing = result.get('reviewStatus') == 'processing'
+                execution = {}
+                if processing:
+                    execution = {step['index']: step for step in json.loads(
+                        (directory / 'execution_result.json').read_text(encoding='utf8')).get('results', [])}
+                checkpoints = [dict(item, executionStatus='not_run', comparisonStatus='not_run',
+                                    reviewStatus='not_applicable', message=result.get('error') or result.get('screenshotReviewError') or '场景未执行')
+                               for item in summary.get('screenshotCheckpoints', {}).get(name, [])]
+                if processing:
+                    for checkpoint in checkpoints:
+                        checkpoint.update(executionStatus=execution.get(checkpoint['index'], {}).get('status', 'not_run'),
+                                          comparisonStatus='processing', message='截图辅助报告后台生成中')
+            for checkpoint in checkpoints:
+                row = dict(checkpoint, case=name)
+                identity = [name, row['index'], row.get('baselineSha256'), row.get('actualSha256')]
+                if attempt.get('stage'):
+                    identity.append(attempt['result'])
+                    row['attemptStage'] = attempt['stage']
+                    row['label'] = ('串行复测' if attempt['stage'] == 'serial-recheck' else '首轮') + ' · ' + row['label']
+                row['id'] = hashlib.sha256(json.dumps(identity, separators=(',', ':')).encode()).hexdigest()
+                for key in ('expected', 'actual', 'expectedView', 'actualView', 'diff', 'rawDiff'):
+                    if row.get(key):
+                        path = (directory / row[key]).resolve()
+                        if not path.is_relative_to(output):
+                            raise ValueError('Screenshot image escapes the batch directory')
+                        row[key] = path.relative_to(output).as_posix()
+                rows.append(row)
     pending = sum(row['reviewStatus'] == 'pending' for row in rows)
     summary['screenshotReviewPendingCount'] = pending
     summary['screenshotReviewManifest'] = 'screenshot_review.json'
@@ -184,8 +199,11 @@ def write_batch_report(output, summary):
     # Keep the existing portable HTML summary as an evidence index, not another reviewer UI.
     escape = html.escape
     links = ''.join('<tr><td>{}</td><td>{}</td><td>{}</td></tr>'.format(escape(case['id']),
-        escape(case['status']), '<a href="{}/case_report.html">场景报告</a>'.format(quote(case['id']))
-        if case['result'] else '未执行') for case in cases)
+        '复测通过' if case.get('outcome') == 'passed_after_recheck' else escape(case['status']),
+        ' · '.join('<a href="{}">{}</a>'.format(quote(Path(a['result']).with_name('case_report.html').as_posix()),
+            '串行复测' if a.get('stage') == 'serial-recheck' else '首轮')
+            for a in case.get('attempts', [])) or ('<a href="{}">场景报告</a>'.format(
+                quote(Path(case['result']).with_name('case_report.html').as_posix())) if case['result'] else '未执行')) for case in cases)
     images = ''.join('<tr class="checkpoint"><td>{} / #{} / {}</td><td>{}</td><td>{}</td></tr>'.format(
         escape(row['case']), row['index'], escape(row['label']), escape(row['executionStatus']),
         escape(row.get('message', ''))) for row in rows)

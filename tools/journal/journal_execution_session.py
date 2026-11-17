@@ -58,8 +58,8 @@ def _macos_bundle_instance(bundle, deadline, expected_pid):
     return owned[0] if owned else None
 
 
-def _activate_owned_macos_application(process, executable, deadline):
-    """Activate only this session's already registered .app child by exact PID."""
+def _identify_owned_macos_application(process, executable, deadline, *, activate=False):
+    """Verify the owned child; only serial replay may activate its exact PID."""
     if (sys.platform != "darwin" or executable.parent.name != "MacOS" or
             executable.parent.parent.name != "Contents" or
             executable.parent.parent.parent.suffix != ".app"):
@@ -82,13 +82,13 @@ def _activate_owned_macos_application(process, executable, deadline):
             break
         time.sleep(min(0.05, max(0, deadline - time.monotonic())))
     check(identity)
-    # Unlike `open -a`, setfront cannot launch a replacement if the child exits
-    # between identity verification and activation. It addresses only this PID.
-    subprocess.run(["/usr/bin/lsappinfo", "setfront", "#" + str(process.pid)],
-                   check=True, capture_output=True, text=True,
-                   timeout=max(0.01, min(2, deadline - time.monotonic())))
-    check(_macos_bundle_instance(bundle, deadline, process.pid))
-    return {"mechanism": "LaunchServices.setfront", "pid": process.pid,
+    if activate:
+        # setfront targets an existing PID and cannot launch a replacement child.
+        subprocess.run(["/usr/bin/lsappinfo", "setfront", "#" + str(process.pid)],
+                       check=True, capture_output=True, text=True,
+                       timeout=max(0.01, min(2, deadline - time.monotonic())))
+        check(_macos_bundle_instance(bundle, deadline, process.pid))
+    return {"mechanism": "LaunchServices.setfront" if activate else "LaunchServices.identity", "pid": process.pid,
             "bundlePath": str(bundle)}
 
 
@@ -111,6 +111,58 @@ def load_application_environment(journal_path):
                 not isinstance(value, str) or "\0" in value):
             raise ValueError("metadata.applicationEnvironment requires string keys and values")
     return environment
+
+
+def _windows_priority_class(process, value=None):
+    """Use the owned Popen handle; never identify a process by name or a new PID."""
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    if value is None:
+        query = kernel.GetPriorityClass
+        query.argtypes = [wintypes.HANDLE]
+        query.restype = wintypes.DWORD
+        value = query(int(process._handle))
+        if not value:
+            raise ctypes.WinError(ctypes.get_last_error())
+    else:
+        update = kernel.SetPriorityClass
+        update.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        update.restype = wintypes.BOOL
+        if not update(int(process._handle), value):
+            raise ctypes.WinError(ctypes.get_last_error())
+    return value
+
+
+def _terminate_owned_application(process, result):
+    # A BelowNormal launcher passes its class to children. Under parallel load,
+    # low-priority Ready threads can delay even TerminateProcess completion.
+    # Normalize only this exiting child, without changing replay scheduling.
+    original = None
+    if sys.platform == "win32":
+        evidence = result.setdefault("applicationTerminationPriority", {})
+        try:
+            current = _windows_priority_class(process)
+            evidence["originalClass"] = current
+            if current in (0x40, 0x4000):  # IDLE, BELOW_NORMAL
+                _windows_priority_class(process, 0x20)  # NORMAL; never HIGH/REALTIME
+                original = current
+                evidence["temporaryClass"] = 0x20
+        except Exception as exc:
+            # Priority adjustment is best effort; the existing termination and
+            # its strict five-second exit check still run and retain failures.
+            evidence["error"] = str(exc)
+    try:
+        process.terminate()
+        process.wait(timeout=5)
+    finally:
+        if original is not None and process.poll() is None:
+            try:
+                _windows_priority_class(process, original)
+                evidence["restoredClass"] = original
+            except Exception as exc:
+                result.setdefault("cleanupErrors", []).append(
+                    f"Owned process priority restoration: {exc}")
 
 
 class JournalExecutionSession:
@@ -169,6 +221,16 @@ class JournalExecutionSession:
                 if environment_overrides is not None:
                     result["environmentOverrides"] = dict(environment_overrides)
                 environment["GPLATFORM_JOURNAL_SESSION"] = "1"
+                if sys.platform == "darwin":
+                    # Ignore ambient/scenario focus settings: the batch owns
+                    # whether this child may activate the shared desktop.
+                    background = (environment_overrides or {}).get(
+                        "QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM") == "1"
+                    if background:
+                        environment["QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM"] = "1"
+                    else:
+                        # Cocoa tests emptiness, so even "0" would disable activation.
+                        environment.pop("QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM", None)
                 # The app owns its Journal location. Buffer startup output until
                 # journal.paths is available; never guess it from the caller's cwd.
                 stream = tempfile.NamedTemporaryFile(mode="wb", prefix="journal-startup-", suffix=".log", delete=False)
@@ -190,9 +252,10 @@ class JournalExecutionSession:
                         time.sleep(min(0.05, max(0, deadline-time.monotonic())))
                 else:
                     raise TimeoutError(f"Application startup timed out: {last_error}")
-                activation = _activate_owned_macos_application(process, executable, deadline)
+                activation = _identify_owned_macos_application(process, executable, deadline,
+                    activate=environment.get("QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM") != "1")
                 if activation is not None:
-                    emit(f"已激活本会话的 macOS 测试实例，PID {process.pid}")
+                    emit(f"已核对本会话的 macOS 测试实例，PID {process.pid}，{activation['mechanism']}")
                 response = client.request("journal.replay.begin", {
                     "replayId": replay_id, "resume": True, "windowProfile": WINDOW_PROFILE},
                     timeout=min(3.0, max(0.01, deadline-time.monotonic())))
@@ -220,8 +283,8 @@ class JournalExecutionSession:
             result["windowProfile"] = WINDOW_PROFILE
             result["actualWindow"] = actual_window
             if activation is not None:
-                result["applicationActivation"] = activation
-            if handshake:
+                result["applicationRegistration"] = activation
+            if handshake and client.client is not None:
                 client.end_replay()
                 handshake = False
         except Exception as exc:
@@ -229,24 +292,31 @@ class JournalExecutionSession:
             emit(f"测试失败：{exc}")
         finally:
             if handshake:
-                try:
-                    client.end_replay()
-                except Exception as exc:
-                    result.setdefault("cleanupErrors", []).append(str(exc))
+                if client.client is None and process is not None and not keep_app:
+                    # An interrupted opt-in probe closes its partial stream.
+                    # The owned child is still terminated/waited below; there
+                    # is no live connection on which to restore replay state.
+                    result["replayCleanup"] = "owned-process-termination"
+                else:
+                    try:
+                        client.end_replay()
+                    except Exception as exc:
+                        result.setdefault("cleanupErrors", []).append(str(exc))
             client.disconnect()
             if process is not None:
-                result["applicationExitCode"] = process.poll()
+                result["applicationPid"] = process.pid
+                process.poll()
                 if process.returncode is not None:
                     result.update(success=False, acceptance="failed",
                                   error=f"Test application exited unexpectedly: {process.returncode}")
                 elif not keep_app:
                     # Only this session's child process. Never search/kill user PIDs.
                     try:
-                        process.terminate()
-                        process.wait(timeout=5)
+                        _terminate_owned_application(process, result)
                     except (OSError, subprocess.TimeoutExpired) as exc:
                         result.setdefault("cleanupErrors", []).append(str(exc))
-                result["applicationKeptOpen"] = process.poll() is None
+                result["applicationExitCode"] = process.poll()
+                result["applicationKeptOpen"] = result["applicationExitCode"] is None
             if not output_ready:
                 try:
                     if output is None:

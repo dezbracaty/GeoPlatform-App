@@ -12,155 +12,168 @@
 #include <QNetworkInformation>
 #include <QCryptographicHash>
 #include <algorithm>
+#include <QTemporaryFile>
+#include <QUuid>
 #include "Foundation/Log.h"
 
 DownloadItem::DownloadItem(const QString& id, const QString& name, const QString& url, QObject* parent)
     : QObject(parent), m_id(id), m_name(name), m_url(url) {
+    m_timeout.setSingleShot(true);
+    connect(&m_timeout, &QTimer::timeout, this, [this] { finish("failed", "Model download timed out"); });
 }
 
 DownloadItem::~DownloadItem() {
-    if (m_reply) {
-        m_reply->abort();
-        m_reply->deleteLater();
-    }
-    if (m_file) {
-        m_file->close();
-        delete m_file;
-    }
+    detachReply();
+    delete m_file;
+}
+
+void DownloadItem::detachReply() {
+    ++m_generation;
+    if (!m_reply) return;
+    auto* reply = m_reply;
+    m_reply = nullptr;
+    disconnect(reply, nullptr, this, nullptr);
+    reply->abort();
+    reply->deleteLater();
+}
+
+void DownloadItem::finish(const QString& status, const QString& error) {
+    if (m_terminal) return;
+    m_terminal = true;
+    m_timeout.stop();
+    detachReply();
+    m_status = status;
+    m_error = error;
+    if (status != "completed" && m_file && m_ownsFile) m_file->remove();
+    emit errorChanged();
+    emit statusChanged();
+    emit finished();
 }
 
 void DownloadItem::start(QNetworkAccessManager* manager) {
-    if (m_status == "downloading") return;
-
-    // Create downloads directory if it doesn't exist
-    QString downloadsPath = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
-    QString modelPath = downloadsPath + "/GPlatform/Models";
-    QDir dir(modelPath);
-    if (!dir.exists()) {
-        dir.mkpath(".");
+    if (m_status == "downloading" || m_terminal) return;
+    m_manager = manager;
+    delete m_file; m_file = nullptr;
+    m_ownsFile = false;
+    const QString modelPath = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation) + "/GPlatform/Models";
+    if (!QDir().mkpath(modelPath)) { finish("failed", "Cannot create the download directory"); return; }
+    if (!m_externalFileName.isEmpty()) {
+        const QUrl url(m_url, QUrl::StrictMode);
+        if (url.scheme() != "https" || url.host().isEmpty() || !url.userInfo().isEmpty() ||
+            QFileInfo(m_externalFileName).fileName() != m_externalFileName ||
+            m_externalFileName.contains('\\') || m_externalFileName.contains(QChar(0))) {
+            finish("failed", "Invalid external download"); return;
+        }
+        auto* temporary = new QTemporaryFile(modelPath + "/.gplatform-XXXXXX");
+        m_file = temporary;
+        if (!temporary->open()) { finish("failed", "Cannot open the temporary download file"); return; }
+        m_ownsFile = true;
+        const QFileInfo name(m_externalFileName);
+        const auto tail = '-' + QUuid::createUuid().toString(QUuid::WithoutBraces) + '.' + name.suffix();
+        auto base = name.completeBaseName();
+        while ((base + tail).toUtf8().size() > 255) {
+            const int count = base.back().isLowSurrogate() && base.size() > 1 ? 2 : 1;
+            base.chop(count);
+        }
+        m_filePath = modelPath + '/' + base + tail;
+        m_timeout.start(m_remainingMs);
+    } else {
+        QString baseFileName = m_name.simplified().replace(" ", "_");
+        QString extension = "." + QUrl(m_url).path().section('.', -1);
+        if (extension == "." || extension.length() > 5) {
+            if (m_url.contains(".stl", Qt::CaseInsensitive)) extension = ".stl";
+            else if (m_url.contains(".obj", Qt::CaseInsensitive)) extension = ".obj";
+            else if (m_url.contains(".gltf", Qt::CaseInsensitive)) extension = ".gltf";
+            else if (m_url.contains(".glb", Qt::CaseInsensitive)) extension = ".glb";
+            else extension = ".3d";
+        }
+        m_filePath = modelPath + "/" + baseFileName + extension;
+        if (QFile::exists(m_filePath))
+            m_filePath = modelPath + "/" + baseFileName + QDateTime::currentDateTime().toString("_yyyyMMdd_HHmmss") + extension;
+        m_file = new QFile(m_filePath);
+        if (!m_file->open(QIODevice::WriteOnly)) { finish("failed", "Cannot open the download file"); return; }
+        m_ownsFile = true;
     }
-
-    // Generate unique filename based on the URL
-    QString baseFileName = m_name.simplified().replace(" ", "_");
-
-    // Extract extension from URL
-    QString urlPath = QUrl(m_url).path();
-    QString extension = "." + urlPath.section('.', -1);
-    if (extension == "." || extension.length() > 5) {
-        // Fallback to common 3D formats
-        if (m_url.contains(".stl", Qt::CaseInsensitive)) extension = ".stl";
-        else if (m_url.contains(".obj", Qt::CaseInsensitive)) extension = ".obj";
-        else if (m_url.contains(".gltf", Qt::CaseInsensitive)) extension = ".gltf";
-        else if (m_url.contains(".glb", Qt::CaseInsensitive)) extension = ".glb";
-        else extension = ".3d"; // Generic 3D file
-    }
-
-    m_filePath = modelPath + "/" + baseFileName + extension;
-
-    // Check if file already exists and add timestamp if needed
-    if (QFile::exists(m_filePath)) {
-        QString timestamp = QDateTime::currentDateTime().toString("_yyyyMMdd_HHmmss");
-        m_filePath = modelPath + "/" + baseFileName + timestamp + extension;
-    }
-
-    m_file = new QFile(m_filePath);
-    if (!m_file->open(QIODevice::WriteOnly)) {
-        m_error = "Failed to open file for writing: " + m_file->errorString();
-        m_status = "failed";
-        emit errorChanged();
-        emit statusChanged();
-        LOG_ERROR("Failed to open file for writing: {}", m_file->errorString().toStdString());
-        return;
-    }
-
-    QNetworkRequest request;
-    request.setUrl(QUrl(m_url));
-    request.setRawHeader("User-Agent", "GPlatform/1.0");
-
-    m_reply = manager->get(request);
-
-    connect(m_reply, &QNetworkReply::downloadProgress, this, &DownloadItem::onDownloadProgress);
-    connect(m_reply, &QNetworkReply::readyRead, this, &DownloadItem::onReadyRead);
-    connect(m_reply, &QNetworkReply::finished, this, &DownloadItem::onFinished);
-
     m_status = "downloading";
+    m_progress = 0; m_downloadedSize = 0; m_redirects = 0;
     emit statusChanged();
-    LOG_INFO("Started download: {} -> {}", m_url.toStdString(), m_filePath.toStdString());
+    beginRequest(QUrl(m_url));
+}
+
+void DownloadItem::beginRequest(const QUrl& url) {
+    QNetworkRequest request(url);
+    request.setRawHeader("User-Agent", "GPlatform/1.0");
+    if (!m_externalFileName.isEmpty())
+        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+    m_reply = m_manager->get(request);
+    const auto generation = ++m_generation;
+    connect(m_reply, &QNetworkReply::downloadProgress, this, [this, generation](qint64 got, qint64 total) {
+        if (generation == m_generation && !m_terminal) onDownloadProgress(got, total);
+    });
+    connect(m_reply, &QNetworkReply::readyRead, this, [this, generation] {
+        if (generation == m_generation && !m_terminal) onReadyRead();
+    });
+    connect(m_reply, &QNetworkReply::finished, this, [this, generation] {
+        if (generation == m_generation && !m_terminal) onFinished();
+    });
 }
 
 void DownloadItem::pause() {
-    if (m_status == "downloading" && m_reply) {
-        m_reply->abort();
-        m_status = "paused";
-        emit statusChanged();
-    }
+    if (m_status != "downloading") return;
+    if (!m_externalFileName.isEmpty()) { m_remainingMs = qMax(1, m_timeout.remainingTime()); m_timeout.stop(); }
+    detachReply();
+    if (m_file && m_ownsFile) m_file->remove();
+    m_status = "paused";
+    emit statusChanged();
 }
 
 void DownloadItem::resume() {
-    // For simplicity, we restart the download
-    // In production, you'd implement proper range requests for resume
-    if (m_status == "paused") {
-        m_status = "pending";
-        emit statusChanged();
-    }
+    if (m_status == "paused") { m_status = "pending"; emit statusChanged(); }
 }
 
 void DownloadItem::cancel() {
-    if (m_reply) {
-        m_reply->abort();
-    }
-    if (m_file) {
-        m_file->remove();
-    }
-    m_status = "cancelled";
-    emit statusChanged();
+    if (!m_terminal) finish("cancelled");
 }
 
 void DownloadItem::onDownloadProgress(qint64 bytesReceived, qint64 bytesTotal) {
     m_downloadedSize = bytesReceived;
     m_totalSize = bytesTotal;
-
-    if (bytesTotal > 0) {
-        m_progress = static_cast<float>(bytesReceived) / bytesTotal;
-    }
-
-    emit downloadedSizeChanged();
-    emit totalSizeChanged();
-    emit progressChanged();
+    if (bytesTotal > 0) m_progress = static_cast<float>(bytesReceived) / bytesTotal;
+    emit downloadedSizeChanged(); emit totalSizeChanged(); emit progressChanged();
 }
 
 void DownloadItem::onReadyRead() {
-    if (m_file && m_reply) {
-        m_file->write(m_reply->readAll());
+    if (!m_file || !m_reply) return;
+    if (!m_externalFileName.isEmpty() && !m_reply->attribute(QNetworkRequest::RedirectionTargetAttribute).isNull()) {
+        m_reply->readAll(); return;
     }
+    const auto bytes = m_reply->readAll();
+    if (m_file->write(bytes) != bytes.size()) finish("failed", "Cannot write the model download");
 }
 
 void DownloadItem::onFinished() {
-    if (m_file) {
-        m_file->flush();
-        m_file->close();
-    }
-
-    if (m_reply->error() == QNetworkReply::NoError) {
-        m_status = "completed";
-        m_progress = 1.0f;
-        emit progressChanged();
-        LOG_INFO("Download completed: {}", m_filePath.toStdString());
-    } else {
-        m_status = "failed";
-        m_error = m_reply->errorString();
-        emit errorChanged();
-        if (m_file) {
-            m_file->remove();
+    if (!m_reply || m_terminal) return;
+    if (m_reply->error() != QNetworkReply::NoError) { finish("failed", "Network download failed"); return; }
+    const auto redirect = m_reply->attribute(QNetworkRequest::RedirectionTargetAttribute);
+    if (!m_externalFileName.isEmpty() && !redirect.isNull()) {
+        const auto next = m_reply->url().resolved(redirect.toUrl());
+        if (++m_redirects > 5 || next.scheme() != "https" || next.host().isEmpty() || !next.userInfo().isEmpty()) {
+            finish("failed", "Invalid or excessive download redirects"); return;
         }
-        LOG_ERROR("Download failed: {}", m_error.toStdString());
+        detachReply();
+        beginRequest(next); return;
     }
-
-    emit statusChanged();
-    emit finished();
-
-    m_reply->deleteLater();
-    m_reply = nullptr;
+    onReadyRead();
+    if (m_terminal) return;
+    if (!m_file->flush()) { finish("failed", "Cannot flush the model download"); return; }
+    m_file->close();
+    if (m_file->error() != QFileDevice::NoError) { finish("failed", "Cannot close the model download"); return; }
+    if (auto* temporary = dynamic_cast<QTemporaryFile*>(m_file)) {
+        if (!temporary->rename(m_filePath)) { finish("failed", "Cannot publish the downloaded model"); return; }
+        temporary->setAutoRemove(false);
+    }
+    m_progress = 1; emit progressChanged();
+    finish("completed");
 }
 
 DownloadManager::DownloadManager(QObject* parent)
@@ -300,7 +313,13 @@ void DownloadManager::fetchPolyHavenDownloadUrl(const QJsonObject& modelData) {
     });
 }
 
-void DownloadManager::startDownload(const QString& id, const QString& name, const QString& downloadUrl) {
+void DownloadManager::startExternalDownload(const QString& id, const QUrl& url, const QString& fileName) {
+    if (getDownload(id)) { emit downloadFailed(id, "Duplicate download request"); return; }
+    startDownload(id, fileName, url.toString(QUrl::FullyEncoded), fileName);
+}
+
+void DownloadManager::startDownload(const QString& id, const QString& name, const QString& downloadUrl,
+                                    const QString& externalFileName) {
     // 🔴 CRITICAL FIX: Check network availability before starting download
     auto netInfo = QNetworkInformation::instance();
     if (netInfo && netInfo->reachability() == QNetworkInformation::Reachability::Disconnected) {
@@ -311,6 +330,7 @@ void DownloadManager::startDownload(const QString& id, const QString& name, cons
     }
 
     auto* item = new DownloadItem(id, name, downloadUrl, this);
+    if (!externalFileName.isEmpty()) item->setExternalFileName(externalFileName);
 
     connect(item, &DownloadItem::finished, [this, item]() {
         const QJsonObject sourceMetadata = m_pendingModelMetadata.take(item->id());
@@ -319,6 +339,10 @@ void DownloadManager::startDownload(const QString& id, const QString& name, cons
             QFileInfo fileInfo(item->filePath());
             addToHistory(item->id(), item->name(), item->filePath(), fileInfo.size(), sourceMetadata);
             emit downloadCompleted(item->id(), item->filePath());
+        } else if (item->status() == "cancelled") {
+            emit downloadCancelled(item->id());
+        } else {
+            emit downloadFailed(item->id(), item->error());
         }
         emit downloadsChanged();
     });
@@ -327,7 +351,7 @@ void DownloadManager::startDownload(const QString& id, const QString& name, cons
     emit downloadsChanged();
     emit downloadStarted(id);
 
-    LOG_INFO("Starting download: {} (network available)", id.toStdString());
+    LOG_INFO("Starting download request: {}", id.toStdString());
     item->start(m_networkManager);
 }
 
@@ -351,7 +375,8 @@ void DownloadManager::resumeDownload(const QString& id) {
     auto netInfo = QNetworkInformation::instance();
     if (netInfo && netInfo->reachability() == QNetworkInformation::Reachability::Disconnected) {
         LOG_ERROR("Network is completely unavailable - cannot resume download: {}", id.toStdString());
-        emit downloadFailed(id, "Network not available. Please check your internet connection and try again later.");
+        if (auto* item = getDownload(id))
+            item->finish("failed", "Network not available. Please check your internet connection and try again later.");
         return;
     }
 

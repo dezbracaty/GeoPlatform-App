@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import socket
 import sys
+import tempfile
 import threading
 import time
 from urllib.parse import urlencode
@@ -20,14 +21,20 @@ from review_model import ReviewBatch
 import run_acceptance
 
 
+DEFAULT_PARALLELISM = run_acceptance.DEFAULT_PARALLELISM
+
+
 class WorkbenchError(ValueError):
     pass
 
 
 class JournalWorkbench:
-    def __init__(self, application=None, app_root=None, exports=None, *, output_root=None):
+    def __init__(self, application=None, app_root=None, exports=None, *, assets=None, output_root=None, parallelism=DEFAULT_PARALLELISM):
+        self.parallelism = run_acceptance.validate_parallelism(parallelism)
         self.app_root = Path(app_root or TOOLS.parents[1]).resolve()
-        self.assets = self.app_root / 'tests/TestAssets'
+        self.assets = Path(assets).resolve() if assets is not None else self.app_root / 'tests/TestAssets'
+        if assets is not None and (not (self.assets / 'catalog.json').is_file() or not (self.assets / 'scenarios').is_dir()):
+            raise WorkbenchError('资产目录必须包含 catalog.json 和 scenarios')
         self.application = str(Path(application).resolve()) if application else ''
         self.exports = str(Path(exports).resolve()) if exports else ''
         defaults = JournalSessionRepository.default_paths(self.application or '.')
@@ -206,11 +213,18 @@ class JournalWorkbench:
                 pass
         task['rows'] = []
         for name in planned:
+            details = task.get('caseProgress', {}).get(name, {})
             status = by_id.get(name, {}).get('status')
             if status is None:
-                status = ('running' if name == task.get('case') and task['state'] in ('running', 'cancelling') else
+                status = (details['status'] if details.get('phase') == 'end' else
+                    'running' if (details.get('phase') == 'begin' or name == task.get('case')) and task['state'] in ('running', 'cancelling') else
                     'not_run' if task['state'] in ('completed', 'cancelled', 'failed') else 'waiting')
-            task['rows'].append(dict(id=name, status=status))
+            if details.get('phase') == 'begin' and details.get('stage') == 'serial-recheck' and task['state'] in ('running', 'cancelling'):
+                status = 'running'
+            row = dict(by_id.get(name, {}), id=name, status=status)
+            if details:
+                row.update(step=details.get('step', 0), totalSteps=details.get('totalSteps', 0))
+            task['rows'].append(row)
 
     def state(self):
         history, records = self._history(), self._records()
@@ -225,17 +239,23 @@ class JournalWorkbench:
                     if case['latestStatus'] is not None:
                         continue
                     try:
-                        result = json.loads((directory / case['id'] / 'case_result.json').read_text(encoding='utf8'))
+                        batch_summary = json.loads((directory / 'summary.json').read_text(encoding='utf8'))
+                        entry = next((c for c in batch_summary.get('cases', []) if c['id'] == case['id']), {})
+                        result_path = (directory / entry.get('result', case['id'] + '/case_result.json')).resolve()
+                        if not result_path.is_relative_to(directory):
+                            continue
+                        result = json.loads(result_path.read_text(encoding='utf8'))
                         provenance = result['provenance']
                         if (provenance.get('applicationSha256') == self.application_hash and
                                 provenance.get('inputs') == self.case_hashes.get(case['id'])):
                             case['latestStatus'] = result['status']
-                            batch_summary = json.loads((directory / 'summary.json').read_text(encoding='utf8'))
+                            case['latestOutcome'] = entry.get('outcome', result['status'])
                             if batch_summary.get('cleanupError'):
-                                case.update(latestStatus='failed', latestError=batch_summary['cleanupError'])
+                                case.update(latestStatus='failed', latestOutcome='failed', latestError=batch_summary['cleanupError'])
                     except (OSError, ValueError, KeyError):
                         continue
             return dict(config=dict(application=self.application, exports=self.exports,
+                defaultExports=tempfile.gettempdir(), parallelism=self.parallelism,
                 assetsRoot=str(self.assets), machine=socket.gethostname(), recordPort=self.record_port),
                 cases=cases, task=task, records=records, history=history,
                 recording=dict(connected=bool(self.client and self.client.client),
@@ -245,10 +265,13 @@ class JournalWorkbench:
                     sessionId=self.identity(self.runner.session_path) if self.runner and self.runner.session_path else None,
                     checkpoints=copy.deepcopy(self.record_points), connectionError=self.connection_error))
 
-    def _session(self):
+    def _session(self, case=None):
         def progress(index, total, entry):
             with self.lock:
                 self.task.update(step=index, totalSteps=total, stepKind=entry['kind'])
+                if case is not None:
+                    self.task.setdefault('caseProgress', {}).setdefault(case, {}).update(
+                        step=index, totalSteps=total, stepKind=entry['kind'])
         return JournalExecutionSession(cancel_event=self.cancel_event, progress=progress, log=self.log)
 
     def run(self, data):
@@ -261,22 +284,29 @@ class JournalWorkbench:
             raise WorkbenchError('所选场景准备阻塞，请先查看场景详情')
         if not self.application or not Path(self.application).is_file():
             raise WorkbenchError('请先配置 A 电脑的 GPlatform 可执行文件')
-        if any(known[c]['needsExports'] for c in ids) and not self.exports:
-            raise WorkbenchError('所选场景需要配置 A 电脑的实际导出目录')
+        needs_exports = any(known[c]['needsExports'] for c in ids)
+        exports = self.exports
         pause_each = data.get('pauseAfterEach', False)
         if not isinstance(pause_each, bool):
             raise WorkbenchError('pauseAfterEach 必须为布尔值')
+        try:
+            jobs = run_acceptance.validate_parallelism(data.get('parallelism', self.parallelism))
+        except ValueError as exc:
+            raise WorkbenchError(str(exc)) from exc
+        if jobs > 1 and pause_each:
+            raise WorkbenchError('逐项暂停查看请使用串行回放')
         output = self.repository.playbacks / ('session_' + time.strftime('%Y%m%d_%H%M%S') + '_' + uuid.uuid4().hex[:8])
         identifier = self._register_run(output)
         args = ['--assets', str(self.assets), '--application', self.application,
-            '--cases', ','.join(ids), '--output', str(output)]
-        if self.exports:
-            args += ['--exports', self.exports]
+            '--cases', ','.join(ids), '--output', str(output), '--jobs', str(jobs), '--recheck-failed-serial']
         def progress(event):
             with self.lock:
-                self.task.update(case=event['case'], caseIndex=event['index'], total=event['total'])
+                self.task.update(case=event['case'], caseIndex=event['index'], total=event['total'],
+                                 stage=event.get('stage', 'initial'))
                 if event['phase'] == 'begin':
                     self.task.update(step=0, totalSteps=0)
+                    self.task.setdefault('caseProgress', {})[event['case']] = dict(step=0, totalSteps=0)
+                self.task.setdefault('caseProgress', {}).setdefault(event['case'], {}).update(event)
             self.log(event['phase'] + ' ' + event['case'] + ' ' + event.get('status', ''))
         def boundary(refresh):
             with self.condition:
@@ -292,14 +322,23 @@ class JournalWorkbench:
                         return
                     self.condition.wait(timeout=.25)
         def operation():
-            code = run_acceptance.main(args, session=self._session(), progress=progress, between_cases=boundary)
+            export_directory = exports
+            if needs_exports and not export_directory:
+                export_directory = tempfile.mkdtemp(prefix='gplatform-journal-exports-')
+            run_args = args + ['--exports', export_directory] if export_directory else args
+            if export_directory:
+                self.log('本次导出目录：' + export_directory)
+            code = run_acceptance.main(run_args, session=self._session(),
+                **({'session_factory': self._session, 'pause_requested': lambda: self.pause_requested} if jobs > 1 else {}),
+                progress=progress, between_cases=boundary)
             summary = json.loads((output / 'summary.json').read_text(encoding='utf8'))
             with self.lock:
                 self.task['summary'] = summary
                 self.task['state'] = ('cancelled' if self.cancel_event.is_set() else 'completed' if code == 0 else 'failed')
                 self.task['error'] = summary.get('cleanupError') or summary.get('error')
         self._submit('regression', operation, plannedCases=ids, total=len(ids),
-            resultId=identifier, output=str(output), pauseAfterEach=pause_each)
+            resultId=identifier, output=str(output), pauseAfterEach=pause_each,
+            parallelism=jobs, caseProgress={})
 
     def pause(self):
         with self.lock:
@@ -489,8 +528,13 @@ class JournalWorkbench:
                     item[key + 'URL'] = self._url(identifier, root, path) if path else None
                 item.update(canReview=model.can_review(row), decision=model.decision(row))
                 rows.append(item)
-        directories = [(c['id'], root / c['id']) for c in cases] if summary is not None else [(cases[0]['id'] if cases else root.name, root)]
-        for case_name, directory in directories:
+        directories = [(c['id'], (root / a['result']).resolve().parent, a.get('stage'))
+            for c in cases for a in (c.get('attempts') or [dict(result=c.get('result') or c['id'] + '/case_result.json')])] if summary is not None else [(cases[0]['id'] if cases else root.name, root, None)]
+        for case_name, directory, stage in directories:
+            if not directory.is_relative_to(root):
+                continue
+            identity = case_name + (':' + stage if stage else '')
+            label_prefix = ('串行复测 · ' if stage == 'serial-recheck' else '首轮 · ') if stage else ''
             try:
                 execution = json.loads((directory / 'execution_result.json').read_text(encoding='utf8'))
                 for step in execution['results']:
@@ -505,8 +549,8 @@ class JournalWorkbench:
                             evidence.append(dict(name=path.name, url=url))
                             if path.suffix == '.json':
                                 details[path.name] = json.loads(path.read_text(encoding='utf8'))
-                    rows.append(dict(id=case_name + ':db:' + str(step['index']), case=case_name,
-                        index=step['index'], label='DB · ' + str(step['index']), kind='verify.db',
+                    rows.append(dict(id=identity + ':db:' + str(step['index']), case=case_name,
+                        index=step['index'], label=label_prefix + 'DB · ' + str(step['index']), kind='verify.db',
                         automaticStatus=step['status'], comparisonStatus=step['status'],
                         message=step.get('message', ''), details=details, evidence=evidence, canReview=False))
                 checks_file = directory / 'checks.json'
@@ -514,8 +558,8 @@ class JournalWorkbench:
                     for check in json.loads(checks_file.read_text(encoding='utf8')):
                         if not check.get('supplemental'):
                             continue
-                        rows.append(dict(id=case_name + ':check:' + check['id'], case=case_name,
-                            label=check['id'], kind='artifact', automaticStatus=check['status'],
+                        rows.append(dict(id=identity + ':check:' + check['id'], case=case_name,
+                            label=label_prefix + check['id'], kind='artifact', automaticStatus=check['status'],
                             message=check.get('message', ''), details=check, canReview=False,
                             evidence=[dict(name=Path(p).name, url=self._url(identifier, root, directory / p))
                                 for p in check.get('evidence', [])]))

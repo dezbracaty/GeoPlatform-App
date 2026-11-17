@@ -24,6 +24,7 @@ class StartupCoordinator final : public QObject {
     Q_PROPERTY(bool ready READ ready NOTIFY changed)
     Q_PROPERTY(bool sceneReady READ sceneReady NOTIFY changed)
     Q_PROPERTY(bool replayMode READ replayMode CONSTANT)
+    Q_PROPERTY(bool backgroundReplay READ backgroundReplay CONSTANT)
     Q_PROPERTY(qint64 elapsedMs READ elapsedMs NOTIFY changed)
 public:
     explicit StartupCoordinator(bool replayMode, QObject* parent = nullptr);
@@ -35,6 +36,7 @@ public:
     bool ready() const { return m_stage == "Ready"; }
     bool sceneReady() const { return m_sceneReady; }
     bool replayMode() const { return m_replayMode; }
+    bool backgroundReplay() const;
     qint64 elapsedMs() const { return m_clock.elapsed(); }
     bool stopped() const { return m_stage == "Failed" || m_stage == "ShuttingDown"; }
     void setStage(const QString& stage, const QString& text);
@@ -45,6 +47,8 @@ public:
     QString admissionError(const QString& code, bool ai) const;
     void fail(const QString& message);
     void beginShutdown();
+    QQuickWindow* mainWindow() const;
+    void activateMainWindow();
     Q_INVOKABLE void attachMainWindow(QObject* window);
     Q_INVOKABLE void attachWorkspace(QObject* renderer);
     Q_INVOKABLE void requestExit();

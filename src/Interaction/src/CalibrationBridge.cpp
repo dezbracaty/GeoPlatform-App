@@ -554,6 +554,7 @@ bool CalibrationBridge::acceptResult(const QVariantMap& observation) {
     const auto path=directory+"/"+m_session->id+".json";
     const auto slot = flow ? m_session->request.flow_filament_slot : 0;
     QJsonObject record{{"version",2},{"task",m_session->id},{"mode",int(m_session->request.mode)},
+        {"applicationPid",QCoreApplication::applicationPid()},
         {"plate",m_selectedPlate},{"parameters",QJsonObject::fromVariantMap(m_parameters)},
         {"observation",QJsonObject::fromVariantMap(observation)}, {"materialKey",key},
         {"machine",QString::fromStdString(active->selection.machine_model_id)},
