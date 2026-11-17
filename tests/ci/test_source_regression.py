@@ -61,7 +61,7 @@ class SourceMRRegression(unittest.TestCase):
             package=controller.build_sdk_package(Path('/fixed/host'), 'macos', Path('/owned/package'), {})
         presets=[c[c.index('--preset')+1] for c in calls if '--preset' in c]
         self.assertEqual(presets, ['arm_release','arm_release','x86_release','x86_release'])
-        self.assertEqual(package, Path('/owned/package'))
+        self.assertEqual(package, Path('/owned/package').resolve())
         self.assertEqual(sum('gplatform_sdk_artifacts' in c for c in calls), 2)
         exports=[c for c in calls if '--export' in c]
         self.assertEqual(len(exports),2)
