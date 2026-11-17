@@ -99,6 +99,18 @@ class WorkbenchTests(unittest.TestCase):
         self.assertEqual(state['task']['state'], 'completed')
         self.assertEqual([r['id'] for r in state['task']['rows']], ['b', 'a'])
 
+    def test_complete_default_order_is_marked_all_without_changing_explicit_order(self):
+        seen=[]
+        def main(args,**kwargs):
+            seen.append(args[args.index('--cases')+1])
+            self.summary(Path(args[args.index('--output')+1]))
+            return 0
+        with patch('journal_workbench.run_acceptance.main',side_effect=main):
+            self.w.run(dict(cases=['a','b']));self.wait()
+            self.w.run(dict(cases=['b','a']));self.wait()
+            self.w.run(dict(cases=['a']));self.wait()
+        self.assertEqual(seen,['all','b,a','a'])
+
     def test_explicit_assets_are_used_for_discovery_execution_and_report(self):
         assets = self.root / 'windows-assets'
         scenario = assets / 'scenarios/a'

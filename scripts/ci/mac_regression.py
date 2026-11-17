@@ -8,6 +8,13 @@ import re
 from pathlib import Path
 import subprocess
 import sys
+import http.cookiejar
+import secrets
+import signal
+import time
+import urllib.request
+import urllib.error
+import uuid
 
 from common import git_env, run, text_git, write_json
 
@@ -35,6 +42,110 @@ def prepare_assets(source, selected_sha=None):
         raise RuntimeError('TestAssets differs from the prepared regression SHA')
     run(['git', '-C', assets, 'lfs', 'pull'], env=env, attempts=3)
     return selected_sha
+
+
+def server_regression(source, executable, output, env, *, timeout=14400):
+    """Own a normal Server process, submit one all-ID task, retain both attempt stages."""
+    output = Path(output)
+    tools = Path(source) / 'tools/journal'
+    sys.path.insert(0, str(tools))
+    from session_repository import discover_scenarios
+    ids = [path.name for path in discover_scenarios(Path(source) / 'tests/TestAssets/scenarios')]
+    if not ids:
+        raise RuntimeError('No active Journal scenarios')
+    code = f'{secrets.randbelow(1000000):06d}'
+    # The CLI owns its existing repository lock and shutdown contract. SIGBREAK
+    # becomes the same KeyboardInterrupt on a Windows-owned console group.
+    wrapper = ("import runpy,signal,sys; "
+               "signal.signal(getattr(signal,'SIGBREAK',signal.SIGTERM),signal.default_int_handler); "
+               "sys.argv=sys.argv[1:]; runpy.run_path(sys.argv[0],run_name='__main__')")
+    command = [sys.executable, '-u', '-c', wrapper, tools / 'journal_server.py',
+               '--application', executable, '--app-root', source, '--assets', Path(source) / 'tests/TestAssets',
+               '--output-root', output / 'run', '--exports', output / 'exports',
+               '--port', '0', '--listen', '127.0.0.1', '--token', code, '--no-browser']
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),
+                                        urllib.request.ProxyHandler({}))
+    base = None
+    def request(path, payload=None):
+        data = None if payload is None else json.dumps(payload).encode()
+        req = urllib.request.Request(base + path, data=data, headers={'Content-Type': 'application/json'})
+        with opener.open(req, timeout=15) as response:
+            return json.load(response)
+    def operation(path, payload=None):
+        return request(path, dict(payload or {}, commandId=uuid.uuid4().hex))
+    task_id = None
+    last_progress = None
+    last_heartbeat = time.monotonic()
+    run_requested = False
+    completed = False
+    with (output / 'regression.log').open('w', encoding='utf8') as log:
+        child = subprocess.Popen(list(map(str, command)), cwd=source, env=env, stdout=log,
+                                 stderr=subprocess.STDOUT,
+                                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0)
+        deadline = time.monotonic() + timeout
+        try:
+            while base is None:
+                if child.poll() is not None:
+                    raise RuntimeError('Journal Server startup failed; inspect regression.log')
+                match = re.search(r'http://127[.]0[.]0[.]1:([0-9]+)', (output / 'regression.log').read_text(encoding='utf8'))
+                if match:
+                    base = match[0]
+                    break
+                if time.monotonic() >= min(deadline, deadline - timeout + 60):
+                    raise TimeoutError('Journal Server did not become ready')
+                time.sleep(.2)
+            print('Journal Server ready: ' + base, flush=True)
+            request('/api/login', {'token': code})
+            run_requested = True
+            operation('/api/run', {'cases': ids})
+            while True:
+                state = request('/api/state')
+                task = state['task']
+                if task_id is None:
+                    task_id = task['id']
+                if task.get('id') != task_id:
+                    raise RuntimeError('Server task identity changed')
+                write_json(output / 'server-state.json', state)
+                progress = (task['state'], task.get('stage'), task.get('caseIndex'), task.get('case'))
+                if progress != last_progress or time.monotonic() - last_heartbeat >= 30:
+                    print('Journal ' + json.dumps({key:task.get(key) for key in
+                        ('state','stage','caseIndex','total','case','step','totalSteps')}, ensure_ascii=False), flush=True)
+                    last_progress, last_heartbeat = progress, time.monotonic()
+                if task['state'] in ('completed', 'failed', 'cancelled'):
+                    completed = True
+                    directory = Path(task['output']).resolve()
+                    if directory.parent != (output / 'run').resolve():
+                        raise RuntimeError('Server returned a result outside owned staging')
+                    summary = json.loads((directory / 'summary.json').read_text(encoding='utf8'))
+                    if (task['state'] != 'completed' or summary.get('status') != 'passed'
+                            or not summary.get('runComplete') or summary.get('cleanupError')
+                            or summary.get('selectionScope') != 'all' or summary.get('candidateCollection')
+                            or sorted(summary.get('plannedCases', [])) != sorted(ids)
+                            or summary.get('completedCaseCount') != len(ids)
+                            or sorted(c['id'] for c in summary.get('cases', [])) != sorted(ids)
+                            or any(c.get('status') != 'passed' for c in summary.get('cases', []))):
+                        raise RuntimeError(f'Journal Server full regression did not pass; see {directory}')
+                    return summary, directory
+                if child.poll() is not None:
+                    raise RuntimeError('Journal Server exited before the task completed')
+                if time.monotonic() >= deadline:
+                    raise TimeoutError('Journal Server regression budget exhausted')
+                time.sleep(1)
+        finally:
+            if child.poll() is None:
+                if base and run_requested and not completed and request('/api/state')['task']['state'] in ('running', 'paused', 'cancelling'):
+                    operation('/api/cancel')
+                    until = time.monotonic() + 60
+                    while time.monotonic() < until:
+                        if request('/api/state')['task']['state'] in ('completed', 'failed', 'cancelled'):
+                            break
+                        time.sleep(.25)
+                    else:
+                        raise RuntimeError('Server cancellation did not finish; owned Server retained for cleanup')
+                child.send_signal(signal.CTRL_BREAK_EVENT if os.name == 'nt' else signal.SIGINT)
+                child.wait(timeout=30)
+            if child.returncode != 0 and completed:
+                raise RuntimeError(f'Journal Server cleanup failed: exit {child.returncode}')
 
 
 def regression(source, bundle, output, env, test_assets_sha=None):
@@ -65,17 +176,9 @@ def regression(source, bundle, output, env, test_assets_sha=None):
                 'QT_AUTO_SCREEN_SCALE_FACTOR', 'QT_FONT_DPI', 'QT_ENABLE_HIGHDPI_SCALING',
                 'QT_SCALE_FACTOR_ROUNDING_POLICY'):
         native_env.pop(key, None)
-    command = [sys.executable, source / 'tools/run_acceptance.py', '--application', executable,
-               '--journal-tools', tools, '--assets', source / 'tests/TestAssets', '--cases', 'all',
-               '--output', output / 'run', '--exports', output / 'exports']
-    with (output / 'regression.log').open('w', encoding='utf8') as log:
-        result = subprocess.run([str(arg) for arg in command], cwd=source, env=native_env,
-                                stdout=log, stderr=subprocess.STDOUT)
-    summary_path = output / 'run/summary.json'
-    summary = json.loads(summary_path.read_text(encoding='utf8')) if summary_path.is_file() else {}
-    if result.returncode != 0 or summary.get('status') != 'passed' or not summary.get('runComplete'):
-        raise RuntimeError(f"Mac mini regression did not pass: exit {result.returncode}; see {output}")
-    return dict(status='passed', assets_sha=assets_sha, case_count=summary['completedCaseCount'])
+    summary, directory = server_regression(source, executable, output, native_env)
+    return dict(status='passed', assets_sha=assets_sha, case_count=summary['completedCaseCount'],
+                summary_path=str(directory / 'summary.json'))
 
 
 def package_and_regress(package, verify, result_path):

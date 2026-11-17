@@ -1,5 +1,6 @@
 """Real SDK payload validation, without claiming an actual platform build."""
 import json
+import hashlib
 import os
 import shutil
 import subprocess
@@ -42,6 +43,8 @@ class AppSDKChecks(unittest.TestCase):
             (root / "sdk-build.json").write_text(json.dumps({
                 "SDK_FORMAT": 3, "GPLATFORM_SDK_ARCH": slot.split("/")[0],
                 "CMAKE_BUILD_TYPE": "Release", "CMAKE_SYSTEM_NAME": "Darwin", "Qt6_VERSION": "6.9.3",
+                "SOURCE_STATE": dict(HEAD='a'*40, DIRTY=False, DIFF_SHA256=hashlib.sha256(b'').hexdigest()),
+                "APP_SOURCE_STATE": dict(HEAD='b'*40, DIRTY=False, DIFF_SHA256=hashlib.sha256(b'').hexdigest()),
                 "UI_BINARY_PACKAGE_VERSION": 1, "CONSUMER_SOURCE_FORKS": ['OrcaSlicer'],
                 "SOURCE_INPUTS": {fork: {'revision': 'revision-' + fork} for fork in forks},
                 "SOURCE_REVISIONS": {fork: 'revision-' + fork for fork in forks},
@@ -55,6 +58,40 @@ class AppSDKChecks(unittest.TestCase):
 
     def test_both_sdk_payloads_validate(self):
         validate_sdk(self.source, self.slots)
+
+    def test_explicit_sdk_root_cannot_silently_fall_back_to_declared_pin(self):
+        external=self.source/'selected-sdk'
+        shutil.move(self.source/'ThirdParty/libs/GPlatformSDK',external)
+        validate_sdk(self.source,self.slots,external)
+        with self.assertRaises(FileNotFoundError):validate_sdk(self.source,self.slots)
+        (external/'arm64/Release/lib/test.a').write_bytes(b'corrupt selected package')
+        with self.assertRaises(RuntimeError):validate_sdk(self.source,self.slots,external)
+
+    def test_source_mode_requires_exact_clean_producer_for_every_slot(self):
+        for slot in self.slots:
+            root=self.source/'ThirdParty/libs/GPlatformSDK'/slot
+            data=json.loads((root/'sdk-build.json').read_text())
+            data['SOURCE_STATE']=dict(HEAD='a'*40,DIRTY=False,DIFF_SHA256=hashlib.sha256(b'').hexdigest())
+            data['APP_SOURCE_STATE']=dict(HEAD='b'*40,DIRTY=False,DIFF_SHA256=hashlib.sha256(b'').hexdigest())
+            (root/'sdk-build.json').write_text(json.dumps(data));self.manifest(root)
+        validate_sdk(self.source,self.slots,producer_root_sha='a'*40,producer_app_sha='b'*40)
+        with self.assertRaisesRegex(RuntimeError,'frozen clean producer'):
+            validate_sdk(self.source,self.slots,producer_root_sha='c'*40)
+        root=self.source/'ThirdParty/libs/GPlatformSDK/x86_64/Release'
+        data=json.loads((root/'sdk-build.json').read_text());data['APP_SOURCE_STATE']['DIRTY']=True
+        (root/'sdk-build.json').write_text(json.dumps(data));self.manifest(root)
+        with self.assertRaisesRegex(RuntimeError,'frozen clean producer'):
+            validate_sdk(self.source,self.slots,producer_app_sha='b'*40)
+
+    def test_published_sdk_with_dirty_or_missing_provenance_is_rejected(self):
+        root=self.source/'ThirdParty/libs/GPlatformSDK/arm64/Release'
+        data=json.loads((root/'sdk-build.json').read_text())
+        data['SOURCE_STATE']['DIRTY']=True
+        (root/'sdk-build.json').write_text(json.dumps(data));self.manifest(root)
+        with self.assertRaisesRegex(RuntimeError,'clean producer'):validate_sdk(self.source,self.slots)
+        data.pop('SOURCE_STATE')
+        (root/'sdk-build.json').write_text(json.dumps(data));self.manifest(root)
+        with self.assertRaisesRegex(RuntimeError,'clean producer'):validate_sdk(self.source,self.slots)
 
     def test_second_architecture_corruption_fails(self):
         (self.source / "ThirdParty/libs/GPlatformSDK/x86_64/Release/lib/test.a").write_bytes(b"corrupt")
@@ -251,6 +288,65 @@ class WindowsEntryChecks(unittest.TestCase):
                         windows_entry(source, 'target with spaces', ['-DNAME=value with spaces'], environment)
                 else:
                     windows_entry(source, 'target with spaces', ['-DNAME=value with spaces'], environment)
+
+
+class SDKSelectionChecks(unittest.TestCase):
+    def test_platform_lfs_materialization_never_follows_a_branch_or_other_platform(self):
+        from common import materialize_sdk
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary).resolve();sha='a'*40
+            for platform,include in [('windows','AMD64/Release/**'),('macos','arm64/Release/**,x86_64/Release/**')]:
+                with self.subTest(platform=platform),patch('common.text_git',side_effect=[str(root),sha,'',sha,'']),patch('common.run') as run:
+                    self.assertEqual(materialize_sdk(root,sha,platform),root)
+                    self.assertEqual(run.call_args.args[0],['git','-C',root,'lfs','pull','--include',include,'--exclude',''])
+    def test_wrong_identity_dirty_checkout_and_mid_transfer_change_fail_closed(self):
+        from common import materialize_sdk
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary).resolve();sha='a'*40
+            for replies in [[str(root),'b'*40],[str(root),sha,' M lib.dll']]:
+                with self.subTest(replies=replies),patch('common.text_git',side_effect=replies),patch('common.run') as run:
+                    with self.assertRaisesRegex(RuntimeError,'frozen clean commit'):materialize_sdk(root,sha,'windows')
+                    run.assert_not_called()
+            with patch('common.text_git',side_effect=[str(root),sha,'','b'*40]),patch('common.run'):
+                with self.assertRaisesRegex(RuntimeError,'changed while materializing'):materialize_sdk(root,sha,'windows')
+            with patch('common.text_git') as git,patch('common.run') as run:
+                with self.assertRaisesRegex(RuntimeError,'frozen clean commit'):materialize_sdk(root,'moving-branch','windows')
+                git.assert_not_called();run.assert_not_called()
+
+
+class InstallerPayloadChecks(unittest.TestCase):
+    def fixture(self, root, *, architecture=0x8664, deployed=b''):
+        import struct
+        payload=bytearray(96);payload[:2]=b'MZ';struct.pack_into('<I',payload,0x3c,64)
+        payload[64:68]=b'PE\x00\x00';struct.pack_into('<H',payload,68,architecture)
+        for name in ['dist/GPlatform.exe','build-Release/GPlatform.exe']:
+            p=root/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(bytes(payload)+deployed)
+        script=root/'package/InstallerScript.iss';script.parent.mkdir();script.write_text('[Files]\n')
+        installer=root/'GPlatform.exe';installer.write_bytes(b'MZInno-fixture')
+        return installer
+
+    def test_windows_checks_actual_amd64_distribution_and_binds_startup_identity(self):
+        from build import inspect_installer
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);package=self.fixture(root)
+            with patch('build.smoke_application',return_value={'status':'passed'}) as smoke:
+                result=inspect_installer(root,'windows',package,root/'checks',{})
+            self.assertEqual(result['status'],'passed')
+            self.assertFalse(result['installation_tested'])
+            self.assertEqual(result['distribution']['GPlatform.exe'],digest(root/'dist/GPlatform.exe'))
+            self.assertIn('independent_extraction_of_Inno_payload',result['not_tested'])
+            self.assertEqual(smoke.call_args.args[1],root/'dist/GPlatform.exe')
+
+    def test_windows_x86_or_stale_distribution_stops_before_startup(self):
+        from build import inspect_installer
+        for fault in ['x86','stale']:
+            with self.subTest(fault=fault),tempfile.TemporaryDirectory() as temporary:
+                root=Path(temporary);package=self.fixture(root,architecture=0x14c if fault=='x86' else 0x8664)
+                if fault=='stale':(root/'build-Release/GPlatform.exe').write_bytes(b'different product')
+                with patch('build.smoke_application') as smoke,self.assertRaises(RuntimeError):
+                    inspect_installer(root,'windows',package,root/'checks',{})
+                smoke.assert_not_called()
+                self.assertEqual(json.loads((root/'checks/installer-checks.json').read_text())['status'],'failed')
 
 
 class JournalSelectionChecks(unittest.TestCase):

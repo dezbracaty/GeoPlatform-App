@@ -1,5 +1,7 @@
 # SDK 包、来源与消费检查
 
+平台工作流见APP_ROOT/docs/ci.md与Root docs/Development/Platform_Workflows.md。SDK固定macos/windows发布，正式消费使用冻结的平台SDK_ROOT；历史单gitlink仍是本地兼容默认，实际构建身份单独报告。
+
 路径显式区分 App 与完整宿主。只有 App 时可检查候选 SDK 和消费端；生产/导出需要相应宿主源码和已有构建产物。
 
 ## 生产侧

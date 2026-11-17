@@ -174,16 +174,35 @@ def _init_pinned_submodules(source, env, *, skip=None, require_sdk=False):
         _init_pinned_submodules(Path(source) / path, env)
 
 
-def init_source_submodules(source, *, consumer=False):
+def init_source_submodules(source, *, consumer=False, external_sdk=False):
     env = git_env()
-    _init_pinned_submodules(source, env, skip=None if consumer else f"App/{SDK_PATH}",
+    skip = SDK_PATH if consumer and external_sdk else None if consumer else f"App/{SDK_PATH}"
+    _init_pinned_submodules(source, env, skip=skip,
                            require_sdk=consumer)
-    if consumer:
+    if consumer and not external_sdk:
         sdk = SDK_PATH
         slot = "AMD64/Release" if os.name == "nt" else None
         include = f"{slot}/**" if slot else "arm64/Release/**,x86_64/Release/**"
         run(["git", "-C", Path(source) / sdk, "lfs", "pull", "--include", include,
              "--exclude", ""], env=env)
+
+
+def materialize_sdk(root, sha, platform):
+    """Materialize only the frozen platform's LFS payload; never follow a branch."""
+    root = Path(root).resolve()
+    if (not re.fullmatch(r'[0-9a-f]{40}', sha)
+            or Path(text_git(root, 'rev-parse', '--show-toplevel')).resolve() != root
+            or text_git(root, 'rev-parse', 'HEAD') != sha
+            or text_git(root, 'status', '--porcelain', '--untracked-files=no')):
+        raise RuntimeError('SDK checkout differs from the frozen clean commit')
+    slots = {'windows': 'AMD64/Release/**', 'macos': 'arm64/Release/**,x86_64/Release/**'}
+    if platform not in slots:
+        raise ValueError('Unknown SDK platform')
+    run(['git', '-C', root, 'lfs', 'pull', '--include', slots[platform], '--exclude', ''],
+        env=git_env(), attempts=3)
+    if text_git(root, 'rev-parse', 'HEAD') != sha or text_git(root, 'status', '--porcelain', '--untracked-files=no'):
+        raise RuntimeError('SDK changed while materializing its fixed payload')
+    return root
 
 
 def digest(path):

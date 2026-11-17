@@ -162,21 +162,11 @@ class ReleaseChecks(unittest.TestCase):
 
 
 class ReleaseWorkflowChecks(unittest.TestCase):
-    def test_publish_is_default_on_and_requires_successful_current_attempt_summary(self):
-        workflow = (ROOT / '.github/workflows/build-app.yml').read_text(encoding='utf-8')
-        setting = workflow.split('      publish_release:\n', 1)[1].split('      request_id:\n', 1)[0]
-        self.assertIn('type: boolean', setting)
-        self.assertIn('default: true', setting)
-        job = workflow.split('  publish:\n', 1)[1]
-        self.assertIn('needs: [prepare, result]', job)
-        self.assertIn('if: inputs.publish_release && needs.prepare.outputs.attempt == github.run_attempt', job)
-        self.assertNotIn('always()', job)
-        self.assertIn('app-windows-${{ github.run_id }}-${{ github.run_attempt }}', job)
-        self.assertIn('app-macos-${{ github.run_id }}-${{ github.run_attempt }}', job)
-        self.assertIn('HAS_RELEASE: ${{ !inputs.publish_release || secrets.GPLATFORM_RELEASE_TOKEN !=', workflow)
-        build = workflow.split('  build:\n', 1)[1].split('  queue_guard:\n', 1)[0]
-        self.assertNotIn('secrets.GPLATFORM_RELEASE_TOKEN', build)
+    def test_installer_does_not_implicitly_publish_a_release(self):
+        workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/build-app.yml').read_text()
+        self.assertNotIn('publish_release:', workflow)
+        self.assertNotIn('GPLATFORM_RELEASE_TOKEN', workflow)
+        self.assertNotIn('publish_release.py', workflow)
 
 
-if __name__ == '__main__':
-    unittest.main()
+if __name__ == '__main__': unittest.main()

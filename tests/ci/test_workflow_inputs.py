@@ -1,79 +1,72 @@
-"""Execute the workflow's real resolver without requiring test assets in package-only mode."""
+"""Execute the maintained installer resolver with independently moving platform branches."""
 import json
 from pathlib import Path
 import shutil
 import subprocess
-import textwrap
 import unittest
 
 
 @unittest.skipUnless(shutil.which('node'), 'Requires Node for the workflow JavaScript contract')
 class WorkflowInputChecks(unittest.TestCase):
-    def resolve(self, run_journal, windows=False):
+    def resolve(self, platform='windows', **refs):
+        module = Path(__file__).resolve().parents[2] / 'scripts/ci/prepare_installer.js'
+        fixture = r'''const calls = [], outputs = {};
+const input = JSON.parse(process.argv[1]);
+Object.assign(process.env, {SOURCE_REF:'feature/app', PLATFORM:input.platform,
+  WINDOWS_SDK_REF:input.windows || 'windows', MACOS_SDK_REF:input.macos || 'macos'});
+const github = {rest:{repos:{
+  async getBranch(args) { calls.push(args); return {data:{commit:{sha:(args.repo === 'App' ? 'a' : args.branch === 'windows' ? 'b':'c').repeat(40)}}}; },
+  async getCommit(args) { calls.push(args); return {data:{sha:args.ref}}; },
+  async getContent(args) {
+    calls.push(args);
+    if (args.path !== 'ThirdParty/libs/GPlatformSDK') throw Error('Installer accessed assets');
+    return {data:{sha:'d'.repeat(40),submodule_git_url:'https://github.com/org/SDK.git'}};
+  }
+}}};
+const summary = {addHeading(){return this},addCodeBlock(){return this},async write(){}};
+require(process.argv[2])({github,context:{repo:{owner:'org',repo:'App'}},
+  core:{setOutput(k,v){outputs[k]=v},summary}})
+.then(() => process.stdout.write(JSON.stringify({calls,outputs})))
+.catch(e => {console.error(e.message);process.exitCode=1});'''
+        return subprocess.run([shutil.which('node'), '-e', fixture, json.dumps(dict(platform=platform, **refs)), str(module)],
+                              text=True, capture_output=True, timeout=15)
+
+    def test_windows_only_never_resolves_macos_or_assets(self):
+        completed = self.resolve()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        result = json.loads(completed.stdout)
+        self.assertEqual(result['outputs']['app_sha'], 'a'*40)
+        self.assertEqual(result['outputs']['windows_sdk_sha'], 'b'*40)
+        self.assertNotIn('macos_sdk_sha', result['outputs'])
+        self.assertEqual([c.get('branch') for c in result['calls'] if 'branch' in c], ['feature/app', 'windows'])
+        self.assertEqual(result['outputs']['declared_sdk_sha'], 'd'*40)
+
+    def test_all_freezes_distinct_platform_shas_from_declared_repository(self):
+        completed = self.resolve('all')
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        result = json.loads(completed.stdout)
+        self.assertEqual(result['outputs']['macos_sdk_sha'], 'c'*40)
+        self.assertEqual(result['outputs']['windows_sdk_sha'], 'b'*40)
+        self.assertTrue(all(c['repo'] == 'SDK' for c in result['calls'] if c.get('branch') in ['windows','macos']))
+
+    def test_exact_sdk_sha_is_verified_without_resolving_a_branch(self):
+        completed = self.resolve('macos', macos='e'*40)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        result = json.loads(completed.stdout)
+        self.assertEqual(result['outputs']['macos_sdk_sha'], 'e'*40)
+        self.assertIn(dict(owner='org',repo='SDK',ref='e'*40), result['calls'])
+
+    def test_invalid_platform_fails_before_resolving_sources(self):
+        completed = self.resolve('linux')
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn('Invalid installer platform', completed.stderr)
+
+    def test_public_installer_has_no_regression_or_release_controls(self):
         workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/build-app.yml').read_text()
-        source_step = workflow.split('      - id: source\n', 1)[1].split('      - id: windows\n', 1)[0]
-        script = textwrap.dedent(source_step.split('          script: |\n', 1)[1])
-        fixture = '''
-        (async () => {
-          process.env.SOURCE_REF = 'feature/gplatform-ui';
-          process.env.TEST_ASSETS_REF = 'missing-on-purpose';
-          process.env.RUN_JOURNAL = RUN_JOURNAL;
-          process.env.RUN_WINDOWS_JOURNAL = WINDOWS;
-          process.env.WINDOWS_TEST_ASSETS_REF = 'windows';
-          const calls = [], outputs = {};
-          const github = {rest: {repos: {
-            async getBranch(args) {
-              calls.push(args);
-              return {data: {commit: {sha: (args.repo === 'GeoPlatform-App' ? 'a' : 'c').repeat(40)}}};
-            },
-            async getContent(args) {
-              calls.push(args);
-              if (args.path === 'ThirdParty/libs/GPlatformSDK')
-                return {data: {sha: 'b'.repeat(40), submodule_git_url: 'https://github.com/example/SDK.git'}};
-              if (process.env.RUN_JOURNAL !== 'true' && process.env.RUN_WINDOWS_JOURNAL !== 'true') throw Error('Package-only run accessed TestAssets');
-              return {data: {sha: 'd'.repeat(40), submodule_git_url: 'https://github.com/example/TestAssets.git'}};
-            }
-          }}};
-          const summary = {addHeading() {return this}, addTable() {return this}, async write() {}};
-          const core = {setOutput(name, value) {outputs[name] = value}, summary};
-          const AsyncFunction = Object.getPrototypeOf(async function() {}).constructor;
-          await new AsyncFunction('github', 'context', 'core', SCRIPT)(github,
-            {repo: {owner: 'example', repo: 'GeoPlatform-App'}}, core);
-          process.stdout.write(JSON.stringify({calls, outputs}));
-        })().catch(error => {console.error(error); process.exitCode = 1});
-        '''
-        fixture = fixture.replace('= RUN_JOURNAL;', '= ' + json.dumps(str(run_journal).lower()) + ';')
-        fixture = fixture.replace('= WINDOWS;', '= ' + json.dumps(str(windows).lower()) + ';')
-        fixture = fixture.replace("'core', SCRIPT)", "'core', " + json.dumps(script) + ")")
-        completed = subprocess.run([shutil.which('node'), '-'], input=fixture,
-                                   text=True, capture_output=True, check=True, timeout=15)
-        return json.loads(completed.stdout)
-
-    def test_disabled_regression_never_resolves_test_assets(self):
-        result = self.resolve(False)
-        self.assertEqual(result['outputs']['app_sha'], 'a' * 40)
-        self.assertEqual(result['outputs']['sdk_sha'], 'b' * 40)
-        self.assertEqual(result['outputs']['test_assets_sha'], '')
-        self.assertEqual(len(result['calls']), 2)
-
-    def test_enabled_regression_still_pins_independent_test_repository(self):
-        result = self.resolve(True)
-        self.assertEqual(result['outputs']['test_assets_sha'], 'c' * 40)
-        self.assertIn(dict(owner='example', repo='TestAssets', branch='missing-on-purpose'), result['calls'])
-
-    def test_windows_only_pins_windows_without_resolving_macmini(self):
-        result = self.resolve(False, windows=True)
-        self.assertEqual(result['outputs']['test_assets_sha'], '')
-        self.assertEqual(result['outputs']['windows_test_assets_sha'], 'c' * 40)
-        self.assertIn(dict(owner='example', repo='TestAssets', branch='windows'), result['calls'])
-        self.assertFalse(any(c.get('branch') == 'missing-on-purpose' for c in result['calls']))
-
-    def test_both_platforms_resolve_their_own_asset_ref(self):
-        result = self.resolve(True, windows=True)
-        self.assertEqual(result['outputs']['windows_test_assets_sha'], 'c' * 40)
-        self.assertIn(dict(owner='example', repo='TestAssets', branch='windows'), result['calls'])
-        self.assertIn(dict(owner='example', repo='TestAssets', branch='missing-on-purpose'), result['calls'])
-
-
-if __name__ == '__main__':
-    unittest.main()
+        dispatch = workflow.split('permissions:', 1)[0]
+        for old in ['run_journal:', 'run_windows_journal:', 'publish_release:', 'test_assets_ref:', 'request_id:']:
+            self.assertNotIn(old, dispatch)
+        self.assertNotIn('publish_release.py', workflow)
+        self.assertIn('--sdk-root', workflow)
+        self.assertIn('--no-run-journal', workflow)
+        self.assertIn('matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}', workflow)

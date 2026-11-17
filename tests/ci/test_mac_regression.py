@@ -80,19 +80,16 @@ class MacRegressionTests(unittest.TestCase):
             for name in ['journal_execution_session.py','journal_runner.py','journal_display_profile.py']:(tools/name).write_text('# managed')
             output=root/'evidence'
             env=dict(GPLATFORM_JOURNAL_TOOLS=str(root/'obsolete-tools'),QT_QPA_PLATFORM='offscreen',QT_SCALE_FACTOR='.5')
-            def execute(args,**kwargs):
-                self.assertNotIn('QT_QPA_PLATFORM',kwargs['env'])
-                self.assertNotIn('QT_SCALE_FACTOR',kwargs['env'])
-                self.assertIn(str(exe),args)
-                self.assertEqual(args[args.index('--cases')+1],'all')
-                self.assertEqual(args[args.index('--journal-tools')+1],str(source/'tools/journal'))
-                run=Path(args[args.index('--output')+1]);run.mkdir()
-                (run/'summary.json').write_text(json.dumps(dict(status='passed',runComplete=True,completedCaseCount=101)))
-                return type('Result',(),{'returncode':0})()
+            def execute(selected, program, destination, environment):
+                self.assertEqual(selected, source)
+                self.assertEqual(program, exe)
+                self.assertNotIn('QT_QPA_PLATFORM', environment)
+                self.assertNotIn('QT_SCALE_FACTOR', environment)
+                return dict(completedCaseCount=101), output / 'run/session_fixture'
             with patch('mac_regression.sys.platform','darwin'),patch('mac_regression.getpass.getuser',return_value='ci'),\
                     patch('mac_regression.subprocess.check_output',return_value='ci\n'),patch('mac_regression.run'),\
                     patch('mac_regression.prepare_assets',return_value='a'*40),patch('mac_regression.text_git',return_value='b'*40),\
-                    patch('mac_regression.subprocess.run',side_effect=execute):
+                    patch('mac_regression.server_regression',side_effect=execute):
                 result=regression(source,bundle,output,env)
             self.assertEqual(result['case_count'],101)
             self.assertEqual(exe.read_bytes(),b'program')
@@ -103,13 +100,9 @@ class MacRegressionTests(unittest.TestCase):
             (tools/'journal_execution_session.py').write_text('# managed')
             bundle=root/'App.app';exe=bundle/'Contents/MacOS/GPlatform';exe.parent.mkdir(parents=True);exe.write_bytes(b'app')
             for name in ['journal_runner.py','journal_display_profile.py']:(tools/name).write_text('# managed')
-            def execute(args,**kwargs):
-                run=Path(args[args.index('--output')+1]);run.mkdir()
-                (run/'summary.json').write_text(json.dumps(dict(status='passed',runComplete=False,completedCaseCount=1)))
-                return type('Result',(),{'returncode':0})()
             with patch('mac_regression.sys.platform','darwin'),patch('mac_regression.getpass.getuser',return_value='ci'),\
                     patch('mac_regression.subprocess.check_output',return_value='ci\n'),patch('mac_regression.run'),\
                     patch('mac_regression.prepare_assets',return_value='a'*40),patch('mac_regression.text_git',return_value='b'*40),\
-                    patch('mac_regression.subprocess.run',side_effect=execute):
+                    patch('mac_regression.server_regression',side_effect=RuntimeError('Server regression did not pass')):
                 with self.assertRaisesRegex(RuntimeError,'did not pass'):
                     regression(source,bundle,root/'out',dict(GPLATFORM_JOURNAL_TOOLS=str(tools)))
