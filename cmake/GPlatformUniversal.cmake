@@ -19,8 +19,15 @@ if(NOT EXISTS "${Qt6_DIR}/Qt6Config.cmake")
 endif()
 
 set(_universal_target GPlatform)
+set(_universal_sdk_args)
 if(EXISTS "${CMAKE_SOURCE_DIR}/App/CMakeLists.txt")
     set(_universal_target gplatform_build)
+else()
+    if(NOT DEFINED GPLATFORM_SDK_ROOT OR "${GPLATFORM_SDK_ROOT}" STREQUAL "")
+        message(FATAL_ERROR "Standalone Universal App requires an explicit GPLATFORM_SDK_ROOT; see docs/ci.md")
+    endif()
+    get_filename_component(GPLATFORM_SDK_ROOT "${GPLATFORM_SDK_ROOT}" ABSOLUTE)
+    list(APPEND _universal_sdk_args --sdk-root "${GPLATFORM_SDK_ROOT}")
 endif()
 set(_universal_environment)
 foreach(_input CMAKE_MAKE_PROGRAM CMAKE_FETCH_CACHE Python3_EXECUTABLE
@@ -38,6 +45,7 @@ add_custom_target(GPlatform ALL
         --arm64-build-dir "${CMAKE_SOURCE_DIR}/build-arm64-${CMAKE_BUILD_TYPE}"
         --x86_64-build-dir "${CMAKE_SOURCE_DIR}/build-x86_64-${CMAKE_BUILD_TYPE}"
         --qt-dir "${Qt6_DIR}" --config "${CMAKE_BUILD_TYPE}"
+        ${_universal_sdk_args}
         --target "${_universal_target}"
     COMMENT "Build, deploy and verify macOS arm64 + x86_64 ${CMAKE_BUILD_TYPE}"
     USES_TERMINAL VERBATIM)

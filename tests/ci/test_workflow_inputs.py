@@ -12,15 +12,15 @@ class WorkflowInputChecks(unittest.TestCase):
         module = Path(__file__).resolve().parents[2] / 'scripts/ci/prepare_installer.js'
         fixture = r'''const calls = [], outputs = {};
 const input = JSON.parse(process.argv[1]);
-Object.assign(process.env, {SOURCE_REF:'feature/app', PLATFORM:input.platform,
+Object.assign(process.env, {APP_REF:'feature/app', PLATFORM:input.platform,
   WINDOWS_SDK_REF:input.windows || 'windows', MACOS_SDK_REF:input.macos || 'macos'});
 const github = {rest:{repos:{
   async getBranch(args) { calls.push(args); return {data:{commit:{sha:(args.repo === 'App' ? 'a' : args.branch === 'windows' ? 'b':'c').repeat(40)}}}; },
   async getCommit(args) { calls.push(args); return {data:{sha:args.ref}}; },
   async getContent(args) {
     calls.push(args);
-    if (args.path !== 'ThirdParty/libs/GPlatformSDK') throw Error('Installer accessed assets');
-    return {data:{sha:'d'.repeat(40),submodule_git_url:'https://github.com/org/SDK.git'}};
+    if (args.path !== 'cmake/sdk-repository.json') throw Error('Installer accessed assets');
+    return {data:{type:'file',encoding:'base64',content:Buffer.from(JSON.stringify(input.declaration === undefined ? {repository:'org/SDK'} : input.declaration)).toString('base64')}};
   }
 }}};
 const summary = {addHeading(){return this},addCodeBlock(){return this},async write(){}};
@@ -39,7 +39,7 @@ require(process.argv[2])({github,context:{repo:{owner:'org',repo:'App'}},
         self.assertEqual(result['outputs']['windows_sdk_sha'], 'b'*40)
         self.assertNotIn('macos_sdk_sha', result['outputs'])
         self.assertEqual([c.get('branch') for c in result['calls'] if 'branch' in c], ['feature/app', 'windows'])
-        self.assertEqual(result['outputs']['declared_sdk_sha'], 'd'*40)
+        self.assertNotIn('declared_sdk_sha', result['outputs'])
 
     def test_all_freezes_distinct_platform_shas_from_declared_repository(self):
         completed = self.resolve('all')
@@ -61,12 +61,20 @@ require(process.argv[2])({github,context:{repo:{owner:'org',repo:'App'}},
         self.assertNotEqual(completed.returncode, 0)
         self.assertIn('Invalid installer platform', completed.stderr)
 
+    def test_invalid_repository_declaration_fails_before_sdk_resolution(self):
+        for declaration in ({}, {'repository':'https://other/SDK'}, {'repository':'../bad'},
+                            {'repository':'org/..'}, {'repository':'org/SDK','pin':'old'}):
+            with self.subTest(declaration=declaration):
+                completed = self.resolve(declaration=declaration)
+                self.assertNotEqual(completed.returncode, 0)
+                self.assertIn('Invalid App SDK repository declaration', completed.stderr)
+
     def test_public_installer_has_no_regression_or_release_controls(self):
-        workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/build-app.yml').read_text()
+        workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/build-installer.yml').read_text()
         dispatch = workflow.split('permissions:', 1)[0]
         for old in ['run_journal:', 'run_windows_journal:', 'publish_release:', 'test_assets_ref:', 'request_id:']:
             self.assertNotIn(old, dispatch)
         self.assertNotIn('publish_release.py', workflow)
         self.assertIn('--sdk-root', workflow)
-        self.assertIn('--no-run-journal', workflow)
+        self.assertNotIn('--no-run-journal', workflow)
         self.assertIn('matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}', workflow)

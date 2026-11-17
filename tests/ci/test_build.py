@@ -25,7 +25,7 @@ class AppSDKChecks(unittest.TestCase):
         (self.source / 'cmake').mkdir()
         shutil.copy2(Path(__file__).resolve().parents[2] / 'cmake/source_inputs.py', self.source / 'cmake/source_inputs.py')
         for slot in self.slots:
-            root = self.source / "ThirdParty/libs/GPlatformSDK" / slot
+            root = self.source / "selected-sdk" / slot
             (root / "lib").mkdir(parents=True)
             (root / "lib/test.a").write_bytes(b"actual payload")
             modules, resources = {}, {}
@@ -57,55 +57,55 @@ class AppSDKChecks(unittest.TestCase):
         (root / "sdk-manifest.json").write_text(json.dumps(entries))
 
     def test_both_sdk_payloads_validate(self):
-        validate_sdk(self.source, self.slots)
+        validate_sdk(self.source, self.slots, self.source/'selected-sdk')
 
     def test_explicit_sdk_root_cannot_silently_fall_back_to_declared_pin(self):
-        external=self.source/'selected-sdk'
-        shutil.move(self.source/'ThirdParty/libs/GPlatformSDK',external)
+        external=self.source/'external-sdk'
+        shutil.move(self.source/'selected-sdk',external)
         validate_sdk(self.source,self.slots,external)
-        with self.assertRaises(FileNotFoundError):validate_sdk(self.source,self.slots)
+        with self.assertRaises(TypeError):validate_sdk(self.source,self.slots)
         (external/'arm64/Release/lib/test.a').write_bytes(b'corrupt selected package')
         with self.assertRaises(RuntimeError):validate_sdk(self.source,self.slots,external)
 
     def test_source_mode_requires_exact_clean_producer_for_every_slot(self):
         for slot in self.slots:
-            root=self.source/'ThirdParty/libs/GPlatformSDK'/slot
+            root=self.source/'selected-sdk'/slot
             data=json.loads((root/'sdk-build.json').read_text())
             data['SOURCE_STATE']=dict(HEAD='a'*40,DIRTY=False,DIFF_SHA256=hashlib.sha256(b'').hexdigest())
             data['APP_SOURCE_STATE']=dict(HEAD='b'*40,DIRTY=False,DIFF_SHA256=hashlib.sha256(b'').hexdigest())
             (root/'sdk-build.json').write_text(json.dumps(data));self.manifest(root)
-        validate_sdk(self.source,self.slots,producer_root_sha='a'*40,producer_app_sha='b'*40)
+        validate_sdk(self.source, self.slots, self.source/'selected-sdk',producer_root_sha='a'*40,producer_app_sha='b'*40)
         with self.assertRaisesRegex(RuntimeError,'frozen clean producer'):
-            validate_sdk(self.source,self.slots,producer_root_sha='c'*40)
-        root=self.source/'ThirdParty/libs/GPlatformSDK/x86_64/Release'
+            validate_sdk(self.source, self.slots, self.source/'selected-sdk',producer_root_sha='c'*40)
+        root=self.source/'selected-sdk/x86_64/Release'
         data=json.loads((root/'sdk-build.json').read_text());data['APP_SOURCE_STATE']['DIRTY']=True
         (root/'sdk-build.json').write_text(json.dumps(data));self.manifest(root)
         with self.assertRaisesRegex(RuntimeError,'frozen clean producer'):
-            validate_sdk(self.source,self.slots,producer_app_sha='b'*40)
+            validate_sdk(self.source, self.slots, self.source/'selected-sdk',producer_app_sha='b'*40)
 
     def test_published_sdk_with_dirty_or_missing_provenance_is_rejected(self):
-        root=self.source/'ThirdParty/libs/GPlatformSDK/arm64/Release'
+        root=self.source/'selected-sdk/arm64/Release'
         data=json.loads((root/'sdk-build.json').read_text())
         data['SOURCE_STATE']['DIRTY']=True
         (root/'sdk-build.json').write_text(json.dumps(data));self.manifest(root)
-        with self.assertRaisesRegex(RuntimeError,'clean producer'):validate_sdk(self.source,self.slots)
+        with self.assertRaisesRegex(RuntimeError,'clean producer'):validate_sdk(self.source, self.slots, self.source/'selected-sdk')
         data.pop('SOURCE_STATE')
         (root/'sdk-build.json').write_text(json.dumps(data));self.manifest(root)
-        with self.assertRaisesRegex(RuntimeError,'clean producer'):validate_sdk(self.source,self.slots)
+        with self.assertRaisesRegex(RuntimeError,'clean producer'):validate_sdk(self.source, self.slots, self.source/'selected-sdk')
 
     def test_second_architecture_corruption_fails(self):
-        (self.source / "ThirdParty/libs/GPlatformSDK/x86_64/Release/lib/test.a").write_bytes(b"corrupt")
+        (self.source / "selected-sdk/x86_64/Release/lib/test.a").write_bytes(b"corrupt")
         with self.assertRaisesRegex(RuntimeError, "missing, changed or outside"):
-            validate_sdk(self.source, self.slots)
+            validate_sdk(self.source, self.slots, self.source/'selected-sdk')
 
     def test_missing_or_extra_payload_fails(self):
-        root = self.source / "ThirdParty/libs/GPlatformSDK/arm64/Release"
+        root = self.source / "selected-sdk/arm64/Release"
         (root / "extra.a").write_bytes(b"undeclared")
         with self.assertRaisesRegex(RuntimeError, "complete package manifest"):
-            validate_sdk(self.source, self.slots)
+            validate_sdk(self.source, self.slots, self.source/'selected-sdk')
 
     def test_sdk_symlink_cannot_read_outside_slot(self):
-        root = self.source / "ThirdParty/libs/GPlatformSDK/arm64/Release"
+        root = self.source / "selected-sdk/arm64/Release"
         outside = self.source / "outside.a"
         outside.write_bytes(b"external")
         if os.name == 'nt':
@@ -127,20 +127,20 @@ class AppSDKChecks(unittest.TestCase):
             rejection = 'missing, changed or outside'
         sentinel = outside.read_bytes()
         with self.assertRaisesRegex(RuntimeError, rejection):
-            validate_sdk(self.source, self.slots)
+            validate_sdk(self.source, self.slots, self.source/'selected-sdk')
         self.assertEqual(outside.read_bytes(), sentinel)
 
     def test_wrong_architecture_fails(self):
-        root = self.source / "ThirdParty/libs/GPlatformSDK/x86_64/Release"
+        root = self.source / "selected-sdk/x86_64/Release"
         (root / "sdk-build.json").write_text(json.dumps({"SDK_FORMAT":3,"GPLATFORM_SDK_ARCH":"arm64"}))
         self.manifest(root)
         with self.assertRaisesRegex(RuntimeError, "matching format"):
-            validate_sdk(self.source, self.slots)
+            validate_sdk(self.source, self.slots, self.source/'selected-sdk')
 
     def test_consumer_checks_real_orca_and_never_requires_private_ui(self):
         from build import source_contract
         orca = self.source / 'ThirdParty/OrcaSlicer'
-        orca.mkdir()
+        orca.mkdir(parents=True)
         def git(*args):
             subprocess.check_call(['git', '-C', str(orca), *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         git('init', '-q')
@@ -152,13 +152,13 @@ class AppSDKChecks(unittest.TestCase):
         contract = source_contract(self.source)
         observed = contract.summary(contract.record(self.source / 'ThirdParty', {'OrcaSlicer': ['payload.cpp']}))['OrcaSlicer']
         for slot in self.slots:
-            root = self.source / 'ThirdParty/libs/GPlatformSDK' / slot
+            root = self.source / 'selected-sdk' / slot
             metadata = json.loads((root / 'sdk-build.json').read_text())
             metadata['SOURCE_INPUTS']['OrcaSlicer'] = observed
             metadata['SOURCE_REVISIONS']['OrcaSlicer'] = observed['revision']
             (root / 'sdk-build.json').write_text(json.dumps(metadata))
             self.manifest(root)
-        metadata = validate_sdk(self.source, self.slots)
+        metadata = validate_sdk(self.source, self.slots, self.source/'selected-sdk')
         validate_source_inputs(self.source, metadata)
         self.assertFalse((self.source / 'ThirdParty/SmoothUI').exists())
         (orca / 'payload.cpp').write_text('changed')
@@ -166,7 +166,7 @@ class AppSDKChecks(unittest.TestCase):
             validate_source_inputs(self.source, metadata)
 
     def test_backslash_manifest_escape_is_rejected(self):
-        root = self.source / 'ThirdParty/libs/GPlatformSDK/arm64/Release'
+        root = self.source / 'selected-sdk/arm64/Release'
         if os.name == 'nt':
             # Backslashes are separators on Windows, so inject the invalid
             # serialized key instead of accidentally creating an outside file.
@@ -177,17 +177,17 @@ class AppSDKChecks(unittest.TestCase):
             (root / 'sdk-manifest.json').write_text(json.dumps(manifest))
             self.assertIn('..\\outside', json.loads((root / 'sdk-manifest.json').read_text()))
             with self.assertRaisesRegex(RuntimeError, 'complete package manifest|outside the package'):
-                validate_sdk(self.source, self.slots)
+                validate_sdk(self.source, self.slots, self.source/'selected-sdk')
             self.assertEqual(outside.read_bytes(), b'preserve')
         else:
             # POSIX permits a literal backslash: exercise the lexical guard too.
             (root / '..\\outside').write_bytes(b'bad')
             self.manifest(root)
             with self.assertRaisesRegex(RuntimeError, 'outside the package'):
-                validate_sdk(self.source, self.slots)
+                validate_sdk(self.source, self.slots, self.source/'selected-sdk')
 
     def test_old_sdk_and_incomplete_provenance_are_rejected(self):
-        root = self.source / "ThirdParty/libs/GPlatformSDK/arm64/Release"
+        root = self.source / "selected-sdk/arm64/Release"
         original = json.loads((root / 'sdk-build.json').read_text())
         for field, value in [('SDK_FORMAT', 2), ('CONSUMER_SOURCE_FORKS', ['OrcaSlicer', 'SmoothUI']),
                              ('SOURCE_INPUTS', {'OrcaSlicer': {'revision': 'only-one'}})]:
@@ -195,23 +195,23 @@ class AppSDKChecks(unittest.TestCase):
             (root / 'sdk-build.json').write_text(json.dumps(metadata))
             self.manifest(root)
             with self.assertRaises(RuntimeError):
-                validate_sdk(self.source, self.slots)
+                validate_sdk(self.source, self.slots, self.source/'selected-sdk')
 
     def test_cross_architecture_contract_mismatch_is_rejected(self):
-        root = self.source / "ThirdParty/libs/GPlatformSDK/x86_64/Release"
+        root = self.source / "selected-sdk/x86_64/Release"
         metadata = json.loads((root / 'sdk-build.json').read_text())
         metadata['Qt6_VERSION'] = '6.8.0'
         (root / 'sdk-build.json').write_text(json.dumps(metadata))
         self.manifest(root)
         with self.assertRaisesRegex(RuntimeError, 'differ'):
-            validate_sdk(self.source, self.slots)
+            validate_sdk(self.source, self.slots, self.source/'selected-sdk')
 
     def test_corrupt_ui_contract_is_rejected_after_manifest_update(self):
-        root = self.source / "ThirdParty/libs/GPlatformSDK/arm64/Release"
+        root = self.source / "selected-sdk/arm64/Release"
         (root / 'ui-package.json').write_text('{}')
         self.manifest(root)
         with self.assertRaisesRegex(RuntimeError, 'contract digest'):
-            validate_sdk(self.source, self.slots)
+            validate_sdk(self.source, self.slots, self.source/'selected-sdk')
 
     def test_missing_qt_cache_is_an_explicit_failure(self):
         build = self.source / "build-arm64-Release"
@@ -266,7 +266,7 @@ class WindowsEntryChecks(unittest.TestCase):
         self.assertEqual(args[0][:3], ['pwsh', '-NoProfile', '-Command'])
         self.assertEqual(kwargs['cwd'], source)
         self.assertEqual(kwargs['env']['BASELINE'], 'preserve')
-        self.assertEqual(kwargs['env']['CI_BUILD_ENTRY'], str(source / 'scripts/build.ps1'))
+        self.assertEqual(kwargs['env']['CI_BUILD_ENTRY'], str(Path(__file__).resolve().parents[2] / 'scripts/build.ps1'))
         self.assertEqual(json.loads(kwargs['env']['CI_CMAKE_ARGS']), arguments)
         self.assertNotIn(str(source), args[0][-1])
         self.assertNotIn(arguments[0], args[0][-1])
@@ -274,20 +274,25 @@ class WindowsEntryChecks(unittest.TestCase):
     @unittest.skipUnless(shutil.which('pwsh'), 'Native PowerShell is exercised on the Windows CI runner')
     def test_real_powershell_preserves_pre_native_failure_native_exit_and_success(self):
         with tempfile.TemporaryDirectory(prefix='App CI entry ') as temporary:
-            source = Path(temporary)
-            script = source / 'scripts/build.ps1'
-            script.parent.mkdir()
-            parameters = '[CmdletBinding()] param([string]$Preset, [string[]]$Targets, [string[]]$CMakeArgs)\n'
+            source = Path(temporary) / 'selected product'
+            source.mkdir()
+            control = Path(temporary) / 'fixed control'
+            script = control / 'scripts/build.ps1'
+            script.parent.mkdir(parents=True)
+            (script.parent / 'ci').mkdir()
+            fixed_module = script.parent / 'ci/build.py'
+            parameters = '[CmdletBinding()] param([string]$SourceDir, [string]$Preset, [string[]]$Targets, [string[]]$CMakeArgs)\n'
             environment = dict(os.environ, CI_TEST_PYTHON=sys.executable)
             for body, code in [("throw 'failure before any native invocation'", 1),
                                ('& $env:CI_TEST_PYTHON -c "import sys; sys.exit(7)"', 7),
                                ("if ($Targets[0] -ne 'target with spaces' -or $CMakeArgs[0] -ne '-DNAME=value with spaces') { throw 'array transport failed' }; & $env:CI_TEST_PYTHON -c 'pass'", 0)]:
                 script.write_text(parameters + body)
                 if code:
-                    with self.assertRaisesRegex(RuntimeError, f'exit {code}'):
+                    with patch('build.__file__', str(fixed_module)), self.assertRaisesRegex(RuntimeError, f'exit {code}'):
                         windows_entry(source, 'target with spaces', ['-DNAME=value with spaces'], environment)
                 else:
-                    windows_entry(source, 'target with spaces', ['-DNAME=value with spaces'], environment)
+                    with patch('build.__file__', str(fixed_module)):
+                        windows_entry(source, 'target with spaces', ['-DNAME=value with spaces'], environment)
 
 
 class SDKSelectionChecks(unittest.TestCase):
@@ -349,24 +354,25 @@ class InstallerPayloadChecks(unittest.TestCase):
                 self.assertEqual(json.loads((root/'checks/installer-checks.json').read_text())['status'],'failed')
 
 
-class JournalSelectionChecks(unittest.TestCase):
-    def test_packaging_only_does_not_require_test_assets(self):
+class InstallerSelectionChecks(unittest.TestCase):
+    def test_packaging_requires_explicit_sdk_without_regression_controls(self):
         arguments = ['build.py', '--source-dir', 'source', '--platform', 'macos',
-                     '--app-sha', 'a' * 40, '--sdk-sha', 'b' * 40, '--no-run-journal']
+                     '--app-sha', 'a' * 40, '--sdk-sha', 'b' * 40, '--sdk-root', 'sdk']
         with patch('sys.argv', arguments), patch('build.build') as execute:
             main()
-        execute.assert_called_once_with(Path('source'), 'macos', 'a' * 40, 'b' * 40, None, run_journal=False)
+        execute.assert_called_once_with(Path('source'), 'macos', 'a' * 40, 'b' * 40, sdk_root=Path('sdk'))
 
-    def test_default_still_requires_assets_for_macos_regression(self):
-        import contextlib
-        import io
-        arguments = ['build.py', '--source-dir', 'source', '--platform', 'macos',
-                     '--app-sha', 'a' * 40, '--sdk-sha', 'b' * 40]
-        with patch('sys.argv', arguments), patch('build.build') as execute, contextlib.redirect_stderr(io.StringIO()):
-            with self.assertRaises(SystemExit) as error:
-                main()
-        self.assertEqual(error.exception.code, 2)
-        execute.assert_not_called()
+    def test_missing_sdk_and_retired_regression_flags_fail_before_build(self):
+        import contextlib, io
+        base = ['build.py', '--source-dir', 'source', '--platform', 'macos',
+                '--app-sha', 'a' * 40, '--sdk-sha', 'b' * 40]
+        for extra in [[], ['--sdk-root', 'sdk', '--run-journal'],
+                      ['--sdk-root', 'sdk', '--test-assets-sha', 'c' * 40]]:
+            with self.subTest(extra=extra), patch('sys.argv', base + extra), patch('build.build') as execute, contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as error:
+                    main()
+                self.assertEqual(error.exception.code, 2)
+                execute.assert_not_called()
 
 
 if __name__ == "__main__":

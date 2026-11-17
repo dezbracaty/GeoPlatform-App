@@ -12,15 +12,19 @@ module.exports = async ({github, context, core}) => {
       throw new Error('Commit did not resolve exactly');
     return sha;
   }
-  const app = await resolve(context.repo, process.env.SOURCE_REF);
-  const {data:sdk} = await github.rest.repos.getContent({...context.repo, path:'ThirdParty/libs/GPlatformSDK', ref:app});
-  const match = /^(?:https:\/\/github\.com\/|git@github\.com:)([^/]+)\/([^/]+?)(?:\.git)?$/.exec(sdk.submodule_git_url || '');
-  if (!match || !/^[0-9a-f]{40}$/.test(sdk.sha)) throw new Error('App SDK declaration missing');
+  const app = await resolve(context.repo, process.env.APP_REF);
+  const {data:file} = await github.rest.repos.getContent({...context.repo, path:'cmake/sdk-repository.json', ref:app});
+  if (file.type !== 'file' || file.encoding !== 'base64' || typeof file.content !== 'string')
+    throw new Error('App SDK repository declaration must be a base64 file');
+  const declaration = JSON.parse(Buffer.from(file.content, 'base64').toString('utf8'));
+  const match = declaration && Object.keys(declaration).length === 1 && typeof declaration.repository === 'string'
+    && /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/.exec(declaration.repository);
+  if (!match || match.slice(1).some(part => part === '.' || part === '..'))
+    throw new Error('Invalid App SDK repository declaration');
   const repository = {owner:match[1], repo:match[2]};
   core.setOutput('app_sha', app);
-  core.setOutput('declared_sdk_sha', sdk.sha);
   core.setOutput('sdk_repository', `${repository.owner}/${repository.repo}`);
-  const receipt = {app_sha:app, declared_sdk_sha:sdk.sha, sdk_repository:repository, platforms:{}};
+  const receipt = {app_sha:app, sdk_repository:repository, platforms:{}};
   for (const platform of platforms) {
     const ref = process.env[platform.toUpperCase() + '_SDK_REF'] || platform;
     const sha = await resolve(repository, ref);

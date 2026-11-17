@@ -1,3 +1,4 @@
+import base64
 """MR controller boundaries; no platform build or Journal success is mocked as acceptance."""
 import contextlib
 import importlib.util
@@ -10,26 +11,10 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-CONTROL = Path(os.environ['GPLATFORM_CI_CONTROL_ROOT']) if os.environ.get('GPLATFORM_CI_CONTROL_ROOT') else None
-controller = None
-if CONTROL and (CONTROL / 'scripts/ci/source_regression.py').is_file():
-    directory = str(CONTROL / 'scripts/ci')
-    saved_path = list(sys.path)
-    saved_modules = {name: sys.modules.pop(name, None) for name in ('common', 'update_sdk', 'regression')}
-    try:
-        sys.path.insert(0, directory)
-        spec = importlib.util.spec_from_file_location('host_source_regression', Path(directory) / 'source_regression.py')
-        controller = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(controller)
-    finally:
-        sys.path[:] = saved_path
-        for name, value in saved_modules.items():
-            sys.modules.pop(name, None)
-            if value is not None:
-                sys.modules[name] = value
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts/ci'))
+import source_regression as controller
 
 
-@unittest.skipUnless(controller, 'Full-host MR controller is not selected for this standalone App check')
 class SourceMRRegression(unittest.TestCase):
     def test_freezes_platform_branches_without_resolving_published_sdk(self):
         class API:
@@ -37,21 +22,24 @@ class SourceMRRegression(unittest.TestCase):
             def request(self, method, path):
                 self.calls.append((method, path))
                 responses = {
+                    '/repos/org/App/commits/' + 'b'*40: {'sha':'b'*40},
+                    '/repos/org/Host/commits/' + 'a'*40: {'sha':'a'*40},
                     '/repos/org/Host/contents/App?ref=' + 'a'*40:
                         {'sha':'b'*40, 'submodule_git_url':'https://github.com/org/App.git'},
                     '/repos/org/App/contents/tests/TestAssets?ref=' + 'b'*40:
                         {'sha':'c'*40, 'submodule_git_url':'https://github.com/org/TestAssets.git'},
-                    '/repos/org/App/contents/ThirdParty/libs/GPlatformSDK?ref=' + 'b'*40:
-                        {'sha':'f'*40, 'submodule_git_url':'https://github.com/org/SDK.git'},
+                    '/repos/org/App/contents/cmake/sdk-repository.json?ref=' + 'b'*40:
+                        {'type':'file','encoding':'base64','content':base64.b64encode(b'{"repository":"org/SDK"}').decode()},
                     '/repos/org/TestAssets/branches/macmini': {'commit':{'sha':'d'*40}},
                     '/repos/org/TestAssets/branches/windows': {'commit':{'sha':'e'*40}},
                 }
                 return 200, responses[path]
         api = API()
-        result = controller.prepare(api, 'org/Host', 'a'*40, 'org/App')
+        result = controller.prepare(api, 'org/App', 'b'*40, 'org/Host', 'a'*40)
         self.assertEqual(result, {'source_sha':'a'*40, 'app_sha':'b'*40,
+                                 'declared_app_sha':'b'*40, 'app_repository':'org/App', 'host_repository':'org/Host',
                                  'macos_assets_sha':'d'*40, 'windows_assets_sha':'e'*40, 'sdk_repository':'org/SDK'})
-        self.assertEqual(len(api.calls), 5)
+        self.assertEqual(len(api.calls), 7)
         self.assertFalse(any('/repos/org/SDK/' in path for _, path in api.calls))
 
     def test_sdk_producer_uses_both_official_mac_presets_and_one_package(self):
@@ -71,22 +59,24 @@ class SourceMRRegression(unittest.TestCase):
         class API:
             def request(self, *args): raise AssertionError('Must reject invalid inputs before API')
         with self.assertRaisesRegex(ValueError, 'forbidden'):
-            controller.prepare(API(), 'org/Host', 'a'*40, 'org/App', windows_sdk_ref='windows')
+            controller.prepare(API(), 'org/App', 'b'*40, 'org/Host', 'a'*40, windows_sdk_ref='windows')
 
     def test_published_freezes_only_selected_platform_sdk_and_asset_shas(self):
         class API:
             def __init__(self): self.calls=[]
             def request(self, method, path):
                 self.calls.append(path)
-                if '/contents/App?' in path: result={'sha':'b'*40,'submodule_git_url':'https://github.com/org/App.git'}
+                if path.endswith('/commits/'+'a'*40): result={'sha':'a'*40}
+                elif path.endswith('/commits/'+'b'*40): result={'sha':'b'*40}
+                elif '/contents/App?' in path: result={'sha':'b'*40,'submodule_git_url':'https://github.com/org/App.git'}
                 elif '/contents/tests/' in path: result={'sha':'c'*40,'submodule_git_url':'https://github.com/org/Assets.git'}
-                elif '/contents/ThirdParty/' in path: result={'sha':'f'*40,'submodule_git_url':'https://github.com/org/SDK.git'}
+                elif '/contents/cmake/sdk-repository.json?' in path: result={'type':'file','encoding':'base64','content':base64.b64encode(b'{"repository":"org/SDK"}').decode()}
                 elif path.endswith('/branches/windows'): result={'commit':{'sha':'d'*40}}
                 elif path.endswith('/commits/'+'e'*40): result={'sha':'e'*40}
                 else: raise AssertionError(path)
                 return 200,result
         api=API()
-        result=controller.prepare(api,'org/Host','a'*40,'org/App',platform='windows',sdk_source='published',windows_sdk_ref='e'*40)
+        result=controller.prepare(api,'org/App','b'*40,'org/Host','a'*40,platform='windows',sdk_source='published',windows_sdk_ref='e'*40)
         self.assertEqual(result['windows_sdk_sha'],'e'*40)
         self.assertEqual(result['windows_assets_sha'],'d'*40)
         self.assertNotIn('macos_assets_sha',result)
@@ -114,7 +104,7 @@ class SourceMRRegression(unittest.TestCase):
             with patch.object(controller, 'run', side_effect=RuntimeError('Pillow missing')), \
                  patch.object(controller, 'build_sdk_package') as build:
                 with self.assertRaisesRegex(RuntimeError, 'Pillow missing'):
-                    controller.regress(root, 'macos', 'a'*40, 'd'*40, output)
+                    controller.regress(root, 'macos', 'a'*40, 'd'*40, output, app_sha='b'*40, app_repository='org/App')
             build.assert_not_called()
             self.assertEqual(json.loads((output/'source-regression.json').read_text())['status'],'failed')
 
@@ -135,17 +125,19 @@ sys.meta_path.insert(0, NoOptionalPackages())
             with patch.object(controller, 'run', side_effect=admission), \
                  patch.object(controller, 'machine_lock', side_effect=RuntimeError('admission passed')):
                 with self.assertRaisesRegex(RuntimeError, 'admission passed'):
-                    controller.regress(root, 'macos', 'a'*40, 'd'*40, root/'evidence')
+                    controller.regress(root, 'macos', 'a'*40, 'd'*40, root/'evidence', app_sha='b'*40, app_repository='org/App')
 
     def pipeline(self, root, output, *, compiler_error=False, receipt_assets='d'*40):
         executable=root/'consumer-app'; executable.write_bytes(b'actual fixture executable')
         def run(args, **kw):
             if '-c' in args and args[2] == controller.APP_CONSUMER:
                 payload=json.loads(args[3])
+                self.assertEqual(Path(payload['ci_dir']), Path(controller.__file__).resolve().parent)
                 self.assertEqual(payload['producer_root_sha'],'a'*40)
                 self.assertEqual(payload['producer_app_sha'],'b'*40)
                 (output/'consumer-receipt.json').write_text(json.dumps({'executable':str(executable),'sdk_root':payload['sdk_root']}))
             if '-c' in args and args[2] == controller.APP_REGRESSION:
+                self.assertEqual(Path(json.loads(args[3])['ci_dir']), Path(controller.__file__).resolve().parent)
                 # No duplicate Authorization headers leak between the two common modules.
                 self.assertEqual(kw['env'].get('GIT_CONFIG_COUNT'),'1')
                 directory=output/'journals/run/session_fixture';directory.mkdir(parents=True)
@@ -162,18 +154,18 @@ sys.meta_path.insert(0, NoOptionalPackages())
             stack.enter_context(patch.dict(os.environ, {'GIT_CONFIG_COUNT':'1','GIT_CONFIG_KEY_0':'core.eol','GIT_CONFIG_VALUE_0':'lf'}))
             stack.enter_context(patch.object(controller,'machine_lock',return_value=contextlib.nullcontext()))
             stack.enter_context(patch.object(controller,'prepare_cached_source'))
-            stack.enter_context(patch.object(controller,'init_source_submodules'))
+            stack.enter_context(patch.object(controller,'init_host_submodules'))
             stack.enter_context(patch.object(controller,'text_git',return_value='b'*40))
             stack.enter_context(patch.object(controller,'run',side_effect=run))
             stack.enter_context(patch.object(controller.native_checks,'build_environment',return_value={}))
             native=stack.enter_context(patch.object(controller.native_checks,'architecture',return_value={'returncode':0}))
             build=stack.enter_context(patch.object(controller,'build_sdk_package',side_effect=produce))
             publish=stack.enter_context(patch.object(controller,'update_sdk',return_value={'published':False,'sdk_sha':''}))
-            result=controller.regress(root,'macos','a'*40,'d'*40,output,sdk_repository='org/SDK')
+            result=controller.regress(root,'macos','a'*40,'d'*40,output,app_sha='b'*40,app_repository='org/App',sdk_repository='org/SDK')
             self.assertEqual(build.call_count,1)
-            self.assertEqual(publish.call_args.kwargs,{'publish':False})
+            self.assertEqual(publish.call_args.kwargs,{'app_sha':'b'*40,'publish':False})
             self.assertEqual([c.args[1] for c in native.call_args_list],['arm64','x86_64'])
-            self.assertTrue(all(c.kwargs['run_journal'] is False for c in native.call_args_list))
+            self.assertTrue(all(not c.kwargs for c in native.call_args_list))
             return result
 
     def test_compile_failure_stops_before_gui_and_retains_failure_evidence(self):
@@ -205,7 +197,7 @@ sys.meta_path.insert(0, NoOptionalPackages())
     def test_invalid_published_identity_is_rejected_before_any_build(self):
         with tempfile.TemporaryDirectory() as temporary, patch.object(controller,'build_sdk_package') as build:
             with self.assertRaisesRegex(ValueError,'frozen SDK'):
-                controller.regress(temporary,'windows','a'*40,'d'*40,Path(temporary)/'output',sdk_source='published')
+                controller.regress(temporary,'windows','a'*40,'d'*40,Path(temporary)/'output',app_sha='b'*40,app_repository='org/App',sdk_source='published')
             build.assert_not_called()
 
 

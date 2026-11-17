@@ -13,8 +13,6 @@ import shutil
 import sys
 import tempfile
 
-from mac_regression import regression, package_and_regress
-from windows_regression import regression as windows_regression
 from common import digest, git_env, init_source_submodules, machine_lock, materialize_sdk, prepare_cached_source, run, text_git, write_json
 
 
@@ -39,8 +37,8 @@ def source_contract(source):
     return module
 
 
-def validate_sdk(source, slots, sdk_root=None, *, producer_root_sha=None, producer_app_sha=None):
-    sdk_root = Path(sdk_root) if sdk_root is not None else source / 'ThirdParty/libs/GPlatformSDK'
+def validate_sdk(source, slots, sdk_root, *, producer_root_sha=None, producer_app_sha=None):
+    sdk_root = Path(sdk_root)
     contract = source_contract(source)
     result = {}
     for slot in slots:
@@ -78,11 +76,11 @@ def validate_source_inputs(source, metadata):
 def windows_entry(source, target, cmake_args, env):
     command = ("$ErrorActionPreference = 'Stop'; try { "
                '$global:LASTEXITCODE = 0; '
-               '& $env:CI_BUILD_ENTRY -Preset release -Targets $env:CI_BUILD_TARGET '
+               '& $env:CI_BUILD_ENTRY -SourceDir $env:CI_SOURCE_DIR -Preset release -Targets $env:CI_BUILD_TARGET '
                '-CMakeArgs @($env:CI_CMAKE_ARGS | ConvertFrom-Json); exit $LASTEXITCODE '
                '} catch { [Console]::Error.WriteLine($_); exit 1 }')
-    step_env = dict(env, CI_BUILD_ENTRY=str(source / 'scripts/build.ps1'),
-                    CI_BUILD_TARGET=target, CI_CMAKE_ARGS=json.dumps(cmake_args))
+    step_env = dict(env, CI_BUILD_ENTRY=str(Path(__file__).resolve().parents[1] / 'build.ps1'),
+                    CI_SOURCE_DIR=str(source), CI_BUILD_TARGET=target, CI_CMAKE_ARGS=json.dumps(cmake_args))
     run(['pwsh', '-NoProfile', '-Command', command], cwd=source, env=step_env)
 
 
@@ -110,7 +108,7 @@ def build_consumer(source, platform, sdk_root, env, *, producer_root_sha=None, p
         run(['arch', '-x86_64', '/usr/bin/true'], env=env)
         directories = []
         for preset, directory in [('arm_release', 'build-arm64-Release'), ('x86_release', 'build-x86_64-Release')]:
-            run(['bash', source / 'scripts/build.sh', '--preset', preset, '--configure-only', '--', *arguments], cwd=source, env=env)
+            run(['bash', Path(__file__).resolve().parents[1] / 'build.sh', '--source-dir', source, '--preset', preset, '--configure-only', '--', *arguments], cwd=source, env=env)
             run(['cmake', '--build', '--preset', preset, '--target', 'GPlatform', 'SDKConsumerExtensionCheck'], cwd=source, env=env)
             directories.append(directory)
         executable = source / 'build-arm64-Release/GPlatform.app/Contents/MacOS/GPlatform'
@@ -169,7 +167,7 @@ def inspect_installer(source, platform, package, output, env):
                     raise RuntimeError('DMG must contain exactly one App bundle')
                 bundle = bundles[0]
                 original = source / 'build-universal-Release/GPlatform.app'
-                spec = importlib.util.spec_from_file_location('installer_bundle_audit', source / 'scripts/macos_bundle.py')
+                spec = importlib.util.spec_from_file_location('installer_bundle_audit', Path(__file__).resolve().parents[1] / 'macos_bundle.py')
                 audit = importlib.util.module_from_spec(spec); spec.loader.exec_module(audit)
                 audit.audit_bundle(bundle)
                 for relative, path in audit.inventory(original).items():
@@ -211,13 +209,10 @@ def inspect_installer(source, platform, package, output, env):
         write_json(output / 'installer-checks.json', result)
 
 
-def build(source, platform, app_sha, sdk_sha, test_assets_sha=None, *, run_journal=True, sdk_root=None):
+def build(source, platform, app_sha, sdk_sha, *, sdk_root):
     source = source.resolve()
     if text_git(source, "rev-parse", "HEAD") != app_sha:
         raise RuntimeError("App source SHA changed")
-    declared_sdk_sha = text_git(source, 'rev-parse', 'HEAD:ThirdParty/libs/GPlatformSDK')
-    if sdk_root is None and declared_sdk_sha != sdk_sha:
-        raise RuntimeError('App SDK gitlink differs from prepared SHA')
     output = Path(tempfile.mkdtemp(prefix="app-package-", dir=os.environ["RUNNER_TEMP"]))
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
         f.write(f"deliverables={output}\n")
@@ -226,10 +221,10 @@ def build(source, platform, app_sha, sdk_sha, test_assets_sha=None, *, run_journ
     env = git_env()
     with machine_lock():
         prepare_cached_source(source, app_sha, platform, consumer=True)
-        init_source_submodules(source, consumer=True, external_sdk=sdk_root is not None)
-        actual_sdk = materialize_sdk(sdk_root, sdk_sha, platform) if sdk_root is not None else source / 'ThirdParty/libs/GPlatformSDK'
+        init_source_submodules(source)
+        actual_sdk = materialize_sdk(sdk_root, sdk_sha, platform)
         consumer = build_consumer(source, platform, actual_sdk, env)
-        sdk_identity = dict(declared_sdk_sha=declared_sdk_sha, sdk_root=str(actual_sdk),
+        sdk_identity = dict(sdk_root=str(actual_sdk),
                             control_sha=text_git(Path(__file__).resolve().parents[2], 'rev-parse', 'HEAD'),
                             run_id=os.environ.get('GITHUB_RUN_ID'), run_attempt=os.environ.get('GITHUB_RUN_ATTEMPT'),
                             sdk_producers={slot: {key: data.get(key) for key in ('SOURCE_STATE', 'APP_SOURCE_STATE')}
@@ -249,22 +244,14 @@ def build(source, platform, app_sha, sdk_sha, test_assets_sha=None, *, run_journ
             package = packages[0]
             architecture = "x64"
         else:
-            run([sys.executable, source / "scripts/build_macos_universal.py", "--source-dir", source,
-                 "--config", "Release", "--merge-only"], cwd=source, env=env)
+            run([sys.executable, Path(__file__).resolve().parents[1] / "build_macos_universal.py", "--source-dir", source,
+                 "--config", "Release", "--merge-only", "--sdk-root", actual_sdk], cwd=source, env=env)
             report = json.loads((source / "build-universal-Release/report.json").read_text())
             if report.get("status") != "passed" or report.get("architectures") != ["arm64", "x86_64"]:
                 raise RuntimeError("Universal package audit did not pass")
             bundle = source / "build-universal-Release/GPlatform.app"
-            regression_output = None
-            if run_journal:
-                regression_output = Path(tempfile.mkdtemp(prefix="app-regression-", dir=os.environ["RUNNER_TEMP"]))
-                with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf8") as stream:
-                    stream.write(f"regression_results={regression_output}\n")
-                with open(os.environ["GITHUB_ENV"], "a", encoding="utf8") as stream:
-                    stream.write(f"APP_REGRESSION_ROOT={regression_output}\n")
-            # The established package helper reads the completed, signed App;
-            # it does not modify the bundle being exercised by GUI regression.
-            spec = importlib.util.spec_from_file_location('selected_macos_bundle', source / 'scripts/macos_bundle.py')
+            # Package only after the completed Universal payload has passed its audit.
+            spec = importlib.util.spec_from_file_location('selected_macos_bundle', Path(__file__).resolve().parents[1] / 'macos_bundle.py')
             packaging = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(packaging)
             package = output / 'GPlatform.dmg'
@@ -276,17 +263,17 @@ def build(source, platform, app_sha, sdk_sha, test_assets_sha=None, *, run_journ
                 (output / (package.name + '.sha256')).write_text(f'{checksum}  {package.name}\n')
                 checks = inspect_installer(source, platform, package, output, env)
                 return dict(package=package.name, sha256=checksum, checks=checks)
-            verify = (lambda: regression(source, bundle, regression_output, env, test_assets_sha)) if run_journal else None
-            stages = package_and_regress(make_installer, verify, output / 'mac-stages.json')
-            architecture = "universal"
-            if regression_output is not None:
-                write_json(regression_output / 'regression-result.json', stages['regression'])
-            write_json(output / 'build-result.json', dict(app_sha=app_sha, sdk_sha=sdk_sha,
-                platform=platform, architecture=architecture, **sdk_identity, sdk_consumer_check='passed',
-                installer=stages['installer'], regression=stages['regression'], installation_tested=False))
-            if stages['installer']['status'] != 'passed' or (run_journal and stages['regression']['status'] != 'passed'):
-                raise RuntimeError('macOS installer or regression failed; both stage results are retained')
-            print('macOS installer passed; Journal regression ' + stages['regression']['status'])
+            installer = dict(status='failed')
+            try:
+                installer.update(make_installer(), status='passed')
+            except Exception as error:
+                installer['error'] = f'{type(error).__name__}: {error}'
+                raise
+            finally:
+                write_json(output / 'build-result.json', dict(app_sha=app_sha, sdk_sha=sdk_sha,
+                    platform=platform, architecture='universal', **sdk_identity, sdk_consumer_check='passed',
+                    installer=installer, installation_tested=False))
+            print('macOS installer and package checks passed')
             return
         if not package.is_file() or not package.stat().st_size:
             raise RuntimeError("Installer is missing or empty")
@@ -297,25 +284,7 @@ def build(source, platform, app_sha, sdk_sha, test_assets_sha=None, *, run_journ
         checks = inspect_installer(source, platform, destination, output, env)
         write_json(output / "build-result.json", dict(app_sha=app_sha, sdk_sha=sdk_sha, checks=checks,
                    platform=platform, architecture=architecture, **sdk_identity, sdk_consumer_check="passed",
-                   package=destination.name, sha256=checksum, installation_tested=False,
-                   regression=dict(status='pending' if run_journal else 'skipped', reason='run_journal=false' if not run_journal else 'not_started')))
-        if run_journal:
-            regression_output = Path(tempfile.mkdtemp(prefix='app-regression-', dir=os.environ['RUNNER_TEMP']))
-            with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as stream:
-                stream.write(f'regression_results={regression_output}\n')
-            with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as stream:
-                stream.write(f'APP_REGRESSION_ROOT={regression_output}\n')
-            result_path = output / 'build-result.json'
-            result = json.loads(result_path.read_text(encoding='utf-8'))
-            try:
-                result['regression'] = windows_regression(source, source / 'build-Release/GPlatform.exe',
-                                                          regression_output, env, test_assets_sha)
-            except Exception as exc:
-                result['regression'] = dict(status='failed', error=str(exc))
-                raise
-            finally:
-                write_json(result_path, result)
-                write_json(regression_output / 'regression-result.json', result['regression'])
+                   package=destination.name, sha256=checksum, installation_tested=False))
     print(f"Build and package checks passed: {destination.name}")
 
 
@@ -325,17 +294,9 @@ def main():
     p.add_argument("--platform", choices=("windows", "macos"), required=True)
     p.add_argument("--app-sha", required=True)
     p.add_argument("--sdk-sha", required=True)
-    p.add_argument("--sdk-root", type=Path, help="External frozen SDK checkout; default uses the App gitlink")
-    p.add_argument('--test-assets-sha', help='Prepared platform TestAssets commit for Journal regression')
-    p.add_argument('--run-journal', action=argparse.BooleanOptionalAction, default=True,
-                   help='Run this platform Journal regression (default: enabled)')
+    p.add_argument("--sdk-root", type=Path, required=True, help="Explicit frozen SDK checkout")
     a = p.parse_args()
-    if a.run_journal and not a.test_assets_sha:
-        p.error('--test-assets-sha is required for Journal regression')
-    options = dict(run_journal=a.run_journal)
-    if a.sdk_root is not None:
-        options['sdk_root'] = a.sdk_root
-    build(a.source_dir, a.platform, a.app_sha, a.sdk_sha, a.test_assets_sha, **options)
+    build(a.source_dir, a.platform, a.app_sha, a.sdk_sha, sdk_root=a.sdk_root)
 
 
 if __name__ == "__main__":

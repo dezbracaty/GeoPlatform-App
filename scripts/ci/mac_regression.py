@@ -1,6 +1,5 @@
 """Run the maintained App regression entry against the audited macOS delivery bundle."""
 from __future__ import annotations
-from concurrent.futures import ThreadPoolExecutor
 import getpass
 import json
 import os
@@ -56,9 +55,11 @@ def server_regression(source, executable, output, env, *, timeout=14400):
     code = f'{secrets.randbelow(1000000):06d}'
     # The CLI owns its existing repository lock and shutdown contract. SIGBREAK
     # becomes the same KeyboardInterrupt on a Windows-owned console group.
-    wrapper = ("import runpy,signal,sys; "
+    # run_path does not add the script directory as a normal Python script launch does.
+    wrapper = ("import runpy,signal,sys; from pathlib import Path; "
                "signal.signal(getattr(signal,'SIGBREAK',signal.SIGTERM),signal.default_int_handler); "
-               "sys.argv=sys.argv[1:]; runpy.run_path(sys.argv[0],run_name='__main__')")
+               "sys.argv=sys.argv[1:]; sys.path.insert(0,str(Path(sys.argv[0]).resolve().parent)); "
+               "runpy.run_path(sys.argv[0],run_name='__main__')")
     command = [sys.executable, '-u', '-c', wrapper, tools / 'journal_server.py',
                '--application', executable, '--app-root', source, '--assets', Path(source) / 'tests/TestAssets',
                '--output-root', output / 'run', '--exports', output / 'exports',
@@ -179,24 +180,3 @@ def regression(source, bundle, output, env, test_assets_sha=None):
     summary, directory = server_regression(source, executable, output, native_env)
     return dict(status='passed', assets_sha=assets_sha, case_count=summary['completedCaseCount'],
                 summary_path=str(directory / 'summary.json'))
-
-
-def package_and_regress(package, verify, result_path):
-    """Package after deployment, optionally running regression alongside it."""
-    results = {}
-    operations = [('installer', package)]
-    if verify is None:
-        results['regression'] = dict(status='skipped', reason='run_journal=false')
-    else:
-        operations.append(('regression', verify))
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        pending = {name: pool.submit(operation) for name, operation in operations}
-        for name, future in pending.items():
-            try:
-                value = future.result()
-                results[name] = dict(value or {})
-                results[name].setdefault('status', 'passed')
-            except Exception as exc:
-                results[name] = dict(status='failed', error=str(exc))
-    write_json(result_path, results)
-    return results

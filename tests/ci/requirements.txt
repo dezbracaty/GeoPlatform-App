@@ -1,0 +1,2 @@
+# YAML workflow contracts; install in the same Python used by CI tool tests.
+PyYAML>=6,<7

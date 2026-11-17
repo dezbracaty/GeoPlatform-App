@@ -1,6 +1,6 @@
 # SDK 包、来源与消费检查
 
-平台工作流见APP_ROOT/docs/ci.md与Root docs/Development/Platform_Workflows.md。SDK固定macos/windows发布，正式消费使用冻结的平台SDK_ROOT；历史单gitlink仍是本地兼容默认，实际构建身份单独报告。
+平台四个工作流均在App，唯一完整规范见APP_ROOT/docs/ci.md；Root原平台文档仅作索引。SDK固定macos/windows发布，正式消费使用冻结的平台SDK_ROOT；SDK地址由选定App的cmake/sdk-repository.json声明；本地与CI均显式选择SDK_ROOT，不保留SDK gitlink回退。
 
 路径显式区分 App 与完整宿主。只有 App 时可检查候选 SDK 和消费端；生产/导出需要相应宿主源码和已有构建产物。
 
@@ -45,7 +45,7 @@ source provenance 包括提交、dirty/diff 摘要和 managed-file 内容；检�
 - `source_inputs.py` 消费模式验证 UI package 并只验证 Orca 源码输入；真实 Git checkout 可从当前 tracked files 重算，无 Git 时需要完整导出的来源清单。不要将 source-inputs.json 不存在单独解释为 checkout 必然损坏。
 - runtime 部署函数跟踪 SDK 库并复制到实际应用位置；仍需核对实际运行来源。
 
-本地验证用外置候选 SDK，保留源码 SDK pin：
+本地验证用显式候选 SDK：
 
 ```sh
 cmake --preset <preset> -DGPLATFORM_SDK_ROOT=<package>/SDK -DGPLATFORM_BUILD_SDK_CHECKS=ON
@@ -58,6 +58,6 @@ cmake --build --preset <preset>
 
 记录生产源码/工作区状态、工具链、架构、配置、包摘要、消费端所选槽位、实际运行库与验证结果。
 应用接口类布局、虚函数表或共享头文件变化需要配套重编 SDK；SDK 内置后端依赖部分应用 DB 契约，不保证任意新 DB 自动可绘制。
-主仓库生产 SDK，App 维护 SDK gitlink，宿主维护 App gitlink，Orca 独立维护源码提交。只有用户授权的交付范围才执行相应外部操作；本技能不默认扩大到跨仓库提交与发布。
+主仓库生产 SDK，App 四入口维护平台发布/消费流程并冻结实际 SDK SHA，宿主维护 App gitlink，Orca 独立维护源码提交。只有用户授权的交付范围才执行相应外部操作；本技能不默认扩大到跨仓库提交与发布。
 授权包含跨仓库提交/交付时，先提交推送子仓库目标提交，再及时提交推送本次任务涉及的父仓库 gitlink；核对引用指向已推送的本次目标提交。开发分支引用同步不等待完整 CI，CI 结果和正式合并/发布状态分别记录。宿主不可访问时说明尚未同步的范围，不宣称引用链已全部完成。
-文件包导出、独立编译运行、正式 clone/submodule/LFS 获取分别验证和陈述。
+文件包导出、独立编译运行、正式 SDK clone/LFS 获取与源码 submodule 获取分别验证和陈述。

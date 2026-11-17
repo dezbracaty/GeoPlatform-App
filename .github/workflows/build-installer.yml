@@ -1,9 +1,9 @@
 name: Build Installer
-run-name: 'Installer | ${{ inputs.platform }} | source=${{ inputs.source_ref }}'
+run-name: 'Installer | ${{ inputs.platform }} | source=${{ inputs.app_ref }}'
 on:
   workflow_dispatch:
     inputs:
-      source_ref:
+      app_ref:
         description: App branch or complete SHA to build
         type: string
         default: feature/gplatform-ui
@@ -57,7 +57,7 @@ jobs:
       - id: source
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
         env:
-          SOURCE_REF: ${{ inputs.source_ref }}
+          APP_REF: ${{ inputs.app_ref }}
           PLATFORM: ${{ inputs.platform }}
           MACOS_SDK_REF: ${{ inputs.macos_sdk_ref }}
           WINDOWS_SDK_REF: ${{ inputs.windows_sdk_ref }}
@@ -159,7 +159,7 @@ jobs:
           import os, subprocess, sys
           subprocess.run([sys.executable, 'control/scripts/ci/build.py', '--source-dir', 'source',
               '--platform', os.environ['PLATFORM'], '--app-sha', os.environ['APP_SHA'],
-              '--sdk-sha', os.environ['SDK_SHA'], '--sdk-root', 'sdk', '--no-run-journal'], check=True)
+              '--sdk-sha', os.environ['SDK_SHA'], '--sdk-root', 'sdk'], check=True)
       - name: Upload required installer and checksums
         id: artifacts
         if: always() && steps.package.outputs.deliverables != ''

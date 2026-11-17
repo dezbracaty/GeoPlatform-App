@@ -1,13 +1,12 @@
-"""Parallel packaging/regression preserves both results and runs the delivery App natively."""
+"""Run the delivery App natively through the dedicated regression entry."""
 import json
 from pathlib import Path
 import sys
 import tempfile
-import threading
 import unittest
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts/ci'))
-from mac_regression import package_and_regress, prepare_assets, regression
+from mac_regression import prepare_assets, regression
 
 
 class MacRegressionTests(unittest.TestCase):
@@ -30,47 +29,9 @@ class MacRegressionTests(unittest.TestCase):
                 prepare_assets(Path('/fixture/source'), 'b' * 40)
         self.assertFalse(any('lfs' in call.args[0] for call in execute.call_args_list))
 
-    def test_both_stages_start_in_parallel_and_success_is_preserved(self):
-        barrier=threading.Barrier(2)
-        with tempfile.TemporaryDirectory() as temporary:
-            result=package_and_regress(lambda:(barrier.wait(timeout=3),dict(package='App.dmg'))[1],
-                lambda:(barrier.wait(timeout=3),dict(status='passed',case_count=101))[1],Path(temporary)/'stages.json')
-            self.assertEqual(result['installer']['status'],'passed')
-            self.assertEqual(result['regression']['case_count'],101)
-            self.assertEqual(json.loads((Path(temporary)/'stages.json').read_text()),result)
 
-    def test_failure_does_not_cancel_other_result_or_turn_it_into_success(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root=Path(temporary)
-            def package():
-                (root/'App.dmg').write_bytes(b'preserved installer')
-                return dict(package='App.dmg')
-            def verify():raise RuntimeError('screenshot comparison failed')
-            result=package_and_regress(package,verify,root/'stages.json')
-            self.assertEqual(result['installer']['status'],'passed')
-            self.assertEqual(result['regression']['status'],'failed')
-            self.assertIn('screenshot',result['regression']['error'])
-            self.assertTrue((root/'App.dmg').is_file())
 
-    def test_disabled_regression_packages_and_records_explicit_skip(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            def package():
-                (root / 'App.dmg').write_bytes(b'installer')
-                return dict(package='App.dmg')
-            result = package_and_regress(package, None, root / 'stages.json')
-            self.assertEqual(result['installer']['status'], 'passed')
-            self.assertEqual(result['regression'], dict(status='skipped', reason='run_journal=false'))
-            self.assertEqual(json.loads((root / 'stages.json').read_text()), result)
-            self.assertEqual((root / 'App.dmg').read_bytes(), b'installer')
 
-    def test_disabled_regression_does_not_hide_installer_failure(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            def package():
-                raise RuntimeError('installer failed')
-            result = package_and_regress(package, None, Path(temporary) / 'stages.json')
-            self.assertEqual(result['installer']['status'], 'failed')
-            self.assertEqual(result['regression']['status'], 'skipped')
 
     def test_regression_uses_native_delivery_app_and_all_pinned_assets(self):
         with tempfile.TemporaryDirectory() as temporary:

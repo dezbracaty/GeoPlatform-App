@@ -11,6 +11,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'scripts/ci'))
 from mac_regression import server_regression
 
 SERVER = r'''
+import ci_server_sibling_fixture
 import argparse,json,sys
 from pathlib import Path
 sys.path.insert(0,sys.argv[1]);del sys.argv[1]
@@ -55,6 +56,7 @@ class ServerRegressionTests(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name).resolve();self.source=self.root/'App';self.tools=self.source/'tools/journal'
         self.tools.mkdir(parents=True)
+        (self.tools / 'ci_server_sibling_fixture.py').write_text('VALUE = \"script sibling\"\n')
         self.real=Path(__file__).resolve().parents[2]/'tools/journal'
         shutil.copyfile(self.real/'session_repository.py',self.tools/'session_repository.py')
         # The real existing HTTP handler is used; the fake worker only produces fixture results.
