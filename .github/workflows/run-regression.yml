@@ -240,10 +240,7 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: regression-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            regression-results/${{ github.run_id }}-${{ github.run_attempt }}/${{ matrix.platform }}
-            !regression-results/**/sdk-package/SDK/**/lib
-            !regression-results/**/sdk-package/SDK/**/objects
+          path: regression-results/${{ github.run_id }}-${{ github.run_attempt }}/${{ matrix.platform }}
           if-no-files-found: error
           retention-days: 7
           compression-level: 6

@@ -149,9 +149,16 @@ sys.meta_path.insert(0, NoOptionalPackages())
                     'expected_cases':['one','two'],'summary_path':str(summary)}))
         def produce(source, platform, package, env):
             if compiler_error: raise RuntimeError('compiler failed')
-            package.mkdir();(package/'package-manifest.json').write_text('{}')
+            self.assertEqual(package.parent, root.resolve())
+            (package/'package-manifest.json').write_text('{}')
+            for slot in ('arm64/Release', 'x86_64/Release'):
+                directory = package / 'SDK' / slot
+                directory.mkdir(parents=True)
+                for name in ('sdk-build.json', 'sdk-manifest.json'):
+                    (directory / name).write_text('{}')
         with contextlib.ExitStack() as stack:
-            stack.enter_context(patch.dict(os.environ, {'GIT_CONFIG_COUNT':'1','GIT_CONFIG_KEY_0':'core.eol','GIT_CONFIG_VALUE_0':'lf'}))
+            stack.enter_context(patch.dict(os.environ, {'GIT_CONFIG_COUNT':'1','GIT_CONFIG_KEY_0':'core.eol','GIT_CONFIG_VALUE_0':'lf',
+                'RUNNER_TEMP':str(root)}))
             stack.enter_context(patch.object(controller,'machine_lock',return_value=contextlib.nullcontext()))
             stack.enter_context(patch.object(controller,'prepare_cached_source'))
             stack.enter_context(patch.object(controller,'init_host_submodules'))
@@ -160,7 +167,8 @@ sys.meta_path.insert(0, NoOptionalPackages())
             stack.enter_context(patch.object(controller.native_checks,'build_environment',return_value={}))
             native=stack.enter_context(patch.object(controller.native_checks,'architecture',return_value={'returncode':0}))
             build=stack.enter_context(patch.object(controller,'build_sdk_package',side_effect=produce))
-            publish=stack.enter_context(patch.object(controller,'update_sdk',return_value={'published':False,'sdk_sha':''}))
+            publish=stack.enter_context(patch.object(controller,'update_sdk',return_value={'published':False,'sdk_sha':'',
+                'selected_slots':['arm64/Release','x86_64/Release']}))
             result=controller.regress(root,'macos','a'*40,'d'*40,output,app_sha='b'*40,app_repository='org/App',sdk_repository='org/SDK')
             self.assertEqual(build.call_count,1)
             self.assertEqual(publish.call_args.kwargs,{'app_sha':'b'*40,'publish':False})

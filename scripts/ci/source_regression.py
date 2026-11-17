@@ -5,11 +5,14 @@ import json
 from collections import Counter
 import os
 from pathlib import Path
+import shutil
 import sys
+import tempfile
 
 from common import (repository_url, digest, git_env, init_host_submodules, machine_lock,
                     prepare_cached_source, require_sha, run, text_git, write_json)
 from common import freeze_candidate, app_dependency_repository, resolve_ref
+from common import remove_owned_tree
 from update_sdk import build_sdk_package, update_sdk
 import native_regression as native_checks
 
@@ -109,6 +112,7 @@ def regress(source, platform, source_sha, assets_sha, output, *, app_sha, app_re
     output.mkdir(parents=True, exist_ok=False)
     report = dict(status='failed', source_sha=source_sha, app_sha=app_sha, app_repository=app_repository, platform=platform,
                   assets_ref=assets_ref or ASSET_BRANCHES[platform], assets_sha=assets_sha, sdk_source=sdk_source, phases=[], output=str(output))
+    package = None
     try:
         # Automatic screenshot verification requires Pillow. Optional review
         # hints and schema tooling must not block the formal Journal gate.
@@ -140,11 +144,22 @@ def regress(source, platform, source_sha, assets_sha, output, *, app_sha, app_re
                     raise RuntimeError('Required native regression checks failed: ' + arch)
             run([sys.executable, '-c', APP_NATIVE_ASSETS, str(app), '', ci_dir], cwd=source, env=dict(os.environ))
             if sdk_source == 'source':
-                package = output / 'sdk-package'
+                # The exporter stages beside this directory. A nested report
+                # path can exceed Windows MAX_PATH even for valid source files.
+                package = Path(tempfile.mkdtemp(prefix='sdk-package-', dir=os.environ.get('RUNNER_TEMP'))).resolve()
+                report['sdk_package'] = dict(path=str(package), retained=True)
                 build_sdk_package(source, platform, package, env)
                 receipt = update_sdk(source, source_sha, platform, package,
                                      repository_url(sdk_repository), app_sha=app_sha, publish=False)
                 report['sdk'] = dict(receipt, package_manifest_sha256=digest(package / 'package-manifest.json'))
+                metadata = ['package-manifest.json'] + [f'SDK/{slot}/{name}'
+                    for slot in receipt['selected_slots'] for name in ('sdk-build.json', 'sdk-manifest.json')]
+                report['sdk_package']['metadata'] = {}
+                for name in metadata:
+                    destination = output / 'sdk-package' / name
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(package / name, destination)
+                    report['sdk_package']['metadata'][name] = digest(destination)
                 selected_sdk = package / 'SDK'
             else:
                 require_sha(sdk_sha)
@@ -178,11 +193,20 @@ def regress(source, platform, source_sha, assets_sha, output, *, app_sha, app_re
                 raise RuntimeError('Journal receipt is outside owned staging')
             summary = json.loads(summary_path.read_text(encoding='utf-8'))
             verify_inventory(summary, receipt['expected_cases'])
-            report.update(status='passed', case_count=len(receipt['expected_cases']),
+            report.update(case_count=len(receipt['expected_cases']),
                 initial_counts=dict(Counter((c.get('attempts') or [c])[0].get('status') for c in summary['cases'])),
                 final_counts=dict(Counter(c.get('status') for c in summary['cases'])),
                 serial_recheck_cases=sum(len(c.get('attempts', [])) > 1 for c in summary['cases']))
+            if package is not None:
+                try:
+                    remove_owned_tree(package, package.parent)
+                except Exception as error:
+                    report['cleanupError'] = f'{type(error).__name__}: {error}'
+                    raise
+                report['sdk_package']['retained'] = False
+            report['status'] = 'passed'
     except Exception as error:
+        report['status'] = 'failed'
         report['error'] = f'{type(error).__name__}: {error}'
         raise
     finally:

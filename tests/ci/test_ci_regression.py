@@ -13,6 +13,115 @@ from native_regression import build_environment, command, comparison_verdict, ph
 
 
 class RegressionTests(unittest.TestCase):
+    def test_source_sdk_scratch_lifetime_and_metadata_survive_each_boundary(self):
+        import contextlib
+        import source_regression as driver
+        for failure in (None, 'producer', 'consumer', 'cancel', 'journal', 'cleanup'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary, contextlib.ExitStack() as stack:
+                root = Path(temporary).resolve()
+                scratch = root / 'short'
+                scratch.mkdir()
+                output = root / 'deep/report'
+                metadata = {'package-manifest.json': b'{"package":"original bytes"}',
+                    'SDK/AMD64/Release/sdk-build.json': b'{"source":"original bytes"}',
+                    'SDK/AMD64/Release/sdk-manifest.json': b'{"payload":"original bytes"}'}
+                created = []
+                def produce(source, platform, package, env):
+                    self.assertEqual(package.parent, scratch)
+                    self.assertFalse(package.is_relative_to(output))
+                    created.append(package)
+                    if failure == 'producer':
+                        raise RuntimeError('producer failure')
+                    for name, value in metadata.items():
+                        path = package / name
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_bytes(value)
+                def execute(args, **kwargs):
+                    if '-c' not in args:
+                        return
+                    if args[2] not in (driver.APP_CONSUMER, driver.APP_REGRESSION):
+                        return
+                    payload = json.loads(args[3])
+                    self.assertTrue(created[0].is_dir())
+                    if args[2] == driver.APP_CONSUMER:
+                        self.assertEqual(Path(payload['sdk_root']), created[0] / 'SDK')
+                        if failure == 'consumer':
+                            raise RuntimeError('consumer failure')
+                        if failure == 'cancel':
+                            raise KeyboardInterrupt('cancel failure')
+                        executable = root / 'App.exe'
+                        executable.write_bytes(b'fixture; never executed')
+                        receipt = {'executable': str(executable)}
+                    else:
+                        if failure == 'journal':
+                            raise RuntimeError('journal failure')
+                        summary = output / 'journals/run/task/summary.json'
+                        summary.parent.mkdir(parents=True)
+                        summary.write_text(json.dumps(dict(status='passed', runComplete=True,
+                            selectionScope='all', plannedCases=['one'], completedCaseCount=1,
+                            cases=[dict(id='one', status='passed')])) )
+                        receipt = dict(status='passed', assets_sha='c'*40,
+                            expected_cases=['one'], summary_path=str(summary))
+                    Path(payload['receipt']).write_text(json.dumps(receipt))
+                stack.enter_context(patch.dict(os.environ, RUNNER_TEMP=str(scratch)))
+                stack.enter_context(patch.object(driver, 'run', side_effect=execute))
+                stack.enter_context(patch.object(driver, 'machine_lock', return_value=contextlib.nullcontext()))
+                stack.enter_context(patch.object(driver, 'prepare_cached_source'))
+                stack.enter_context(patch.object(driver, 'init_host_submodules'))
+                stack.enter_context(patch.object(driver, 'text_git', return_value='b'*40))
+                stack.enter_context(patch.object(driver.native_checks, 'build_environment', return_value={}))
+                stack.enter_context(patch.object(driver.native_checks, 'architecture', return_value={'returncode': 0}))
+                stack.enter_context(patch.object(driver, 'build_sdk_package', side_effect=produce))
+                stack.enter_context(patch.object(driver, 'update_sdk', return_value={'selected_slots': ['AMD64/Release']}))
+                if failure == 'cleanup':
+                    stack.enter_context(patch.object(driver, 'remove_owned_tree', side_effect=RuntimeError('cleanup failure')))
+                if failure:
+                    with self.assertRaisesRegex(KeyboardInterrupt if failure == 'cancel' else RuntimeError, failure + ' failure'):
+                        driver.regress(root, 'windows', 'a'*40, 'c'*40, output, app_sha='b'*40,
+                            app_repository='org/App', sdk_repository='org/SDK')
+                else:
+                    driver.regress(root, 'windows', 'a'*40, 'c'*40, output, app_sha='b'*40,
+                        app_repository='org/App', sdk_repository='org/SDK')
+                report = json.loads((output / 'source-regression.json').read_text())
+                self.assertEqual(report['sdk_package']['path'], str(created[0]))
+                self.assertEqual(report['status'], 'failed' if failure else 'passed')
+                self.assertEqual(created[0].exists(), bool(failure))
+                self.assertEqual(report['sdk_package']['retained'], bool(failure))
+                if failure == 'cleanup':
+                    self.assertIn('cleanup failure', report['cleanupError'])
+                if failure != 'producer':
+                    for name, value in metadata.items():
+                        self.assertEqual((output / 'sdk-package' / name).read_bytes(), value)
+                        self.assertEqual(report['sdk_package']['metadata'][name], driver.digest(output / 'sdk-package' / name))
+
+    def test_published_sdk_never_creates_or_cleans_source_scratch(self):
+        import contextlib
+        import source_regression as driver
+        with tempfile.TemporaryDirectory() as temporary, contextlib.ExitStack() as stack:
+            root = Path(temporary).resolve()
+            sdk = root / 'external-sdk'
+            sdk.mkdir()
+            (sdk / 'sentinel').write_bytes(b'keep')
+            def execute(args, **kwargs):
+                if '-c' in args and args[2] == driver.APP_CONSUMER:
+                    self.assertEqual(json.loads(args[3])['sdk_root'], str(sdk))
+                    raise RuntimeError('consumer failure')
+            stack.enter_context(patch.object(driver, 'run', side_effect=execute))
+            stack.enter_context(patch.object(driver, 'machine_lock', return_value=contextlib.nullcontext()))
+            stack.enter_context(patch.object(driver, 'prepare_cached_source'))
+            stack.enter_context(patch.object(driver, 'init_host_submodules'))
+            stack.enter_context(patch.object(driver, 'text_git', return_value='b'*40))
+            stack.enter_context(patch.object(driver.native_checks, 'build_environment', return_value={}))
+            stack.enter_context(patch.object(driver.native_checks, 'architecture', return_value={'returncode': 0}))
+            allocate = stack.enter_context(patch.object(driver.tempfile, 'mkdtemp'))
+            cleanup = stack.enter_context(patch.object(driver, 'remove_owned_tree'))
+            with self.assertRaisesRegex(RuntimeError, 'consumer failure'):
+                driver.regress(root, 'windows', 'a'*40, 'c'*40, root / 'report', app_sha='b'*40,
+                    app_repository='org/App', sdk_source='published', sdk_root=sdk, sdk_sha='d'*40)
+            allocate.assert_not_called()
+            cleanup.assert_not_called()
+            self.assertEqual((sdk / 'sentinel').read_bytes(), b'keep')
+
     def test_windows_native_ctest_resolves_runtime_before_provenance_exists(self):
         from types import SimpleNamespace
         from unittest.mock import Mock
@@ -135,6 +244,7 @@ class RegressionTests(unittest.TestCase):
             def produce(*args):
                 self.assertEqual(selections, ['c' * 40, ''])
                 raise RuntimeError('SDK boundary reached after restoring source fixtures')
+            stack.enter_context(patch.dict(os.environ, RUNNER_TEMP=str(source)))
             stack.enter_context(patch.object(driver, 'run', side_effect=execute))
             stack.enter_context(patch.object(driver, 'machine_lock', return_value=contextlib.nullcontext()))
             stack.enter_context(patch.object(driver, 'prepare_cached_source'))
