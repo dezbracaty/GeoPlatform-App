@@ -374,7 +374,8 @@ class RegressionTests(unittest.TestCase):
         flow=yaml.load((Path(__file__).resolve().parents[2]/'.github/workflows/run-regression.yml').read_text(),Loader=yaml.BaseLoader)
         code=next(s['run'] for s in flow['jobs']['regression']['steps'] if s.get('name')=='SDK consumer and complete platform regression')
         for mode in ['source','published']:
-            env=dict(GITHUB_RUN_ID='123',GITHUB_RUN_ATTEMPT='1',PLATFORM='macos',SOURCE_SHA='a'*40,
+            env=dict(GITHUB_WORKSPACE=str(Path('fixture-workspace').resolve()),
+                     GITHUB_RUN_ID='123',GITHUB_RUN_ATTEMPT='1',PLATFORM='macos',SOURCE_SHA='a'*40,
                      APP_SHA='d'*40,GITHUB_REPOSITORY='org/App',ASSETS_SHA='b'*40,ASSETS_REF='macmini',SDK_SOURCE=mode,SDK_SHA='c'*40,SDK_REPOSITORY='org/SDK')
             with self.subTest(mode=mode),patch.dict(os.environ,env),patch('subprocess.run') as spawn:
                 exec(compile(code,'actual-workflow-step','exec'),{})

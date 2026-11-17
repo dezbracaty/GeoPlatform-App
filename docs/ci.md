@@ -121,6 +121,8 @@ CI 工具测试依赖在 runner 准备阶段用同一 Python 安装 `tests/ci/re
 
 App runner 的完整宿主检出固定使用工作区内 `host-source`，installer 的独立 App 检出继续使用 `source`。缓存清理只接受对应的准确受管目录，不能让两种仓库在同一路径来回替换或扩大清理范围。
 
+回归报告保留 `regression-results/<run>-<attempt>/<platform>` 布局；Windows 根目录使用 `RUNNER_TEMP`，避免串行复查的记录归档路径超过 Windows 文件接口限制，Mac 仍使用工作区。构建、上传与清理使用同一受管路径；无论执行成功或失败均上传报告，仅上传成功后清理受管暂存，上传失败保留本机报告。原子 JSON 替换仅对 Windows 短暂读句柄争用进行有界重试，持续占用或其他错误仍使流程失败。
+
 两仓 runner 若在同一机器，继续共用现有机器锁，不能并发争抢同一缓存/桌面。迁移需核对 App runner 的正式工具链、宿主源码工作路径和兼容缓存；路径不一致不能手改 CMakeCache 或拼库冒充复用。编译不固定为两路并行；未显式配置 CMAKE_BUILD_PARALLEL_LEVEL 时按现有工具调度。
 
 Windows 故障直接 SSH 或用户授权会话检查，禁止改 workflow/提交/反复 dispatch 下发诊断。全量 Journal 必须从 Server 发起并记录服务地址、6位码、计划与结果。保留用户 WIP、当前验收证据、有效 SDK 槽与兼容依赖缓存。

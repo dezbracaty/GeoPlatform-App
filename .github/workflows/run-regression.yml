@@ -225,7 +225,8 @@ jobs:
           ASSETS_SHA: ${{ matrix.platform == 'windows' && needs.prepare.outputs.windows_assets_sha || needs.prepare.outputs.macos_assets_sha }}
         run: |
           import os, pathlib, subprocess, sys
-          output = pathlib.Path('regression-results') / (os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT']) / os.environ['PLATFORM']
+          root = pathlib.Path(os.environ['RUNNER_TEMP'] if os.environ['PLATFORM'] == 'windows' else os.environ['GITHUB_WORKSPACE'])
+          output = root / 'regression-results' / (os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT']) / os.environ['PLATFORM']
           command = [sys.executable, 'control/scripts/ci/source_regression.py', '--source-dir', 'host-source',
               '--source-sha', os.environ['SOURCE_SHA'], '--app-sha', os.environ['APP_SHA'],
               '--app-repository', os.environ['GITHUB_REPOSITORY'], '--assets-sha', os.environ['ASSETS_SHA'], '--assets-ref', os.environ['ASSETS_REF'],
@@ -240,7 +241,7 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: regression-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: regression-results/${{ github.run_id }}-${{ github.run_attempt }}/${{ matrix.platform }}
+          path: ${{ matrix.platform == 'windows' && runner.temp || github.workspace }}/regression-results/${{ github.run_id }}-${{ github.run_attempt }}/${{ matrix.platform }}
           if-no-files-found: error
           retention-days: 7
           compression-level: 6
@@ -253,11 +254,11 @@ jobs:
           import os, pathlib, re, sys
           sys.path.insert(0, 'control/scripts/ci')
           from common import remove_owned_tree
-          workspace = pathlib.Path(os.environ['GITHUB_WORKSPACE']).resolve()
           identity = os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT']
           platform = os.environ['PLATFORM']
           if not re.fullmatch(r'[0-9]+-[0-9]+', identity) or platform not in ('windows', 'macos'):
               raise RuntimeError('Invalid owned report identity')
+          workspace = pathlib.Path(os.environ['RUNNER_TEMP'] if platform == 'windows' else os.environ['GITHUB_WORKSPACE']).resolve()
           root = workspace / 'regression-results'
           parent = root / identity
           path = parent / platform

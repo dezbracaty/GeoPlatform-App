@@ -48,6 +48,64 @@ def expression(value, needs, platform="all", attempt="1", steps=None, mode="arti
 
 
 class Workflows(unittest.TestCase):
+    def test_regression_build_upload_and_cleanup_share_the_platform_report_root(self):
+        job = load(APP / '.github/workflows/run-regression.yml')['jobs']['regression']
+        steps = {step.get('name'): step for step in job['steps']}
+        build = steps['SDK consumer and complete platform regression']['run']
+        upload = steps['Retain regression evidence even on failure']['with']['path']
+        cleanup = steps['Clean uploaded report staging']
+        self.assertEqual(upload,
+            "${{ matrix.platform == 'windows' && runner.temp || github.workspace }}"
+            "/regression-results/${{ github.run_id }}-${{ github.run_attempt }}/${{ matrix.platform }}")
+        for outcome in ('success', 'failure', 'skipped'):
+            self.assertEqual(expression(cleanup['if'], {}, steps={'evidence': SimpleNamespace(outcome=outcome)}),
+                             outcome == 'success')
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory).resolve()
+            workspace, runner = base / 'workspace', base / 'runner-temp'
+            workspace.mkdir()
+            runner.mkdir()
+            for platform in ('windows', 'macos'):
+                with self.subTest(platform=platform):
+                    env = dict(os.environ, GITHUB_WORKSPACE=str(workspace), RUNNER_TEMP=str(runner),
+                        GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='2', PLATFORM=platform,
+                        SOURCE_SHA='a' * 40, APP_SHA='b' * 40, GITHUB_REPOSITORY='owner/App',
+                        ASSETS_SHA='c' * 40, ASSETS_REF=platform, SDK_SOURCE='source', SDK_REPOSITORY='owner/SDK')
+                    calls = []
+                    with patch.dict(os.environ, env), patch.object(subprocess, 'run', side_effect=lambda *a, **k: calls.append(a)):
+                        exec(compile(build, '<workflow-build>', 'exec'), {})
+                    command = calls[0][0]
+                    output = Path(command[command.index('--output') + 1])
+                    root = runner if platform == 'windows' else workspace
+                    self.assertEqual(output, root / 'regression-results/123-2' / platform)
+                    output.mkdir(parents=True)
+                    (output / 'report.json').write_text('preserve until uploaded')
+                    other = (workspace if platform == 'windows' else runner) / 'unrelated'
+                    other.mkdir(exist_ok=True)
+                    with patch.dict(os.environ, env):
+                        exec(compile(cleanup['run'], '<workflow-cleanup>', 'exec'), {})
+                    self.assertFalse(output.exists())
+                    self.assertTrue(other.is_dir())
+
+    def test_regression_cleanup_rejects_redirected_platform_report_root(self):
+        job = load(APP / '.github/workflows/run-regression.yml')['jobs']['regression']
+        cleanup = next(step['run'] for step in job['steps'] if step.get('name') == 'Clean uploaded report staging')
+        for platform in ('windows', 'macos'):
+            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as directory:
+                base = Path(directory).resolve()
+                workspace, runner, outside = base / 'workspace', base / 'runner', base / 'outside'
+                for root in (workspace, runner, outside):
+                    root.mkdir()
+                sentinel = outside / 'sentinel'
+                sentinel.write_text('keep')
+                root = runner if platform == 'windows' else workspace
+                directory_link(root / 'regression-results', outside)
+                env = dict(os.environ, GITHUB_WORKSPACE=str(workspace), RUNNER_TEMP=str(runner),
+                           GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='2', PLATFORM=platform)
+                with patch.dict(os.environ, env), self.assertRaisesRegex(RuntimeError, 'redirected report'):
+                    exec(compile(cleanup, '<workflow-cleanup>', 'exec'), {})
+                self.assertEqual(sentinel.read_text(), 'keep')
+
     def test_installer_does_not_implicitly_publish_a_release(self):
         workflow = (APP / '.github/workflows/build-installer.yml').read_text()
         for retired in ('publish_release:', 'GPLATFORM_RELEASE_TOKEN', 'publish_release.py'):

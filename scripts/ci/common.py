@@ -444,7 +444,16 @@ def write_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".tmp")
     temporary.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    # Match the SDK publisher's bounded handling of Windows readers holding
+    # a destination without delete sharing. Never expose a partial JSON file.
+    for attempt in range(20):
+        try:
+            temporary.replace(path)
+            return
+        except PermissionError as error:
+            if sys.platform != 'win32' or getattr(error, 'winerror', None) not in (5, 32) or attempt == 19:
+                raise
+            time.sleep(0.25)
 
 
 def write_outputs(value, result=None):
