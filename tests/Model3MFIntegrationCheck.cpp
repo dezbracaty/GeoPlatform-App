@@ -910,7 +910,7 @@ void checkConfigurationNotifications() {
     const auto decision = QObject::connect(bridge, &SliceSettingsBridge::printerSwitchDecisionRequested,
         bridge, [bridge](const QVariantMap&) { bridge->resolvePrinterSwitch("discard"); });
     const auto disconnect = qScopeGuard([&] { QObject::disconnect(decision); });
-    require(bridge->selectMachine("P3", "0.4") && bridge->selectedMachineModelId() == "P3",
+    require(selectMachineAndWait(*bridge, "P3", "0.4"),
             "Cannot activate P3 for configuration notifications");
     const auto active = GPlatform::SlicingBackend::instance().activeConfigView();
     require(active && active->selection.machine_model_id == "P3", "Backend did not activate P3");
@@ -932,8 +932,7 @@ void checkConfigurationNotifications() {
     require(bridge->selectedMachine() == machine, "Material selection changed the machine metadata");
     require(machineChanges.isEmpty(), "Material selection incorrectly notified a machine change");
     require(!filamentChanges.isEmpty(), "Material selection omitted its material notification");
-    require(bridge->selectMachine("Flashforge AD5X", "0.4") &&
-            bridge->selectedMachineModelId() == "Flashforge AD5X" && !machineChanges.isEmpty(),
+    require(selectMachineAndWait(*bridge, "Flashforge AD5X", "0.4") && !machineChanges.isEmpty(),
             "Actual machine switch omitted its notification");
     importAndWait("complete-project.3mf", "project");
     const auto projectMachine = bridge->selectedMachine();
