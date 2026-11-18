@@ -261,12 +261,14 @@ class WindowsEntryChecks(unittest.TestCase):
         source = Path('/source with spaces')
         arguments = ['-DNAME=value with spaces', '-DGPLATFORM_BUILD_SDK_CHECKS=ON']
         with patch('build.run') as execute:
-            windows_entry(source, 'SDKConsumerExtensionCheck', arguments, {'BASELINE': 'preserve'})
+            targets = ['GPlatform', 'SDKConsumerExtensionCheck']
+            windows_entry(source, targets, arguments, {'BASELINE': 'preserve'})
         args, kwargs = execute.call_args
         self.assertEqual(args[0][:3], ['pwsh', '-NoProfile', '-Command'])
         self.assertEqual(kwargs['cwd'], source)
         self.assertEqual(kwargs['env']['BASELINE'], 'preserve')
         self.assertEqual(kwargs['env']['CI_BUILD_ENTRY'], str(Path(__file__).resolve().parents[2] / 'scripts/build.ps1'))
+        self.assertEqual(json.loads(kwargs['env']['CI_BUILD_TARGETS']), targets)
         self.assertEqual(json.loads(kwargs['env']['CI_CMAKE_ARGS']), arguments)
         self.assertNotIn(str(source), args[0][-1])
         self.assertNotIn(arguments[0], args[0][-1])
@@ -285,14 +287,14 @@ class WindowsEntryChecks(unittest.TestCase):
             environment = dict(os.environ, CI_TEST_PYTHON=sys.executable)
             for body, code in [("throw 'failure before any native invocation'", 1),
                                ('& $env:CI_TEST_PYTHON -c "import sys; sys.exit(7)"', 7),
-                               ("if ($Targets[0] -ne 'target with spaces' -or $CMakeArgs[0] -ne '-DNAME=value with spaces') { throw 'array transport failed' }; & $env:CI_TEST_PYTHON -c 'pass'", 0)]:
+                               ("if ($Targets.Count -ne 2 -or $Targets[0] -ne 'target with spaces' -or $Targets[1] -ne 'second-target' -or $CMakeArgs[0] -ne '-DNAME=value with spaces') { throw 'array transport failed' }; & $env:CI_TEST_PYTHON -c 'pass'", 0)]:
                 script.write_text(parameters + body)
                 if code:
                     with patch('build.__file__', str(fixed_module)), self.assertRaisesRegex(RuntimeError, f'exit {code}'):
-                        windows_entry(source, 'target with spaces', ['-DNAME=value with spaces'], environment)
+                        windows_entry(source, ['target with spaces', 'second-target'], ['-DNAME=value with spaces'], environment)
                 else:
                     with patch('build.__file__', str(fixed_module)):
-                        windows_entry(source, 'target with spaces', ['-DNAME=value with spaces'], environment)
+                        windows_entry(source, ['target with spaces', 'second-target'], ['-DNAME=value with spaces'], environment)
 
 
 class SDKSelectionChecks(unittest.TestCase):

@@ -73,14 +73,14 @@ def validate_source_inputs(source, metadata):
     contract.verify(source / 'ThirdParty', None, expected)
 
 
-def windows_entry(source, target, cmake_args, env):
+def windows_entry(source, targets, cmake_args, env):
     command = ("$ErrorActionPreference = 'Stop'; try { "
                '$global:LASTEXITCODE = 0; '
-               '& $env:CI_BUILD_ENTRY -SourceDir $env:CI_SOURCE_DIR -Preset release -Targets $env:CI_BUILD_TARGET '
+               '& $env:CI_BUILD_ENTRY -SourceDir $env:CI_SOURCE_DIR -Preset release -Targets @($env:CI_BUILD_TARGETS | ConvertFrom-Json) '
                '-CMakeArgs @($env:CI_CMAKE_ARGS | ConvertFrom-Json); exit $LASTEXITCODE '
                '} catch { [Console]::Error.WriteLine($_); exit 1 }')
     step_env = dict(env, CI_BUILD_ENTRY=str(Path(__file__).resolve().parents[1] / 'build.ps1'),
-                    CI_SOURCE_DIR=str(source), CI_BUILD_TARGET=target, CI_CMAKE_ARGS=json.dumps(cmake_args))
+                    CI_SOURCE_DIR=str(source), CI_BUILD_TARGETS=json.dumps(targets), CI_CMAKE_ARGS=json.dumps(cmake_args))
     run(['pwsh', '-NoProfile', '-Command', command], cwd=source, env=step_env)
 
 
@@ -98,8 +98,7 @@ def build_consumer(source, platform, sdk_root, env, *, producer_root_sha=None, p
     if platform == 'windows':
         if os.name != 'nt':
             raise RuntimeError('Windows build requires a Windows runner')
-        windows_entry(source, 'GPlatform', arguments, env)
-        windows_entry(source, 'SDKConsumerExtensionCheck', arguments, env)
+        windows_entry(source, ['GPlatform', 'SDKConsumerExtensionCheck'], arguments, env)
         directories = ['build-Release']
         executable = source / 'build-Release/GPlatform.exe'
     elif platform == 'macos':
@@ -233,11 +232,9 @@ def build(source, platform, app_sha, sdk_sha, *, sdk_root):
         if os.environ.get('Qt6_DIR') or os.environ.get('QT6_DIR'):
             cmake_args.append('-DQt6_DIR=' + (os.environ.get('Qt6_DIR') or os.environ['QT6_DIR']))
         if platform == 'windows':
-            def entry(target):
-                windows_entry(source, target, cmake_args, env)
             for old in (source / "package").glob("*.exe"):
                 old.unlink()
-            entry("GPlatform_installer")
+            windows_entry(source, ["GPlatform_installer"], cmake_args, env)
             packages = list((source / "package").glob("*.exe"))
             if len(packages) != 1:
                 raise RuntimeError("Expected exactly one Windows installer")
