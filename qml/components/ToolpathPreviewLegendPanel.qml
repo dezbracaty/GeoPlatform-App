@@ -312,7 +312,7 @@ PanelSurface {
                 snapMode: Slider.SnapAlways
                 live: true
                 enabled: root.totalPreviewSteps > 1
-                value: root.shownPreviewStep
+                value: Math.min(root.shownPreviewStep, to)
                 Keys.priority: Keys.BeforeItem
                 Keys.onPressed: function(event) {
                     if (event.key !== Qt.Key_Up && event.key !== Qt.Key_Down
