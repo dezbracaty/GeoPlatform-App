@@ -820,12 +820,10 @@ ContentPage {
         objectCount: preparePage.workspaceContent
                      ? preparePage.workspaceContent.objectCount : 0
         hasSelection: SelectionBridge.hasSelection
-        parametersAvailable: root.activePageName === "prepare"
         selectedFileName: SelectionBridge.selectedModel
                           ? SelectionBridge.selectedModel.name : ""
         printerControlOpen: printerControlPopup.opened
 
-        onParametersRequested: { printerControlPopup.close(); globalPrintBar.closeMachinePopup(); root.openSliceSettings({}) }
         onMachinePopupOpening: printerControlPopup.close()
         onPrinterControlRequested: root.togglePrinterControl()
         onAddModelRequested: Global.starter.chooseModel({})

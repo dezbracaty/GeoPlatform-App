@@ -793,13 +793,12 @@ void SlicingHandler::performSlice() {
 
     updateProgress(0.2f, QString("正在切片 %1...").arg(m_modelName));
     libslicer::SliceCallbacks callbacks;
-    callbacks.progress = [&updateProgress](float progress, std::string_view stage) {
+    callbacks.progress_details = [&updateProgress](const libslicer::SliceProgress& progress) {
         // libslicer reports progress relative to its own slicing phase. Map it
         // into the whole task range so preparation (0-30%), slicing (30-90%)
         // and preview creation (90-100%) remain monotonic in the shared UI.
-        const float taskProgress = 0.3f + std::clamp(progress, 0.0f, 1.0f) * 0.6f;
-        updateProgress(taskProgress,
-                       QString::fromUtf8(stage.data(), static_cast<qsizetype>(stage.size())));
+        const float taskProgress = 0.3f + std::clamp(progress.progress, 0.0f, 1.0f) * 0.6f;
+        updateProgress(taskProgress, GPlatform::describeSlicingProgress(progress));
     };
     callbacks.is_cancelled = [this]() {
         return (m_taskWatcher && m_taskWatcher->isCanceled()) ||

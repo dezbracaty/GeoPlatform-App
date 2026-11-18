@@ -39,6 +39,7 @@ class ModelPropertyBridge : public PropertyBridgeBase {
                BINDABLE bindableOpacity NOTIFY opacityChanged)
     // 0 = not bound, -1 = mixed across parts, positive = explicit slot.
     Q_PROPERTY(int filamentSlot READ filamentSlot NOTIFY filamentBindingChanged)
+    Q_PROPERTY(int filamentBindingMode READ filamentBindingMode NOTIFY filamentBindingChanged)
     Q_PROPERTY(QVariantList filamentSlots READ filamentSlots
                NOTIFY filamentSlotsChanged)
 
@@ -87,6 +88,7 @@ public:
     QVector3D diffuseColor() const;
     float opacity() const;
     int filamentSlot() const;
+    int filamentBindingMode() const { return m_filamentBindingMode; }
     QVariantList filamentSlots() const;
     bool boundsValid() const;
     QVector3D boundsCenter() const;
@@ -130,6 +132,8 @@ private:
     void updateFromActor(const std::shared_ptr<ActorDB>& actor);
     void updateSpecificProperty(const std::string& propertyName);
     void clearProperties();
+    void updateFromPart();
+    bool assignFilament(bool useDefault, int slot);
     void updateBounds(const std::shared_ptr<ActorDB>& actor);
     void updateModelStatistics(
         const std::shared_ptr<class ModelInstanceDB>& instance);
@@ -151,6 +155,8 @@ private:
     Q_OBJECT_BINDABLE_PROPERTY(ModelPropertyBridge, QVector3D, m_boundsSize, &ModelPropertyBridge::boundsSizeChanged)
 
     DBInstanceID m_selectedId;
+    DBInstanceID m_selectedPartId;
+    int m_filamentBindingMode{0};
     int m_filamentSlot{0};
     int m_partCount{0};
     qulonglong m_vertexCount{0};

@@ -213,9 +213,10 @@ void GCodeImportHandler::parseGCodeInBackground() {
         callbacks.is_cancelled = [cancelRequested, epoch, bridge] {
             return !cancelRequested || cancelRequested->load(std::memory_order_acquire) || !bridge->acceptsPublication(epoch);
         };
-        callbacks.progress = [handler, cancelRequested, epoch, bridge](float progress, std::string_view stage) {
+        callbacks.progress_details = [handler, cancelRequested, epoch, bridge](const libslicer::SliceProgress& status) {
             if (!handler || cancelRequested->load() || !bridge->acceptsPublication(epoch)) return;
-            const QString description = QString::fromUtf8(stage.data(), qsizetype(stage.size()));
+            const float progress = status.progress;
+            const QString description = GPlatform::describeSlicingProgress(status);
             QMetaObject::invokeMethod(handler, [handler, cancelRequested, epoch, bridge, progress, description] {
                 if (!handler || cancelRequested->load() || !bridge->acceptsPublication(epoch) ||
                     handler->getState() != State::Background) return;

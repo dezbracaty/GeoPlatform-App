@@ -110,11 +110,13 @@ ColumnLayout {
         spacing: 6
         Button {
             objectName: "printerDisconnectButton"
+            Layout.fillWidth: true
+            Layout.preferredWidth: 1
             icon.name: FluentIcons.graph_DisconnectDisplay
             icon.width: 14
             icon.height: 14
             text: PrinterService.connectionState === PrinterService.Connecting ? qsTr("Cancel") : qsTr("Disconnect device")
-            implicitHeight: 28
+            implicitHeight: PrintWorkspaceStyle.controlHeight
             font: Typography.caption
             visible: PrinterService.connected || PrinterService.connectionState === PrinterService.Connecting
             enabled: PrinterService.canDisconnect
@@ -127,11 +129,13 @@ ColumnLayout {
         }
         Button {
             objectName: "printerReconnectButton"
+            Layout.fillWidth: true
+            Layout.preferredWidth: 1
             icon.name: FluentIcons.graph_Refresh
             icon.width: 14
             icon.height: 14
             text: PrinterService.deviceAccessRequired ? qsTr("Enter access code") : PrinterService.connected || PrinterService.connectionState === PrinterService.ConnectionError ? qsTr("Reconnect") : qsTr("Connect")
-            implicitHeight: 28
+            implicitHeight: PrintWorkspaceStyle.controlHeight
             font: Typography.caption
             visible: PrinterService.connectionState !== PrinterService.Connecting
             enabled: PrinterService.canReconnect
@@ -142,15 +146,12 @@ ColumnLayout {
                     PrinterService.reconnectDevice();
             }
         }
-        Item {
-            Layout.fillWidth: true
-        }
         IconButton {
             objectName: "printerConnectionDiagnosticsButton"
             icon.name: FluentIcons.graph_Info
             flat: true
-            implicitWidth: 28
-            implicitHeight: 28
+            implicitWidth: PrintWorkspaceStyle.controlHeight
+            implicitHeight: PrintWorkspaceStyle.controlHeight
             Accessible.name: qsTr("Connection diagnostics")
             onClicked: root.diagnosticsRequested()
         }

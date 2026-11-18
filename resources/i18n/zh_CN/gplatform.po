@@ -4310,3 +4310,33 @@ msgstr "切片参数无效。"
 
 msgid "Model or modifier settings changed during slicing. Slice again."
 msgstr "切片过程中模型或修改体参数已变化，请重新切片。"
+
+msgid "Select whole model"
+msgstr "选择整个模型"
+
+msgid "Modifier parameters"
+msgstr "修改体参数"
+
+msgid "Modifier"
+msgstr "修改体"
+
+msgid "Position relative to model"
+msgstr "相对模型的位置"
+
+msgid "Modifier material"
+msgstr "修改体耗材"
+
+msgid "Inherited from model"
+msgstr "继承模型耗材"
+
+msgid "Changes apply to the selected model instance."
+msgstr "修改仅应用于当前模型实例。"
+
+msgid "Unable to isolate the selected model for editing."
+msgstr "无法为当前模型创建独立的编辑对象。"
+
+msgid "The selected modifier is no longer available."
+msgstr "所选修改体已不可用。"
+
+msgid "The selected model is no longer available."
+msgstr "所选模型已不可用。"

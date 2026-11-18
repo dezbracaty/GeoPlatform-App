@@ -3,6 +3,7 @@
 #include "SliceSession.hpp"
 #include <libslicer/Library.hpp>
 #include <libslicer/Calibration.hpp>
+#include <QString>
 
 #include <cstdint>
 #include <memory>
@@ -10,6 +11,8 @@
 #include <vector>
 
 namespace GPlatform {
+
+QString describeSlicingProgress(const libslicer::SliceProgress& progress);
 
 using SlicingConfigActivationResult = libslicer::ConfigActivationResult;
 
@@ -48,7 +51,7 @@ public:
     std::vector<libslicer::PresetOption> printerPresets(const std::string& model, const std::string& variant) const;
     libslicer::PrinterSwitchReview reviewPrinterSwitch(const libslicer::ConfigSelection&, bool afterSave = false);
     libslicer::PrinterSwitchSaveResult savePrinterSwitchPreset(
-        std::uint64_t revision, libslicer::PrinterSwitchPreset, const std::string& name, bool validateOnly = false);
+        std::uint64_t revision, libslicer::PrinterSwitchPreset, const std::string& name, bool validateOnly = false, const std::string& sourcePresetId = {});
     libslicer::PrinterSwitchResult preparePrinterSwitch(const libslicer::ConfigSelection&,
         std::uint64_t revision, const std::vector<libslicer::PrinterSwitchDecision>&,
         const std::vector<std::pair<std::string, std::string>>& remembered);
@@ -61,6 +64,7 @@ public:
         const std::vector<std::pair<std::string, std::string>>& patch);
     libslicer::SettingsResult setConfigValue(std::string_view key, std::string_view value);
     libslicer::SettingsResult resetConfigValue(std::string_view key);
+    SlicingConfigActivationResult restorePreset(libslicer::SettingGroup group, std::optional<std::size_t> filamentSlot = std::nullopt);
     std::optional<libslicer::ActiveConfigView> activeConfigView() const;
     std::uint64_t configurationRevision() const;
     libslicer::ConfigActivationResult setFilamentPreset(

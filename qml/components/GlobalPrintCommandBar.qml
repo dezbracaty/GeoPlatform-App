@@ -15,7 +15,6 @@ PanelSurface {
     property int objectCount: 0
     property string selectedFileName: ""
     property bool hasSelection: false
-    property bool parametersAvailable: !previewMode
     property bool printerControlOpen: false
 
     property alias printerAnchor: deviceStatus
@@ -88,7 +87,6 @@ PanelSurface {
     readonly property string currentJobName:
         (submissionNameMode ? PrinterService.submissionDisplayName : PrinterService.jobFileName)
         || qsTr("Print Job")
-    signal parametersRequested()
     signal machinePopupOpening()
     signal printerControlRequested()
     signal addModelRequested()
@@ -306,29 +304,6 @@ PanelSurface {
                     spacing: PrintWorkspaceStyle.space4
 
                     Button {
-                        id: parameterButton
-                        objectName: "print.configuration.open"
-                        visible: root.parametersAvailable
-                        Layout.fillWidth: false
-                        Layout.minimumWidth: implicitWidth
-                        Layout.preferredWidth: implicitWidth
-                        Layout.maximumWidth: implicitWidth
-                        Layout.preferredHeight: PrintWorkspaceStyle.controlHeight
-                        text: root.narrow ? "" : qsTr("Global process")
-                        icon.name: root.narrow ? FluentIcons.graph_Settings : ""
-                        icon.width: 14
-                        icon.height: 14
-                        font: Typography.caption
-                        onClicked: root.parametersRequested()
-
-                        ToolTip {
-                            text: qsTr("Global process")
-                            visible: parent.hovered && root.narrow
-                            delay: Theme.tooltipDelay
-                        }
-                    }
-
-                    Button {
                         id: normalPrimaryButton
                         objectName: "printNormalPrimaryButton"
                         Layout.fillWidth: false
@@ -387,18 +362,33 @@ PanelSurface {
                 }
 
                 ColumnLayout {
+                    readonly property int descriptionBreak: root.taskDescription.indexOf("\n")
                     Layout.fillWidth: true
                     Layout.preferredWidth: root.progressContentMinimumWidth
-                    Layout.minimumWidth: 0
+                    Layout.minimumWidth: taskProgressDetails.visible
+                                         ? Math.min(taskProgressDetails.implicitWidth, root.progressContentMinimumWidth) : 0
                     Layout.maximumWidth: root.progressContentMinimumWidth
                     spacing: 2
 
                     Label {
                         Layout.fillWidth: true
-                        text: root.taskDescription || qsTr("Processing…")
+                        objectName: "printTaskProgressDescription"
+                        text: (parent.descriptionBreak < 0 ? root.taskDescription
+                               : root.taskDescription.slice(0, parent.descriptionBreak)) || qsTr("Processing…")
                         elide: Text.ElideRight
                         color: root.SmoothUI.theme.res.textFillColorPrimary
                         font: Typography.bodyStrong
+                    }
+
+                    Label {
+                        id: taskProgressDetails
+                        Layout.fillWidth: true
+                        objectName: "printTaskProgressDetails"
+                        visible: parent.descriptionBreak >= 0
+                        text: visible ? root.taskDescription.slice(parent.descriptionBreak + 1).replace(/\n/g, " ") : ""
+                        elide: Text.ElideRight
+                        color: root.SmoothUI.theme.res.textFillColorSecondary
+                        font: Typography.caption
                     }
 
                     ProgressBar {

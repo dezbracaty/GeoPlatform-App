@@ -21,6 +21,7 @@
 - VTK/Filament、DBSync、拾取与帧交换：`.agents/skills/gplatform-rendering/SKILL.md`。
 - 真实程序 Journal 编写、回放与验收：`.agents/skills/gplatform-journal/SKILL.md`。
 - SDK 导出、独立 App 消费与交付：`.agents/skills/gplatform-sdk-delivery/SKILL.md`。
+- 同名临时分支交付、跨仓提交推送与关联 MR 回归：`.agents/skills/gplatform-mr-delivery/SKILL.md`。
 
 按任务组合；小型文本或布局修改不自动升级成完整设计、审查或性能分析流程。
 处理 `qml/`、`src/Bridge/`、`src/Interaction/` 时先读对应目录的 `AGENTS.md`。

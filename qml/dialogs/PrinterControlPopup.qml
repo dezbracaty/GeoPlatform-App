@@ -225,8 +225,8 @@ AppPopup {
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
                         text: control.scanning ? qsTr("Scanning") : qsTr("Refresh")
-                        implicitHeight: 27
-                        font.pixelSize: 12
+                        implicitHeight: PrintWorkspaceStyle.controlHeight
+                        font: Typography.caption
                         icon.name: FluentIcons.graph_Refresh
                         icon.width: 16
                         icon.height: 16
@@ -431,8 +431,8 @@ AppPopup {
                 Button {
                     objectName: "printerConfigureMoonrakerButton"
                     Layout.fillWidth: true
-                    implicitHeight: 27
-                    font.pixelSize: 12
+                    implicitHeight: PrintWorkspaceStyle.controlHeight
+                    font: Typography.caption
                     text: qsTr("Connect to Moonraker")
                     enabled: PrinterService.canConfigureBackend
                     onClicked: {
@@ -442,8 +442,9 @@ AppPopup {
                 }
                 Button {
                     objectName: "printerUseFlashforgeButton"
-                    implicitHeight: 27
-                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                    implicitHeight: PrintWorkspaceStyle.controlHeight
+                    font: Typography.caption
                     text: qsTr("Use Flashforge")
                     visible: PrinterService.backendName !== "Flashforge"
                     enabled: PrinterService.canConfigureBackend
@@ -452,8 +453,8 @@ AppPopup {
                 Button {
                     objectName: "printerControlFlashforgeAccountButton"
                     Layout.fillWidth: true
-                    implicitHeight: 27
-                    font.pixelSize: 12
+                    implicitHeight: PrintWorkspaceStyle.controlHeight
+                    font: Typography.caption
                     visible: PrinterService.supportsAccount
                     text: PrinterService.signedIn
                           ? qsTr("Flashforge account") : qsTr("Sign in to Flashforge")

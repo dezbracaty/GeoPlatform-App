@@ -2,11 +2,10 @@
 
 #include "Foundation/Log.h"
 
-#ifdef _WIN32
 #include <QCoreApplication>
-#endif
 #include <QStandardPaths>
 
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <deque>
@@ -18,6 +17,23 @@
 #include <utility>
 
 namespace GPlatform {
+
+QString describeSlicingProgress(const libslicer::SliceProgress& progress)
+{
+    const auto translated = [](std::string_view source) {
+        const QByteArray text(source.data(), qsizetype(source.size()));
+        return QCoreApplication::translate("LibSlicerSettings", text.constData());
+    };
+    QString description = translated(progress.detail.empty() ? progress.stage : progress.detail);
+    if (progress.total_layers > 0) {
+        const auto completed = std::min(progress.completed_layers, progress.total_layers);
+        description += QLatin1Char('\n') + QCoreApplication::translate("LibSlicerSettings",
+            "%1/%2 layers (%3%)")
+            .arg(qulonglong(completed)).arg(qulonglong(progress.total_layers))
+            .arg(int(100.0 * double(completed) / double(progress.total_layers)));
+    }
+    return description;
+}
 
 class SlicingBackend::Impl final {
 public:
@@ -224,7 +240,7 @@ libslicer::PrinterSwitchReview SlicingBackend::reviewPrinterSwitch(
 }
 
 libslicer::PrinterSwitchSaveResult SlicingBackend::savePrinterSwitchPreset(
-    std::uint64_t revision, libslicer::PrinterSwitchPreset type, const std::string& name, bool validateOnly)
+    std::uint64_t revision, libslicer::PrinterSwitchPreset type, const std::string& name, bool validateOnly, const std::string& sourcePresetId)
 {
     std::unique_lock<std::mutex> admissionLock(m_impl->configurationAdmissionMutex);
     if (!configurationChangesAllowed()) {
@@ -232,8 +248,8 @@ libslicer::PrinterSwitchSaveResult SlicingBackend::savePrinterSwitchPreset(
         result.diagnostics = busySettingsResult().diagnostics;
         return result;
     }
-    return m_impl->invoke([this, revision, type, name, validateOnly] {
-        return m_impl->library->save_printer_switch_preset(revision, type, name, validateOnly);
+    return m_impl->invoke([this, revision, type, name, validateOnly, sourcePresetId] {
+        return m_impl->library->save_printer_switch_preset(revision, type, name, validateOnly, sourcePresetId);
     });
 }
 
@@ -342,6 +358,25 @@ libslicer::SettingsResult SlicingBackend::resetConfigValue(std::string_view key)
     const std::string requestedKey(key);
     return m_impl->invoke([this, requestedKey]() {
         return m_impl->library->reset_active_config_value(requestedKey);
+    });
+}
+
+SlicingConfigActivationResult SlicingBackend::restorePreset(
+    libslicer::SettingGroup group, std::optional<std::size_t> filamentSlot)
+{
+    if (!m_available) {
+        SlicingConfigActivationResult result;
+        result.diagnostics = unavailableSettingsResult("libslicer is not initialized").diagnostics;
+        return result;
+    }
+    std::unique_lock<std::mutex> admissionLock(m_impl->configurationAdmissionMutex);
+    if (m_impl->activeLongJobs.load(std::memory_order_acquire) != 0) {
+        SlicingConfigActivationResult result;
+        result.diagnostics = busySettingsResult().diagnostics;
+        return result;
+    }
+    return m_impl->invoke([this, group, filamentSlot] {
+        return m_impl->library->restore_active_preset(group, filamentSlot);
     });
 }
 

@@ -1,3 +1,4 @@
+#include <ModelGraphUtil.hpp>
 #include "SliceSettingsBridge.hpp"
 #include "BridgeRegistration.hpp"
 
@@ -467,9 +468,10 @@ SliceSettingsBridge::PreparedConfiguration SliceSettingsBridge::prepareConfigura
     for (std::size_t index = 0; index < prepared.view.settings.size(); ++index) {
         const auto& item = prepared.view.settings[index];
         prepared.itemIndex.emplace(item.key, index);
-        if (item.group == libslicer::SettingGroup::Process)
-            prepared.processBaseline.emplace(item.key, item.value);
+
     }
+    for (const auto& key : prepared.view.modified_process_keys)
+        prepared.modifiedProcessKeys.push_back(QString::fromStdString(key));
     prepared.filamentSlots = filamentSlotItems(prepared.view.filament_slots, prepared.view.settings);
     auto schema = prepareSchema(prepared.view.settings);
     prepared.schemaSettings = std::move(schema.settings);
@@ -507,7 +509,8 @@ void SliceSettingsBridge::installCommittedConfiguration(
     m_compatibleProcesses.swap(prepared.view.compatible_processes);
     m_compatibleFilaments.swap(prepared.view.compatible_filaments);
     m_items.swap(prepared.view.settings);
-    m_processBaseline.swap(prepared.processBaseline);
+    m_modifiedProcessKeys.swap(prepared.modifiedProcessKeys);
+    m_printerPresetModified = prepared.view.printer_preset_modified;
     m_itemIndex.swap(prepared.itemIndex);
     m_schemaSettings.swap(prepared.schemaSettings);
     m_schemaPages.swap(prepared.schemaPages);
@@ -664,13 +667,41 @@ QVariantMap SliceSettingsBridge::settings() const {
 
 QStringList SliceSettingsBridge::modifiedSettingKeys() const {
     QReadLocker locker(&m_lock);
-    QStringList keys;
-    for (const auto& item : m_items) {
-        const auto base = m_processBaseline.find(item.key);
-        if (item.visible && base != m_processBaseline.end() && item.value != base->second)
-            keys.append(QString::fromStdString(item.key));
+    return m_modifiedProcessKeys;
+}
+
+bool SliceSettingsBridge::printerPresetModified() const {
+    QReadLocker locker(&m_lock);
+    return m_printerPresetModified;
+}
+
+void SliceSettingsBridge::refreshPresetState() {
+    const auto active = GPlatform::SlicingBackend::instance().activeConfigView();
+    if (!active) return;
+    bool slotsChanged = false;
+    bool selectionChanged = false;
+    bool schemaChanged = false;
+    {
+        QWriteLocker locker(&m_lock);
+        schemaChanged = applyChangedItemsLocked(active->settings);
+        m_modifiedProcessKeys.clear();
+        for (const auto& key : active->modified_process_keys)
+            m_modifiedProcessKeys.push_back(QString::fromStdString(key));
+        m_printerPresetModified = active->printer_preset_modified;
+        selectionChanged = m_selection.filament_preset_ids != active->selection.filament_preset_ids;
+        m_selection = active->selection;
+        m_compatibleProcesses = active->compatible_processes;
+        m_compatibleFilaments = active->compatible_filaments;
+        auto projectedSlots = filamentSlotItems(active->filament_slots, m_items);
+        slotsChanged = projectedSlots != m_filamentSlots;
+        m_filamentSlots.swap(projectedSlots);
     }
-    return keys;
+    if (selectionChanged) {
+        publishActiveSlicingConfig(active->revision, active->filament_slots);
+        emit presetSelectionChanged();
+    }
+    if (slotsChanged) emit filamentSlotsChanged();
+    if (schemaChanged) emit this->schemaChanged();
 }
 
 void SliceSettingsBridge::setSettings(const QVariantMap& settings) {
@@ -706,8 +737,10 @@ void SliceSettingsBridge::setSettings(const QVariantMap& settings) {
         if (valuesChanged)
             setPendingLocked(&pendingChanged);
     }
-    if (valuesChanged)
+    if (valuesChanged) {
+        refreshPresetState();
         emit settingsChanged();
+    }
     if (schemaChanged)
         emit this->schemaChanged();
     if (pendingChanged)
@@ -781,8 +814,10 @@ void SliceSettingsBridge::setSetting(const QString& key, const QVariant& value) 
     }
     if (valueChanged)
         emit settingChanged(key, canonicalDisplay);
-    if (valueChanged)
+    if (valueChanged) {
+        refreshPresetState();
         emit settingsChanged();
+    }
     if (schemaChanged)
         emit this->schemaChanged();
     if (pendingChanged)
@@ -818,46 +853,35 @@ void SliceSettingsBridge::removeSetting(const QString& key) {
         if (valueChanged)
             setPendingLocked(&pendingChanged);
     }
-    if (valueChanged)
+    if (valueChanged) {
+        refreshPresetState();
         emit settingsChanged();
+    }
     if (schemaChanged)
         emit this->schemaChanged();
     if (pendingChanged)
         emit hasPendingResliceChanged();
 }
 
-void SliceSettingsBridge::resetToDefaults() {
-    if (configurationMutationBlocked("configuration reset"))
-        return;
-
+void SliceSettingsBridge::restoreCurrentPreset(const QString& tab, int filamentSlot) {
+    if (configurationMutationBlocked("preset restore")) return;
+    if (tab != QStringLiteral("process") && tab != QStringLiteral("filament") && tab != QStringLiteral("printer")) return;
+    const auto group = tab == QStringLiteral("process") ? libslicer::SettingGroup::Process
+                     : tab == QStringLiteral("filament") ? libslicer::SettingGroup::Filament
+                                                         : libslicer::SettingGroup::Printer;
     auto& backend = GPlatform::SlicingBackend::instance();
-    if (!backend.available())
+    const auto revision = backend.configurationRevision();
+    auto result = backend.restorePreset(group, filamentSlot < 0 ? std::nullopt
+                                                              : std::optional<std::size_t>(filamentSlot));
+    if (!result) {
+        QStringList reasons;
+        for (const auto& diagnostic : result.diagnostics)
+            reasons.push_back(translatedSettingText(QString::fromStdString(diagnostic.message)));
+        emit settingRejected({}, tr("Could not restore the current preset: %1").arg(reasons.join(QLatin1Char('\n'))));
         return;
-    libslicer::ConfigSelection selection;
-    {
-        QReadLocker locker(&m_lock);
-        selection.machine_model_id = m_selection.machine_model_id;
-        selection.machine_variant_id = m_selection.machine_variant_id;
-        selection.process_preset_id = m_selection.process_preset_id;
-        selection.filament_preset_ids = m_selection.filament_preset_ids;
     }
-    replaceConfig(backend.activateConfig(selection), true);
-}
-
-void SliceSettingsBridge::restoreProcessSettings() {
-    // Reactivating the same SDK selection intentionally preserves edits.
-    // Restore only process values through its atomic, validated patch API;
-    // printer and material configuration must remain untouched.
-    QVariantMap baseline;
-    {
-        QReadLocker locker(&m_lock);
-        for (const auto& item : m_items) {
-            const auto original = m_processBaseline.find(item.key);
-            if (original != m_processBaseline.end() && item.value != original->second)
-                baseline.insert(QString::fromStdString(item.key), displayValueLocked(item, original->second));
-        }
-    }
-    if (!baseline.isEmpty()) setSettings(baseline);
+    if (result.view.revision == revision) return;
+    replaceConfig(std::move(result), true);
 }
 
 QVariantList SliceSettingsBridge::machineModels() const {
@@ -991,7 +1015,7 @@ QVariantMap SliceSettingsBridge::printerSwitchPresetNameStatus(const QString& na
     const auto& pending = *m_printerSwitch;
     const auto& preset = pending.review.presets.at(pending.decisions.size());
     const auto status = GPlatform::SlicingBackend::instance().savePrinterSwitchPreset(
-        pending.review.revision, preset.type, name.toStdString(), true);
+        pending.review.revision, preset.type, name.toStdString(), true, preset.name);
     if (!status.diagnostics.empty())
         return {{"valid", false}, {"message", tr(status.diagnostics.front().message.c_str())}};
     return {{"valid", true}, {"message", status.overwrite_warning.empty()
@@ -1006,7 +1030,7 @@ void SliceSettingsBridge::resolvePrinterSwitch(const QString& action, const QStr
     Action decision = Action::Cancel;
     if (action == QStringLiteral("save")) {
         auto& backend = GPlatform::SlicingBackend::instance();
-        auto saved = backend.savePrinterSwitchPreset(pending.review.revision, preset.type, saveName.toStdString());
+        auto saved = backend.savePrinterSwitchPreset(pending.review.revision, preset.type, saveName.toStdString(), false, preset.name);
         if (!saved) {
             const auto message = saved.diagnostics.empty() ? tr("Could not save preset")
                 : QString::fromStdString(saved.diagnostics.front().message);
@@ -1024,7 +1048,8 @@ void SliceSettingsBridge::resolvePrinterSwitch(const QString& action, const QStr
             emit settingRejected(QStringLiteral("printer"), tr("Preset saved. Printer switch failed. %1").arg(message));
             return;
         }
-        if (pending.review.presets.empty()) pending.decisions.clear();
+        // Saving changes the review list; replay decisions against its new identities.
+        pending.decisions.clear();
     } else {
         if (action == QStringLiteral("transfer")) decision = Action::Transfer;
         else if (action == QStringLiteral("discard")) decision = Action::Discard;
@@ -1245,7 +1270,7 @@ std::shared_ptr<ModelInstanceDB> selectedParameterInstance(const QString& modelI
     bool ok = false;
     const DBInstanceID id(modelId.toULongLong(&ok));
     const auto* selection = SelectionBridge::instance();
-    if (!ok || !id.isValid() || selection->selectionCount() != 1 || selection->selectedId() != id)
+    if (!ok || !id.isValid() || selection->activeInstanceId() != id)
         return {};
     return DocumentManager::instance()->getDB<ModelInstanceDB>(id);
 }
@@ -1352,10 +1377,32 @@ QString SliceSettingsBridge::editLocalProcessSetting(const QString& modelId, con
     if (changed == target.semantics()) return {};
 
     TransactionGuard transaction(target.part ? "Edit modifier slicing parameter" : "Edit model slicing parameter");
-    if (target.part)
-        target.part->setProjectSemantics(changed);
-    else
-        target.object->setProjectSemantics(changed);
+    const auto instance = selectedParameterInstance(modelId);
+    if (!instance) {
+        transaction.rollback();
+        return tr("The selected model is no longer available.");
+    }
+    const auto unique = ModelGraphUtil::ensureUniqueObjectForInstance(instance->getDBInstanceID());
+    if (!unique) {
+        transaction.rollback();
+        return tr("Unable to isolate the selected model for editing.");
+    }
+    auto* document = DocumentManager::instance();
+    if (target.part) {
+        const auto partId = unique.mapPart(target.part->getDBInstanceID());
+        const auto part = document->getDB<ModelPartDB>(partId);
+        if (!part) {
+            transaction.rollback();
+            return tr("The selected modifier is no longer available.");
+        }
+        part->setProjectSemantics(changed);
+        const auto* selection = SelectionBridge::instance();
+        if (selection->activeInstanceId() == instance->getDBInstanceID() &&
+            selection->activePartId() == target.part->getDBInstanceID())
+            SelectionBridge::instance()->setSelectedModifier(instance->getDBInstanceID(), partId);
+    } else {
+        document->getDB<ModelObjectDB>(unique.objectId)->setProjectSemantics(changed);
+    }
     transaction.commit();
     markNeedsReslice();
     return {};
@@ -1603,6 +1650,7 @@ QVariantList SliceSettingsBridge::filamentSlotItems(
             {QStringLiteral("number"), static_cast<qulonglong>(slot.index + 1)},
             {QStringLiteral("presetId"), QString::fromStdString(slot.preset_id)},
             {QStringLiteral("presetName"), QString::fromStdString(slot.preset_name)},
+            {QStringLiteral("presetModified"), slot.preset_modified},
             {QStringLiteral("compatiblePresets"), presetOptions(slot.compatible_presets)},
             {QStringLiteral("vendor"), QString::fromStdString(slot.vendor)},
             {QStringLiteral("materialType"), QString::fromStdString(slot.material_type)},
@@ -1828,10 +1876,6 @@ bool SliceSettingsBridge::replaceConfig(GPlatform::SlicingConfigActivationResult
             }
             synchronizePlateMaterials = domainChanged;
         }
-        if (m_selection.machine_model_id == prepared.view.selection.machine_model_id &&
-            m_selection.machine_variant_id == prepared.view.selection.machine_variant_id &&
-            m_selection.process_preset_id == prepared.view.selection.process_preset_id && !m_processBaseline.empty())
-            prepared.processBaseline = m_processBaseline;
     }
     if (synchronizePlateMaterials) {
         // Update every real plate on the document thread, before publishing the
