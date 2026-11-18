@@ -19,17 +19,13 @@ description: 导出、检查或验证 GPlatform SDK 与独立 App 消费。先�
 先查 SDK export、`publish_sdk.py`、`cmake/source_inputs.py`、`GPlatformSDKConsumer.cmake` 和现有部署/CI 调用链，确认现有能力是否已经覆盖。复用清单生成、来源检查、锁、暂存/替换及运行库部署，不另写逐文件复制、校验或发布脚本。
 确有接口/资源缺口时在拥有它的导出或消费位置补齐必要契约，并验证两端；局部交付问题不默认扩大为 SDK 布局迁移、兼容框架或跨仓库历史改造。
 
-## MR 源码回归与独立消费的区别
-
-主仓 MR 按 `gplatform-mr-delivery` 从完整源码构建，不要求开发者在提交 MR 前生成或推送新 SDK。Mac mini 与 Windows 固定平台回归都通过后，由 workflow 使用同一源码 SHA 生产、校验并更新同名临时 SDK 分支，保留本技能中的来源、清单、载荷和槽位校验。SDK 不自动回写正在验收的 App／主仓指针；后续独立 App 消费更新仍按 SDK → App → 宿主的依赖顺序处理。
-
 ## 执行方法
 
 1. 生产：用匹配的薄架构 preset 构建完整宿主的标准目标，核对 `sdk-export/settings.json`、导出清单与产物来源。
 2. 导出：使用宿主唯一入口 `cmake/sdk/publish_sdk.py --export <build>/sdk-export --output <build>/package`，核对包清单和校验结果。
-3. 消费：独立配置 App，以 `GPLATFORM_SDK_ROOT=<package>/SDK` 指向候选包；不要为本地验证修改源码 SDK 子模块指针。
+3. 消费：独立配置 App，以 `GPLATFORM_SDK_ROOT=<package>/SDK` 指向候选包；本地与CI均显式选择，不使用SDK子模块默认路径。
 4. 本地验证：检查 App 真正消费候选槽位，运行相关 SDK 检查与应用场景，核对实际部署/加载的库和 QML 资源。
-5. 交付与 CI：在已授权范围内按依赖顺序完成 SDK/LFS、App pin 和宿主 gitlink 的提交推送，并以固定提交运行 CI；打包流程本身不执行 Git 提交、推送或发布。
+5. 交付与 CI：四个CI入口统一在App，规范见APP_ROOT/docs/ci.md；准确冻结App/宿主SHA，不能把所选App换回Root旧gitlink。SDK固定发布到macos/windows；正式平台构建冻结各自SDK SHA并通过SDK_ROOT消费，SDK地址来自App的cmake/sdk-repository.json，不保留SDK gitlink回退。按已授权范围维护App/Root源码引用，不能把其他SDK当实际消费版本；SDK包保留真实producer身份，不为CI/pin后继循环重编。打包流程不自动提交或发布Release。
 
 上述为相关阶段的入口，不要求每个检查任务重新生产全部 SDK；已有匹配且可验证的包可直接用于所请求的消费检查。
 已授权的跨仓库任务，子仓库目标提交推送成功后，及时同步本次任务涉及的父仓库引用；开发分支引用同步不等待 CI 完成。分别报告引用已同步、CI 进行中/通过/失败和正式发布状态；正式合并/发布仍遵守对应验收及授权要求。

@@ -10,7 +10,7 @@ App 路径相对 `APP_ROOT`；完整源码宿主用 `HOST_ROOT` 明示。
 | 独立 App | `CMakeLists.txt` 和 presets | 无 Foundation target 时进入 `cmake/GPlatformSDKConsumer.cmake`；编译应用与 Orca 源码，消费 SDK |
 | Orca 单独 | `ThirdParty/OrcaSlicer/CMakeLists.txt` 和自身 presets | 公共 libslicer 库和按需测试；没有原版 wx GUI |
 
-独立 App 的 SDK 使用 `<架构>/<配置>/sdk-build.json`，默认位于 `ThirdParty/libs/GPlatformSDK`；候选包通过 `GPLATFORM_SDK_ROOT` 指定。先核对真实槽位、LFS 是否已物化及元数据，不靠文件夹名推断兼容。
+独立 App 的 SDK 使用 `<架构>/<配置>/sdk-build.json`；本地与 CI 都必须通过 `GPLATFORM_SDK_ROOT` 显式选择 checkout 或文件包 SDK 目录，没有 SDK 子模块默认路径。仓库地址由 cmake/sdk-repository.json 声明，平台流程见 docs/ci.md。先核对真实槽位、LFS 是否已物化及元数据，不靠文件夹名推断兼容。
 
 ## 现有入口的职责
 

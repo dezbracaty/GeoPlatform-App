@@ -1,148 +1,136 @@
-# App 双平台构建
+# App 平台 CI：SDK、回归、安装包与 MR
 
-跨仓临时分支提交和 MR 全量门禁的讨论定稿见 [MR 回归流程](mr-regression-workflow.md)。其中四参数主入口及强制门禁是待实施设计；下文描述目前已实现的 App 手动构建流程，二者不能混作已上线能力。
+本文件是平台 CI 的唯一完整维护规范，替代原 Root `docs/Development/Platform_Workflows.md` 中的入口设计。最终只有四个 workflow，全部维护并运行于 `dezbracaty/GeoPlatform-App`。三个手动入口互相独立，一个 App MR 自动入口复用同一回归实现；不维护额外 controller 分支。
 
-本仓库只有一个 `Build App` workflow，同时构建 Windows x64 和 macOS Universal。入口为 Actions → Build App → Run workflow；主仓库的 Run Build App 也调用同一入口并等待真实结果。
+本文描述用户已确认的最终契约。迁移中的代码、默认分支及 GitHub 已登记入口是否已切换，必须以实际提交和正式运行结果另行核实，不能把文档存在视为已上线或验收通过。
 
-仅手动或被主仓库显式调用，不监听源码 push，不更新 SDK；默认在全部启用的检查成功后发布 App 预发布版。
+## 入口清单
 
-## 输入和版本
+| Workflow | 文件 | 触发方式 | 职责 |
+| --- | --- | --- | --- |
+| Build SDK | `.github/workflows/build-sdk.yml` | 手动 | 正式生产、检查、可选发布平台 SDK |
+| Run Regression | `.github/workflows/run-regression.yml` | 手动、workflow_call | 完整宿主原生检查、SDK 消费检查、Server 全量回归 |
+| Build Installer | `.github/workflows/build-installer.yml` | 手动 | 检查、构建、部署、打包、必要启动验证和上传 |
+| MR Checks | `.github/workflows/pr-checks.yml` | App MR 自动触发 | 固定 MR head，强制双平台源码模式完整回归 |
 
-| 输入 | 默认值 | 含义 |
-| --- | --- | --- |
-| `source_ref` | `feature/gplatform-ui` | App 已有分支或完整提交 SHA |
-| `test_assets_ref` | `macmini` | TestAssets 仓库已有分支或完整提交 SHA，仅用于 macOS 回归 |
-| `run_journal` | `true` | 是否执行 macOS Journal 回归；设为 `false` 仅编译、检查、部署和打包 |
-| `windows_test_assets_ref` | `windows` | Windows TestAssets 分支或完整 SHA，独立于 macmini |
-| `run_windows_journal` | `true` | 是否执行 Windows Journal 回归 |
-| `publish_release` | `true` | 全部构建及启用的检查成功后，是否发布到本 App 仓库的 Releases；设为 `false` 只保留 Actions 附件 |
-| `request_id` | 空 | 主仓库内部关联 ID；独立手动运行可留空 |
+所有本轮报告、SDK 附件和安装包附件在 App 仓库 Actions 查看。GPlatform 保留完整宿主源码、标准 presets、原生测试、SDK 导出入口；SDK/TestAssets 仓库保留平台产物和测试数据。
 
-准备任务固定 App SHA，读取其中 `ThirdParty/libs/GPlatformSDK` 的 gitlink。两平台消费同一个 App SHA 和 SDK SHA，不提供“最新 SDK”或单独切换源码依赖的选项。
-测试资产版本从该 App 声明的 TestAssets 仓库独立解析为固定 SHA，并记录到本次输入。
-`macmini` 是测试资产分支，不要求宿主或 App 创建同名分支。选择的远端引用必须存在，否则准备失败；
-本地分支不会自动发布，也不会自动成为 CI 输入。
-两个平台的回归开关均为 `false` 时不解析或下载 TestAssets，不需要 Journal 工具、Pillow 或图形桌面会话；
-SDK 校验、`SDKConsumerExtensionCheck`、Universal 部署审计和安装包生成仍执行。
-此选项不会修改基线，也不会将未执行的 Journal 记成通过。
+## 固定分支与候选身份
 
-App 消费 SDK 格式 3 / UI package 1，产品构建依赖 SDK 与 Orca 两个引用。`tests/TestAssets` 声明 `update=none`，产品编译仍跳过它；各平台回归阶段显式初始化该仓库，再检出准备阶段选定的测试 SHA 并获取 LFS 实体，不改 App gitlink。详见 [验收架构](acceptance.md)。SmoothUI、SmoothUIDock 及其 KDDockWidgets 实现由生产者编成 SDK，App 不克隆这些实现仓库；构建前验证完整 SDK manifest、UI 资源合同及 Orca 受管内容/版本，不改写来源清单。
+| 平台 | SDK 发布分支 | SDK Release 槽位 | TestAssets 默认分支 |
+| --- | --- | --- | --- |
+| windows | windows | AMD64/Release | windows |
+| macos | macos | arm64/Release、x86_64/Release | macmini |
 
-控制 workflow/CI 脚本来自本次 workflow 提交，产品代码来自固定的 App 提交；两者分别记录。App 仓库自己的 `.github/`、`scripts/ci/`、`tests/ci/`、`docs/ci.md` 由本仓库维护，主仓库同步产品源码时保留。
+SDK 长期使用这两个固定分支，不创建任务 SDK 分支。源码按正常功能分支开发；所有分支在 prepare 一次解析为完整 SHA，后续不重新解析分支头。`platform=all` 两平台独立并行，fail-fast=false；Mac 自身两个薄架构遵循现有标准构建顺序。
 
-## runner 与少量配置
+App 是被测代码的主身份：先冻结 `app_ref`，再冻结 `host_ref`。完整宿主按选定 Root SHA 检出，`App/` 明确检出本轮 App SHA，不能默认回到 Root 旧 App gitlink。报告同时记录宿主原声明 App gitlink 和实际选定 App SHA；Root 自身源码、App 自身源码及各自依赖分别严格校验。
 
-必须是本仓库有权调度的 runner；主仓库注册的 repo runner 不会自动接本仓库任务。同一物理机如注册两个仓库 runner，重编共享同一把 OS 文件锁。
+现有 SDK format 3 已分别记录 SOURCE_STATE 与 APP_SOURCE_STATE；继续保留真实 producer Root/App HEAD、干净状态、源码 diff 摘要、fork 来源、UI 包与完整 manifest。不能伪造来源、允许任意脏修改、取消输入一致性检查或靠循环更新 pin 生产 SDK。显式选择 App 是受控候选输入，不等于修改 Root 的源码提交或自动提交新 gitlink。
 
-| Variable | 示例结构 | 用途 |
-| --- | --- | --- |
-| `GPLATFORM_WINDOWS_RUNNER_LABELS` | `["self-hosted","Windows","X64","gplatform-build"]` | Windows runner 标签 |
-| `GPLATFORM_MACOS_RUNNER_LABELS` | `["self-hosted","macOS","ARM64","gplatform-macos-build"]` | Mac runner 标签 |
+运行记录必须包含 workflow 实现 SHA、Root/App SHA、SDK 来源及实际 SDK SHA/文件包摘要、producer Root/App 身份、所选 TestAssets SHA、工具链、应用哈希、实际加载资源及报告路径。CI 编排、构建适配和启动包装器始终来自本轮固定的 workflow 实现检出，不能因为 app_ref 指向历史产品就退回旧版CI脚本；Journal 客户端/Server、业务场景和源码契约仍来自被测 App。MR 工作流实现与被测 MR head 分开固定；来自外部 fork 的代码不自动获得内部 runner 或凭据。
 
-示例标签不代表已注册机器。prepare 实际查询本仓库 runner，输出 online/busy 信息；无匹配在线 runner 立即失败。busy 可排队，queue_guard 最多看护 30 分钟；超时请求取消本次运行，不能把请求已接受说成已经停止。
+## Build SDK
 
-| Secret | 权限 |
-| --- | --- |
-| `GPLATFORM_SOURCE_TOKEN` | App、SDK、TestAssets、私有源码子模块的 Contents 读 |
-| `GPLATFORM_WORKFLOW_TOKEN` | 供 hosted prepare 查询本仓库 runner 的 Administration 读 |
-| `GPLATFORM_RELEASE_TOKEN` | 本 App 仓库的 Contents 写；开发提交的 workflow 与默认分支不同时还需 Workflows 写。仅 `publish_release=true` 必需 |
+| 参数 | 类型 | 默认值 | 含义 |
+| --- | --- | --- | --- |
+| app_ref | 分支/完整 SHA | feature/gplatform-ui | 参与生产的 App 源码 |
+| host_ref | 分支/完整 SHA | feature/gplatform-ui | GPlatform 完整宿主源码 |
+| platform | windows / macos / all | windows | 仅调度所选平台 |
+| mode | artifacts / publish | artifacts | 仅产包上传，或校验后发布固定平台分支并上传 |
 
-平台编译 job 仅注入 SOURCE，不注入独立发布 Secret；SOURCE 应配置为只读。实际权限由配置的 Token 决定，Secret 命名不会降低权限；经明确授权采用更广权限时，验收记录必须注明，不能宣称仍满足只读隔离。queue_guard 用本仓库 `GITHUB_TOKEN` 的 Actions 写权限，只取消本次运行。发布使用独立的 hosted `publish` job，仅该任务注入 RELEASE；不扩大 SOURCE 的权限。发布开启但未配置 RELEASE 时，准备阶段立即失败。发布 job 的内置 `GITHUB_TOKEN` 只用于读取本轮 Actions 附件。凭据配置由获授权的管理身份完成。
+执行：冻结 App/宿主/依赖 → 检出准确组合 → 工具链和源码检查 → 正式 preset configure/build → `cmake/sdk/publish_sdk.py` 导出 → 完整来源、manifest、槽位、LFS/ABI 检查 → 可选 CAS 发布 → 上传证据。
 
-runner 需要 Git/LFS、Python 3.12、CMake/Ninja 和相容 Qt。Windows 需要 PowerShell 7、MSVC C++/Windows SDK、Inno Setup 7；Mac 需要激活的 Xcode 和可运行 x86_64 检查的 Rosetta。固定的 Node 24 Actions 要求 runner 至少 2.327.1。
+发布目标始终为 SDK 的 windows/macos；prepare 分别冻结平台分支 expected-base，每个平台只更新自身槽位。Windows 不等待 Mac，不向另一平台分支合槽。Mac 两槽必须来自同一候选和一致契约。
 
-Mac GUI 回归要求 runner 运行在已登录且可用的图形用户会话中，屏幕可用逻辑区域至少容纳
-1382×954 窗口；不能用 offscreen 代替实际回放。执行器只激活它自己启动且身份核对一致的 App。
-runner Python 必须有 Pillow；辅助看图依赖见 `tools/requirements.txt`，OCR/辅助计算不决定通过。
-Journal Python 工具固定使用所选 App 提交中的 `tools/journal/`，不再依赖 runner 的
-`GPLATFORM_JOURNAL_TOOLS` 外部目录；工具哈希继续记录到回归输入。
-这些工具和所选 SDK 中的 C++ JournalSystem 必须配套支持固定逻辑窗口协议；
-不通过替换部署库、自动升级 SDK 或放宽截图判定绕过不匹配。
+构建、导出校验、SDK 仓库发布、Actions 上传分别记录。上传失败不撤销已完成发布，也不据此重新编译。此入口不修改 App 源码、不发布 GitHub Release、不自动启动回归或 installer。
 
-环境部署在 workflow 之外完成：安装 Python >= 3.12，并使 runner 服务的 PATH 能直接执行 python；Windows 的 PowerShell 脚本执行策略也由部署阶段配置。Mac 可将已安装 Homebrew Python 的 libexec/bin 加入 runner PATH。修改 runner 环境后，在空闲时重启对应服务并检查工具。workflow 不下载或安装工具，不改 PATH、不创建解释器别名、不设置执行策略；只读检查 Python，环境缺失直接失败。
+## Run Regression
 
-工具路径沿用普通项目入口支持的 `Qt6_DIR` / `GPLATFORM_VS_ROOT` 等环境配置，不提交机器绝对路径。`GPLATFORM_MACHINE_BUILD_LOCK` 可指定跨仓库共享锁路径；默认用户缓存目录 `.cache/gplatform/build.lock`。`CMAKE_BUILD_PARALLEL_LEVEL` 控制编译并行度。
+| 参数 | 类型 | 默认值 | 含义 |
+| --- | --- | --- | --- |
+| app_ref | 分支/完整 SHA | feature/gplatform-ui | 被测 App |
+| host_ref | 分支/完整 SHA | feature/gplatform-ui | 完整宿主 |
+| platform | windows / macos / all | all | 所选平台 |
+| sdk_source | source / published | source | 本轮源码 SDK 包，或已发布 SDK |
+| macos_sdk_ref | 分支/完整 SHA，可空 | 空 | published 时空值选 macos |
+| windows_sdk_ref | 分支/完整 SHA，可空 | 空 | published 时空值选 windows |
+| macos_test_assets_ref | 分支/完整 SHA | macmini | Mac 测试资产 |
+| windows_test_assets_ref | 分支/完整 SHA | windows | Windows 测试资产 |
 
-## 执行和附件
+source 模式禁止填写 SDK refs，按本轮 Root/App 候选生产 SDK 文件包，仅供本轮使用，不发布 SDK 分支。published 模式使用冻结的 SDK 提交，并核对实际来源与候选契约；不兼容或来源不符必须明确失败，不回退旧 SDK。未选择的平台不解析其 SDK/资产，不调度其 runner。
 
-Windows 复用 `scripts/build.ps1`，Mac 复用薄 preset 和 `scripts/build_macos_universal.py --merge-only`，保留项目默认构建目录。
+完整执行：冻结版本 → 准备本平台 TestAssets → 宿主原生 CTest/原生切片检查 → 生成或获取 SDK → 构建 SDK 消费 App → 必需 SDK 检查及实际部署/资源检查 → 启动 Journal Web Server → 使用该 Server 的 /api/run 创建全量任务 → 严格验收 → 按既有规则一次串行复查 → 汇总。
 
-每平台必须实际构建并运行 `SDKConsumerExtensionCheck`；Mac 两架构分别检查。
-Mac 合并、部署及审计 Universal App 完成后，在同一个受机器锁保护的 job 中并行执行两项：
-现有 `create_disk_image` 生成 DMG；正式 `run_acceptance.py --cases all` 对该 App 执行全部场景。
-DMG 帮助函数使用自己的暂存副本，不能修改被测 App。Journal 场景仍串行运行，不需要第二个 runner。
-两项分别保存终态，一项失败仍等待另一项保存证据；任一失败导致 Mac job 失败。
-两平台独立完成，任何检查、编译、打包、必需回归或附件上传失败均导致整体失败。
-Windows 在现有 installer 目标完成后，串行调用同一个 `tools/run_acceptance.py --cases all`，
-对 `build-Release/GPlatform.exe` 回归。安装目标可能更新部署产物，因此不与回放并发。
-Windows 固定独立的资产 SHA，核对实际 DPR=1、窗口及截图 1382×954；runner 必须处于
-已登录且解锁的桌面会话，Session 0 服务会话直接失败。App 显式配置专用测试子进程，系统桌面缩放不变。
-Windows 同样单独上传回归证据，失败仍上传；`build-result.json` 明确记录该平台的回归终态。
-关闭 `run_journal` 时，Mac 直接从已部署并审计的 Universal App 生成 DMG，不启动回归任务，
-也不创建回归结果附件；安装包附件中的 `mac-stages.json` 和 `build-result.json` 明确记录
-`regression.status=skipped`、`reason=run_journal=false`。
+原生 configure 显式使用已预检依赖的 Python3_EXECUTABLE，并打开既有 JOURNALSYSTEM_BUILD_TESTS。原生与 GUI 使用同一冻结资产；SDK 生产/消费前恢复 App 自己声明的测试资产 gitlink，不能把平台资产选择当作脏产品源码。GUI 再选择冻结资产。
 
-附件名称含平台、run ID、attempt，保留 7 天。安装包附件包含 EXE/DMG、对应 SHA-256 文件和
-`build-result.json`；Mac 另含 `mac-stages.json` 及 DMG 日志，并单独上传回归目录，包括固定输入、
-执行日志、逐场景自动结果和截图证据。回归失败时仍上传已生成的安装包及失败证据。
-使用标准 upload-artifact；不补上传，不自动续传失败的发布。Mac 回归通过只证明所选场景
-覆盖的行为，不代表已完成安装器安装、所有 UI 或全部算法验收，当前 Mac 签名不等同已公证发行。
+共享 discover_scenarios 决定活动 ID，计划与实际集合必须一致。保留初轮、串行复查、最终身份和计数；缺项、pending、失败、执行中断、cleanupError 均不能通过。截图、DB、输出及取消语义保持现有严格契约，不修改标准制造通过。
 
-生产和消费源码子模块统一使用 `core.autocrlf=false` / `core.eol=lf`，仓库 `.gitattributes` 优先；不改写来源清单。旧 SDK 若记录不同检出字节，需要按标准 SDK 更新入口重建匹配版本，不能绕过校验。
+回归入口不发布 SDK，不生成 installer，不发布 Release。原生检查、SDK 消费、应用启动、真实 Journal、输出文件检查分别报告，不互相冒充。
 
-## 自动发布到 Releases
+## Build Installer
 
-`publish_release` 默认 `true`。Windows、macOS 及启用的 Journal 回归、附件上传和队列看护汇总
-全部成功后，独立发布任务只下载本轮 run ID / attempt 的两个安装包附件。关闭此开关会跳过
-发布任务，不要求 RELEASE Secret，不改变安装包构建、检查与 Actions 附件上传。
+| 参数 | 类型 | 默认值 | 含义 |
+| --- | --- | --- | --- |
+| app_ref | 分支/完整 SHA | feature/gplatform-ui | 要打包的 App |
+| platform | windows / macos / all | windows | 所选平台 |
+| macos_sdk_ref | 分支/完整 SHA | macos | Mac SDK |
+| windows_sdk_ref | 分支/完整 SHA | windows | Windows SDK |
 
-发布前核对两平台的 App/SDK SHA、架构、SDK 消费检查、各自启用的回归终态及安装包 SHA-256。
-标签为 `build-<run_id>-<attempt>`，明确指向本次固定的 App SHA，不默认使用 `main` 或 workflow
-控制提交。先创建预发布草稿，上传 EXE、DMG、各自的 SHA-256 文件和
-`build-result-windows.json` / `build-result-macos.json`。同名构建信息分别命名，避免相互覆盖；
-Mac 日志与逐场景回归证据继续保留在 Actions 附件中。
-远端附件名称、大小、摘要全部核对成功后才公开为 Pre-release；不会自动设置为正式版 Latest。
-发布或校验失败会使 workflow 失败，已创建的草稿保留供检查，不公开不完整的下载集合。
-全量重跑使用新的 attempt 标签，不覆盖之前发布或已验收的安装包。
+执行：冻结 App/SDK → 完整包、来源、UI 输入、Qt/编译器/ABI 兼容检查 → 显式 GPLATFORM_SDK_ROOT → App 正式 configure/build → SDK 消费检查 → 正式部署与 installer 目标 → 包内容、架构、依赖、哈希及必要启动检查 → 上传产物与报告。
 
-这个开关只控制是否发布，不控制预发布/正式版。自动发布的每一条都先是预发布版；
-验收通过后，在 GitHub Releases 编辑该条记录，取消 Pre-release，可按需要标记为 Latest。
-此过程沿用同一标签和同一批已验收附件，无需重编；其他构建记录仍保持预发布状态。
-关闭 Journal 时，Release 说明和 Mac 构建信息明确标记 `skipped`，不会声称回归通过。
+Windows 生成 AMD64 `.exe` installer，Mac 生成 Universal `.dmg`，all 并行。此入口不构建完整宿主、不重新生产 SDK、不下载 TestAssets、不跑全量 Journal、不发布 Release，没有跳过必需检查的公开参数。打包通过不满足 MR 全量门禁。
 
-创建非默认分支提交的标签时，GitHub 可能要求发布凭据具有 Workflows 写权限；
-请为 `GPLATFORM_RELEASE_TOKEN` 配置仅限本 App 仓库的发布身份，不复用只读 SOURCE。
-权限依据见 [创建 Release](https://docs.github.com/en/rest/releases/releases#create-a-release)。
+正式交付填写已验收候选的完整 App/SDK SHA，不用后来可能前进的分支名冒充同一版本。App 不再记录 SDK gitlink。本地与 CI 每层都必须使用同一显式 GPLATFORM_SDK_ROOT；缺失或不兼容直接失败，不回退旧 SDK、不补拼 DLL/dylib。
 
-## 失败、重跑和清理
+检查范围：Mac 挂载实际 DMG，核对包内完整载荷与双架构依赖并启动 App；Windows 核对正式 Inno 输入、AMD64 发行目录和载荷哈希并启动发行 App。未执行的 Windows 实装、注册表、升级卸载必须明确标注未验证，不能把发行 App 启动称为实装通过。
 
-选择 **Re-run all jobs** 或重新发起 workflow。**Re-run failed jobs / 单个 job 重跑不受支持**：prepare 的 attempt 与本轮不一致时，平台任务和 guard 在调度前跳过，汇总明确失败并提示全量重跑，避免沿用旧时限或遗漏 guard。
+## MR Checks
 
-普通失败和取消执行独立收尾，上传后删除本任务的安装包、回归结果暂存和临时 control checkout。固定 source 工作缓存保留 Git 对象与当前平台 Release preset 构建目录；构建前验证固定 SHA、目录边界与已有 CMake 缓存，再清除源码和子模块的改动及其余未跟踪文件。子模块按每层固定父提交同步 URL；每次仍执行原有 CMake 配置、构建、检查和打包。源码目录、配置、架构或显式 Qt/工具链输入与缓存冲突时明确失败，不能绕过缓存检查。外部兼容依赖缓存继续保留。清理校验工作区边界与 Git 标记，仅针对 Windows 只读权限错误解除写保护重试，不忽略其他删除错误。不删除无关工作区，也不清全机缓存。硬终止或 runner 故障不能保证收尾执行，需如实记录剩余状态。
+App MR 创建、重新打开、提交更新、转为可审核、变更目标分支触发；不限制目标分支，只改标题/描述不重复执行。草稿暂不启动完整回归；外部 fork 不自动使用内部 runner/凭据，明确显示未执行，不登记为完整验收通过。
 
-## 本地验证
+没有手动参数。固定当前 MR head 为 App SHA，宿主从仓库变量 GPLATFORM_HOST_REF 解析，空值默认 feature/gplatform-ui；测试资产默认 macmini/windows。强制 platform=all、sdk_source=source，直接调用同仓库 run-regression.yml 的 workflow_call，不能从调用方注入跳过必需检查参数。工作流实现使用审核过的固定版本，被测源码使用准确 MR head，两种身份都报告。
 
-```sh
-python3 -m unittest discover -s tests/ci -p 'test_*.py' -v
-actionlint .github/workflows/build-app.yml
-```
+新提交只取消本 MR 的旧候选，不影响其他任务；取消负责收尾本任务 owned 进程。两平台所有必需检查完整通过才报告通过。合并保护应绑定 App MR Checks 的当前候选汇总，未核实服务端设置不能声称门禁已生效。
 
-真实双平台验收仍要通过本 workflow 运行；本地 fixture 与语法检查不代替 Windows/Mac 实际结果。
+本四入口方案不保留 Root 自动 MR 入口：Root MR 不自动触发全量；Root 源码变化通过 App Run Regression 的 host_ref 显式验收，不把 App MR 检查冒称覆盖其他 Root MR。
 
-## Windows 标准准备
+## SDK 显式选择与职责边界
 
-Windows 资产位于 TestAssets 的 `windows` 分支。App 沿用开发分支，默认资产 gitlink 不改为平台专属分支。
-业务场景采用当前 App 集成版本，保留 macmini 的输入修正；Windows 标准单独采集、审核。
-包含部署资源绝对路径的完整 DB 标准必须在 `preconditions.applicationDirectory` 声明实际应用目录。
-部署目录不同，场景可以用 `deploymentResources` 显式声明资源相对路径及审核过的 SHA256。
-现有 Journal 物化阶段先核对当前部署文件哈希，再仅替换标准 DB 中对应的完整 UTF-8 路径字符串及长度。
-原始标准与实际 DB 不改写，正式比较仍覆盖全部字节；资源变化、缺失或标准内路径不明确均拒绝运行。
-没有该声明的旧场景仍要求原部署目录。此绑定不证明独立 App 已通过，仍须执行 CI 正式回放。
+本地独立 App 与 CI 均显式传 `-DGPLATFORM_SDK_ROOT=<checkout-or-package/SDK>`。SDK 不再作为 App 子模块自动下载；长期分支仍是 macos/windows，运行时冻结完整 SHA。完整宿主生产 SDK 不需要该消费路径。
 
-候选采集使用同一个入口增加 `--capture-candidates`：在相同 entryIndex 将 verify.db/verify.screenshot
-物化为已有 capture.db/screenshot.capture，保留原始 Journal、业务输入、时间点与标准。
-运行目录记录原始和执行 JSON 的哈希、实际窗口、DB 原始字节及截图。
-候选完成返回 not_verified（退出码 2），不会写入资产或通过 CI。逐检查点审核后才更新 Windows 标准，
-随后在新目录运行不带该选项的完整回归。CI 拒绝待审核标准、候选采集和不完整的场景清单。
+Universal 独立 App 的 outer configure 将同一 SDK_ROOT 传给两个薄架构；merge-only 必须核对两侧缓存实际消费同一选择。CI 构建/打包适配器来自固定 workflow 实现，使用现有 `--source-dir`/`-SourceDir` 选择产品项目，产品 presets、CMake、资源、source_inputs 与 Journal 工具来自被测版本。
 
-Windows 开关独立于现有 macOS 开关；关闭任意平台的回归仅记录该平台 skipped，发布阶段分别检查两平台终态。
+Build Installer 内部只保留打包、消费检查和必要启动观察，不再提供 run_journal/test_assets 参数或“打包并跑全量”分支；完整 Journal 由 Run Regression 唯一承担。必要启动观察使用现有 owned 生命周期，不属于完整回归，也不能代替完整回归。
+
+## 日常流程
+
+1. 在 App 功能分支开发、提交、创建 MR。
+2. MR 自动执行准确 head 的双平台源码模式完整回归；失败修复后新提交自动验收新候选。
+3. 需要交付时，手动 Build SDK，填写已验收的 App/宿主 SHA，mode=publish，生成对应平台 SDK SHA。
+4. 手动 Build Installer，填写同一 App SHA 和刚生成的准确 SDK SHA。
+5. 核查真实包和上传报告后交付。MR 通过不自动发布 SDK 或打包；三个手动入口相互独立。
+
+## 仓库配置与执行环境
+
+App 仓库使用 GPLATFORM_HOST_REPOSITORY 指定完整宿主（默认 dezbracaty/GPlatform）；MR 的 GPLATFORM_HOST_REF 默认 feature/gplatform-ui。SDK 仓库地址只从选定 App 提交的 `cmake/sdk-repository.json` 读取，文件仅含 `repository`（GitHub owner/repo），不存版本 pin，也不增加可写仓库参数。测试资产仓库仍从选定 App 的真实子模块声明读取。缺少新 SDK 声明或不符合当前 SDK/Server/构建契约的历史 App 明确失败，不解析旧 SDK gitlink 兜底。
+
+App runner 标签使用 GPLATFORM_WINDOWS_RUNNER_LABELS/GPLATFORM_MACOS_RUNNER_LABELS。源码依赖只读凭据 GPLATFORM_SOURCE_TOKEN、队列检查所需 GPLATFORM_WORKFLOW_TOKEN、SDK 发布凭据 GPLATFORM_PUBLISH_TOKEN 按阶段最小使用；publish token 只提供给显式发布阶段，回归/installer 不具备 SDK 写权限。
+
+CI 工具测试依赖在 runner 准备阶段用同一 Python 安装 `tests/ci/requirements.txt`，截图验证沿用 Pillow 依赖。回归在 Journal 全量通过后再检查 CI 工具合同，工具检查失败仍阻止最终通过。runner 只复用测试输入和本机工具环境一致的通过记录，记录包含源检查提交，工具输入变化或无通过记录时重新执行。仅改变 TestAssets gitlink 不改变工具测试输入。
+
+App runner 的完整宿主检出固定使用工作区内 `host-source`，installer 的独立 App 检出继续使用 `source`。宿主和独立 App 保留各自经校验的 preset 构建目录，每个依赖切换到固定 gitlink 后只清理一次。回归的源码 SDK 使用 runner 临时目录下固定短路径 `regression-sdk`，每轮重新生成并校验来源和载荷，App 按标准 preset 增量构建。缓存不兼容时明确失败，不消费旧 SDK 或不匹配的 App。
+
+回归报告保留 `regression-results/<run>-<attempt>/<platform>` 布局；Windows 根目录使用 `RUNNER_TEMP`，避免串行复查的记录归档路径超过 Windows 文件接口限制，Mac 仍使用工作区。构建、上传与清理使用同一受管路径；无论执行成功或失败均上传报告，仅上传成功后清理受管暂存，上传失败保留本机报告。原子 JSON 替换仅对 Windows 短暂读句柄争用进行有界重试，持续占用或其他错误仍使流程失败。
+
+两仓 runner 若在同一机器，继续共用现有机器锁，不能并发争抢同一缓存/桌面。迁移需核对 App runner 的正式工具链、宿主源码工作路径和兼容缓存；路径不一致不能手改 CMakeCache 或拼库冒充复用。编译不固定为两路并行；未显式配置 CMAKE_BUILD_PARALLEL_LEVEL 时按现有工具调度。
+
+Windows 故障直接 SSH 或用户授权会话检查，禁止改 workflow/提交/反复 dispatch 下发诊断。全量 Journal 必须从 Server 发起并记录服务地址、6位码、计划与结果。保留用户 WIP、当前验收证据、有效 SDK 槽与兼容依赖缓存。
+
+## 迁移与旧入口退役
+
+先迁移和验证 App 新入口，再在已运行旧候选正常收尾后切换，不能中途换运行代码。新的手动 workflow 文件须先按仓库流程进入默认分支，GitHub 才能正式登记并提供 workflow_dispatch；运行时仍可选择其他工作流分支。参见 [GitHub 官方说明](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)。不能只把新文件推到功能分支就宣称默认入口已上线。删除 Root 的 update-sdk.yml、run-regression.yml、run-build-app.yml、pr-tests.yml 及不再被调用的 CI 编排/重复测试；App 原 build-app.yml 替换为 build-installer.yml。
+
+退役 Root 原有 build_windows/publish_delivery 手工 SDK-only/恢复 CLI；历史运行须以其原历史版本和状态恢复，新实现不保留旧状态兼容器。Root 原平台说明改为指向本文的索引，不保留第二套参数规范。更新 AGENTS、技能和提交/合并说明中的旧引用、controller SHA 和入口。停用 GitHub 已登记旧入口，历史运行和日志保留。没有用户授权不能合并 MR、发布 Release 或自动创建源码提交；已明确授权的交付按原范围执行。
+
+迁移检查覆盖：仅四个 workflow、精确公开参数、平台选择零误调度、分支冻结、MR head 不被 Root 旧 gitlink 覆盖、Root/App 与所有 fork 干净来源、SDK_ROOT/manifest/LFS/ABI 一致性、两种 SDK 模式、来源拒绝、取消/清理、全量 ID 集合及初轮/复查计数。先本地验证，再固定候选实际运行 App 四入口；未执行的正式平台范围明确列为待验收，不把工具测试算作完整回归或安装包通过。

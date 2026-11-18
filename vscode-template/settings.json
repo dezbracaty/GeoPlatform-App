@@ -6,6 +6,9 @@
     "cmake.options.statusBarVisibility": "visible",
     "cmake.useVsDeveloperEnvironment": "always",
     "cmake.configureOnOpen": false,
+    "cmake.configureSettings": {
+        "GPLATFORM_SDK_ROOT": "/REPLACE_WITH_SELECTED_SDK_CHECKOUT_OR_PACKAGE/SDK"
+    },
     "cmake.configureEnvironment": {
         "Qt6_DIR": "/REPLACE_WITH_QT_INSTALLATION/lib/cmake/Qt6"
     },

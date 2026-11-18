@@ -12,3 +12,5 @@ package/
 # Python contract and CI helpers generate bytecode locally.
 __pycache__/
 *.py[cod]
+# Former SDK checkout is retained locally; SDK selection is explicit now.
+/ThirdParty/libs/GPlatformSDK/

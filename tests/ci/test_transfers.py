@@ -62,5 +62,17 @@ class TransferTests(unittest.TestCase):
         self.assertEqual(value.strip(), b"3")
 
 
+    def test_single_attempt_capture_failure_preserves_stderr_without_command_or_environment(self):
+        diagnostic = 'fatal: invalid relocated git directory\n'
+        result = subprocess.CompletedProcess([], 128, stdout=b'', stderr=diagnostic.encode())
+        output = io.StringIO()
+        with patch.object(common.subprocess, 'run', return_value=result), contextlib.redirect_stderr(output):
+            with self.assertRaisesRegex(RuntimeError, 'exit 128'):
+                common.run(['git', 'argument-must-stay-private'], capture=True,
+                           env={'environment': 'must-stay-private'})
+        self.assertEqual(output.getvalue(), diagnostic)
+        self.assertNotIn('must-stay-private', output.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

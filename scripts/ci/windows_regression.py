@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 from common import digest, text_git, write_json
-from mac_regression import prepare_assets
+from mac_regression import prepare_assets, server_regression
 
 
 def require_desktop():
@@ -66,26 +66,20 @@ def regression(source, executable, output, env, test_assets_sha):
     native = dict(env)
     native.pop('QT_QPA_PLATFORM', None)
     native['PYTHONIOENCODING'] = 'utf-8'
-    # run_acceptance owns the explicit Windows child-process DPR=1 policy.
-    command = [sys.executable, source / 'tools/run_acceptance.py', '--application', executable,
-               '--assets', source / 'tests/TestAssets', '--cases', 'all',
-               '--output', output / 'run', '--exports', output / 'exports']
-    with (output / 'regression.log').open('w', encoding='utf-8') as log:
-        completed = subprocess.run([str(x) for x in command], cwd=source, env=native,
-                                   stdout=log, stderr=subprocess.STDOUT)
-    path = output / 'run/summary.json'
-    summary = json.loads(path.read_text(encoding='utf-8')) if path.is_file() else {}
-    if (completed.returncode != 0 or summary.get('status') != 'passed'
-            or not summary.get('runComplete') or summary.get('selectionScope') != 'all'
-            or summary.get('candidateCollection') or not summary.get('cases')):
-        raise RuntimeError(f'Windows regression did not pass: exit {completed.returncode}; see {output}')
+    # The existing Server owns scheduling, display policy and serial rechecks.
+    summary, directory = server_regression(source, executable, output, native)
+    if (summary.get('status') != 'passed' or not summary.get('runComplete')
+            or summary.get('selectionScope') != 'all' or summary.get('candidateCollection') or summary.get('cleanupError')):
+        raise RuntimeError('Windows regression did not pass the complete Server task')
     names = [scene.parent.name for scene in scenes]
     if (summary.get('plannedCases') != names or summary.get('completedCaseCount') != len(names)
             or sorted(case['id'] for case in summary['cases']) != names
             or any(case.get('status') != 'passed' for case in summary['cases'])):
         raise RuntimeError('Windows regression did not pass every scene in the fixed asset inventory')
     for case in summary['cases']:
-        result = output / 'run' / case['id'] / 'execution_result.json'
+        result = directory / (case.get('result') or case['id'] + '/case_result.json')
+        execution_path = result.parent / 'execution_result.json'
+        result = execution_path
         execution = json.loads(result.read_text(encoding='utf-8'))
         window = execution.get('actualWindow', {})
         if window.get('devicePixelRatio') != 1 or window.get('logicalSize') != [1382, 954]:
@@ -96,4 +90,5 @@ def regression(source, executable, output, env, test_assets_sha):
                 with Image.open(actual) as capture:
                     if capture.size != (1382, 954):
                         raise RuntimeError(f'Windows screenshot size differs: {actual}')
-    return dict(status='passed', assets_sha=assets_sha, case_count=summary['completedCaseCount'])
+    return dict(status='passed', assets_sha=assets_sha, case_count=summary['completedCaseCount'],
+                summary_path=str(directory / 'summary.json'))
