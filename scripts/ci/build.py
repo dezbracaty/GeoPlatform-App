@@ -73,7 +73,14 @@ def validate_source_inputs(source, metadata):
     contract.verify(source / 'ThirdParty', None, expected)
 
 
-def windows_entry(source, targets, cmake_args, env):
+def windows_build_command(source, targets, cmake_args, env):
+    # Different text for an identical Windows executable invalidates Ninja's
+    # compiler launcher command hash. Use the same explicit interpreter across
+    # the host, SDK producer and consumer. Preserve a venv interpreter symlink.
+    python = Path(sys.executable)
+    if not python.is_symlink():
+        python = python.resolve(strict=True)
+    cmake_args = [*cmake_args, '-DPython3_EXECUTABLE=' + str(python)]
     command = ("$ErrorActionPreference = 'Stop'; try { "
                '$global:LASTEXITCODE = 0; '
                '& $env:CI_BUILD_ENTRY -SourceDir $env:CI_SOURCE_DIR -Preset release -Targets @($env:CI_BUILD_TARGETS | ConvertFrom-Json) '
@@ -81,7 +88,12 @@ def windows_entry(source, targets, cmake_args, env):
                '} catch { [Console]::Error.WriteLine($_); exit 1 }')
     step_env = dict(env, CI_BUILD_ENTRY=str(Path(__file__).resolve().parents[1] / 'build.ps1'),
                     CI_SOURCE_DIR=str(source), CI_BUILD_TARGETS=json.dumps(targets), CI_CMAKE_ARGS=json.dumps(cmake_args))
-    run(['pwsh', '-NoProfile', '-Command', command], cwd=source, env=step_env)
+    return ['pwsh', '-NoProfile', '-Command', command], step_env
+
+
+def windows_entry(source, targets, cmake_args, env):
+    args, step_env = windows_build_command(source, targets, cmake_args, env)
+    run(args, cwd=source, env=step_env)
 
 
 def build_consumer(source, platform, sdk_root, env, *, producer_root_sha=None, producer_app_sha=None):

@@ -51,12 +51,15 @@ class Workflows(unittest.TestCase):
     def test_regression_build_upload_and_cleanup_share_the_platform_report_root(self):
         job = load(APP / '.github/workflows/run-regression.yml')['jobs']['regression']
         steps = {step.get('name'): step for step in job['steps']}
+        prepare = steps['Resolve owned regression report directory']
         build = steps['SDK consumer and complete platform regression']['run']
-        upload = steps['Retain regression evidence even on failure']['with']['path']
+        upload = steps['Retain regression evidence even on failure']
         cleanup = steps['Clean uploaded report staging']
-        self.assertEqual(upload,
-            "${{ matrix.platform == 'windows' && runner.temp || github.workspace }}"
-            "/regression-results/${{ github.run_id }}-${{ github.run_attempt }}/${{ matrix.platform }}")
+        reference = '${{ steps.report_path.outputs.directory }}'
+        self.assertEqual(prepare['id'], 'report_path')
+        self.assertEqual(upload['with']['path'], reference)
+        self.assertEqual(steps['SDK consumer and complete platform regression']['env']['REPORT_DIRECTORY'], reference)
+        self.assertEqual(cleanup['env']['REPORT_DIRECTORY'], reference)
         for outcome in ('success', 'failure', 'skipped'):
             self.assertEqual(expression(cleanup['if'], {}, steps={'evidence': SimpleNamespace(outcome=outcome)}),
                              outcome == 'success')
@@ -67,19 +70,30 @@ class Workflows(unittest.TestCase):
             runner.mkdir()
             for platform in ('windows', 'macos'):
                 with self.subTest(platform=platform):
+                    github_output = base / f'github-output-{platform}'
                     env = dict(os.environ, GITHUB_WORKSPACE=str(workspace), RUNNER_TEMP=str(runner),
                         GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='2', PLATFORM=platform,
                         SOURCE_SHA='a' * 40, APP_SHA='b' * 40, GITHUB_REPOSITORY='owner/App',
-                        ASSETS_SHA='c' * 40, ASSETS_REF=platform, SDK_SOURCE='source', SDK_REPOSITORY='owner/SDK')
+                        ASSETS_SHA='c' * 40, ASSETS_REF=platform, SDK_SOURCE='source', SDK_REPOSITORY='owner/SDK',
+                        GITHUB_OUTPUT=str(github_output))
+                    with patch.dict(os.environ, env):
+                        exec(compile(prepare['run'], '<workflow-report-path>', 'exec'), {})
+                    key, value = github_output.read_text(encoding='utf-8').strip().split('=', 1)
+                    self.assertEqual(key, 'directory')
+                    env['REPORT_DIRECTORY'] = value
                     calls = []
                     with patch.dict(os.environ, env), patch.object(subprocess, 'run', side_effect=lambda *a, **k: calls.append(a)):
                         exec(compile(build, '<workflow-build>', 'exec'), {})
                     command = calls[0][0]
                     output = Path(command[command.index('--output') + 1])
-                    root = runner if platform == 'windows' else workspace
+                    root = runner.parent if platform == 'windows' else workspace
                     self.assertEqual(output, root / 'regression-results/123-2' / platform)
                     output.mkdir(parents=True)
                     (output / 'report.json').write_text('preserve until uploaded')
+                    if platform == 'windows':
+                        runner.rmdir()
+                        runner.mkdir()
+                        self.assertEqual((output / 'report.json').read_text(), 'preserve until uploaded')
                     other = (workspace if platform == 'windows' else runner) / 'unrelated'
                     other.mkdir(exist_ok=True)
                     with patch.dict(os.environ, env):
@@ -98,7 +112,7 @@ class Workflows(unittest.TestCase):
                     root.mkdir()
                 sentinel = outside / 'sentinel'
                 sentinel.write_text('keep')
-                root = runner if platform == 'windows' else workspace
+                root = runner.parent if platform == 'windows' else workspace
                 directory_link(root / 'regression-results', outside)
                 env = dict(os.environ, GITHUB_WORKSPACE=str(workspace), RUNNER_TEMP=str(runner),
                            GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='2', PLATFORM=platform)
@@ -184,9 +198,14 @@ class Workflows(unittest.TestCase):
                              str(APP / 'scripts/build.ps1'))
             self.assertEqual(kwargs['env']['CI_SOURCE_DIR'], str(kwargs['cwd']))
             self.assertIn('-SourceDir $env:CI_SOURCE_DIR', args[-1])
-            self.assertIn('-Targets gplatform_sdk_artifacts', args[-1])
+            self.assertEqual(json.loads(kwargs['env']['CI_BUILD_TARGETS']), ['gplatform_sdk_artifacts'])
+            python = Path(sys.executable)
+            if not python.is_symlink():
+                python = python.resolve(strict=True)
             self.assertEqual(json.loads(kwargs['env']['CI_CMAKE_ARGS']),
-                             ['-DGPLATFORM_BUILD_TESTS=OFF', '-DGPLATFORM_BUILD_ORCA_NATIVE_PROBES=OFF'] + (['-DQt6_DIR=' + qt_dir] if qt_dir else []))
+                             ['-DGPLATFORM_BUILD_TESTS=OFF', '-DGPLATFORM_BUILD_ORCA_NATIVE_PROBES=OFF']
+                             + (['-DQt6_DIR=' + qt_dir] if qt_dir else [])
+                             + ['-DPython3_EXECUTABLE=' + str(python)])
             self.assertNotIn(str(kwargs['cwd']), args[-1])
             if qt_dir:
                 self.assertNotIn(qt_dir, args[-1])

@@ -10,6 +10,7 @@ import shutil
 import tempfile
 import re
 
+from build import windows_build_command
 from common import (clone_branch, commit_tree, digest, git, git_env, push_exact_commit,
                     read_remote_head, repository_url, require_sha, SDK_DECLARATION, parse_sdk_repository,
                     text_git, write_outputs, run)
@@ -25,12 +26,8 @@ def build_sdk_package(source, platform, package, env):
     if qt:
         arguments.append('-DQt6_DIR=' + qt)
     if platform == 'windows':
-        command = ("$ErrorActionPreference = 'Stop'; try { $global:LASTEXITCODE = 0; "
-                   "& $env:CI_BUILD_ENTRY -SourceDir $env:CI_SOURCE_DIR -Preset release -Targets gplatform_sdk_artifacts "
-                   "-CMakeArgs @($env:CI_CMAKE_ARGS | ConvertFrom-Json); exit $LASTEXITCODE "
-                   "} catch { [Console]::Error.WriteLine($_); exit 1 }")
-        run(['pwsh', '-NoProfile', '-Command', command], cwd=source,
-            env=dict(env, CI_BUILD_ENTRY=str(Path(__file__).resolve().parents[1] / 'build.ps1'), CI_SOURCE_DIR=str(source), CI_CMAKE_ARGS=json.dumps(arguments)))
+        command, step_env = windows_build_command(source, ['gplatform_sdk_artifacts'], arguments, env)
+        run(command, cwd=source, env=step_env)
         builds = ['build-Release']
     elif platform == 'macos':
         builds = []

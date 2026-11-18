@@ -269,7 +269,10 @@ class WindowsEntryChecks(unittest.TestCase):
         self.assertEqual(kwargs['env']['BASELINE'], 'preserve')
         self.assertEqual(kwargs['env']['CI_BUILD_ENTRY'], str(Path(__file__).resolve().parents[2] / 'scripts/build.ps1'))
         self.assertEqual(json.loads(kwargs['env']['CI_BUILD_TARGETS']), targets)
-        self.assertEqual(json.loads(kwargs['env']['CI_CMAKE_ARGS']), arguments)
+        python = Path(sys.executable)
+        if not python.is_symlink():
+            python = python.resolve(strict=True)
+        self.assertEqual(json.loads(kwargs['env']['CI_CMAKE_ARGS']), arguments + ['-DPython3_EXECUTABLE=' + str(python)])
         self.assertNotIn(str(source), args[0][-1])
         self.assertNotIn(arguments[0], args[0][-1])
 

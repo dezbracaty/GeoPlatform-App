@@ -8,7 +8,7 @@ import subprocess
 import sys
 import time
 
-from build import cache_value
+from build import cache_value, windows_build_command
 from common import git_env, text_git, write_json
 
 
@@ -144,16 +144,11 @@ def architecture(source, arch, output, report, env):
     arguments = ['-DGPLATFORM_BUILD_TESTS=ON', '-DGPLATFORM_BUILD_SDK_CHECKS=ON',
                  '-DJOURNALSYSTEM_BUILD_TESTS=ON', '-DGPLATFORM_ENABLE_ORCA_NATIVE_REGRESSION=OFF',
                  '-DGPLATFORM_BUILD_ORCA_NATIVE_PROBES=ON',
-                 '-DQt6_DIR=' + env['Qt6_DIR'],
-                 '-DPython3_EXECUTABLE=' + sys.executable]
+                 '-DQt6_DIR=' + env['Qt6_DIR']]
     if os.name == 'nt':
-        invocation = ("$ErrorActionPreference = 'Stop'; try { $global:LASTEXITCODE = 0; "
-                      "& $env:CI_BUILD_ENTRY -SourceDir $env:CI_SOURCE_DIR -Preset release -Targets all "
-                      "-CMakeArgs @($env:CI_CMAKE_ARGS | ConvertFrom-Json); exit $LASTEXITCODE "
-                      "} catch { [Console]::Error.WriteLine($_); exit 1 }")
-        build_env = dict(env, CI_BUILD_ENTRY=str(Path(__file__).resolve().parents[1] / 'build.ps1'), CI_SOURCE_DIR=str(source), CI_CMAKE_ARGS=json.dumps(arguments))
-        build_args = ['pwsh', '-NoProfile', '-Command', invocation]
+        build_args, build_env = windows_build_command(source, ['all'], arguments, env)
     else:
+        arguments.append('-DPython3_EXECUTABLE=' + sys.executable)
         build_env = env
         build_args = ['bash', Path(__file__).resolve().parents[1] / 'build.sh', '--source-dir', source, '--preset', preset, '--configure-only', '--', *arguments]
     def build_tests():
