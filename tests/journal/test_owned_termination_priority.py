@@ -78,6 +78,51 @@ class OwnedTerminationCheck(unittest.TestCase):
         self.assertIn('restore failed', ' '.join(result['cleanupErrors']))
         self.assertNotIn('restoredClass', result['applicationTerminationPriority'])
 
+    def test_graceful_close_waits_for_the_owned_process_after_confirmation(self):
+        for release_disconnect in (False, True):
+            with self.subTest(release_disconnect=release_disconnect):
+                process, result = self.process(), {}
+                process.wait.side_effect = None
+                process.wait.return_value = 0
+                client = Mock(entry=sessions.JournalSystem.entry, client=object())
+                requests = []
+
+                def request(method, params, *, timeout, cancel_event):
+                    self.assertEqual(method, 'journal.entry.execute')
+                    self.assertGreater(timeout, 0)
+                    self.assertLessEqual(timeout, sessions._WINDOWS_OWNED_CLOSE_LIMIT)
+                    self.assertFalse(cancel_event.is_set())
+                    entry = params['entry']
+                    requests.append((entry['kind'], entry['payload'].get('event'), params.get('checkOnly')))
+                    if params.get('checkOnly'):
+                        return {'ready': True}
+                    if release_disconnect and entry['payload'].get('event') == 'release':
+                        client.client = None
+                        raise ConnectionError('connection closed during quit')
+                    return {}
+
+                client.request.side_effect = request
+                self.assertTrue(sessions._close_owned_windows_application(process, client, result))
+                self.assertEqual(requests, [('input.close', None, None), ('input.mouse', 'press', True),
+                                            ('input.mouse', 'press', None), ('input.mouse', 'release', None)])
+                process.wait.assert_called_once()
+                process.terminate.assert_not_called()
+                self.assertEqual(result['applicationGracefulClose']['exitCode'], 0)
+                self.assertEqual('releaseReplyError' in result['applicationGracefulClose'], release_disconnect)
+
+    def test_graceful_close_requires_confirmation_within_total_budget(self):
+        for error in (None, RuntimeError('window missing'), ConnectionError('stream closed')):
+            with self.subTest(error=error):
+                process, result = self.process(), {}
+                client = Mock(entry=sessions.JournalSystem.entry, client=object())
+                client.request.side_effect = error or [{}, {'ready': False}]
+                clock = Mock(monotonic=Mock(side_effect=[0, 0, 2, 5, 5]))
+                with patch.object(sessions, 'time', clock):
+                    self.assertFalse(sessions._close_owned_windows_application(process, client, result))
+                self.assertIn(str(error) if error else 'close deadline exceeded',
+                              result['applicationGracefulClose']['error'])
+                process.wait.assert_not_called()
+
     def test_session_final_exit_code_timeout_and_instance_boundaries(self):
         for mode in ('owned', 'keep', 'attach', 'mac', 'mac-timeout',
                      'timeout', 'timeout-exited', 'timeout-exits-during-grace'):
@@ -114,11 +159,16 @@ class OwnedTerminationCheck(unittest.TestCase):
                         patch.object(sessions, 'time', clock), \
                         patch.object(sessions, 'JournalSystem', return_value=client), \
                         patch.object(sessions.subprocess, 'Popen', return_value=process), \
+                        patch.object(sessions, '_close_owned_windows_application', return_value=False) as close, \
                         patch.object(sessions, '_windows_priority_class', return_value=0x4000) as priority:
                     result = sessions.JournalExecutionSession().run(journal,
                         application=None if mode == 'attach' else sys.executable,
                         port=9999 if mode == 'attach' else 0, keep_app=mode == 'keep', output_dir=root/'output')
-                if mode in ('keep', 'attach') or mode.startswith('mac'): priority.assert_not_called()
+                if mode in ('keep', 'attach') or mode.startswith('mac'):
+                    priority.assert_not_called()
+                    close.assert_not_called()
+                else:
+                    close.assert_called_once_with(process, client, result)
                 if mode in ('keep', 'attach'): process.terminate.assert_not_called()
                 elif mode in ('timeout', 'mac-timeout'):
                     self.assertFalse(result['success'])

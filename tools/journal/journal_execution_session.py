@@ -11,6 +11,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
+from threading import Event
 
 from journalsystem import JournalSystem
 from journal_runner import JournalRunner, load_journal, finish_result
@@ -20,6 +21,7 @@ from journal_display_profile import (WINDOW_PROFILE, process_environment,
 
 _OWNED_TERMINATION_INITIAL_WAIT = 5
 _WINDOWS_OWNED_TERMINATION_LIMIT = 15
+_WINDOWS_OWNED_CLOSE_LIMIT = 5
 
 
 def _macos_bundle_instance(bundle, deadline, expected_pid):
@@ -137,6 +139,52 @@ def _windows_priority_class(process, value=None):
     return value
 
 
+def _close_owned_windows_application(process, client, result):
+    """Use the normal close dialog before forcing a verified child to exit."""
+    started = time.monotonic()
+    deadline = started + _WINDOWS_OWNED_CLOSE_LIMIT
+    evidence = result.setdefault("applicationGracefulClose", {})
+    # These RPCs share a deadline, including while sending and receiving. An
+    # independent event lets cleanup settle even when replay was cancelled.
+    bounded = Event()
+    window = WINDOW_PROFILE["window"]
+    press = {"window": window, "target": "window.quit.confirm", "event": "press",
+             "button": 1, "buttons": 1, "modifiers": 0}
+
+    def remaining():
+        budget = deadline - time.monotonic()
+        if budget <= 0:
+            raise TimeoutError("Owned application close deadline exceeded")
+        return budget
+
+    def execute(kind, payload, *, check_only=False):
+        params = {"entry": client.entry(kind, payload)}
+        if check_only:
+            params["checkOnly"] = True
+        return client.request("journal.entry.execute", params, timeout=remaining(), cancel_event=bounded)
+
+    try:
+        execute("input.close", {"window": window})
+        while execute("input.mouse", press, check_only=True).get("ready") is not True:
+            time.sleep(min(0.05, remaining()))
+        execute("input.mouse", press)
+        try:
+            execute("input.mouse", dict(press, event="release", buttons=0))
+        except OSError as exc:
+            # A successful quit can close the socket before the reply arrives.
+            # The OS exit status below is authoritative in either case.
+            if client.client is not None:
+                raise
+            evidence["releaseReplyError"] = str(exc)
+        evidence["exitCode"] = process.wait(timeout=remaining())
+        return evidence["exitCode"] == 0
+    except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+        evidence["error"] = str(exc)
+        return False
+    finally:
+        evidence["seconds"] = round(time.monotonic() - started, 3)
+
+
 def _terminate_owned_application(process, result):
     # A BelowNormal launcher passes its class to children. Under parallel load,
     # low-priority Ready threads can delay even TerminateProcess completion.
@@ -212,6 +260,7 @@ class JournalExecutionSession:
         activation = None
         stream = None
         handshake = False
+        owned_replay_ready = False
         result = {"results": [], "journalPath": document["journalPath"],
                   "journalSha256": document["journalSha256"],
                   "totalEntries": len(document["entries"])}
@@ -281,6 +330,7 @@ class JournalExecutionSession:
                 if response.get("status") != "ready" or response.get("replayId") != replay_id:
                     raise RuntimeError("Application startup identity/readiness mismatch")
                 handshake = True
+                owned_replay_ready = True
             else:
                 if not port:
                     raise ValueError("Attaching to an existing app requires --port")
@@ -321,15 +371,22 @@ class JournalExecutionSession:
                         client.end_replay()
                     except Exception as exc:
                         result.setdefault("cleanupErrors", []).append(str(exc))
+                    else:
+                        handshake = False
+            # The connection still belongs to the same owned instance that
+            # completed the handshake. A broken stream is never reconnected.
+            graceful_exit = (sys.platform == "win32" and owned_replay_ready and not handshake and not keep_app and
+                             client.client is not None and process.poll() is None and
+                             _close_owned_windows_application(process, client, result))
             client.disconnect()
             if process is not None:
                 result["applicationPid"] = process.pid
                 termination_timeout = None
                 process.poll()
-                if process.returncode is not None:
+                if process.returncode is not None and not graceful_exit:
                     result.update(success=False, acceptance="failed",
                                   error=f"Test application exited unexpectedly: {process.returncode}")
-                elif not keep_app:
+                elif process.returncode is None and not keep_app:
                     # Only this session's child process. Never search/kill user PIDs.
                     try:
                         _terminate_owned_application(process, result)

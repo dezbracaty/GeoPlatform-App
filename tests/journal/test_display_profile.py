@@ -11,6 +11,7 @@ from journal_display_profile import (WINDOW_PROFILE, process_environment,
 from journal_execution_session import JournalExecutionSession
 from journal_runner import JournalRunner, write_journal
 from journalsystem import JournalSystem
+from test_python_client import owned_startup_reply
 
 
 def window(dpr=1, size=None):
@@ -87,8 +88,7 @@ class DisplayProfileCheck(unittest.TestCase):
             client.window_info.return_value = window(2)
             client.paths.return_value = {"recordings": str(root / "recordings"),
                                          "playbacks": str(root / "playbacks")}
-            client.request.side_effect = lambda method, params, **kwargs: {
-                "replayId": params["replayId"], "status": "ready"}
+            client.request.side_effect = owned_startup_reply
             processes = [Mock(pid=101, returncode=None)]
             for process in processes:
                 process.poll.return_value = None
@@ -104,7 +104,7 @@ class DisplayProfileCheck(unittest.TestCase):
             self.assertNotIn("QT_SCALE_FACTOR", launch.call_args.kwargs["env"])
             self.assertEqual(result["actualWindow"], window(2))
             client.execute_entry.assert_called_once()
-            self.assertEqual(client.request.call_args.args[1]["windowProfile"], WINDOW_PROFILE)
+            self.assertEqual(client.request.call_args_list[0].args[1]["windowProfile"], WINDOW_PROFILE)
             for process in processes:
                 process.terminate.assert_called_once()
 

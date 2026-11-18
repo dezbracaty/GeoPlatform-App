@@ -129,6 +129,12 @@ class JournalTransportRecoveryCheck(unittest.TestCase):
         wire.close.assert_not_called()
 
 
+def owned_startup_reply(method, params, **kwargs):
+    if method != "journal.replay.begin":
+        raise RuntimeError(f"Unsupported fixture RPC: {method}")
+    return {"status": "ready", "replayId": params["replayId"]}
+
+
 class RunnerClient:
     def __init__(self, root):
         self.client = object()
@@ -967,8 +973,7 @@ class JournalPythonClientCheck(unittest.TestCase):
             journal = write_journal(Path(temporary) / "source.json", [client.entry("action", {"code": "existing.action"})])
             client.connect = Mock()
             client.disconnect = Mock()
-            client.request = Mock(side_effect=lambda method, params, **kwargs:
-                                  {"status": "ready", "replayId": params["replayId"]})
+            client.request = Mock(side_effect=owned_startup_reply)
             process = Mock(pid=123, returncode=None)
             process.poll.return_value = None
             process.wait.side_effect = lambda **kwargs: setattr(process.poll, "return_value", -15)
@@ -980,7 +985,7 @@ class JournalPythonClientCheck(unittest.TestCase):
             self.assertEqual(result["applicationRegistration"], activation)
             saved = json.loads((Path(result["outputPath"]) / "execution_result.json").read_text(encoding="utf-8"))
             self.assertEqual(saved["applicationRegistration"], activation)
-            self.assertEqual(client.request.call_args.args[0], "journal.replay.begin")
+            self.assertEqual(client.request.call_args_list[0].args[0], "journal.replay.begin")
             self.assertTrue(result["success"])
 
 
@@ -1052,8 +1057,7 @@ class JournalPythonClientCheck(unittest.TestCase):
                     client.entry("action", {"code": "existing.action"})])
                 client.connect = Mock()
                 client.disconnect = Mock()
-                client.request = Mock(side_effect=lambda method, params, **kwargs:
-                                      {"status": "ready", "replayId": params["replayId"]})
+                client.request = Mock(side_effect=owned_startup_reply)
                 process = Mock(pid=123, returncode=None)
                 process.poll.return_value = None
                 process.wait.side_effect = lambda **kwargs: setattr(process.poll, "return_value", -15)
@@ -1443,7 +1447,7 @@ class JournalPythonClientCheck(unittest.TestCase):
             client.window_info.return_value = RunnerClient.window_info(None, {})
             client.paths.return_value = {"recordings": str(Path(temporary) / "recordings"),
                                          "playbacks": str(Path(temporary) / "playbacks")}
-            client.request.side_effect = lambda method, params, **kwargs: {"status": "ready", "replayId": params["replayId"]}
+            client.request.side_effect = owned_startup_reply
             process = Mock(pid=123, returncode=None)
             process.poll.return_value = None
             process.wait.side_effect = lambda **kwargs: setattr(process.poll, "return_value", -15)
@@ -1467,7 +1471,7 @@ class JournalPythonClientCheck(unittest.TestCase):
                 if sys.platform == "darwin":
                     self.assertNotIn("QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM",
                                      launch.call_args.kwargs["env"])
-                self.assertTrue(client.request.call_args.args[1]["resume"])
+                self.assertTrue(client.request.call_args_list[0].args[1]["resume"])
                 client.begin_replay.assert_not_called()
                 runner.return_value.play.assert_not_called()
                 process.terminate.assert_called_once()
@@ -1530,8 +1534,7 @@ class JournalPythonClientCheck(unittest.TestCase):
                 "recordings": str(Path(temporary) / "recordings"),
                 "playbacks": str(Path(temporary) / "playbacks"),
             }
-            client.request.side_effect = lambda method, params, **kwargs: {
-                "status": "ready", "replayId": params["replayId"]}
+            client.request.side_effect = owned_startup_reply
             process = Mock(pid=123, returncode=None)
             process.poll.return_value = None
             process.wait.side_effect = lambda **kwargs: setattr(
@@ -1636,8 +1639,7 @@ class JournalPythonClientCheck(unittest.TestCase):
             event = threading.Event()
             client.connect = Mock()
             client.disconnect = Mock()
-            client.request = Mock(side_effect=lambda method, params, **kwargs:
-                                  {"status": "ready", "replayId": params["replayId"]})
+            client.request = Mock(side_effect=owned_startup_reply)
             process = Mock(pid=123, returncode=None)
             process.poll.return_value = None
             process.wait.side_effect = lambda **kwargs: setattr(process.poll, "return_value", -15)
