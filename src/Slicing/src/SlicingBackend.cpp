@@ -170,7 +170,7 @@ SlicingBackend::SlicingBackend()
         options.resource_directory =
             (QCoreApplication::applicationDirPath() + "/resources/libslicer").toStdString();
 #endif
-        m_impl->library = libslicer::Library::open(options, &diagnostics);
+        m_impl->library = libslicer::Library::open(options, libslicer::PresetLoadingMode::OnDemand, &diagnostics);
         if (!m_impl->library) {
             return false;
         }
@@ -705,6 +705,21 @@ libslicer::ProjectReadResult SlicingBackend::readProject(const libslicer::Projec
     return m_impl->invoke([this, request, wrapped, decisions] {
         return m_impl->library->read_project(request, wrapped, decisions);
     });
+}
+
+libslicer::ProjectWriteResult SlicingBackend::writeProject(const libslicer::ProjectWriteRequest& request,
+    const libslicer::SliceCallbacks& callbacks) const {
+    if (!m_available) return {};
+    auto wrapped = callbacks;
+    wrapped.is_cancelled = [impl = m_impl.get(), cancelled = callbacks.is_cancelled] {
+        return impl->shutdownRequested.load(std::memory_order_acquire) || (cancelled && cancelled());
+    };
+    {
+        std::lock_guard<std::mutex> lock(m_impl->configurationAdmissionMutex);
+        m_impl->activeLongJobs.fetch_add(1, std::memory_order_release);
+    }
+    LongJobCompletionGuard completion(m_impl->activeLongJobs);
+    return m_impl->invoke([this, request, wrapped] { return m_impl->library->write_project(request, wrapped); });
 }
 
 std::optional<libslicer::ProjectMachine> SlicingBackend::activeProjectMachine() const {

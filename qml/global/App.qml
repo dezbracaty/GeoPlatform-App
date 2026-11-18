@@ -10,6 +10,7 @@ Starter {
     id: starter
 
     property var pendingModelFiles: ({})
+    property var pendingModelExports: ({})
     property bool themeInitialized: false
 
     function syncEffectiveTheme() {
@@ -50,6 +51,35 @@ Starter {
         return true
     }
 
+    function dispatchModelExport(action, params) {
+        if (ActionManager.triggerAction(action, params)) return true
+        var outcome = ActionManager.lastActionOutcome()
+        NotificationManager.showWarning(qsTr("Export Models"), outcome.error || qsTr("The export could not be started."))
+        return false
+    }
+
+    function exportModels(scope, format, individualFiles, saveAs) {
+        if (!StartupState.ready || TaskStateNotifier.isBusy) return false
+        var ids = ModelFileController.exportTargets(scope)
+        if (!ids || ids.length === 0) return false
+        var params = {scope: scope, format: format, modelIds: ids, individualFiles: !!individualFiles}
+        var action = scope === "project" ? "project.save" : "model.export"
+        if (scope === "project" && !saveAs && ModelFileController.projectFile !== "") {
+            params.filePath = ModelFileController.projectFile
+            return dispatchModelExport(action, params)
+        }
+        var parentWindow = null
+        for (var i = 0; i < WindowRouter.windows.length; ++i)
+            if (WindowRouter.windows[i].active) parentWindow = WindowRouter.windows[i]
+        var options = {title: scope === "project" ? qsTr("Save Project") : qsTr("Export Models"),
+            nameFilters: format === "stl" ? [qsTr("STL Files (*.stl)")] : [qsTr("3MF Files (*.3mf)")],
+            parentWindow: parentWindow}
+        if (scope === "project" && ModelFileController.projectFile !== "") options.currentFile = ModelFileController.projectFile
+        var requestId = individualFiles ? FilePicker.openFolder(options) : FilePicker.saveFile(options)
+        pendingModelExports[requestId] = {actionCode: action, params: params}
+        return requestId > 0
+    }
+
     Connections {
         target: FilePicker
         function onViewStateChanged(requestId, state) {
@@ -58,6 +88,14 @@ Starter {
         }
         function onAccepted(requestId, urls) {
             if (!StartupState.ready) return
+            var exportRequest = starter.pendingModelExports[requestId]
+            if (exportRequest) {
+                delete starter.pendingModelExports[requestId]
+                if (!urls || urls.length === 0) return
+                exportRequest.params.filePath = urls[0].toString()
+                starter.dispatchModelExport(exportRequest.actionCode, exportRequest.params)
+                return
+            }
             var request = starter.pendingModelFiles[requestId]
             if (!request) return
             delete starter.pendingModelFiles[requestId]
@@ -67,6 +105,7 @@ Starter {
                 console.error("File import failed:", JSON.stringify(ActionManager.lastActionOutcome()))
         }
         function onRejected(requestId) {
+            delete starter.pendingModelExports[requestId]
             delete starter.pendingModelFiles[requestId]
         }
     }

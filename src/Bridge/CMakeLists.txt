@@ -83,6 +83,7 @@ target_link_libraries(Bridge
         Utils     # Shared camera navigation operations
         Slicing   # Slicer configuration/catalog application service
     PRIVATE
+        BaseUI    # Existing process-wide task state during preset preparation
         GPlatform::ModelSlicingPolicy
         FacetPaintingCore
         DBRelations

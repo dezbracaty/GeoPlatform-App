@@ -968,10 +968,11 @@ void appendUndoTransactionsToTurnLedger(QHash<QString, QVariantMap>& turnLedger,
 
 AIChatBridge::AIChatBridge(QObject* parent)
     : bridge::BridgeBase(parent) {
+    // Startup status bindings may create this bridge before the first frame.
+    // Start the backend when the panel opens or the deferred account check runs.
     m_agentBackend = resolveConfiguredBackend();
     if (m_agentBackend) {
         m_agentBackend->setEventSink(this);
-        m_agentBackend->ensureReady();
     }
 
     connect(ActionManager::getInstance(),
@@ -1033,6 +1034,8 @@ void AIChatBridge::setPanelVisible(bool visible) {
         return;
     }
     m_panelVisible = visible;
+    if (visible && m_agentBackend)
+        m_agentBackend->ensureReady();
     emit panelVisibleChanged();
 }
 

@@ -24,7 +24,14 @@ Item {
         pendingStartupPage = ""
         page_router.go(page)
     }
-    onStartupReadyChanged: restoreStartupPage()
+    function refreshStartupAccount() {
+        if (startupReady) AIAccountBridge.refreshAccount()
+    }
+    onStartupReadyChanged: {
+        restoreStartupPage()
+        if (startupReady)
+            Qt.callLater(root.refreshStartupAccount)
+    }
 
     function currentPrintHost() {
         const routed = navigation_view.routerView.currentItem
@@ -35,6 +42,7 @@ Item {
                 && page.activeWorkspaceContent ? page : null
     }
     function startUserGuide(workspace) {
+        aiAssistantLoader.active = true
         return workspaceGuide.start(workspace, currentPrintHost())
     }
     function automaticGuideHost() {
@@ -66,7 +74,7 @@ Item {
             const host = automaticGuideHost()
             if (!host || workspaceGuide.running || !SettingsHelper.claimPrintGuideAutoAttempt())
                 return
-            workspaceGuide.start(host.activeWorkspaceContent, host)
+            root.startUserGuide(host.activeWorkspaceContent)
         })
     }
     Timer {
@@ -79,7 +87,7 @@ Item {
     UserGuide {
         id: workspaceGuide
         navigation: navigation_view
-        aiPanel: aiAssistantPanel
+        aiPanel: aiAssistantLoader.item
         onSessionEnded: function(reason, shown) {
             if (shown && (reason === "complete" || reason === "dismissed"))
                 SettingsHelper.markPrintGuideHandled()
@@ -150,6 +158,15 @@ Item {
         }
         if (actionCode === "model.import.choose_stl") {
             Global.starter.chooseStl({})
+            return
+        }
+        if (actionCode === "file.save" || actionCode === "file.saveAs") {
+            Global.starter.exportModels("project", "3mf", false, actionCode === "file.saveAs")
+            return
+        }
+        var exportAction = /^model\.export\.(selection|plate|owner)\.(stl|3mf|stlIndividual)\.choose$/.exec(actionCode)
+        if (exportAction) {
+            Global.starter.exportModels(exportAction[1], exportAction[2] === "3mf" ? "3mf" : "stl", exportAction[2] === "stlIndividual", false)
             return
         }
         if (actionCode === "slice.settings") {
@@ -333,8 +350,6 @@ Item {
         }
 
         Component.onCompleted: {
-            AIAccountBridge.refreshAccount()
-
             if (TransactionDebugBridge.runtimeEnabled) {
                 if (!root.debugWindowOpened) {
                     WindowRouter.go("/page", {
@@ -349,15 +364,27 @@ Item {
             // after that barrier, without overwriting it during initialization.
             pendingStartupPage = !StartupState.replayMode && SettingsHelper.getRememberLastPage()
                     ? (SettingsHelper.getLastPage() || "/dock") : "/dock"
-            if (startupReady)
+            if (startupReady) {
                 restoreStartupPage()
-            else
+                Qt.callLater(root.refreshStartupAccount)
+            } else
                 page_router.go("/dock")
         }
     }
 
-    AIAssistantPanel {
-        id: aiAssistantPanel
+    Loader {
+        id: aiAssistantLoader
+        active: false
+        sourceComponent: Component { AIAssistantPanel { parent: root } }
+        Component.onCompleted: {
+            if (AIChatBridge.panelVisible) active = true
+        }
+    }
+    Connections {
+        target: AIChatBridge
+        function onPanelVisibleChanged() {
+            if (AIChatBridge.panelVisible) aiAssistantLoader.active = true
+        }
     }
     Loader {
         id: calibrationLoader
@@ -407,15 +434,19 @@ Item {
         onActivated: Global.starter.chooseStl({})
     }
 
-    AccountCenterPopup {
-        id: accountCenterPopup
+    Loader {
+        id: accountCenterLoader
+        active: false
+        sourceComponent: Component { AccountCenterPopup { parent: root } }
     }
 
     Connections {
         target: AIAccountBridge
 
         function onAccountCenterRequested(section) {
-            accountCenterPopup.openSection(section)
+            accountCenterLoader.active = true
+            if (accountCenterLoader.item)
+                accountCenterLoader.item.openSection(section)
         }
     }
 

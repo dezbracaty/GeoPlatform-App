@@ -3,6 +3,8 @@
 #include "ActionHandlerRegistry.hpp"
 #include "DocumentManager.hpp"
 #include "MenuData.hpp"
+#include "MenuGroup.hpp"
+#include "MenuItem.hpp"
 #include "MaterialDB.hpp"
 #include "ModelGeometryDB.hpp"
 #include "ModelGraphUtil.hpp"
@@ -10,6 +12,10 @@
 #include "ModelObjectDB.hpp"
 #include "ModelPartDB.hpp"
 #include "ModelSurfaceColorDB.hpp"
+#include "FiberMaskDB.hpp"
+#include "ModelFileController.hpp"
+#include "QuickActionController.hpp"
+#include "SelectionBridge.hpp"
 #include "PrintBedDB.hpp"
 #include "PrintBedTemplateDB.hpp"
 #include "PrintBedPlacementUtil.hpp"
@@ -37,6 +43,7 @@
 #include <QColor>
 #include <QQmlEngine>
 #include <QScopeGuard>
+#include <QSet>
 #include <QSignalSpy>
 #include <QSettings>
 #include <QStandardPaths>
@@ -51,6 +58,7 @@
 #include <array>
 #include <cmath>
 #include <iostream>
+#include <functional>
 #include <optional>
 #include <map>
 #include <string>
@@ -59,6 +67,15 @@
 namespace {
 void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
+}
+bool waitForMachinePreparation(SliceSettingsBridge& bridge) {
+    return QTest::qWaitFor([&] { return !bridge.machinePreparationPending(); }, 15000);
+}
+bool selectMachineAndWait(SliceSettingsBridge& bridge, const QString& model, const QString& variant,
+                          const QString& bedType = {}, const QString& preset = {}) {
+    return bridge.selectMachine(model, variant, bedType, preset) && waitForMachinePreparation(bridge) &&
+        bridge.selectedMachineModelId() == model && bridge.selectedMachineVariantId() == variant &&
+        (preset.isEmpty() || bridge.selectedMachine().value("printerPresetId").toString() == preset);
 }
 QByteArray bytes(const QString& path) {
     QFile file(path);
@@ -516,17 +533,28 @@ void checkPlateMaterialSynchronization() {
     std::vector<std::string> partSemantics;
     const auto parts = objects<ModelPartDB>(TypeID::MODEL_PART_DB);
     for (const auto& part : parts) partSemantics.push_back(part->getProjectSemantics());
-    require(bridge->selectMachine("P3", "0.4"), "Cannot switch imported project to P3");
-    // Check immediately, without draining the queued platform-geometry signal:
-    // material synchronization must precede publication of the new revision.
-    const auto snapshot = GPlatform::SlicingBackend::instance().configSnapshot();
-    require(snapshot && snapshot->value("filament_map") == std::optional<std::string>("1,2,3,4,5,6"),
-            "P3 did not publish its six physical material bindings");
-    for (size_t i = 0; i < beds.size(); ++i)
-        require(QJsonDocument::fromJson(QByteArray::fromStdString(beds[i]->getProjectSemantics())).object() == expected[i],
-                "Not all plate mappings were synchronized, or unrelated semantics changed");
-    for (size_t i = 0; i < parts.size(); ++i)
-        require(parts[i]->getProjectSemantics() == partSemantics[i], "Machine switch changed part/modifier settings");
+    bool publicationObserved = false, bindingsPublished = false, platesPublished = false, partsPreserved = false;
+    // Observe publication synchronously, before any queued platform-geometry
+    // update can repair missing material synchronization during the async wait.
+    const auto publication = QObject::connect(bridge, &SliceSettingsBridge::machineSelectionChanged, bridge, [&] {
+        if (publicationObserved || bridge->selectedMachineModelId() != "P3") return;
+        publicationObserved = true;
+        const auto snapshot = GPlatform::SlicingBackend::instance().configSnapshot();
+        bindingsPublished = snapshot && snapshot->value("filament_map") == std::optional<std::string>("1,2,3,4,5,6");
+        platesPublished = true;
+        for (size_t i = 0; i < beds.size(); ++i)
+            platesPublished = platesPublished &&
+                QJsonDocument::fromJson(QByteArray::fromStdString(beds[i]->getProjectSemantics())).object() == expected[i];
+        partsPreserved = true;
+        for (size_t i = 0; i < parts.size(); ++i)
+            partsPreserved = partsPreserved && parts[i]->getProjectSemantics() == partSemantics[i];
+    }, Qt::DirectConnection);
+    const auto disconnectPublication = qScopeGuard([&] { QObject::disconnect(publication); });
+    require(selectMachineAndWait(*bridge, "P3", "0.4"), "Cannot switch imported project to P3");
+    require(publicationObserved && bindingsPublished, "P3 did not publish its six physical material bindings");
+    require(platesPublished, "Not all plate mappings were synchronized, or unrelated semantics changed");
+    require(partsPreserved, "Machine switch changed part/modifier settings");
+    QObject::disconnect(publication);
     auto illegal = expected.front();
     auto illegalSettings = illegal["settings"].toObject();
     illegalSettings["filament_map"] = "7,2,3,4,5,6";
@@ -566,7 +594,7 @@ void checkPlateMaterialSynchronization() {
 
     // AD5X is single-extruder multi-material. Orca only prunes the model's
     // slot assignments on a tool count change to a non-SEMM machine.
-    require(bridge->selectMachine("Flashforge Adventurer 5M Pro", "0.4"), "Cannot switch to the single-tool fixture");
+    require(selectMachineAndWait(*bridge, "Flashforge Adventurer 5M Pro", "0.4"), "Cannot switch to the single-tool fixture");
     require(bridge->selectedMachineModelId() == "Flashforge Adventurer 5M Pro",
             "The single-tool switch did not complete");
     require(owner->getDefaultFilamentSlot() == 1 &&
@@ -593,11 +621,11 @@ void checkPlateMaterialSynchronization() {
     };
     require(singleTool && !singleTool->filament_slots.empty() && !isSavedColor(singleTool->filament_slots.front()),
             "Switch copied P3's color onto the other printer");
-    require(bridge->selectMachine("P3", "0.4"), "Cannot restore remembered P3 configuration");
+    require(selectMachineAndWait(*bridge, "P3", "0.4"), "Cannot restore remembered P3 configuration");
     const auto p3 = GPlatform::SlicingBackend::instance().activeConfigView();
     require(p3 && !p3->filament_slots.empty() && isSavedColor(p3->filament_slots.front()),
             "Returning to P3 did not restore its color");
-    require(bridge->selectMachine("Flashforge AD5X", "0.4"), "Cannot return to ordinary machine");
+    require(selectMachineAndWait(*bridge, "Flashforge AD5X", "0.4"), "Cannot return to ordinary machine");
     for (const auto& bed : beds) {
         auto semantics = QJsonDocument::fromJson(QByteArray::fromStdString(bed->getProjectSemantics())).object();
         auto settings = semantics["settings"].toObject();
@@ -618,7 +646,7 @@ void checkPlateMaterialSynchronization() {
     owner->setDefaultFilamentSlot(2);
     parts.front()->setDefaultFilamentSlot(2);
     parts.front()->setFilamentBindingMode(int(ModelFilamentBindingMode::ExplicitSlot));
-    require(bridge->selectMachine("CFSYS Alpha500 Printer", "0.4") &&
+    require(selectMachineAndWait(*bridge, "CFSYS Alpha500 Printer", "0.4") &&
             bridge->selectedMachineModelId() == "CFSYS Alpha500 Printer",
             "Cannot switch the two-slot thermoplastic palette to Alpha500");
     require(owner->getDefaultFilamentSlot() == 2 &&
@@ -633,7 +661,7 @@ void checkPlateMaterialSynchronization() {
 void checkPrinterSwitchSaveAndCancel() {
     auto* bridge = SliceSettingsBridge::instance();
     auto& backend = GPlatform::SlicingBackend::instance();
-    require(bridge->selectMachine("P3", "0.4") && bridge->selectedMachineModelId() == "P3",
+    require(selectMachineAndWait(*bridge, "P3", "0.4") && bridge->selectedMachineModelId() == "P3",
             "Cannot activate P3 for the save/cancel check");
     require(bridge->selectProcessPreset("0.20mm Standard @P3"), "Cannot select the save/cancel process baseline");
     bridge->setSetting("printable_height", 180);
@@ -648,7 +676,7 @@ void checkPrinterSwitchSaveAndCancel() {
     const auto connection = QObject::connect(bridge, &SliceSettingsBridge::printerSwitchDecisionRequested, bridge,
         [&](const QVariantMap& preset) { prompts.push_back(preset.value("name").toString()); });
     const auto disconnect = qScopeGuard([&] { QObject::disconnect(connection); });
-    require(bridge->selectMachine("Flashforge Adventurer 5M Pro", "0.4") && prompts.size() == 1,
+    require(bridge->selectMachine("Flashforge Adventurer 5M Pro", "0.4") && waitForMachinePreparation(*bridge) && prompts.size() == 1,
             "Printer switch did not ask about the edited machine");
     const QString savedName = QStringLiteral("Acceptance P3 saved before cancel");
     bridge->resolvePrinterSwitch("save", savedName);
@@ -668,7 +696,7 @@ void checkPrinterSwitchSaveAndCancel() {
             "Cancelling did not retain the saved printer and unsaved process on the source");
 
     QSettings().remove(QStringLiteral("slicing/printerPresets/P3%200.4%20nozzle"));
-    require(bridge->selectMachine("P3", "0.4", {}, "P3 0.4 nozzle") && prompts.size() == 3,
+    require(bridge->selectMachine("P3", "0.4", {}, "P3 0.4 nozzle") && waitForMachinePreparation(*bridge) && prompts.size() == 3,
             "Switching to a compatible P3 preset did not ask about the edited process");
     bridge->resolvePrinterSwitch("cancel");
     const auto compatible = backend.activeConfigView();
@@ -678,7 +706,7 @@ void checkPrinterSwitchSaveAndCancel() {
             "Switching to a compatible printer with no memory lost the edited process");
 
     bridge->setSetting("printable_height", 190);
-    require(bridge->selectMachine("P3", "0.4", {}, savedName) && prompts.size() == 4,
+    require(bridge->selectMachine("P3", "0.4", {}, savedName) && waitForMachinePreparation(*bridge) && prompts.size() == 4,
             "Switching to the overwrite target did not ask about the edited printer");
     const auto status = bridge->printerSwitchPresetNameStatus(savedName);
     require(status.value("valid").toBool() && !status.value("message").toString().isEmpty(),
@@ -724,7 +752,7 @@ void writeUserPresetFixtures(const QString& configDirectory) {
 
 void checkSavedRootUpdatesChildPreset(SliceSettingsBridge& bridge) {
     auto& backend = GPlatform::SlicingBackend::instance();
-    require(bridge.selectMachine("P3", "0.4") && bridge.selectProcessPreset("Acceptance child"),
+    require(selectMachineAndWait(bridge, "P3", "0.4") && bridge.selectProcessPreset("Acceptance child"),
             "Cannot select the original inherited user preset");
     const auto original = backend.configSnapshot();
     require(original && original->value("initial_layer_line_width") == "0.5",
@@ -736,16 +764,16 @@ void checkSavedRootUpdatesChildPreset(SliceSettingsBridge& bridge) {
     const auto connection = QObject::connect(&bridge, &SliceSettingsBridge::printerSwitchDecisionRequested, &bridge,
         [&](const QVariantMap& preset) { prompts.push_back(preset.value("name").toString()); });
     const auto disconnect = qScopeGuard([&] { QObject::disconnect(connection); });
-    require(bridge.selectMachine("Flashforge AD5X", "0.4") && prompts == QStringList{"Acceptance root"},
+    require(bridge.selectMachine("Flashforge AD5X", "0.4") && waitForMachinePreparation(bridge) && prompts == QStringList{"Acceptance root"},
             "Printer switch did not ask about the edited user root");
     bridge.resolvePrinterSwitch("save");
     require(bridge.selectedMachineModelId() == "Flashforge AD5X", "Saving the user root did not complete the switch");
-    require(bridge.selectMachine("P3", "0.4") && bridge.selectProcessPreset("Acceptance child"),
+    require(selectMachineAndWait(bridge, "P3", "0.4") && bridge.selectProcessPreset("Acceptance child"),
             "Cannot reselect the child preset in the same session");
     const auto refreshed = backend.configSnapshot();
     require(refreshed && refreshed->value("initial_layer_line_width") == "165%",
             "Cached child retained the original value after saving its root");
-    require(bridge.selectMachine("Flashforge AD5X", "0.4") && bridge.selectedMachineModelId() == "Flashforge AD5X",
+    require(selectMachineAndWait(bridge, "Flashforge AD5X", "0.4") && bridge.selectedMachineModelId() == "Flashforge AD5X",
             "Cannot return to the integration fixture printer");
 }
 
@@ -772,7 +800,7 @@ void checkProjectPresetSaveAndReselect(SliceSettingsBridge& bridge) {
     const auto connection = QObject::connect(&bridge, &SliceSettingsBridge::printerSwitchDecisionRequested, &bridge,
         [&](const QVariantMap& preset) { prompt = preset; });
     const auto disconnect = qScopeGuard([&] { QObject::disconnect(connection); });
-    require(bridge.selectMachine("CFSYS Alpha500 Printer", "0.4") &&
+    require(bridge.selectMachine("CFSYS Alpha500 Printer", "0.4") && waitForMachinePreparation(bridge) &&
             prompt.value("name").toString() == process && !prompt.value("saveAs").toBool(),
             "An existing project preset should be saved under its current name");
     bridge.resolvePrinterSwitch("save");
@@ -792,7 +820,7 @@ void checkProjectPresetSaveAndReselect(SliceSettingsBridge& bridge) {
                 projectPrinterOffered = true;
         }
     }
-    require(projectPrinterOffered && bridge.selectMachine(model, variant, {}, printer) &&
+    require(projectPrinterOffered && selectMachineAndWait(bridge, model, variant, {}, printer) &&
             bridge.selectedMachineModelId() == model, "Cannot reselect the saved project printer");
     const auto projectMachine = backend.activeProjectMachine();
     require(projectMachine && projectMachine->project_local, "The reselected printer lost its project scope");
@@ -825,11 +853,11 @@ void checkP3PaletteSources() {
     const QString legacyGroup = "slicing/printers/P3/0.4";
     QSettings settings;
     const auto selectOther = [&] {
-        require(bridge->selectMachine("Flashforge AD5X", "0.4") &&
+        require(selectMachineAndWait(*bridge, "Flashforge AD5X", "0.4") &&
                 bridge->selectedMachineModelId() == "Flashforge AD5X", "Cannot switch from P3");
     };
     const auto selectP3 = [&] {
-        require(bridge->selectMachine("P3", "0.4") && bridge->selectedMachineModelId() == "P3",
+        require(selectMachineAndWait(*bridge, "P3", "0.4") && bridge->selectedMachineModelId() == "P3",
                 "Cannot switch to P3");
     };
     selectOther();
@@ -885,12 +913,138 @@ void checkP3PaletteSources() {
     std::cout << "P3 colors: defaults, legacy mapping, explicit memory, import isolation and startup fallback\n";
 }
 
+void checkContextFileMenus() {
+    // User-facing context contract: file commands target the clicked context
+    // directly; object menus must not expose scene/project replacement actions.
+    const std::map<QString,QSet<QString>> expected{
+        {"NoSelection", {"model.export.plate.stl.choose", "model.export.plate.3mf.choose"}},
+        {"SingleModel", {"model.export.selection.stl.choose", "model.export.selection.3mf.choose"}},
+        {"MultipleModels", {"model.export.selection.stl.choose", "model.export.selection.stlIndividual.choose", "model.export.selection.3mf.choose"}},
+        {"ModelPart", {"model.export.owner.stl.choose", "model.export.owner.3mf.choose"}}
+    };
+    for (const auto& [context, exports] : expected) {
+        const auto* group=MenuData::getInstance()->getGroup(context,"normal");
+        require(group,"Missing model context menu");
+        QSet<QString> actual;int imports=0;
+        std::function<void(TMenuItem*,int)> inspect=[&](TMenuItem* item,int depth) {
+            const auto action=item->actionCode();
+            require(action!="project.open.choose","Open Project belongs to the top File menu");
+            if(action=="model.import.choose") {
+                require(context=="NoSelection" && depth==1,"Import must only appear directly in the blank-area menu");
+                ++imports;
+            }
+            if(action.startsWith("model.export.")) {
+                require(depth==1 && !item->isMenu() && item->getItems().empty(),"Context export requires a direct command, not nested menus");
+                require(!actual.contains(action),"Duplicate context export command");actual.insert(action);
+            }
+            for(auto* child:item->getItems())inspect(child,depth+1);
+        };
+        for(auto* item:group->items())inspect(item,1);
+        require(actual==exports,"Context exports target the wrong selection/plate/owner or omit a format");
+        require(imports==(context=="NoSelection"?1:0),"Incorrect import entry for the current context");
+    }
+}
+
+void checkModelFileExport() {
+    checkContextFileMenus();
+    importAndWait("complete-project.3mf","project");
+    auto* document=DocumentManager::instance();
+    auto instances=objects<ModelInstanceDB>(TypeID::MODEL_INSTANCE_DB);
+    require(instances.size()==2,"Export fixture must contain two shared instances on two plates");
+    const auto originalMatrix=PrintBedPlacementUtil::instancePlateMatrix(*instances[1]);
+    instances[0]->setPrintable(false);
+    instances[0]->setDisplayName("First authored instance");instances[1]->setDisplayName("Second authored instance");
+    auto mask=trans::TransDB::create<FiberMaskDB>();
+    require(document->attachOwnedChild(instances[0]->getDBInstanceID(),mask->getDBInstanceID(),FiberMaskDB::kOwnerRelation),"Cannot attach export fixture mask");
+    mask->setDisplayName("Editable region");mask->setDimensions(Vector3(4,4,6));mask->setEnabled(false);
+    mask->setParameterOverridesJson("{\"fiber_contour_include_holes\":\"1\"}");
+    mask->setOrder(0);
+    QTemporaryDir directory;require(directory.isValid(),"Cannot create export test directory");
+    const auto savePath=directory.filePath("editable.3mf");
+    const auto oldPath=ModelFileController::instance()->projectFile();
+    auto* actions=ActionManager::getInstance();
+    const auto run=[&](const QString& action,QVariantMap params,const std::function<void()>& afterCapture = {}) {
+        QVariantMap terminal;QString id;bool cleaned=false;
+        const auto cleanupConnection=QObject::connect(actions,&ActionManager::actionCompleted,actions,[&](const QString& completed,bool){if(completed=="ModelFileExportHandler")cleaned=true;});
+        const auto cleanupDisconnect=qScopeGuard([&]{QObject::disconnect(cleanupConnection);});
+        const auto connection=QObject::connect(actions,&ActionManager::invocationCompleted,actions,[&](const QString& completed,const QVariantMap& outcome){if(completed==id)terminal=outcome;});
+        const auto disconnect=qScopeGuard([&]{QObject::disconnect(connection);});
+        const auto receipt=actions->invokeActionByAI(action,params);id=receipt.value("invocationId").toString();
+        require(receipt.value("accepted").toBool() && receipt.value("success").toBool(),qPrintable(action+": "+receipt.value("error").toString()));
+        if (afterCapture) afterCapture();
+        require(QTest::qWaitFor([&]{return cleaned && !terminal.empty() && !TaskStateNotifier::instance()->isBusy();},20000),"Export action did not reach its terminal outcome");
+        return terminal;
+    };
+    const auto sourcePosition=instances[0]->getPosition();
+    auto saved=run("project.save",{{"filePath",savePath}},[&] { instances[0]->setPosition(sourcePosition+Vector3(13,0,0)); });
+    require(saved.value("success").toBool(),qPrintable(saved.value("error").toString()));
+    require(QFileInfo(savePath).size()>0 && ModelFileController::instance()->projectFile()!=oldPath,"Successful project save did not publish its path");
+    auto snapshot=GPlatform::SlicingBackend::instance().configSnapshot();require(bool(snapshot),"No saved configuration");
+    const auto candidate=GPlatform::SlicingBackend::instance().readProject({savePath.toStdString(),libslicer::ProjectReadMode::Project});
+    for(const auto& d:candidate.diagnostics)std::cout<<d.code<<": "<<d.message<<'\n';
+    require(bool(candidate) && candidate.scene,"Application wrote an unreadable 3MF");
+    const auto& restored=candidate.scene->objects;
+    require(restored.size()==1 && restored[0].parts.size()==5 && restored[0].instances.size()==2,"Project save lost shared objects, parts or instances");
+    require(candidate.scene->plates.size()==2,"Project save lost a print plate");
+    const auto findInstance=[&](const std::string& name)->const libslicer::ProjectInstance& {
+        const auto found=std::find_if(restored[0].instances.begin(),restored[0].instances.end(),[&](const auto& i){return i.name==name;});
+        require(found!=restored[0].instances.end(),"Named instance was lost during export");return *found;
+    };
+    const auto& first=findInstance("First authored instance");const auto& second=findInstance("Second authored instance");
+    require(!first.printable && second.printable,"Project save lost printable state");
+    require(std::abs(first.transform[3]-originalMatrix(0,3))<1e-4 && std::abs(instances[0]->getPosition().x-sourcePosition.x-13)<1e-4,
+        "Export did not retain its captured placement independently of later document edits");
+    instances[0]->setPosition(sourcePosition);
+    require(first.fiber_masks.size()==1 && first.fiber_masks[0].name=="Editable region","Project save lost mask editing state");
+    for(int r=0;r<4;++r)for(int c=0;c<4;++c)require(std::abs(second.transform[r*4+c]-originalMatrix(r,c))<1e-4,"Project save changed plate-local placement");
+    require(!restored[0].parts[0].material_facets.roots.empty(),"Project save lost painted facets");
+    require(candidate.configuration.snapshot().value("filament_colour")==snapshot->value("filament_colour"),"Project save changed material palette");
+    const auto selectedId=instances[1]->getDBInstanceID();
+    auto* menu=QuickActionController::getInstance();menu->initialize();
+    SelectionBridge::instance()->setSelectedObjects({instances[0]->getDBInstanceID(),selectedId});
+    require(menu->getCurrentContext()=="MultipleModels","Multiple model file context was not selected");
+    const auto parts=instances[1]->parts();
+    const auto modifier=std::find_if(parts.begin(),parts.end(),[](const auto& p){return p->getRole()==int(ModelPartRole::ParameterModifier);});
+    require(modifier!=parts.end() && SelectionBridge::instance()->setSelectedModifier(selectedId,(*modifier)->getDBInstanceID()),"Cannot select the export modifier fixture");
+    require(menu->getCurrentContext()=="ModelPart" && !ModelFileController::instance()->canExportSelection() &&
+        ModelFileController::instance()->exportTargets("owner")==QVariantList{QString::number(selectedId.getValue())},"Modifier export silently targeted a selection or the entire scene");
+    auto owner=run("model.export",{{"filePath",directory.filePath("owner.3mf")},{"format","3mf"},{"scope","owner"}});
+    require(owner.value("success").toBool(),"Explicit owning-model export failed");
+    SelectionBridge::instance()->setSelectedObjects({selectedId});
+    require(menu->getCurrentContext()=="SingleModel","Single model export context was not selected");
+    auto exported=run("model.export",{{"filePath",directory.filePath("selected.stl")},{"format","stl"},{"scope","selection"}});
+    require(exported.value("success").toBool() && QFileInfo(directory.filePath("selected.stl")).size()>84,"Selected STL export failed");
+    require(ModelFileController::instance()->projectFile().endsWith("editable.3mf"),"STL export replaced the editable project path");
+    SelectionBridge::instance()->setSelectedObjects({instances[0]->getDBInstanceID(),selectedId});
+    exported=run("model.export",{{"filePath",directory.path()},{"format","stl"},{"scope","selection"},{"individualFiles",true}});
+    require(exported.value("success").toBool() && exported.value("result").toMap().value("files").toList().size()==2,"Individual STL export did not write two selected instances");
+    exported=run("model.export",{{"filePath",directory.filePath("plate.3mf")},{"format","3mf"},{"scope","plate"}});
+    require(exported.value("success").toBool(),"Current-plate 3MF export failed");
+    auto plate=GPlatform::SlicingBackend::instance().readProject({directory.filePath("plate.3mf").toStdString(),libslicer::ProjectReadMode::Project});
+    require(plate && plate.scene && plate.scene->plates.size()==1 && plate.scene->objects.front().instances.size()==1,"Current-plate export included other plates");
+    const auto savedBytes=bytes(savePath);
+    saved=run("project.save",{{"filePath",directory.filePath("missing/failed.3mf")}});
+    require(!saved.value("success").toBool() && bytes(savePath)==savedBytes && ModelFileController::instance()->projectFile().endsWith("editable.3mf"),"Failed save changed the previous file or project path");
+    importAndWait(savePath,"project");
+    instances=objects<ModelInstanceDB>(TypeID::MODEL_INSTANCE_DB);
+    auto masks=objects<FiberMaskDB>(TypeID::FIBER_MASK_DB);
+    require(instances.size()==2 && masks.size()==1 && masks[0]->getDisplayName()=="Editable region" && !masks[0]->getEnabled(),"Application reimport lost authored region state");
+    importAndWait("complete-project-unassigned.3mf","project");
+    saved=run("project.save",{{"filePath",directory.filePath("unassigned.3mf")}});
+    require(saved.value("success").toBool(),"Saving an unassigned model failed");
+    const auto unassigned=GPlatform::SlicingBackend::instance().readProject({directory.filePath("unassigned.3mf").toStdString(),libslicer::ProjectReadMode::Project});
+    require(unassigned && unassigned.scene && unassigned.scene->objects.front().instances.size()==3 &&
+        std::count_if(unassigned.scene->objects.front().instances.begin(),unassigned.scene->objects.front().instances.end(),[](const auto& i){return i.plate_id.empty();})==1,
+        "Saving changed or lost an unassigned instance");
+    std::cout<<"Model exports: editable roundtrip, shared graph, all part roles, painting, masks, two plates, selected and individual STL, failed-save isolation\n";
+}
+
 void checkConfigurationNotifications() {
     auto* bridge = SliceSettingsBridge::instance();
     const auto decision = QObject::connect(bridge, &SliceSettingsBridge::printerSwitchDecisionRequested,
         bridge, [bridge](const QVariantMap&) { bridge->resolvePrinterSwitch("discard"); });
     const auto disconnect = qScopeGuard([&] { QObject::disconnect(decision); });
-    require(bridge->selectMachine("P3", "0.4") && bridge->selectedMachineModelId() == "P3",
+    require(selectMachineAndWait(*bridge, "P3", "0.4"),
             "Cannot activate P3 for configuration notifications");
     const auto active = GPlatform::SlicingBackend::instance().activeConfigView();
     require(active && active->selection.machine_model_id == "P3", "Backend did not activate P3");
@@ -912,8 +1066,7 @@ void checkConfigurationNotifications() {
     require(bridge->selectedMachine() == machine, "Material selection changed the machine metadata");
     require(machineChanges.isEmpty(), "Material selection incorrectly notified a machine change");
     require(!filamentChanges.isEmpty(), "Material selection omitted its material notification");
-    require(bridge->selectMachine("Flashforge AD5X", "0.4") &&
-            bridge->selectedMachineModelId() == "Flashforge AD5X" && !machineChanges.isEmpty(),
+    require(selectMachineAndWait(*bridge, "Flashforge AD5X", "0.4") && !machineChanges.isEmpty(),
             "Actual machine switch omitted its notification");
     importAndWait("complete-project.3mf", "project");
     const auto projectMachine = bridge->selectedMachine();
@@ -943,11 +1096,13 @@ int main(int argc,char** argv) {
         MenuData::getInstance()->loadMenusFromFile(QStringLiteral(THREE_MF_MENUS));
         QQmlEngine engine;
         auto* configuration=SliceSettingsBridge::instance();
-        require(configuration->selectMachine("Flashforge AD5X","0.4"),"Cannot activate the initial real slicer configuration");
-        checkSavedRootUpdatesChildPreset(*configuration);
+        require(selectMachineAndWait(*configuration, "Flashforge AD5X","0.4"),"Cannot activate the initial real slicer configuration");
+        if (!app.arguments().contains("--model-file-export")) checkSavedRootUpdatesChildPreset(*configuration);
         auto definition=trans::TransDB::create<PrintBedTemplateDB>();
         auto bed=trans::TransDB::create<PrintBedDB>();
         bed->setTemplateDBId(definition->getDBInstanceID());
+        if (app.arguments().contains("--model-file-export")) checkModelFileExport();
+        else {
         // With no UI host, an omitted intent must request a decision and leave
         // the document intact; aliases must never silently append geometry.
         const auto initialRevision = GPlatform::SlicingBackend::instance().configurationRevision();
@@ -995,6 +1150,7 @@ int main(int argc,char** argv) {
         checkProjectPresetSaveAndReselect(*configuration);
         checkP3PaletteSources();
         checkConfigurationNotifications();
+        }
     } catch (const std::exception& error) {std::cerr<<error.what()<<'\n'; status=1;}
     ActionManager::getInstance()->cleanupBeforeShutdown();
     ActionHandlerRegistry::instance().clearCache();

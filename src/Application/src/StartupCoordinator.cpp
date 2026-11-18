@@ -22,6 +22,14 @@
 StartupCoordinator::StartupCoordinator(bool replayMode, QObject* parent)
     : QObject(parent), m_replayMode(replayMode) {
     m_clock.start();
+    LOG_INFO("[STARTUP STATE] applicationState={} elapsedMs={}",
+             int(qGuiApp->applicationState()), elapsedMs());
+    connect(qGuiApp, &QGuiApplication::applicationStateChanged, this,
+        [this](Qt::ApplicationState state) {
+            if (!ready() && !stopped())
+                LOG_INFO("[STARTUP STATE] applicationState={} elapsedMs={}",
+                         int(state), elapsedMs());
+        });
     m_text = tr("Starting GPlatform…");
     m_timer.setInterval(250);
     connect(&m_timer, &QTimer::timeout, this, &StartupCoordinator::tick);
@@ -63,9 +71,18 @@ void StartupCoordinator::enqueue(const QString& stage, const QString& text,
     });
 }
 
-void StartupCoordinator::preparePresets(std::function<void()> continuation) {
+void StartupCoordinator::startPresetPreparation() {
     if (stopped() || m_presetsScheduled) return;
     m_presetsScheduled = true;
+    LOG_INFO("[STARTUP] presetPreparationStarted elapsedMs={}", elapsedMs());
+    // Pure configuration data can load while the GUI creates the splash.
+    // Its result is consumed only by preparePresets, after the splash barrier.
+    m_presetTask = SliceSettingsBridge::prepareStartupConfiguration();
+}
+
+void StartupCoordinator::preparePresets(std::function<void()> continuation) {
+    if (stopped()) return;
+    startPresetPreparation();
     setStage("Presets", tr("Loading printer and filament presets…"));
     const auto epoch = m_epoch;
     auto* watcher = new QFutureWatcher<GPlatform::SlicingConfigActivationResult>(this);
@@ -86,7 +103,6 @@ void StartupCoordinator::preparePresets(std::function<void()> continuation) {
             } catch (const std::exception& e) { fail(QString::fromUtf8(e.what())); }
             catch (...) { fail(tr("Cannot load the slicing presets")); }
         });
-    m_presetTask = SliceSettingsBridge::prepareStartupConfiguration();
     watcher->setFuture(m_presetTask);
 }
 
@@ -124,6 +140,17 @@ QString StartupCoordinator::admissionError(const QString& code, bool ai) const {
 }
 
 void StartupCoordinator::attachMainWindow(QObject* object) {
+    const bool profile = qEnvironmentVariableIntValue("GP_STARTUP_PROFILE") == 1;
+    QElapsedTimer profileTimer;
+    if (profile) profileTimer.start();
+    qint64 previousUs = 0;
+    const auto profilePhase = [&](const char* phase) {
+        if (!profile) return;
+        const auto nowUs = profileTimer.nsecsElapsed() / 1000;
+        LOG_INFO("[STARTUP DETAIL] function=StartupCoordinator::attachMainWindow phase={} detail=none durationUs={} totalUs={}",
+                 phase, nowUs - previousUs, nowUs);
+        previousUs = profileTimer.nsecsElapsed() / 1000;
+    };
     auto* window = qobject_cast<QQuickWindow*>(object);
     if (!window || stopped() || (m_main && m_main != window)) return;
     m_main = window;
@@ -141,16 +168,20 @@ void StartupCoordinator::attachMainWindow(QObject* object) {
     watchMainScreen(window->screen());
     QTimer::singleShot(0, this, [this] { fitMainWindowToWorkArea(true); });
 #endif
+    profilePhase("bind-main-window");
     if (m_splash) {
         m_splash->setTransientParent(window);
+        profilePhase("set-splash-transient-parent");
         if (!m_splash->flags().testFlag(Qt::WindowDoesNotAcceptFocus)) {
             m_splash->raise();
+            profilePhase("raise-splash");
             m_splash->requestActivate();
         }
     }
     connect(window, &QQuickWindow::sceneGraphError, this,
         [this](QQuickWindow::SceneGraphError, const QString& error) { fail(error); },
         Qt::QueuedConnection);
+    profilePhase("connect-scenegraph-error");
 }
 
 #ifdef Q_OS_WIN

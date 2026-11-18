@@ -28,6 +28,9 @@ set(INTERACTION_SOURCES
     src/CreateGeometryHandler.cpp
     src/SlicingHandler.cpp
     src/CalibrationBridge.cpp
+    src/ModelMeshSnapshot.cpp
+    src/ModelFileExportHandler.cpp
+    src/ModelFileController.cpp
     src/SliceSessionBuilder.cpp
     src/SlicingPlaybackHandler.cpp
     src/DeleteHandler.cpp
@@ -87,6 +90,9 @@ set(INTERACTION_HEADERS
     include/CreateGeometryHandler.hpp
     include/SlicingHandler.hpp
     include/CalibrationBridge.hpp
+    include/ModelMeshSnapshot.hpp
+    include/ModelFileExportHandler.hpp
+    include/ModelFileController.hpp
     include/SliceSessionBuilder.hpp
     include/SlicingPlaybackHandler.hpp
     include/DeleteHandler.hpp

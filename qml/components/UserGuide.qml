@@ -126,6 +126,7 @@ Item {
         if (!mainWindowSession || printHost.activePageName === name) return
         if (FiberMaskBridge.active || CutToolBridge.active)
             throw new Error(qsTr("Finish or cancel the current fiber-region or cut edit before changing workspaces. The guide preserves your edit and does not switch this page."))
+        printHost.ensureWorkspacePage(name)
         const renderer = printHost.rendererForPage(name)
         if (!printHost.dockReady || !renderer || renderer.Window.window !== overlay.Window.window)
             throw new Error(qsTr("This workspace is not ready in the guide's window."))

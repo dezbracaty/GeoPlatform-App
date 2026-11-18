@@ -4,6 +4,13 @@
 REGISTER_INTERACTION_QML_SINGLETON_CUSTOM(
     QuickActionController, "QuickActionController", &QuickActionController::create)
 #include "SelectionBridge.hpp"
+#include "PickService.hpp"
+#include "InteractionRuntime.hpp"
+#include "ViewportInputRouter.hpp"
+#include <DocumentManager.hpp>
+#include <ModelInstanceDB.hpp>
+#include <ModelPartDB.hpp>
+#include <algorithm>
 #include "Foundation/Log.h"
 #include <stdexcept>
 
@@ -55,6 +62,7 @@ void QuickActionController::initialize()
         // Connect to selection changed signals
         connect(m_selectionBridge, &SelectionBridge::selectionChanged,
                 this, &QuickActionController::onSelectionChanged);
+        connect(m_selectionBridge, &SelectionBridge::activeTargetChanged, this, &QuickActionController::onSelectionChanged);
         LOG_DEBUG("QuickActionController: Connected to SelectionBridge signals");
     } else {
         LOG_WARN("QuickActionController: Failed to get SelectionBridge instance");
@@ -80,6 +88,8 @@ QString QuickActionController::determineCurrentContext() const
     if (!m_selectionBridge) {
         return "NoSelection";
     }
+
+    if (m_selectionBridge->modifierTarget() && m_menuData && m_menuData->currentEnvironment()=="normal") return "ModelPart";
 
     // Simple context determination based on selection
     if (hasSelection()) {
@@ -140,10 +150,33 @@ void QuickActionController::onSelectionChanged()
 
 void QuickActionController::handleRightClick(const QPointF& position)
 {
-    LOG_DEBUG("QuickActionController: Right-click detected at position ({}, {})",
-             position.x(), position.y());
+    handleRightClickForView(position, ViewportInputRouter::getInstance()->lastInputViewId());
+}
 
-    // Emit signal to QML to show quick action menu
+void QuickActionController::handleRightClickForView(const QPointF& position, std::uint64_t viewId)
+{
+    initialize();
+    // Resolve only an actual context click, after pan/drag has been ruled out.
+    // Preserve a multi-selection when its existing member is right-clicked.
+    if (m_menuData->currentEnvironment() == "normal" && viewId != 0) {
+        const auto hit=interactionPickService().pickCpuForView(DBInstanceID(viewId),position.toPoint());
+        using GPlatform::Rendering::PickStatus;
+        if (hit.status==PickStatus::Miss) m_selectionBridge->clearSelection();
+        else if (hit.status==PickStatus::Hit && !hit.payload.subTarget) {
+            auto* document=DocumentManager::instance();
+            if (document->getDB<ModelInstanceDB>(hit.payload.objectId)) {
+                auto part=hit.payload.partId ? document->getDB<ModelPartDB>(*hit.payload.partId) : nullptr;
+                if (part && part->getRole()==int(ModelPartRole::ParameterModifier))
+                    m_selectionBridge->setSelectedModifier(hit.payload.objectId,*hit.payload.partId);
+                else {
+                    const auto& ids=m_selectionBridge->getSelectedIds();
+                    if (std::find(ids.begin(),ids.end(),hit.payload.objectId)==ids.end())
+                        m_selectionBridge->setSelectedObjects({hit.payload.objectId});
+                }
+            } else m_selectionBridge->clearSelection();
+        } else return; // Invalid/stale viewport or tool-owned hit is not a model context.
+    }
+    onSelectionChanged();
     emit showQuickActionMenu(position.x(), position.y(), "");
 }
 

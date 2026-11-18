@@ -21,9 +21,12 @@ ContentPage {
     property bool pendingPrintAfterConnect: false
     property string activePageName: "prepare"
     property var calibrationPanel: null
+    readonly property var previewPage: previewLoader.item
+    readonly property var realisticPage: realisticLoader.item
+    readonly property var printerControlPopup: printerControlLoader.item
     readonly property var activeWorkspaceContent:
-        activePageName === "preview" ? previewPage.workspaceContent
-        : (activePageName === "realistic" ? realisticPage.workspaceContent
+        activePageName === "preview" ? (previewPage ? previewPage.workspaceContent : null)
+        : (activePageName === "realistic" ? (realisticPage ? realisticPage.workspaceContent : null)
                                            : preparePage.workspaceContent)
     readonly property var workspacePageNames: ["prepare", "preview", "realistic"]
     readonly property Item guidePrintBar: globalPrintBar
@@ -37,11 +40,12 @@ ContentPage {
 
     function openPrinterControl() {
         globalPrintBar.closeMachinePopup()
-        printerControlPopup.open()
+        printerControlLoader.active = true
+        if (printerControlPopup) printerControlPopup.open()
     }
 
     function togglePrinterControl() {
-        if (printerControlPopup.opened) {
+        if (printerControlPopup && printerControlPopup.opened) {
             printerControlPopup.close()
             return
         }
@@ -106,7 +110,7 @@ ContentPage {
         sendConfirmation.filePath = outputPath(format)
         sendConfirmation.destinationName = SlicingPreviewBridge.defaultPrintOutputFileName(format)
         sendConfirmation.invalidated = false
-        printerControlPopup.close()
+        if (printerControlPopup) printerControlPopup.close()
         sendConfirmation.open()
     }
 
@@ -547,10 +551,22 @@ ContentPage {
 
     function rendererForPage(pageName) {
         if (pageName === "preview")
-            return previewPage.renderer
+            return previewPage ? previewPage.renderer : null
         if (pageName === "realistic")
-            return realisticPage.renderer
+            return realisticPage ? realisticPage.renderer : null
         return preparePage.renderer
+    }
+
+    function ensureWorkspacePage(pageName) {
+        if (pageName === "preview") {
+            previewLoader.active = true
+            return previewPage
+        }
+        if (pageName === "realistic") {
+            realisticLoader.active = true
+            return realisticPage
+        }
+        return pageName === "prepare" ? preparePage : null
     }
 
     function activatePage(pageName, updateEnvironment, copyCamera = true) {
@@ -559,6 +575,8 @@ ContentPage {
         }
 
         var sourceRenderer = rendererForPage(activePageName)
+        if (!ensureWorkspacePage(pageName))
+            return
         var targetRenderer = rendererForPage(pageName)
         changingPage = true
         activePageName = pageName
@@ -622,12 +640,18 @@ ContentPage {
             title: qsTr("Preview")
             options: KDDW.KDDockWidgets.DockWidgetOption_NotClosable
 
-            Preview3DPrintPage {
-                id: previewPage
-                workspaceContext: sharedWorkspaceContext
-                renderActive: StartupState.ready && root.dockReady && root.activePageName === "preview"
-                onWorkspaceRequested: function(workspaceName) {
-                    root.activatePage(workspaceName, true)
+            Loader {
+                id: previewLoader
+                anchors.fill: parent
+                active: false
+                sourceComponent: Component {
+                    Preview3DPrintPage {
+                        workspaceContext: sharedWorkspaceContext
+                        renderActive: StartupState.ready && root.dockReady && root.activePageName === "preview"
+                        onWorkspaceRequested: function(workspaceName) {
+                            root.activatePage(workspaceName, true)
+                        }
+                    }
                 }
             }
         }
@@ -638,13 +662,18 @@ ContentPage {
             title: qsTr("Realistic")
             options: KDDW.KDDockWidgets.DockWidgetOption_NotClosable
 
-            Realistic3DPrintPage {
-                id: realisticPage
-                workspaceContext: sharedWorkspaceContext
-                renderActive: StartupState.ready && root.dockReady &&
-                              root.activePageName === "realistic"
-                onWorkspaceRequested: function(workspaceName) {
-                    root.activatePage(workspaceName, true)
+            Loader {
+                id: realisticLoader
+                anchors.fill: parent
+                active: false
+                sourceComponent: Component {
+                    Realistic3DPrintPage {
+                        workspaceContext: sharedWorkspaceContext
+                        renderActive: StartupState.ready && root.dockReady && root.activePageName === "realistic"
+                        onWorkspaceRequested: function(workspaceName) {
+                            root.activatePage(workspaceName, true)
+                        }
+                    }
                 }
             }
         }
@@ -801,6 +830,7 @@ ContentPage {
         panelWidth: 400
         panelHeight: 560
         integratedTitleBar: false
+        lazyContent: true
         guideMode: Global.mainScreen && Global.mainScreen.userGuide.running
         panelContent: Component { SceneSettingsPanel {} }
     }
@@ -822,19 +852,21 @@ ContentPage {
         hasSelection: SelectionBridge.hasSelection
         selectedFileName: SelectionBridge.selectedModel
                           ? SelectionBridge.selectedModel.name : ""
-        printerControlOpen: printerControlPopup.opened
+        printerControlOpen: printerControlPopup ? printerControlPopup.opened : false
 
-        onMachinePopupOpening: printerControlPopup.close()
+        onMachinePopupOpening: if (printerControlPopup) printerControlPopup.close()
         onPrinterControlRequested: root.togglePrinterControl()
         onAddModelRequested: Global.starter.chooseModel({})
         onSliceRequested: ActionManager.triggerAction("model.sliceAll", {})
         onExportRequested: function(formatId) {
-            if (previewPage.workspaceContent)
-                previewPage.workspaceContent.requestPrintOutputExport(formatId)
+            const page = root.ensureWorkspacePage("preview")
+            if (page && page.workspaceContent)
+                page.workspaceContent.requestPrintOutputExport(formatId)
         }
         onResliceRequested: {
-            if (previewPage.workspaceContent)
-                previewPage.workspaceContent.triggerResliceCurrentPreview()
+            const page = root.ensureWorkspacePage("preview")
+            if (page && page.workspaceContent)
+                page.workspaceContent.triggerResliceCurrentPreview()
         }
         onPrintRequested: {
             if (!PrinterService.connected) {
@@ -852,18 +884,23 @@ ContentPage {
         onDismissJobStatusRequested: PrinterService.dismissJobStatus()
     }
 
-    PrinterControlPopup {
-        id: printerControlPopup
-        popupHost: root
-        popupAnchor: globalPrintBar.printerAnchor
-        popupVerticalAnchor: globalPrintBar
-        popupAbove: true
+    Loader {
+        id: printerControlLoader
+        active: false
+        sourceComponent: Component {
+            PrinterControlPopup {
+                popupHost: root
+                popupAnchor: globalPrintBar.printerAnchor
+                popupVerticalAnchor: globalPrintBar
+                popupAbove: true
 
-        onClosed: root.pendingPrintAfterConnect = false
+                onClosed: root.pendingPrintAfterConnect = false
 
-        onFlashforgeAccountRequested: {
-            close()
-            AIAccountBridge.openAccountCenter("flashforge")
+                onFlashforgeAccountRequested: {
+                    close()
+                    AIAccountBridge.openAccountCenter("flashforge")
+                }
+            }
         }
     }
 

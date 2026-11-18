@@ -4340,3 +4340,66 @@ msgstr "所选修改体已不可用。"
 
 msgid "The selected model is no longer available."
 msgstr "所选模型已不可用。"
+
+msgid "Import Models…"
+msgstr "导入模型…"
+
+msgid "Open Project…"
+msgstr "打开工程…"
+
+msgid "Save Project As…"
+msgstr "工程另存为…"
+
+msgid "Export Selected Models"
+msgstr "导出选中模型"
+
+msgid "Export Current Plate"
+msgstr "导出当前盘"
+
+msgid "Export Owning Model"
+msgstr "导出所属模型"
+
+msgid "Individual STL Files…"
+msgstr "分别导出 STL 文件…"
+
+msgid "Export Models"
+msgstr "导出模型"
+
+msgid "Exporting models…"
+msgstr "正在导出模型…"
+
+msgid "Export models"
+msgstr "导出模型"
+
+msgid "Export complete"
+msgstr "导出完成"
+
+msgid "Export completed with warnings"
+msgstr "导出完成，存在警告"
+
+msgid "The export could not be started."
+msgstr "无法开始导出。"
+
+msgid "Export as STL…"
+msgstr "导出为 STL…"
+
+msgid "Export as 3MF…"
+msgstr "导出为 3MF…"
+
+msgid "Export as Single STL…"
+msgstr "导出为单个 STL…"
+
+msgid "Export as Separate STL Files…"
+msgstr "分别导出 STL…"
+
+msgid "Export Current Plate as STL…"
+msgstr "导出当前盘为 STL…"
+
+msgid "Export Current Plate as 3MF…"
+msgstr "导出当前盘为 3MF…"
+
+msgid "Export Owning Model as STL…"
+msgstr "导出所属模型为 STL…"
+
+msgid "Export Owning Model as 3MF…"
+msgstr "导出所属模型为 3MF…"

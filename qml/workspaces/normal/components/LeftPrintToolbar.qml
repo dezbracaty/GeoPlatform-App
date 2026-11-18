@@ -49,21 +49,23 @@ ToolbarSurface {
                         }
                     },
                     {
+                        targetName: "print.toolbar.file.exportSelectedStl",
                         icon: FluentIcons.graph_Export,
                         text: qsTr("Export STL"),
                         tooltip: qsTr("Export selected model as STL"),
-                        enabled: SelectionBridge.hasSelection,
+                        enabled: ModelFileController.canExportSelection,
                         action: function() {
-                            console.log("Export STL clicked");
+                            Global.starter.exportModels("selection", "stl", false, false);
                         }
                     },
                     {
+                        targetName: "print.toolbar.file.saveProject",
                         icon: FluentIcons.graph_Save,
                         text: qsTr("Save Project"),
                         tooltip: qsTr("Save current project"),
-                        enabled: true,
+                        enabled: ModelFileController.canSaveProject,
                         action: function() {
-                            console.log("Save Project clicked");
+                            Global.starter.exportModels("project", "3mf", false, false);
                         }
                     },
                     {
