@@ -117,9 +117,9 @@ App 仓库使用 GPLATFORM_HOST_REPOSITORY 指定完整宿主（默认 dezbracat
 
 App runner 标签使用 GPLATFORM_WINDOWS_RUNNER_LABELS/GPLATFORM_MACOS_RUNNER_LABELS。源码依赖只读凭据 GPLATFORM_SOURCE_TOKEN、队列检查所需 GPLATFORM_WORKFLOW_TOKEN、SDK 发布凭据 GPLATFORM_PUBLISH_TOKEN 按阶段最小使用；publish token 只提供给显式发布阶段，回归/installer 不具备 SDK 写权限。
 
-CI 工具测试依赖在 runner 准备阶段用同一 Python 安装 `tests/ci/requirements.txt`，截图验证沿用 Pillow 依赖；workflow 不临时安装或静默跳过测试依赖。
+CI 工具测试依赖在 runner 准备阶段用同一 Python 安装 `tests/ci/requirements.txt`，截图验证沿用 Pillow 依赖。回归在 Journal 全量通过后再检查 CI 工具合同，工具检查失败仍阻止最终通过。runner 只复用测试输入和本机工具环境一致的通过记录，记录包含源检查提交，工具输入变化或无通过记录时重新执行。仅改变 TestAssets gitlink 不改变工具测试输入。
 
-App runner 的完整宿主检出固定使用工作区内 `host-source`，installer 的独立 App 检出继续使用 `source`。缓存清理只接受对应的准确受管目录，不能让两种仓库在同一路径来回替换或扩大清理范围。
+App runner 的完整宿主检出固定使用工作区内 `host-source`，installer 的独立 App 检出继续使用 `source`。宿主和独立 App 保留各自经校验的 preset 构建目录，每个依赖切换到固定 gitlink 后只清理一次。回归的源码 SDK 使用 runner 临时目录下固定短路径 `regression-sdk`，每轮重新生成并校验来源和载荷，App 按标准 preset 增量构建。缓存不兼容时明确失败，不消费旧 SDK 或不匹配的 App。
 
 回归报告保留 `regression-results/<run>-<attempt>/<platform>` 布局；Windows 根目录使用 `RUNNER_TEMP`，避免串行复查的记录归档路径超过 Windows 文件接口限制，Mac 仍使用工作区。构建、上传与清理使用同一受管路径；无论执行成功或失败均上传报告，仅上传成功后清理受管暂存，上传失败保留本机报告。原子 JSON 替换仅对 Windows 短暂读句柄争用进行有界重试，持续占用或其他错误仍使流程失败。
 

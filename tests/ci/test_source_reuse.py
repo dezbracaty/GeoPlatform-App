@@ -76,6 +76,44 @@ class SourceReuseTests(unittest.TestCase):
         self.assertEqual(subprocess.check_output(['git', '-C', str(host), 'rev-parse', 'HEAD'],
                                                 text=True).strip(), self.sha)
 
+    def test_host_cleanup_keeps_the_independent_app_build_cache(self):
+        app = self.workspace / 'app-upstream'
+        app.mkdir()
+        def app_git(*args):
+            return subprocess.check_output(['git', '-C', str(app), *args], stderr=subprocess.PIPE)
+        app_git('init', '-q')
+        app_git('config', 'user.name', 'Test')
+        app_git('config', 'user.email', 'test@example.invalid')
+        (app / '.gitignore').write_text('build*/\n')
+        app_git('add', '.')
+        app_git('commit', '-qm', 'App fixture')
+        host = self.workspace / 'host-source'
+        self.source.rename(host)
+        self.source = host
+        with patch.dict(os.environ, GIT_ALLOW_PROTOCOL='file'):
+            orca = self.workspace / 'orca-upstream'
+            subprocess.run(['git', 'clone', '-q', str(app), str(orca)], check=True)
+            app_git('submodule', 'add', str(orca), 'ThirdParty/OrcaSlicer')
+            app_git('commit', '-qam', 'Pin Orca')
+            self.git('submodule', 'add', str(app), 'App')
+            self.git('commit', '-qam', 'Pin App')
+            marker = self.marker('App/build-Release')
+            orphan = self.marker('App/build-Debug')
+            cache = marker.parent / 'CMakeCache.txt'
+            cache.write_text(f'CMAKE_HOME_DIRECTORY:INTERNAL={host / "App"}\n'
+                             'CMAKE_GENERATOR:INTERNAL=Ninja\nCMAKE_BUILD_TYPE:STRING=Release\n')
+            prepare_cached_source(host, self.git('rev-parse', 'HEAD'), 'windows', host=True)
+            self.assertTrue(marker.exists(), 'host source reset removed the App preset cache')
+            common._init_pinned_submodules(host, common.git_env(), producer=True,
+                                           host_platform='windows')
+            self.assertEqual(marker.read_text(), 'reuse')
+            self.assertFalse(orphan.exists())
+
+            cache.write_text(cache.read_text().replace('STRING=Release', 'STRING=Debug'))
+            with self.assertRaisesRegex(RuntimeError, 'Preset cache mismatch for CMAKE_BUILD_TYPE'):
+                prepare_cached_source(host, self.git('rev-parse', 'HEAD'), 'windows', host=True)
+            self.assertTrue(marker.exists(), 'validation failure must not delete the cache')
+
     def test_new_fixed_commit_preserves_build_objects(self):
         marker = self.marker("build-Release")
         (self.source / "payload").write_text("next pin")

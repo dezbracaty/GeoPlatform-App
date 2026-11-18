@@ -214,7 +214,8 @@ jobs:
           env = git_env()
           with machine_lock():
               prepare_cached_source(source, os.environ['SOURCE_SHA'], os.environ['PLATFORM'], host=True)
-              init_host_submodules(source, os.environ['APP_SHA'], os.environ['GITHUB_REPOSITORY'])
+              init_host_submodules(source, os.environ['APP_SHA'], os.environ['GITHUB_REPOSITORY'],
+                                   host_platform=os.environ['PLATFORM'])
               from update_sdk import build_sdk_package
               build_sdk_package(source, os.environ['PLATFORM'], package, env)
       - id: publish

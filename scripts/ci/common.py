@@ -237,19 +237,7 @@ def clone_branch(url, branch, path, *, env=None):
     return text_git(path, "rev-parse", "HEAD")
 
 
-def prepare_cached_source(source, sha, platform, *, consumer=False, host=False):
-    """Reset the runner's fixed checkout, retaining only preset build caches."""
-    source = Path(source).absolute()
-    workspace = Path(os.environ["GITHUB_WORKSPACE"]).resolve()
-    marker = source / ".git"
-    if (marker.is_symlink() or marker.is_junction() or source.is_symlink() or source.is_junction() or source.resolve() != workspace / ("host-source" if host else "source")
-            or not marker.is_dir()):
-        raise RuntimeError("Refusing to reset a source outside the runner checkout")
-    source = source.resolve()
-    if (Path(text_git(source, "rev-parse", "--absolute-git-dir")).resolve() != source / ".git"
-            or Path(text_git(source, "rev-parse", "--show-toplevel")).resolve() != source
-            or text_git(source, "rev-parse", "HEAD") != sha or not re.fullmatch(r"[0-9a-f]{40}", sha)):
-        raise RuntimeError("Cached source differs from the fixed source SHA")
+def preset_cache_excludes(source, platform, *, consumer=False):
     if platform == "windows":
         builds = ["build-Release"]
     elif platform == "macos":
@@ -265,6 +253,8 @@ def prepare_cached_source(source, sha, platform, *, consumer=False, host=False):
             raise RuntimeError("Preset cache must be an untracked directory inside source")
     for name in builds:
         cache = source / name / "CMakeCache.txt"
+        if cache.is_symlink() or cache.is_junction() or (cache.exists() and not cache.is_file()):
+            raise RuntimeError(f"Preset cache must be a real file: {cache}")
         if not cache.exists():
             continue
         values = {}
@@ -286,26 +276,52 @@ def prepare_cached_source(source, sha, platform, *, consumer=False, host=False):
             normalize = lambda item: os.path.normcase(os.path.normpath(item))
             if key not in values or normalize(values[key]) != normalize(value):
                 raise RuntimeError(f"Preset cache mismatch for {key}: {cache}; clean this owned build cache before changing build inputs")
-    env = git_env()
-    git(source, "reset", "--hard", "HEAD", env=env)
-    git(source, "submodule", "foreach", "--recursive", "git reset --hard HEAD", env=env)
-    git(source, "submodule", "foreach", "--recursive", "git clean -ffdx", env=env)
-    excludes = [argument for name in builds for argument in ("-e", f"/{name}/")]
-    git(source, "clean", "-ffdx", *excludes, env=env)
-    # A cached pre-submodule App tree survives git clean because the new
-    # index owns App as a gitlink. Remove only this uninitialized owned residue.
+    return [argument for name in builds for argument in ("-e", f"/{name}/")]
+
+
+def prepare_cached_source(source, sha, platform, *, consumer=False, host=False):
+    """Reset the runner's fixed checkout and retain validated preset caches."""
+    source = Path(source).absolute()
+    workspace = Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+    marker = source / ".git"
+    if (marker.is_symlink() or marker.is_junction() or source.is_symlink() or source.is_junction() or source.resolve() != workspace / ("host-source" if host else "source")
+            or not marker.is_dir()):
+        raise RuntimeError("Refusing to reset a source outside the runner checkout")
+    source = source.resolve()
+    if (Path(text_git(source, "rev-parse", "--absolute-git-dir")).resolve() != source / ".git"
+            or Path(text_git(source, "rev-parse", "--show-toplevel")).resolve() != source
+            or text_git(source, "rev-parse", "HEAD") != sha or not re.fullmatch(r"[0-9a-f]{40}", sha)):
+        raise RuntimeError("Cached source differs from the fixed source SHA")
+    excludes = preset_cache_excludes(source, platform, consumer=consumer)
     app = source / 'App'
     entry = git(source, 'ls-tree', 'HEAD', '--', 'App')
     if entry.startswith(b'160000 commit '):
         if app.is_symlink() or app.is_junction():
             raise RuntimeError('App cache must be a real directory')
+        app_marker = app / '.git'
+        if app_marker.is_symlink() or app_marker.is_junction():
+            raise RuntimeError('App cache must belong to the runner checkout')
+        if host and app_marker.exists():
+            git_dir = Path(text_git(app, 'rev-parse', '--absolute-git-dir')).resolve()
+            if (Path(text_git(app, 'rev-parse', '--show-toplevel')).resolve() != app
+                    or not (git_dir == app_marker or git_dir.is_relative_to(marker / 'modules'))):
+                raise RuntimeError('App cache must belong to the runner checkout')
+            preset_cache_excludes(app, platform)
+    env = git_env()
+    # Each submodule is checked out and cleaned once against its selected
+    # Git tree in _init_pinned_submodules, not against yesterday's HEAD.
+    git(source, "reset", "--hard", "--no-recurse-submodules", "HEAD", env=env)
+    git(source, "clean", "-ffdx", *excludes, env=env)
+    # A cached pre-submodule App tree survives git clean because the new
+    # index owns App as a gitlink. Remove only this uninitialized owned residue.
+    if entry.startswith(b'160000 commit '):
         if app.exists() and not (app / '.git').exists():
             remove_owned_tree(app, source)
-    print("Retained source Git objects and preset build caches: " + ", ".join(builds), flush=True)
+    print("Retained source Git objects and validated preset build caches", flush=True)
 
 
 def _init_pinned_submodules(source, env, *, require_app=False, producer=False,
-                            app_sha=None, app_repository=None):
+                            app_sha=None, app_repository=None, host_platform=None):
     # The fixed commit's gitlinks are authoritative. .gitmodules may still
     # contain declarations for dependencies removed from the product tree.
     links = {}
@@ -368,10 +384,11 @@ def _init_pinned_submodules(source, env, *, require_app=False, producer=False,
             if text_git(Path(source) / path, 'rev-parse', 'FETCH_HEAD^{commit}') != app_sha:
                 raise RuntimeError('Fetched App differs from the fixed candidate')
             git(Path(source) / path, 'checkout', '--detach', '--force', app_sha, env=env)
-        # A new parent pin may remove a previously initialized child.
-        git(Path(source) / path, "clean", "-ffdx", env=env)
-        # Each new parent pin supplies its own .gitmodules before children sync.
         child = Path(source) / path
+        # Recheck the cache against the selected App tree after pinning it.
+        excludes = preset_cache_excludes(child, host_platform) if app_owner and host_platform else []
+        git(child, "clean", "-ffdx", *excludes, env=env)
+        # Each new parent pin supplies its own .gitmodules before children sync.
         _init_pinned_submodules(child, env, require_app=app_owner)
         git(child, 'lfs', 'install', '--local', env=env)
         git(child, 'lfs', 'pull', env=env)
@@ -382,11 +399,11 @@ def init_source_submodules(source):
     _init_pinned_submodules(source, git_env(), require_app=True)
 
 
-def init_host_submodules(source, app_sha, app_repository):
+def init_host_submodules(source, app_sha, app_repository, *, host_platform=None):
     """Initialize a host's pinned forks and the independently frozen App candidate."""
     require_sha(app_sha); repository_url(app_repository)
     _init_pinned_submodules(source, git_env(), producer=True,
-                            app_sha=app_sha, app_repository=app_repository)
+                            app_sha=app_sha, app_repository=app_repository, host_platform=host_platform)
 
 
 def materialize_sdk(root, sha, platform):

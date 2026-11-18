@@ -1,15 +1,18 @@
 """Build a fixed full host and run App's maintained platform Journal regression."""
 from __future__ import annotations
 import argparse
+import hashlib
+from importlib.metadata import distributions
 import json
 from collections import Counter
 import os
 from pathlib import Path
+import platform as runtime_platform
 import shutil
 import sys
 import tempfile
 
-from common import (repository_url, digest, git_env, init_host_submodules, machine_lock,
+from common import (repository_url, digest, git, git_env, init_host_submodules, machine_lock,
                     prepare_cached_source, require_sha, run, text_git, write_json)
 from common import freeze_candidate, app_dependency_repository, resolve_ref
 from common import remove_owned_tree
@@ -98,6 +101,57 @@ Path(payload['receipt']).write_text(json.dumps(result), encoding='utf-8')
 '''
 
 
+def ci_tools_key(ci_root):
+    # These are tests of the checked-out workflow implementation. Its asset
+    # gitlink is neither initialized nor used by the local test fixtures.
+    entries = git(ci_root, 'ls-tree', '-rz', 'HEAD').split(b'\0')
+    source = b'\0'.join(entry for entry in entries
+                        if not entry.endswith(b'\ttests/TestAssets') or not entry.startswith(b'160000 '))
+    tools = {}
+    for name in ('bash', 'cmake', 'ctest', 'git', 'git-lfs', 'ninja', 'node', 'pwsh'):
+        path = shutil.which(name)
+        if path:
+            path = Path(path).resolve()
+            info = path.stat()
+            tools[name] = [str(path), info.st_size, info.st_mtime_ns]
+    environment = {name: os.environ.get(name) for name in ('Qt6_DIR', 'QT6_DIR', 'VSCMD_VER',
+                   'VCToolsVersion', 'WindowsSDKVersion', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM',
+                   'GIT_CONFIG_NOSYSTEM')}
+    runtime = dict(os=runtime_platform.platform(), python=[sys.executable, sys.version],
+                   packages=sorted((p.metadata.get('Name', ''), p.version) for p in distributions()),
+                   tools=tools, environment=environment)
+    return hashlib.sha256(source + b'\0' + json.dumps(runtime, sort_keys=True).encode()).hexdigest()
+
+
+def check_ci_tools(ci_root, build, report):
+    """Run changed tool contracts after Journal; retain only a successful receipt."""
+    cache = build / 'ci-tools-passed.json'
+    if cache.is_symlink() or cache.is_junction() or cache.exists() and not cache.is_file():
+        raise RuntimeError('CI tools receipt must be a real file')
+    if text_git(ci_root, 'status', '--porcelain', '--untracked-files=no', '--ignore-submodules=all'):
+        raise RuntimeError('CI implementation checkout has local source changes')
+    key = ci_tools_key(ci_root)
+    try:
+        receipt = json.loads(cache.read_text(encoding='utf-8'))
+    except (FileNotFoundError, ValueError):
+        receipt = {}
+    if (isinstance(receipt, dict) and receipt.get('key') == key and receipt.get('status') == 'passed'
+            and isinstance(receipt.get('control_sha'), str) and len(receipt['control_sha']) == 40):
+        report['ci_tools'] = dict(receipt, reused=True)
+        print(f"Reused passed CI tools checks from {receipt['control_sha']}", flush=True)
+        return
+    receipt = dict(key=key, status='failed', control_sha=report['control_sha'])
+    report['ci_tools'] = dict(receipt, reused=False)
+    run([sys.executable, '-m', 'unittest', 'discover', '-s', ci_root / 'tests/ci', '-v'],
+        cwd=ci_root, env=dict(os.environ))
+    receipt['status'] = 'passed'
+    with tempfile.TemporaryDirectory(prefix='.ci-tools-', dir=build) as directory:
+        staged = Path(directory) / cache.name
+        write_json(staged, receipt)
+        staged.replace(cache)
+    report['ci_tools'] = dict(receipt, reused=False)
+
+
 def regress(source, platform, source_sha, assets_sha, output, *, app_sha, app_repository, sdk_source='source', sdk_root=None, sdk_sha=None, sdk_repository=None, assets_ref=None):
     source, output = Path(source).resolve(), Path(output).resolve()
     require_sha(source_sha); require_sha(assets_sha); require_sha(app_sha)
@@ -119,7 +173,7 @@ def regress(source, platform, source_sha, assets_sha, output, *, app_sha, app_re
         run([sys.executable, '-c', 'import PIL, yaml'], env=dict(os.environ))
         with machine_lock():
             prepare_cached_source(source, source_sha, platform, host=True)
-            init_host_submodules(source, app_sha, app_repository)
+            init_host_submodules(source, app_sha, app_repository, host_platform=platform)
             run(['git', '-C', source, 'lfs', 'pull', '--include', 'Core/tests/**', '--exclude', ''], env=git_env(), attempts=3)
             app = source / 'App'
             ci_root = Path(__file__).resolve().parents[2]
@@ -133,10 +187,6 @@ def regress(source, platform, source_sha, assets_sha, output, *, app_sha, app_re
             # so platform baseline selection cannot dirty producer provenance.
             run([sys.executable, '-c', APP_NATIVE_ASSETS, str(app), assets_sha, ci_dir], cwd=source, env=dict(os.environ))
             report['native_assets_sha'] = assets_sha
-            # Checks belong to App; these are controller contract tests, not a
-            # second business-regression runner or a replacement for Journal.
-            run([sys.executable, '-m', 'unittest', 'discover', '-s', ci_root / 'tests/ci', '-v'],
-                cwd=ci_root, env=dict(os.environ))
             env = native_checks.build_environment()
             for arch in (['x64'] if platform == 'windows' else ['arm64', 'x86_64']):
                 check = native_checks.architecture(source, arch, output / arch, report, env)
@@ -144,9 +194,15 @@ def regress(source, platform, source_sha, assets_sha, output, *, app_sha, app_re
                     raise RuntimeError('Required native regression checks failed: ' + arch)
             run([sys.executable, '-c', APP_NATIVE_ASSETS, str(app), '', ci_dir], cwd=source, env=dict(os.environ))
             if sdk_source == 'source':
-                # The exporter stages beside this directory. A nested report
-                # path can exceed Windows MAX_PATH even for valid source files.
-                package = Path(tempfile.mkdtemp(prefix='sdk-package-', dir=os.environ.get('RUNNER_TEMP'))).resolve()
+                # A short, stable SDK_ROOT lets the incremental consumer
+                # keep its build graph while receiving the current package.
+                runner_temp = os.environ.get('RUNNER_TEMP')
+                if runner_temp:
+                    package_path = Path(runner_temp).resolve() / 'regression-sdk'
+                    package_path.mkdir()
+                    package = package_path
+                else:
+                    package = Path(tempfile.mkdtemp(prefix='sdk-package-')).resolve()
                 report['sdk_package'] = dict(path=str(package), retained=True)
                 build_sdk_package(source, platform, package, env)
                 receipt = update_sdk(source, source_sha, platform, package,
@@ -204,6 +260,8 @@ def regress(source, platform, source_sha, assets_sha, output, *, app_sha, app_re
                     report['cleanupError'] = f'{type(error).__name__}: {error}'
                     raise
                 report['sdk_package']['retained'] = False
+            build = source / ('build-Release' if platform == 'windows' else 'build-arm64-Release')
+            check_ci_tools(ci_root, build, report)
             report['status'] = 'passed'
     except Exception as error:
         report['status'] = 'failed'

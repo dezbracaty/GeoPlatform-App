@@ -150,6 +150,7 @@ sys.meta_path.insert(0, NoOptionalPackages())
         def produce(source, platform, package, env):
             if compiler_error: raise RuntimeError('compiler failed')
             self.assertEqual(package.parent, root.resolve())
+            self.assertEqual(package.name, 'regression-sdk')
             (package/'package-manifest.json').write_text('{}')
             for slot in ('arm64/Release', 'x86_64/Release'):
                 directory = package / 'SDK' / slot
@@ -169,8 +170,13 @@ sys.meta_path.insert(0, NoOptionalPackages())
             build=stack.enter_context(patch.object(controller,'build_sdk_package',side_effect=produce))
             publish=stack.enter_context(patch.object(controller,'update_sdk',return_value={'published':False,'sdk_sha':'',
                 'selected_slots':['arm64/Release','x86_64/Release']}))
+            def check_after_journal(ci_root, build, report):
+                self.assertTrue((output/'journal-receipt.json').exists())
+                self.assertEqual(report['final_counts'], {'passed': 2})
+            checks=stack.enter_context(patch.object(controller, 'check_ci_tools', side_effect=check_after_journal))
             result=controller.regress(root,'macos','a'*40,'d'*40,output,app_sha='b'*40,app_repository='org/App',sdk_repository='org/SDK')
             self.assertEqual(build.call_count,1)
+            checks.assert_called_once()
             self.assertEqual(publish.call_args.kwargs,{'app_sha':'b'*40,'publish':False})
             self.assertEqual([c.args[1] for c in native.call_args_list],['arm64','x86_64'])
             self.assertTrue(all(not c.kwargs for c in native.call_args_list))
@@ -207,6 +213,32 @@ sys.meta_path.insert(0, NoOptionalPackages())
             with self.assertRaisesRegex(ValueError,'frozen SDK'):
                 controller.regress(temporary,'windows','a'*40,'d'*40,Path(temporary)/'output',app_sha='b'*40,app_repository='org/App',sdk_source='published')
             build.assert_not_called()
+
+    def test_ci_tools_receipt_requires_matching_inputs_and_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            report = {'control_sha': 'a' * 40}
+            receipt = build / 'ci-tools-passed.json'
+            with patch.object(controller, 'text_git', return_value=''), \
+                 patch.object(controller, 'ci_tools_key', return_value='first') as key, \
+                 patch.object(controller, 'run') as checks:
+                controller.check_ci_tools(build, build, report)
+                self.assertFalse(report['ci_tools']['reused'])
+                controller.check_ci_tools(build, build, report)
+                self.assertTrue(report['ci_tools']['reused'])
+                checks.assert_called_once()
+
+                key.return_value = 'changed'
+                checks.side_effect = RuntimeError('tool suite failed')
+                with self.assertRaisesRegex(RuntimeError, 'tool suite failed'):
+                    controller.check_ci_tools(build, build, report)
+                self.assertEqual(report['ci_tools']['status'], 'failed')
+                self.assertEqual(json.loads(receipt.read_text())['key'], 'first')
+
+                checks.side_effect = None
+                controller.check_ci_tools(build, build, report)
+                self.assertFalse(report['ci_tools']['reused'])
+                self.assertEqual(json.loads(receipt.read_text())['key'], 'changed')
 
 
 if __name__ == '__main__': unittest.main()
