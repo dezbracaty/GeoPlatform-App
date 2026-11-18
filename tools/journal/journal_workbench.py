@@ -298,7 +298,8 @@ class JournalWorkbench:
         output = self.repository.playbacks / ('session_' + time.strftime('%Y%m%d_%H%M%S') + '_' + uuid.uuid4().hex[:8])
         identifier = self._register_run(output)
         args = ['--assets', str(self.assets), '--application', self.application,
-            '--cases', ','.join(ids), '--output', str(output), '--jobs', str(jobs), '--recheck-failed-serial']
+            '--cases', 'all' if ids == list(known) else ','.join(ids),
+            '--output', str(output), '--jobs', str(jobs), '--recheck-failed-serial']
         def progress(event):
             with self.lock:
                 self.task.update(case=event['case'], caseIndex=event['index'], total=event['total'],

@@ -1,0 +1,332 @@
+name: Build SDK
+run-name: 'SDK ${{ inputs.mode }} | ${{ inputs.platform }} | app=${{ inputs.app_ref }} | host=${{ inputs.host_ref }}'
+on:
+  workflow_dispatch:
+    inputs:
+      app_ref:
+        description: App branch or complete SHA
+        type: string
+        default: feature/gplatform-ui
+      host_ref:
+        description: Full-host branch or complete SHA
+        type: string
+        default: feature/gplatform-ui
+      platform:
+        description: Platform SDK to update
+        type: choice
+        options: [windows, macos, all]
+        default: windows
+      mode:
+        description: Artifacts only or explicitly publish selected SDK slots
+        type: choice
+        options: [artifacts, publish]
+        default: artifacts
+
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      app_sha: ${{ steps.source.outputs.app_sha }}
+      declared_app_sha: ${{ steps.source.outputs.declared_app_sha }}
+      host_repository: ${{ steps.source.outputs.host_repository }}
+      sdk_repository: ${{ steps.source.outputs.sdk_repository }}
+      bases: ${{ steps.base.outputs.bases }}
+      matrix: ${{ steps.runner.outputs.matrix }}
+      expected_jobs: ${{ steps.runner.outputs.expected_jobs }}
+      labels: ${{ steps.runner.outputs.labels }}
+      prepared_at: ${{ steps.ready.outputs.prepared_at }}
+      attempt: ${{ steps.ready.outputs.attempt }}
+    steps:
+      - name: Check CI credentials
+        env:
+          MODE: ${{ inputs.mode }}
+          PLATFORM: ${{ inputs.platform }}
+          HAS_SOURCE: ${{ secrets.GPLATFORM_SOURCE_TOKEN != '' }}
+          HAS_PUBLISH: ${{ secrets.GPLATFORM_PUBLISH_TOKEN != '' }}
+          HAS_WORKFLOW: ${{ secrets.GPLATFORM_WORKFLOW_TOKEN != '' }}
+        run: |
+          python3 - <<'PY'
+          import os
+          if os.environ['PLATFORM'] not in ('windows', 'macos', 'all'):
+              raise SystemExit('Invalid SDK platform')
+          if os.environ['MODE'] not in ('artifacts', 'publish'):
+              raise SystemExit('Invalid SDK mode')
+          missing = [key[4:] for key, value in os.environ.items() if key.startswith('HAS_') and value.lower() != 'true'
+                     and (key != 'HAS_PUBLISH' or os.environ['MODE'] == 'publish')]
+          if missing:
+              raise SystemExit('Missing CI credentials: ' + ', '.join(missing))
+          PY
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: control
+          persist-credentials: false
+      - id: source
+        shell: python
+        env:
+          GPLATFORM_SOURCE_TOKEN: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
+          APP_REF: ${{ inputs.app_ref }}
+          HOST_REF: ${{ inputs.host_ref }}
+          HOST_REPOSITORY: ${{ vars.GPLATFORM_HOST_REPOSITORY || 'dezbracaty/GPlatform' }}
+        run: |
+          import os, sys
+          sys.path.insert(0, 'control/scripts/ci')
+          from common import API, freeze_candidate, write_outputs
+          value = freeze_candidate(API(os.environ['GPLATFORM_SOURCE_TOKEN']), os.environ['GITHUB_REPOSITORY'],
+                                   os.environ['APP_REF'], os.environ['HOST_REPOSITORY'], os.environ['HOST_REF'])
+          write_outputs(value)
+      - id: base
+        if: inputs.mode == 'publish'
+        env:
+          GPLATFORM_SOURCE_TOKEN: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
+          REPOSITORY: ${{ steps.source.outputs.sdk_repository }}
+          PLATFORM: ${{ inputs.platform }}
+        run: |
+          python3 - <<'PY'
+          import os, sys
+          sys.path.insert(0, 'control/scripts/ci')
+          from common import read_remote_head, repository_url, git_env, write_outputs
+          platforms = ['windows', 'macos'] if os.environ['PLATFORM'] == 'all' else [os.environ['PLATFORM']]
+          if any(p not in ('windows', 'macos') for p in platforms):
+              raise SystemExit('Invalid SDK platform')
+          bases = {p:read_remote_head(repository_url(os.environ['REPOSITORY']), p, env=git_env()) for p in platforms}
+          write_outputs({'bases': __import__('json').dumps(bases)})
+          PY
+      - id: runner
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        env:
+          PLATFORM: ${{ inputs.platform }}
+          WINDOWS_LABELS: ${{ vars.GPLATFORM_WINDOWS_RUNNER_LABELS }}
+          MACOS_LABELS: ${{ vars.GPLATFORM_MACOS_RUNNER_LABELS }}
+        with:
+          github-token: ${{ secrets.GPLATFORM_WORKFLOW_TOKEN }}
+          script: |
+            const platforms = process.env.PLATFORM === 'all' ? ['windows','macos'] : [process.env.PLATFORM];
+            if (platforms.some(p => !['windows','macos'].includes(p))) throw new Error('Invalid platform');
+            const include = [];
+            for (const platform of platforms) {
+              process.env.CI_RUNNER_LABELS = process.env[platform.toUpperCase() + '_LABELS'];
+              await require('./control/scripts/ci/runner_queue.js')({github,context,core,mode:'preflight'});
+              include.push({platform, labels:JSON.parse(process.env.CI_RUNNER_LABELS)});
+            }
+            core.setOutput('matrix', JSON.stringify({include}));
+            core.setOutput('expected_jobs', JSON.stringify(platforms.map(p => 'sdk-build-' + p)));
+      - id: ready
+        run: |
+          echo "prepared_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+  build_publish:
+    name: sdk-build-${{ matrix.platform }}
+    needs: prepare
+    if: needs.prepare.outputs.attempt == github.run_attempt
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    runs-on: ${{ matrix.labels }}
+    concurrency:
+      group: sdk-${{ matrix.platform }}
+      cancel-in-progress: false
+    timeout-minutes: 240
+    env:
+      # Apply before checkout, including on Windows with system autocrlf=true.
+      GIT_CONFIG_COUNT: ${{ matrix.platform == 'windows' && '13' || '2' }}
+      GIT_CONFIG_KEY_0: core.autocrlf
+      GIT_CONFIG_VALUE_0: 'false'
+      GIT_CONFIG_KEY_1: core.eol
+      GIT_CONFIG_VALUE_1: lf
+      # Git for Windows supports this backend; macOS keeps its native backend.
+      GIT_CONFIG_KEY_2: http.sslBackend
+      GIT_CONFIG_VALUE_2: openssl
+      # Exact repositories in this owned checkout may retain NETWORK SERVICE metadata.
+      # Job-scoped protected config reaches Git, CMake and the SDK validator; no global trust.
+      GIT_CONFIG_KEY_3: safe.directory
+      GIT_CONFIG_VALUE_3: ${{ github.workspace }}/host-source/App
+      GIT_CONFIG_KEY_4: safe.directory
+      GIT_CONFIG_VALUE_4: ${{ github.workspace }}/host-source/App/ThirdParty/OrcaSlicer
+      GIT_CONFIG_KEY_5: safe.directory
+      GIT_CONFIG_VALUE_5: ${{ github.workspace }}/host-source/ThirdParty/QmlDock
+      GIT_CONFIG_KEY_6: safe.directory
+      GIT_CONFIG_VALUE_6: ${{ github.workspace }}/host-source/ThirdParty/SmoothUI
+      GIT_CONFIG_KEY_7: safe.directory
+      GIT_CONFIG_VALUE_7: ${{ github.workspace }}/host-source/ThirdParty/SmoothUI/SmoothUIDock
+      GIT_CONFIG_KEY_8: safe.directory
+      GIT_CONFIG_VALUE_8: ${{ github.workspace }}/host-source/ThirdParty/SmoothUI/SmoothUIDock/KDDockWidgets
+      GIT_CONFIG_KEY_9: safe.directory
+      GIT_CONFIG_VALUE_9: ${{ github.workspace }}/host-source/ThirdParty/SmoothUI/SmoothUIDock/KDDockWidgets/tests/reference-images
+      GIT_CONFIG_KEY_10: safe.directory
+      GIT_CONFIG_VALUE_10: ${{ github.workspace }}/host-source/ThirdParty/SmoothUIDock
+      GIT_CONFIG_KEY_11: safe.directory
+      GIT_CONFIG_VALUE_11: ${{ github.workspace }}/host-source/ThirdParty/SmoothUIDock/KDDockWidgets
+      GIT_CONFIG_KEY_12: safe.directory
+      GIT_CONFIG_VALUE_12: ${{ github.workspace }}/host-source/ThirdParty/SmoothUIDock/KDDockWidgets/tests/reference-images
+      GIT_HTTP_LOW_SPEED_LIMIT: '1024'
+      GIT_HTTP_LOW_SPEED_TIME: '60'
+    outputs:
+      sdk_sha: ${{ steps.publish.outputs.sdk_sha }}
+      updated_slots: ${{ steps.publish.outputs.updated_slots }}
+    defaults:
+      run:
+        shell: python
+    steps:
+      - name: Check installed Python
+        id: environment
+        shell: python
+        run: |
+          import sys
+          if sys.version_info < (3, 12):
+              raise SystemExit('Runner requires Python >= 3.12; prepare it outside the workflow')
+          print(sys.version)
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        timeout-minutes: 5
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: control
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        timeout-minutes: 20
+        with:
+          repository: ${{ needs.prepare.outputs.host_repository }}
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          path: host-source
+          # Keep Git objects and preset builds; reset source explicitly before building.
+          clean: false
+          token: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
+          persist-credentials: false
+          submodules: false
+      - name: Build and export selected SDK
+        env:
+          GPLATFORM_SOURCE_TOKEN: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
+          PLATFORM: ${{ matrix.platform }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          APP_SHA: ${{ needs.prepare.outputs.app_sha }}
+        run: |
+          import json, os, pathlib, subprocess, sys, tempfile
+          sys.path.insert(0, 'control/scripts/ci')
+          from common import git_env, init_host_submodules, machine_lock, prepare_cached_source, run
+          source = pathlib.Path('host-source').resolve()
+          package = pathlib.Path(tempfile.mkdtemp(prefix='sdk-package-', dir=os.environ['RUNNER_TEMP']))
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as f:
+              f.write('SDK_PACKAGE_ROOT=' + str(package) + '\n')
+          env = git_env()
+          with machine_lock():
+              prepare_cached_source(source, os.environ['SOURCE_SHA'], os.environ['PLATFORM'], host=True)
+              init_host_submodules(source, os.environ['APP_SHA'], os.environ['GITHUB_REPOSITORY'],
+                                   host_platform=os.environ['PLATFORM'])
+              from update_sdk import build_sdk_package
+              build_sdk_package(source, os.environ['PLATFORM'], package, env)
+      - id: publish
+        env:
+          MODE: ${{ inputs.mode }}
+          GPLATFORM_PUBLISH_TOKEN: ${{ inputs.mode == 'publish' && secrets.GPLATFORM_PUBLISH_TOKEN || '' }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          APP_SHA: ${{ needs.prepare.outputs.app_sha }}
+          EXPECTED_BASE: ${{ inputs.mode == 'publish' && fromJSON(needs.prepare.outputs.bases)[matrix.platform] || '' }}
+          SDK_REPOSITORY: ${{ needs.prepare.outputs.sdk_repository }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          import os, sys
+          sys.path.insert(0, 'control/scripts/ci')
+          from common import repository_url, write_outputs
+          from update_sdk import update_sdk
+          value = update_sdk('host-source', os.environ['SOURCE_SHA'], os.environ['PLATFORM'],
+                             os.environ['SDK_PACKAGE_ROOT'], repository_url(os.environ['SDK_REPOSITORY']),
+                             os.environ['EXPECTED_BASE'],
+                             app_sha=os.environ['APP_SHA'], publish=os.environ['MODE'] == 'publish')
+          from common import digest, write_json
+          value['package_manifest_sha256'] = digest(os.path.join(os.environ['SDK_PACKAGE_ROOT'], 'package-manifest.json'))
+          write_json(os.path.join(os.environ['SDK_PACKAGE_ROOT'], 'source-receipt.json'), value)
+          write_outputs(value)
+      - name: Upload SDK artifacts and fixed-source receipt
+        id: artifacts
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: sdk-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.SDK_PACKAGE_ROOT }}/SDK
+            ${{ env.SDK_PACKAGE_ROOT }}/source-receipt.json
+            ${{ env.SDK_PACKAGE_ROOT }}/package-manifest.json
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - name: Clean owned packaging temporary directory
+        if: always() && steps.artifacts.outcome == 'success'
+        run: |
+          import os, pathlib, sys
+          value = os.environ.get('SDK_PACKAGE_ROOT')
+          if value:
+              sys.path.insert(0, 'control/scripts/ci')
+              from common import remove_owned_tree
+              path = pathlib.Path(value).resolve()
+              parent = pathlib.Path(os.environ['RUNNER_TEMP']).resolve()
+              if path.parent != parent or not path.name.startswith('sdk-package-'):
+                  raise RuntimeError('Refusing to clean a directory not owned by this job')
+              remove_owned_tree(path, parent)
+      - name: Clean temporary control checkout
+        if: always() && steps.environment.outcome == 'success'
+        shell: python
+        run: |
+          import os, pathlib, shutil, stat
+          # Cleanup must work even when the control checkout never completed.
+          def retry_readonly(function, filename, error):
+              if os.name != 'nt' or not isinstance(error, PermissionError):
+                  raise error
+              mode = os.lstat(filename).st_mode
+              if stat.S_ISLNK(mode) or mode & stat.S_IWRITE:
+                  raise error
+              os.chmod(filename, mode | stat.S_IWRITE)
+              function(filename)
+          workspace = pathlib.Path(os.environ['GITHUB_WORKSPACE']).resolve()
+          for name in ('control',):
+              path = workspace / name
+              if path.is_symlink() or path.resolve().parent != workspace:
+                  raise RuntimeError('Refusing to clean a checkout outside this workspace')
+              if path.exists():
+                  if not (path / '.git').exists():
+                      raise RuntimeError('Refusing to clean a directory without its task checkout marker')
+                  shutil.rmtree(path, onexc=retry_readonly)
+  queue_guard:
+    needs: prepare
+    if: needs.prepare.outputs.attempt == github.run_attempt
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: control
+          persist-credentials: false
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        env:
+          CI_RUNNER_MODE: guard
+          CI_RUNNER_LABELS: ${{ needs.prepare.outputs.labels }}
+          CI_PREPARED_AT: ${{ needs.prepare.outputs.prepared_at }}
+          CI_EXPECTED_JOBS: ${{ needs.prepare.outputs.expected_jobs }}
+        with:
+          script: await require('./control/scripts/ci/runner_queue.js')({github, context, core});
+  result:
+    if: always()
+    needs: [prepare, build_publish, queue_guard]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ toJSON(needs) }}
+          CURRENT_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          result = json.loads(os.environ['RESULTS'])
+          if result['prepare']['result'] != 'success':
+              raise SystemExit('SDK preparation failed; inspect credentials, version and runner preflight.')
+          if result['prepare']['outputs'].get('attempt') != os.environ['CURRENT_ATTEMPT']:
+              raise SystemExit('Partial reruns are rejected before scheduling builds; choose Re-run all jobs or start a new workflow.')
+          if any(job['result'] != 'success' for job in result.values()):
+              raise SystemExit('SDK update incomplete; inspect build and queue results.')
+          PY

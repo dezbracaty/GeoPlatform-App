@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts/ci"))
+import common
 from common import prepare_cached_source
 from fs_fixture import directory_link
 
@@ -58,6 +59,60 @@ class SourceReuseTests(unittest.TestCase):
             self.assertEqual(self.git("status", "--porcelain"), "")
         for path in (nested, unrelated, self.source / "config.local", self.source / "CMakeUserPresets.json"):
             self.assertFalse(path.exists())
+
+    def test_host_and_installer_source_directories_cannot_replace_each_other(self):
+        host = self.workspace / 'host-source'
+        self.source.rename(host)
+        self.source.mkdir()
+        marker = self.source / 'installer-cache'
+        marker.write_text('preserve separate App checkout')
+        (host / 'build-Release').mkdir()
+        (host / 'build-Release/objects').write_text('host cache')
+        with self.assertRaisesRegex(RuntimeError, 'outside'):
+            prepare_cached_source(host, self.sha, 'windows')
+        prepare_cached_source(host, self.sha, 'windows', host=True)
+        self.assertEqual(marker.read_text(), 'preserve separate App checkout')
+        self.assertEqual((host / 'build-Release/objects').read_text(), 'host cache')
+        self.assertEqual(subprocess.check_output(['git', '-C', str(host), 'rev-parse', 'HEAD'],
+                                                text=True).strip(), self.sha)
+
+    def test_host_cleanup_keeps_the_independent_app_build_cache(self):
+        app = self.workspace / 'app-upstream'
+        app.mkdir()
+        def app_git(*args):
+            return subprocess.check_output(['git', '-C', str(app), *args], stderr=subprocess.PIPE)
+        app_git('init', '-q')
+        app_git('config', 'user.name', 'Test')
+        app_git('config', 'user.email', 'test@example.invalid')
+        (app / '.gitignore').write_text('build*/\n')
+        app_git('add', '.')
+        app_git('commit', '-qm', 'App fixture')
+        host = self.workspace / 'host-source'
+        self.source.rename(host)
+        self.source = host
+        with patch.dict(os.environ, GIT_ALLOW_PROTOCOL='file'):
+            orca = self.workspace / 'orca-upstream'
+            subprocess.run(['git', 'clone', '-q', str(app), str(orca)], check=True)
+            app_git('submodule', 'add', str(orca), 'ThirdParty/OrcaSlicer')
+            app_git('commit', '-qam', 'Pin Orca')
+            self.git('submodule', 'add', str(app), 'App')
+            self.git('commit', '-qam', 'Pin App')
+            marker = self.marker('App/build-Release')
+            orphan = self.marker('App/build-Debug')
+            cache = marker.parent / 'CMakeCache.txt'
+            cache.write_text(f'CMAKE_HOME_DIRECTORY:INTERNAL={host / "App"}\n'
+                             'CMAKE_GENERATOR:INTERNAL=Ninja\nCMAKE_BUILD_TYPE:STRING=Release\n')
+            prepare_cached_source(host, self.git('rev-parse', 'HEAD'), 'windows', host=True)
+            self.assertTrue(marker.exists(), 'host source reset removed the App preset cache')
+            common._init_pinned_submodules(host, common.git_env(), producer=True,
+                                           host_platform='windows')
+            self.assertEqual(marker.read_text(), 'reuse')
+            self.assertFalse(orphan.exists())
+
+            cache.write_text(cache.read_text().replace('STRING=Release', 'STRING=Debug'))
+            with self.assertRaisesRegex(RuntimeError, 'Preset cache mismatch for CMAKE_BUILD_TYPE'):
+                prepare_cached_source(host, self.git('rev-parse', 'HEAD'), 'windows', host=True)
+            self.assertTrue(marker.exists(), 'validation failure must not delete the cache')
 
     def test_new_fixed_commit_preserves_build_objects(self):
         marker = self.marker("build-Release")
@@ -140,6 +195,59 @@ class SourceReuseTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Preset cache mismatch for GPLATFORM_TARGET_ARCH"):
             prepare_cached_source(self.source, self.sha, "macos")
         self.assertTrue(marker.is_file())
+
+
+    def test_old_app_tree_and_nested_ui_cache_migrate_to_real_owner_gitlinks(self):
+        def git(repo, *args):
+            return subprocess.check_output(['git', '-C', str(repo), *args], stderr=subprocess.PIPE).decode().strip()
+        def repository(name):
+            repo = self.workspace / name
+            repo.mkdir();git(repo, 'init', '-q');git(repo, 'config', 'user.name', 'Fixture')
+            git(repo, 'config', 'user.email', 'fixture@example.invalid')
+            return repo
+        with patch.dict(os.environ, GIT_ALLOW_PROTOCOL='file'):
+            ui = repository('ui-upstream')
+            (ui / 'source.cpp').write_text('managed fork')
+            git(ui, 'add', '.');git(ui, 'commit', '-qm', 'UI input')
+            pin = git(ui, 'rev-parse', 'HEAD')
+            (self.source / 'App').mkdir()
+            (self.source / 'App/old.cpp').write_text('old ordinary App')
+            self.git('submodule', 'add', '--name', 'ThirdParty/SmoothUI', str(ui), 'App/ThirdParty/SmoothUI')
+            self.git('add', '.');self.git('commit', '-qm', 'Old App tree and real old logical UI name')
+            ui_store = Path(git(self.source / 'App/ThirdParty/SmoothUI', 'rev-parse', '--absolute-git-dir'))
+            app = repository('app-upstream')
+            (app / 'CMakeLists.txt').write_text('# new App owner')
+            (app / '.gitmodules').write_text(
+                f'[submodule "orca"]\npath = ThirdParty/OrcaSlicer\nurl = {ui.as_posix()}\n'
+            )
+            git(app, 'add', '.')
+            for path in ('ThirdParty/OrcaSlicer',):
+                git(app, 'update-index', '--add', '--cacheinfo', '160000', pin, path)
+            git(app, 'commit', '-qm', 'App owns Orca')
+            self.git('rm', '-r', '--cached', 'App')
+            (self.source / '.gitmodules').write_text(
+                f'[submodule "App"]\npath = App\nurl = {app.as_posix()}\n'
+                f'[submodule "ThirdParty/SmoothUI"]\npath = ThirdParty/SmoothUI\nurl = {ui.as_posix()}\n')
+            self.git('add', '.gitmodules')
+            self.git('update-index', '--add', '--cacheinfo', '160000', git(app, 'rev-parse', 'HEAD'), 'App')
+            self.git('update-index', '--add', '--cacheinfo', '160000', pin, 'ThirdParty/SmoothUI')
+            self.git('commit', '-qm', 'New owner graph')
+            sha = self.git('rev-parse', 'HEAD')
+            self.assertTrue((self.source / 'App/old.cpp').exists())
+            prepare_cached_source(self.source, sha, 'macos')
+            self.assertFalse((self.source / 'App/old.cpp').exists())
+            self.assertTrue((ui_store / 'objects').is_dir())
+            common._init_pinned_submodules(self.source, common.git_env(), producer=True)
+            self.assertEqual(git(self.source / 'ThirdParty/SmoothUI', 'rev-parse', 'HEAD'), pin)
+            self.assertEqual(git(self.source / 'App/ThirdParty/OrcaSlicer', 'rev-parse', 'HEAD'), pin)
+            self.assertFalse((self.source / 'App/ThirdParty/libs/GPlatformSDK/.git').exists())
+            app_store = Path(git(self.source / 'App', 'rev-parse', '--absolute-git-dir'))
+            sentinel = app_store / 'keep-object-store'
+            sentinel.write_text('preserve')
+            prepare_cached_source(self.source, sha, 'macos')
+            self.assertEqual(sentinel.read_text(), 'preserve')
+            self.assertTrue((self.source / 'App/.git').exists())
+            self.assertEqual(self.git('status', '--porcelain'), '')
 
 
 if __name__ == "__main__":

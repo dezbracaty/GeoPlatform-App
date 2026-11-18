@@ -2,14 +2,14 @@
     {
         "label": "Configure",
         "command": "bash",
-        "args": ["scripts/build.sh", "--configure-only"],
+        "args": ["scripts/build.sh", "--configure-only", "--", "-DGPLATFORM_SDK_ROOT=/REPLACE_WITH_SELECTED_SDK_CHECKOUT_OR_PACKAGE/SDK"],
         "cwd": "${ZED_WORKTREE_ROOT}",
         "allow_concurrent_runs": false
     },
     {
         "label": "Build",
         "command": "bash",
-        "args": ["scripts/build.sh"],
+        "args": ["scripts/build.sh", "--", "-DGPLATFORM_SDK_ROOT=/REPLACE_WITH_SELECTED_SDK_CHECKOUT_OR_PACKAGE/SDK"],
         "cwd": "${ZED_WORKTREE_ROOT}",
         "allow_concurrent_runs": false
     }

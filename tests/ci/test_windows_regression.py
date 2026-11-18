@@ -44,11 +44,10 @@ class WindowsRegressionChecks(unittest.TestCase):
         self.size = (1382, 954)
         self.exit = 0
 
-    def execute(self, command, **kwargs):
-        self.assertNotIn('QT_QPA_PLATFORM', kwargs['env'])
-        self.assertIn('--cases', command)
-        self.assertEqual(command[command.index('--cases') + 1], 'all')
-        self.assertNotIn('--capture-candidates', command)
+    def execute(self, source, executable, output, env):
+        self.assertEqual(source, self.source)
+        self.assertEqual(executable, self.app)
+        self.assertNotIn('QT_QPA_PLATFORM', env)
         run = self.output / 'run'
         case = run / 'scene'
         case.mkdir(parents=True)
@@ -56,12 +55,12 @@ class WindowsRegressionChecks(unittest.TestCase):
         Image.new('RGB', self.size, 'white').save(case / 'actual.png')
         (case / 'execution_result.json').write_text(json.dumps(dict(actualWindow=self.window,
             results=[dict(kind='verify.screenshot', evidence=['expected.png', 'actual.png'])])), encoding='utf-8')
-        return type('Result', (), dict(returncode=self.exit))()
+        return self.summary, run
 
     def run_regression(self):
         with patch.object(subject, 'require_desktop'), patch.object(subject, 'prepare_assets', return_value='c' * 40), \
                 patch.object(subject, 'text_git', return_value='a' * 40), \
-                patch.object(subject.subprocess, 'run', side_effect=self.execute):
+                patch.object(subject, 'server_regression', side_effect=self.execute):
             return subject.regression(self.source, self.app, self.output, dict(QT_QPA_PLATFORM='offscreen'), 'c' * 40)
 
     def test_pass_uses_deployed_app_all_cases_and_records_fixed_inputs(self):

@@ -41,6 +41,7 @@ def main(argv=None, default_source=None):
     parser.add_argument("--arm64-build-dir", type=Path)
     parser.add_argument("--x86_64-build-dir", type=Path)
     parser.add_argument("--qt-dir", type=Path, help="Directory containing Qt6Config.cmake")
+    parser.add_argument("--sdk-root", help="Explicit SDK checkout or package/SDK for standalone App")
     parser.add_argument("--config", choices=("Release", "Debug"), default="Release")
     parser.add_argument("--jobs", type=int, default=os.environ.get("CMAKE_BUILD_PARALLEL_LEVEL", "4"))
     parser.add_argument("--target", action="append", dest="targets", help="Override thin build targets; defaults to the selected project build target")
@@ -55,6 +56,9 @@ def main(argv=None, default_source=None):
     if not (source_root / "CMakeLists.txt").is_file():
         parser.error(f"Missing project: {source_root}")
     producer = (source_root / "App/CMakeLists.txt").is_file()
+    sdk_root = Path(args.sdk_root).resolve() if args.sdk_root else None
+    if not producer and (sdk_root is None or not sdk_root.is_dir()):
+        parser.error("Standalone App requires --sdk-root pointing to the selected SDK directory")
     app_source = source_root / "App" if producer else source_root
     targets = args.targets or (["gplatform_build"] if producer else ["GPlatform"])
     work = (args.build_dir or source_root / f"build-universal-{args.config}").resolve()
@@ -85,6 +89,10 @@ def main(argv=None, default_source=None):
                 if build == source_root or source_root.is_relative_to(build):
                     raise BuildError("Thin build directories must not contain the source repository")
                 values = cache(build)
+                if not producer and args.merge_only:
+                    selected = values.get('GPLATFORM_SDK_ROOT')
+                    if not selected or Path(selected).resolve() != sdk_root:
+                        raise BuildError(f"{build}: cached GPLATFORM_SDK_ROOT differs from the selected SDK")
                 for key, expected in (("CMAKE_OSX_ARCHITECTURES", arch), ("CMAKE_BUILD_TYPE", args.config),
                                       ("CMAKE_HOME_DIRECTORY", str(source_root))):
                     if values.get(key, expected) != expected:
@@ -94,6 +102,8 @@ def main(argv=None, default_source=None):
                     command = [args.cmake, "--preset", thin_preset, "-S", source_root, "-B", build]
                     if qt:
                         command.append(f"-DQt6_DIR={qt.resolve()}")
+                    if not producer:
+                        command.append(f"-DGPLATFORM_SDK_ROOT={sdk_root}")
                     run(command, work / f"{arch}-configure.log", environment)
                     run([args.cmake, "--build", build, "--target", *targets, "-j", args.jobs],
                         work / f"{arch}-build.log", environment)
