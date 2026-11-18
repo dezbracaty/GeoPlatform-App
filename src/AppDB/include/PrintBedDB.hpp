@@ -113,7 +113,7 @@ public:
 
 protected:
     void initializeSubActorProperties() override;
-    void afterSubActorPropertiesInitialized() override;
+    void onFullyInitialized() override;
     std::vector<std::string_view> getPropertyNames() const override;
     PropertyMap serialize() const override;
     bool deserialize(const PropertyMap& properties) override;

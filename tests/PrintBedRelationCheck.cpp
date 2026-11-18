@@ -35,6 +35,15 @@ int main() {
         return fail("failed to create print bed relation fixture");
     }
 
+    const auto material = bed->getMaterial();
+    if (!material ||
+        material->getDiffuseColor() != Vector3(PrintBedViewDefaults::BED_COLOR_R,
+                                               PrintBedViewDefaults::BED_COLOR_G,
+                                               PrintBedViewDefaults::BED_COLOR_B) ||
+        material->getAmbient() != 1.0f || material->getDiffuse() != 0.0f) {
+        return fail("new print bed did not initialize its owned material");
+    }
+
     definition->setModelId("guider-3-ultra");
     definition->setVariantId("0.4");
     definition->setWidth(300.0f);
