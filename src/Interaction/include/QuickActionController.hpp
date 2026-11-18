@@ -5,6 +5,7 @@
 #include <QString>
 #include <QQmlEngine>
 #include <memory>
+#include <cstdint>
 
 // 需要完整定义，因为 Q_INVOKABLE 方法返回 TMenuGroup*
 #include "MenuGroup.hpp"
@@ -44,6 +45,7 @@ public:
 public slots:
     // Called from C++ side when right-click is detected
     void handleRightClick(const QPointF& position);
+    void handleRightClickForView(const QPointF& position, std::uint64_t viewId);
 
     // Called from C++ side when keyboard input is detected
     void handleKeyboardInput(const QString& text, const QPointF& position = QPointF());

@@ -64,6 +64,8 @@ if(WIN32 AND GPLATFORM_ENABLE_LIBSLICER)
     add_dependencies(Model3MFIntegrationCheck gplatform_app_test_libslicer_resources)
 endif()
 add_test(NAME Model3MFIntegrationCheck COMMAND Model3MFIntegrationCheck)
+add_test(NAME ModelFileExportCheck COMMAND Model3MFIntegrationCheck --model-file-export)
+set_tests_properties(ModelFileExportCheck PROPERTIES TIMEOUT 90)
 set_tests_properties(Model3MFIntegrationCheck PROPERTIES TIMEOUT 90)
 
 add_executable(ProjectDocumentContractCheck ProjectDocumentContractCheck.cpp)
@@ -75,7 +77,7 @@ add_test(NAME ProjectDocumentContractCheck COMMAND ProjectDocumentContractCheck)
 set_tests_properties(ProjectDocumentContractCheck PROPERTIES TIMEOUT 30)
 
 if(WIN32)
-    set_tests_properties(Model3MFIntegrationCheck ProjectDocumentContractCheck
+    set_tests_properties(Model3MFIntegrationCheck ModelFileExportCheck ProjectDocumentContractCheck
         TrackedImportCompletionCheck ExternalOpenRequestCheck LocalInstanceEndpointCheck ExternalDownloadCheck PROPERTIES
         ENVIRONMENT_MODIFICATION
         "PATH=path_list_prepend:$<TARGET_FILE_DIR:GPlatform>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
