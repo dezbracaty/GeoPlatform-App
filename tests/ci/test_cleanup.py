@@ -2,12 +2,13 @@
 import os
 from pathlib import Path
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts/ci"))
-from common import _retry_readonly, remove_owned_tree
+from common import machine_lock, _retry_readonly, remove_owned_tree
 from fs_fixture import directory_link
 
 
@@ -66,6 +67,21 @@ class CleanupTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "marker"):
             remove_owned_tree(source, self.root, require_git=True)
         self.assertTrue(source.exists())
+
+
+    def test_shared_machine_lock_blocks_another_process_and_releases(self):
+        from unittest.mock import patch
+        path = self.root / 'machine.lock'
+        program = ('import sys\nsys.path.insert(0, ' + repr(str(Path(__file__).resolve().parents[2] / 'scripts/ci'))
+                   + ')\nfrom common import machine_lock, machine_lock\nwith machine_lock(timeout=0):\n print("acquired")\n')
+        with patch.dict(os.environ, GPLATFORM_MACHINE_BUILD_LOCK=str(path)):
+            with machine_lock(timeout=0):
+                blocked = subprocess.run([sys.executable, '-c', program], capture_output=True)
+                self.assertNotEqual(blocked.returncode, 0)
+                self.assertIn(b'shared machine build lock', blocked.stderr)
+            released = subprocess.run([sys.executable, '-c', program], capture_output=True)
+            self.assertEqual(released.returncode, 0)
+            self.assertIn(b'acquired', released.stdout)
 
 
 if __name__ == "__main__":

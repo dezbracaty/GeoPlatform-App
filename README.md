@@ -1,7 +1,7 @@
 # GeoPlatform-App
 
 GPlatform 应用开发仓库，使用 CMake 编译上层源码并链接预编译的 [GeoPlatform-SDK](https://github.com/dezbracaty/GeoPlatform-SDK)。
-开发应用只需本仓库及 SDK、Orca 子模块，无需完整源码主仓库。
+开发应用只需本仓库、所选平台 SDK 和 Orca 子模块，无需完整源码主仓库。
 
 ## 可开发的源码
 
@@ -14,7 +14,7 @@ GPlatform 应用开发仓库，使用 CMake 编译上层源码并链接预编译
 | `qml/`、`resources/` | 页面、组件及应用资源 |
 | `ThirdParty/OrcaSlicer/` | 保留源码交付的切片依赖 |
 | `cmake/GPlatformThirdParty.cmake`、`cmake/thirdparty/` | 共用的第三方依赖入口与原有 fetch 规则 |
-| `ThirdParty/libs/GPlatformSDK/` | 项目内部库及其公开接口的二进制子模块 |
+| `cmake/sdk-repository.json` | SDK 仓库地址声明；实际版本由平台 SDK 完整 SHA 选择 |
 
 底层事务实现、通用渲染基类、线程、Session、帧交换和原生资源管理由 SDK 提供。
 `src/Rendering/` 提供 VTK/Filament 的具体 DBSync、业务注册和模型材质规则，随 App 源码编译。
@@ -29,13 +29,13 @@ GPlatform 应用开发仓库，使用 CMake 编译上层源码并链接预编译
 git lfs install
 git clone --recurse-submodules https://github.com/dezbracaty/GeoPlatform-App.git
 cd GeoPlatform-App
-git -C ThirdParty/libs/GPlatformSDK lfs pull
+git clone --branch windows https://github.com/dezbracaty/GeoPlatform-SDK.git ../GeoPlatform-SDK
+git -C ../GeoPlatform-SDK lfs pull
 ```
 
-SDK 路径固定为 `ThirdParty/libs/GPlatformSDK/<架构>/<构建类型>/`。
-版本由本仓库记录的子模块提交指针决定，无需在目录名中写版本。
-SDK 格式 3 提供内部库与 UI 二进制/同源 QML 资源；SmoothUI、SmoothUIDock 及其 KD 依赖不需要私有源码 checkout。配套版本由当前 App 记录的 SDK gitlink 决定。
-旧版本记录的 SDK SHA 需要从迁移归档恢复；不将旧完整 SDK 混入当前交付。
+SDK 固定发布分支为 `windows` 和 `macos`；上例 Windows 选择 windows，Mac 改用 macos。正式候选应先检出所选平台的完整 SDK SHA，再执行 LFS pull；不要在同一轮构建中重新解析前进中的分支。
+SDK checkout 内按 `<架构>/<构建类型>/` 分槽，文件包则按 `SDK/<架构>/<构建类型>/` 分槽。App 不再维护 SDK gitlink，也不自动回退旧 SDK。所有本地与 CI 配置均必须显式提供 `GPLATFORM_SDK_ROOT`；该路径指向 checkout 根或导出包的 SDK 目录。
+SDK 格式 3 提供内部库与 UI 二进制/同源 QML 资源；SmoothUI、SmoothUIDock 及其 KD 依赖不需要私有源码 checkout。平台 CI 和参数见 [docs/ci.md](docs/ci.md)。缺少新 SDK 地址声明或不满足现有构建/SDK/Server 契约的历史 App 不使用旧入口兼容。
 Git App 根据真实 Git 受管文件及 HEAD 校验 SDK 绑定的内容摘要，无需导出清单；没有 Git 元数据的文件包必须提供 `ThirdParty/source-inputs.json` 并通过同一摘要校验。
 
 ## CMake 编译
@@ -48,20 +48,21 @@ macOS Apple Silicon 使用 `arm_release`，Intel 使用 `x86_release`。VS Code 
 在本仓库根目录执行：
 
 ```bash
-cmake --preset release
+cmake --preset release -DGPLATFORM_SDK_ROOT=../GeoPlatform-SDK
 cmake --build --preset release
 ```
 
 VS Code 用户用文件资源管理器将 [vscode-template](vscode-template) 整个目录复制为本仓库的 `.vscode`，安装推荐的 CMake Tools、C++ 扩展，在 `settings.json` 中填写：
 
 - `cmake.cmakePath`：本机 CMake 可执行文件路径；已在 VS Code 的 PATH 中时可保留 `cmake`。Windows 使用 VS 自带 `cmake.exe`。
+- `cmake.configureSettings.GPLATFORM_SDK_ROOT`：所选平台 SDK checkout 或导出包 SDK 目录的绝对路径。
 - `cmake.configureEnvironment.Qt6_DIR`：包含本机所选 `Qt6Config.cmake` 的目录。
 
 模板显式显示底部 CMake 状态栏。在状态栏或 CMake 项目面板选择配置预设和同名构建预设，点击 Configure，再点击 Build；也可使用默认构建快捷键。
 macOS 只显示六个预设：`arm_release`、`arm_debug`、`x86_release`、`x86_debug`、`universal_release`、`universal_debug`。
 目录分别为 `build-arm64-Release/Debug`、`build-x86_64-Release/Debug`、`build-universal-Release/Debug`（Release、Debug 为两个不同目录）。
 `x86` 指 64 位 Intel；Windows/Linux 只显示 `release/debug`，目录为 `build-Release/build-Debug`。
-架构由预设选择，无需修改 settings 或填写命令行参数。完整源码主仓库与独立 App 使用相同的预设名和模板，
+架构由预设选择；SDK_ROOT 与 Qt 路径由本机设置明确提供。完整源码主仓库与独立 App 使用相同的预设名和模板，
 前者构建应用及 SDK 导出产物，后者只构建 App。
 整个 `.vscode/` 和 `CMakeUserPresets.json` 均为本机文件，默认忽略。已有个人设置时按模板补充，不覆盖原有内容。
 
@@ -79,7 +80,7 @@ Apple Silicon 上构建/运行 Intel 程序需要 Rosetta。Universal 预设自�
 ```powershell
 $CMakePath = 'C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
 $env:Qt6_DIR = 'C:/path/to/Qt/msvc2022_64/lib/cmake/Qt6'
-& $CMakePath --preset release
+& $CMakePath --preset release -DGPLATFORM_SDK_ROOT=../GeoPlatform-SDK
 & $CMakePath --build --preset release
 ```
 
@@ -99,8 +100,7 @@ Windows 只查找所选 Qt 目录，不自动改用其他安装。macOS/Linux �
 Qt 组件查找失败时会停止配置，保留原始诊断，并提示标准路径配置示例；其他 SDK 依赖错误不会被当作 Qt 配置错误。
 不在仓库中固定安装路径。Qt 版本须与 SDK 匹配；更换 Qt 或依赖 ABI 时重建配套 SDK，并使用新的项目构建目录。
 仅修改环境不会覆盖旧缓存，无需清理机器级依赖缓存。纯 build 未触发重新 configure 时不会执行这些输入检查。
-主项目打包生成的 App 文件目录带有实物 SDK 和已初始化的第三方受管源码，直接使用以上命令；无需伪造 Git 仓库或初始化。`ThirdParty/source-inputs.json` 绑定实际源码文件摘要；匹配的未提交修改也可构建，内容变化后须重新导出配套 SDK。
-正式 Git 仓库使用者则需按上面的步骤初始化 submodule/LFS。两种交付状态应分别验证。
+SDK 导出器只生成 SDK 文件包，不复制 App 源码或内嵌 SDK 到 App。独立 App 源码与 Orca 输入另行准备，配置时始终显式指定外置 SDK_ROOT。Git checkout 根据实际受管源码校验输入；非 Git 源码文件包须携带完整 ThirdParty/source-inputs.json 并通过相同内容摘要检查，不能伪造 Git 元数据或来源。
 SDK 动态库会自动复制到应用包中。Qt 开发环境由本机提供；Windows 安装包通过下面的目标完成 Qt 部署，应用签名由发布者处理。
 libslicer 运行库和预设资源由现有部署任务跟踪；增量更新运行库时，即使主程序不重新链接，也会复制到运行目录。
 `debug` 预设需要 SDK 中已有相应架构的 `Debug/` 产物，不能混用 Release 库。
@@ -161,21 +161,22 @@ const link = 'gplatform://open?file=' + encodeURIComponent(httpsDownloadUrl);
 ```bash
 git pull --ff-only
 git submodule update --init --recursive
-git -C ThirdParty/libs/GPlatformSDK lfs pull
-cmake --preset release
+git -C ../GeoPlatform-SDK fetch origin
+# 先在独立 SDK checkout 检出本次选定的完整 SHA，再执行：
+git -C ../GeoPlatform-SDK lfs pull
+cmake --preset release -DGPLATFORM_SDK_ROOT=../GeoPlatform-SDK
 cmake --build --preset release
 ```
 
-使用仓库记录的子模块指针，不使用 `git submodule update --remote` 自动追踪 SDK 最新分支。
-如果提示 SDK 缺失，请检查子模块和构建类型；如果提示 Git LFS 指针，请在 SDK 子模块中执行 `git lfs pull`。
+Orca 使用 App 记录的子模块指针。SDK 独立选择固定平台分支的准确提交，不使用旧 SDK 子模块指针；缺失时检查显式 SDK_ROOT、架构及构建类型。提示 LFS 指针时在所选 SDK checkout 执行 `git lfs pull`。
 
 ## 可选扩展检查
 
 下面以 Windows/Linux 为例；macOS 的预设和构建目录按上面的矩阵替换。
 
 ```bash
-cmake --preset release -DGPLATFORM_BUILD_SDK_CHECKS=ON
-cmake --build build-Release --target SDKConsumerExtensionCheck
+cmake --preset release -DGPLATFORM_SDK_ROOT=../GeoPlatform-SDK -DGPLATFORM_BUILD_SDK_CHECKS=ON
+cmake --build --preset release --target SDKConsumerExtensionCheck
 ctest --test-dir build-Release -R '^SDKConsumerExtensionCheck$' --output-on-failure
 ```
 
@@ -184,7 +185,7 @@ ctest --test-dir build-Release -R '^SDKConsumerExtensionCheck$' --output-on-fail
 ## 脚本与验收工具
 
 `cmake/` 负责接入 CMake；`scripts/` 包含独立 App 随包交付的构建、部署和诊断实现。
-完整仓库的根目录兼容脚本转发到这些实现，SDK 的生产和发布编排留在完整仓库。
+完整仓库的根目录兼容脚本转发到这些实现，SDK 的原生导出保留在完整宿主，四工作流编排统一由 App/scripts/ci 维护。
 终端辅助入口为 `scripts/build.sh`（macOS/Linux）与 `scripts/build.cmd`（Windows），均使用本仓库 presets。
 macOS 双架构实现为 `scripts/build_macos_universal.py`，默认目录与 preset 一致；
 普通 `GPlatform_dist` 调用 `scripts/deploy_macos.py`，两者共用 `scripts/macos_bundle.py` 的部署清理和依赖审计。
@@ -205,6 +206,7 @@ Release 薄架构配置完成后，可在所选构建目录构建 `GPlatform_dis
 
 Zed 用户可将 `zed-template/` 复制为本地 `.zed/`。当前模板提供 macOS/Linux Configure、Build，
 共用 `scripts/build.sh`；从编辑器环境设置 `Qt6_DIR`，可用 `GPLATFORM_PRESET` 选择预设，默认本机架构 Release。
+将两个任务 args 中的 GPLATFORM_SDK_ROOT 占位符替换为所选 SDK checkout 或导出包 SDK 目录的绝对路径；首次 Configure 也必须明确提供，不能依赖旧缓存。
 `.zed/` 与 `.vscode/` 一样默认忽略；复制模板前保留原有个人设置。
 
 ## GitHub Actions

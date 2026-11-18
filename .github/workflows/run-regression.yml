@@ -1,0 +1,331 @@
+name: Run Regression
+run-name: 'Regression | app=${{ inputs.app_ref }} | host=${{ inputs.host_ref }} | platform=${{ inputs.platform }}'
+on:
+  workflow_dispatch:
+    inputs:
+      app_ref:
+        description: App branch or complete SHA
+        type: string
+        default: feature/gplatform-ui
+      host_ref:
+        description: Full-host branch or complete SHA
+        type: string
+        default: feature/gplatform-ui
+      platform:
+        description: Platforms to observe
+        type: choice
+        options: [all, windows, macos]
+        default: all
+      sdk_source:
+        description: Build SDK from candidate source or consume a published SDK
+        type: choice
+        options: [source, published]
+        default: source
+      macos_sdk_ref:
+        description: Published SDK branch or full SHA; empty selects macos; forbidden in source mode
+        type: string
+        default: ''
+      windows_sdk_ref:
+        description: Published SDK branch or full SHA; empty selects windows; forbidden in source mode
+        type: string
+        default: ''
+      macos_test_assets_ref:
+        description: macOS TestAssets branch or full SHA
+        type: string
+        default: macmini
+      windows_test_assets_ref:
+        description: Windows TestAssets branch or full SHA
+        type: string
+        default: windows
+  workflow_call:
+    inputs:
+      app_ref: {type: string, required: true}
+      host_ref: {type: string, default: feature/gplatform-ui}
+      platform: {type: string, default: all}
+      sdk_source: {type: string, default: source}
+      macos_sdk_ref: {type: string, default: ''}
+      windows_sdk_ref: {type: string, default: ''}
+      macos_test_assets_ref: {type: string, default: macmini}
+      windows_test_assets_ref: {type: string, default: windows}
+    secrets:
+      GPLATFORM_SOURCE_TOKEN: {required: true}
+      GPLATFORM_WORKFLOW_TOKEN: {required: true}
+
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      app_sha: ${{ steps.source.outputs.app_sha }}
+      host_repository: ${{ steps.source.outputs.host_repository }}
+      declared_app_sha: ${{ steps.source.outputs.declared_app_sha }}
+      windows_assets_sha: ${{ steps.source.outputs.windows_assets_sha }}
+      macos_assets_sha: ${{ steps.source.outputs.macos_assets_sha }}
+      windows_sdk_sha: ${{ steps.source.outputs.windows_sdk_sha }}
+      macos_sdk_sha: ${{ steps.source.outputs.macos_sdk_sha }}
+      sdk_repository: ${{ steps.source.outputs.sdk_repository }}
+      matrix: ${{ steps.runners.outputs.matrix }}
+      expected_jobs: ${{ steps.runners.outputs.expected_jobs }}
+      guard_labels: ${{ steps.runners.outputs.labels }}
+      prepared_at: ${{ steps.ready.outputs.prepared_at }}
+      attempt: ${{ steps.ready.outputs.attempt }}
+    steps:
+      - name: Check CI credentials
+        env:
+          HAS_SOURCE: ${{ secrets.GPLATFORM_SOURCE_TOKEN != '' }}
+          HAS_WORKFLOW: ${{ secrets.GPLATFORM_WORKFLOW_TOKEN != '' }}
+        run: |
+          python3 - <<'PYINPUT'
+          import os
+          missing = [key[4:] for key, value in os.environ.items() if key.startswith('HAS_') and value.lower() != 'true']
+          if missing:
+              raise SystemExit('Missing CI credentials: ' + ', '.join(missing))
+          PYINPUT
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: control
+          persist-credentials: false
+      - id: source
+        shell: python
+        env:
+          GPLATFORM_SOURCE_TOKEN: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
+          APP_REF: ${{ inputs.app_ref }}
+          HOST_REF: ${{ inputs.host_ref }}
+          HOST_REPOSITORY: ${{ vars.GPLATFORM_HOST_REPOSITORY || 'dezbracaty/GPlatform' }}
+          PLATFORM: ${{ inputs.platform }}
+          SDK_SOURCE: ${{ inputs.sdk_source }}
+          MACOS_SDK_REF: ${{ inputs.macos_sdk_ref }}
+          WINDOWS_SDK_REF: ${{ inputs.windows_sdk_ref }}
+          MACOS_TEST_ASSETS_REF: ${{ inputs.macos_test_assets_ref }}
+          WINDOWS_TEST_ASSETS_REF: ${{ inputs.windows_test_assets_ref }}
+        run: |
+          import os, sys
+          sys.path.insert(0, 'control/scripts/ci')
+          from common import API, write_outputs
+          from source_regression import prepare
+          result = prepare(API(os.environ['GPLATFORM_SOURCE_TOKEN']), os.environ['GITHUB_REPOSITORY'],
+              os.environ['APP_REF'], os.environ['HOST_REPOSITORY'], os.environ['HOST_REF'],
+              **{key:os.environ[key.upper()] for key in ('platform','sdk_source','macos_sdk_ref','windows_sdk_ref',
+                 'macos_test_assets_ref','windows_test_assets_ref')})
+          write_outputs(result)
+      - id: runners
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        env:
+          PLATFORM: ${{ inputs.platform }}
+          WINDOWS_LABELS: ${{ vars.GPLATFORM_WINDOWS_RUNNER_LABELS }}
+          MACOS_LABELS: ${{ vars.GPLATFORM_MACOS_RUNNER_LABELS }}
+        with:
+          github-token: ${{ secrets.GPLATFORM_WORKFLOW_TOKEN }}
+          script: |
+            const platforms = process.env.PLATFORM === 'all' ? ['windows','macos'] : [process.env.PLATFORM];
+            if (platforms.some(p => !['windows','macos'].includes(p))) throw new Error('Invalid platform');
+            const include = [];
+            for (const platform of platforms) {
+              process.env.CI_RUNNER_LABELS = process.env[platform.toUpperCase() + '_LABELS'];
+              await require('./control/scripts/ci/runner_queue.js')({github,context,core,mode:'preflight'});
+              include.push({platform, labels:JSON.parse(process.env.CI_RUNNER_LABELS)});
+            }
+            core.setOutput('matrix', JSON.stringify({include}));
+            core.setOutput('expected_jobs', JSON.stringify(platforms.map(p => 'regression-' + p)));
+      - id: ready
+        run: |
+          echo "prepared_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "attempt=$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+  regression:
+    name: regression-${{ matrix.platform }}
+    needs: prepare
+    if: needs.prepare.outputs.attempt == github.run_attempt
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    runs-on: ${{ matrix.labels }}
+    timeout-minutes: 360
+    env:
+      GIT_CONFIG_COUNT: ${{ matrix.platform == 'windows' && '13' || '2' }}
+      GIT_CONFIG_KEY_0: core.autocrlf
+      GIT_CONFIG_VALUE_0: 'false'
+      GIT_CONFIG_KEY_1: core.eol
+      GIT_CONFIG_VALUE_1: lf
+      GIT_CONFIG_KEY_2: http.sslBackend
+      GIT_CONFIG_VALUE_2: openssl
+      # Exact repositories in this owned checkout may retain NETWORK SERVICE metadata.
+      # Job-scoped protected config reaches Git, CMake and the SDK validator; no global trust.
+      GIT_CONFIG_KEY_3: safe.directory
+      GIT_CONFIG_VALUE_3: ${{ github.workspace }}/host-source/App
+      GIT_CONFIG_KEY_4: safe.directory
+      GIT_CONFIG_VALUE_4: ${{ github.workspace }}/host-source/App/ThirdParty/OrcaSlicer
+      GIT_CONFIG_KEY_5: safe.directory
+      GIT_CONFIG_VALUE_5: ${{ github.workspace }}/host-source/ThirdParty/QmlDock
+      GIT_CONFIG_KEY_6: safe.directory
+      GIT_CONFIG_VALUE_6: ${{ github.workspace }}/host-source/ThirdParty/SmoothUI
+      GIT_CONFIG_KEY_7: safe.directory
+      GIT_CONFIG_VALUE_7: ${{ github.workspace }}/host-source/ThirdParty/SmoothUI/SmoothUIDock
+      GIT_CONFIG_KEY_8: safe.directory
+      GIT_CONFIG_VALUE_8: ${{ github.workspace }}/host-source/ThirdParty/SmoothUI/SmoothUIDock/KDDockWidgets
+      GIT_CONFIG_KEY_9: safe.directory
+      GIT_CONFIG_VALUE_9: ${{ github.workspace }}/host-source/ThirdParty/SmoothUI/SmoothUIDock/KDDockWidgets/tests/reference-images
+      GIT_CONFIG_KEY_10: safe.directory
+      GIT_CONFIG_VALUE_10: ${{ github.workspace }}/host-source/ThirdParty/SmoothUIDock
+      GIT_CONFIG_KEY_11: safe.directory
+      GIT_CONFIG_VALUE_11: ${{ github.workspace }}/host-source/ThirdParty/SmoothUIDock/KDDockWidgets
+      GIT_CONFIG_KEY_12: safe.directory
+      GIT_CONFIG_VALUE_12: ${{ github.workspace }}/host-source/ThirdParty/SmoothUIDock/KDDockWidgets/tests/reference-images
+      GIT_HTTP_LOW_SPEED_LIMIT: '1024'
+      GIT_HTTP_LOW_SPEED_TIME: '60'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Check installed Python
+        id: environment
+        shell: python
+        run: |
+          import sys
+          if sys.version_info < (3, 12):
+              raise SystemExit('Prepare Python 3.12+ outside the workflow')
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        timeout-minutes: 5
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: control
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        timeout-minutes: 20
+        with:
+          repository: ${{ needs.prepare.outputs.host_repository }}
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          path: host-source
+          clean: false
+          token: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
+          persist-credentials: false
+          submodules: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        if: inputs.sdk_source == 'published'
+        timeout-minutes: 20
+        with:
+          repository: ${{ needs.prepare.outputs.sdk_repository }}
+          ref: ${{ matrix.platform == 'windows' && needs.prepare.outputs.windows_sdk_sha || needs.prepare.outputs.macos_sdk_sha }}
+          path: selected-sdk
+          token: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
+          persist-credentials: false
+          lfs: false
+      - name: SDK consumer and complete platform regression
+        shell: python
+        env:
+          GPLATFORM_SOURCE_TOKEN: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          APP_SHA: ${{ needs.prepare.outputs.app_sha }}
+          PLATFORM: ${{ matrix.platform }}
+          SDK_SOURCE: ${{ inputs.sdk_source }}
+          SDK_SHA: ${{ matrix.platform == 'windows' && needs.prepare.outputs.windows_sdk_sha || needs.prepare.outputs.macos_sdk_sha }}
+          SDK_REPOSITORY: ${{ needs.prepare.outputs.sdk_repository }}
+          ASSETS_REF: ${{ matrix.platform == 'windows' && inputs.windows_test_assets_ref || inputs.macos_test_assets_ref }}
+          ASSETS_SHA: ${{ matrix.platform == 'windows' && needs.prepare.outputs.windows_assets_sha || needs.prepare.outputs.macos_assets_sha }}
+        run: |
+          import os, pathlib, subprocess, sys
+          root = pathlib.Path(os.environ['RUNNER_TEMP'] if os.environ['PLATFORM'] == 'windows' else os.environ['GITHUB_WORKSPACE'])
+          output = root / 'regression-results' / (os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT']) / os.environ['PLATFORM']
+          command = [sys.executable, 'control/scripts/ci/source_regression.py', '--source-dir', 'host-source',
+              '--source-sha', os.environ['SOURCE_SHA'], '--app-sha', os.environ['APP_SHA'],
+              '--app-repository', os.environ['GITHUB_REPOSITORY'], '--assets-sha', os.environ['ASSETS_SHA'], '--assets-ref', os.environ['ASSETS_REF'],
+              '--platform', os.environ['PLATFORM'], '--output', str(output),
+              '--sdk-source', os.environ['SDK_SOURCE'], '--sdk-repository', os.environ['SDK_REPOSITORY']]
+          if os.environ['SDK_SOURCE'] == 'published':
+              command += ['--sdk-root', 'selected-sdk', '--sdk-sha', os.environ['SDK_SHA']]
+          subprocess.run(command, check=True)
+      - name: Retain regression evidence even on failure
+        id: evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: regression-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ matrix.platform == 'windows' && runner.temp || github.workspace }}/regression-results/${{ github.run_id }}-${{ github.run_attempt }}/${{ matrix.platform }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 6
+      - name: Clean uploaded report staging
+        if: always() && steps.evidence.outcome == 'success'
+        shell: python
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          import os, pathlib, re, sys
+          sys.path.insert(0, 'control/scripts/ci')
+          from common import remove_owned_tree
+          identity = os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT']
+          platform = os.environ['PLATFORM']
+          if not re.fullmatch(r'[0-9]+-[0-9]+', identity) or platform not in ('windows', 'macos'):
+              raise RuntimeError('Invalid owned report identity')
+          workspace = pathlib.Path(os.environ['RUNNER_TEMP'] if platform == 'windows' else os.environ['GITHUB_WORKSPACE']).resolve()
+          root = workspace / 'regression-results'
+          parent = root / identity
+          path = parent / platform
+          for entry in (root, parent, path):
+              if entry.is_symlink() or entry.is_junction() or entry.resolve() != entry:
+                  raise RuntimeError('Refusing to clean a redirected report directory')
+          remove_owned_tree(path, parent)
+      - name: Clean temporary control checkout
+        if: always() && steps.environment.outcome == 'success'
+        shell: python
+        run: |
+          import os, pathlib, shutil, stat
+          # Cleanup must work even when the control checkout never completed.
+          def retry_readonly(function, filename, error):
+              if os.name != 'nt' or not isinstance(error, PermissionError):
+                  raise error
+              mode = os.lstat(filename).st_mode
+              if stat.S_ISLNK(mode) or mode & stat.S_IWRITE:
+                  raise error
+              os.chmod(filename, mode | stat.S_IWRITE)
+              function(filename)
+          workspace = pathlib.Path(os.environ['GITHUB_WORKSPACE']).resolve()
+          for name in ('control', 'selected-sdk'):
+              path = workspace / name
+              if path.is_symlink() or path.resolve().parent != workspace:
+                  raise RuntimeError('Refusing to clean a checkout outside this workspace')
+              if path.exists():
+                  if not (path / '.git').exists():
+                      raise RuntimeError('Refusing to clean a directory without its task checkout marker')
+                  shutil.rmtree(path, onexc=retry_readonly)
+  queue_guard:
+    needs: prepare
+    if: needs.prepare.outputs.attempt == github.run_attempt
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: control
+          persist-credentials: false
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        env:
+          CI_RUNNER_MODE: guard
+          CI_RUNNER_LABELS: ${{ needs.prepare.outputs.guard_labels }}
+          CI_EXPECTED_JOBS: ${{ needs.prepare.outputs.expected_jobs }}
+          CI_PREPARED_AT: ${{ needs.prepare.outputs.prepared_at }}
+        with:
+          script: await require('./control/scripts/ci/runner_queue.js')({github,context,core});
+  result:
+    if: always()
+    needs: [prepare, regression, queue_guard]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ toJSON(needs) }}
+          CURRENT_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          python3 - <<'PYRESULT'
+          import json, os
+          data = json.loads(os.environ['RESULTS'])
+          if data['prepare']['outputs'].get('attempt') != os.environ['CURRENT_ATTEMPT']:
+              raise SystemExit('Partial reruns rejected; run all jobs or create a new run')
+          if any(j['result'] != 'success' for j in data.values()):
+              raise SystemExit('Regression incomplete or failed; inspect retained platform reports')
+          PYRESULT

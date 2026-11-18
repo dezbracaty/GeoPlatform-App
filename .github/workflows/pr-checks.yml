@@ -1,0 +1,29 @@
+name: MR Checks
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, edited]
+permissions:
+  contents: read
+jobs:
+  regression:
+    permissions:
+      contents: read
+      actions: write
+    if: >-
+      !github.event.pull_request.draft &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (github.event.action != 'edited' || github.event.changes.base.ref.from != '')
+    concurrency:
+      group: app-mr-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    uses: ./.github/workflows/run-regression.yml
+    with:
+      app_ref: ${{ github.event.pull_request.head.sha }}
+      host_ref: ${{ vars.GPLATFORM_HOST_REF || 'feature/gplatform-ui' }}
+      platform: all
+      sdk_source: source
+      macos_test_assets_ref: macmini
+      windows_test_assets_ref: windows
+    secrets:
+      GPLATFORM_SOURCE_TOKEN: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
+      GPLATFORM_WORKFLOW_TOKEN: ${{ secrets.GPLATFORM_WORKFLOW_TOKEN }}

@@ -51,10 +51,8 @@ class SubmoduleTests(unittest.TestCase):
         (self.remote / "payload").write_text("new branch head")
         self.git(self.remote, "commit", "-qam", "New dependency head")
         self.library = "ThirdParty/OrcaSlicer"
-        self.sdk = common.SDK_PATH if CONSUMER else "App/" + common.SDK_PATH
-        for name, path in [("library", self.library), ("sdk", self.sdk)]:
-            self.declare(name, path, self.remote.as_uri() if CONSUMER or name == "library" else root / "must-not-fetch")
-            self.git(self.source, "update-index", "--add", "--cacheinfo", "160000", self.pinned, path)
+        self.declare('library', self.library, self.remote.as_uri())
+        self.git(self.source, 'update-index', '--add', '--cacheinfo', '160000', self.pinned, self.library)
         self.declare("stale", "ThirdParty/testTransaction2", root / "removed-repository")
         self.commit()
         self.environment = patch.dict(os.environ, GIT_ALLOW_PROTOCOL="file")
@@ -66,7 +64,7 @@ class SubmoduleTests(unittest.TestCase):
         self.git(self.source, 'update-index', '--add', '--cacheinfo', '160000', self.pinned, 'ThirdParty/SmoothUI')
         self.commit()
         with self.assertRaisesRegex(RuntimeError, 'exactly'):
-            common.init_source_submodules(self.source, consumer=True)
+            common.init_source_submodules(self.source)
         self.assertFalse((self.source / self.library / '.git').exists())
 
     def test_optional_test_assets_skip_product_checkout_and_keep_explicit_pin(self):
@@ -75,11 +73,11 @@ class SubmoduleTests(unittest.TestCase):
         self.git(self.source, 'config', '--file', '.gitmodules', 'submodule.assets.update', 'none')
         self.git(self.source, 'update-index', '--add', '--cacheinfo', '160000', self.pinned, path)
         self.commit()
-        common.init_source_submodules(self.source, consumer=True)
+        common.init_source_submodules(self.source)
         self.assertFalse((self.source / path / '.git').exists())
         self.git(self.source, '-c', 'protocol.file.allow=always', 'submodule', 'update', '--init', '--checkout', '--', path)
         self.assertEqual(self.git(self.source / path, 'rev-parse', 'HEAD'), self.pinned)
-        common.init_source_submodules(self.source, consumer=True)
+        common.init_source_submodules(self.source)
         self.assertFalse((self.source / path / '.git').exists())
 
     def test_optional_test_assets_cannot_be_required_product_dependency(self):
@@ -88,32 +86,30 @@ class SubmoduleTests(unittest.TestCase):
         self.git(self.source, 'update-index', '--add', '--cacheinfo', '160000', self.pinned, common.TEST_ASSETS_PATH)
         self.commit()
         with self.assertRaisesRegex(RuntimeError, 'update=none'):
-            common.init_source_submodules(self.source, consumer=True)
+            common.init_source_submodules(self.source)
         self.assertFalse((self.source / self.library / '.git').exists())
-        self.assertFalse((self.source / self.sdk / '.git').exists())
 
     def test_stale_declaration_is_skipped_and_real_dependency_uses_gitlink(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            common.init_source_submodules(self.source, consumer=CONSUMER)
+            common.init_source_submodules(self.source)
         self.assertIn("Skipping stale submodule declaration", output.getvalue())
         self.assertEqual(self.git(self.source / self.library, "rev-parse", "HEAD"), self.pinned)
         self.assertEqual((self.source / self.library / "payload").read_text(), "original")
         self.assertFalse((self.source / "ThirdParty/testTransaction2").exists())
-        self.assertEqual((self.source / self.sdk / ".git").exists(), CONSUMER)
-        for path in [self.library] + ([self.sdk] if CONSUMER else []):
+        for path in [self.library]:
             self.assertEqual(self.git(self.source / path, "rev-parse", "--is-shallow-repository"), "true")
             self.assertEqual(self.git(self.source / path, "rev-list", "--count", "HEAD"), "1")
 
     def test_cached_dirty_dependency_is_reset_without_losing_git_objects(self):
-        common.init_source_submodules(self.source, consumer=CONSUMER)
+        common.init_source_submodules(self.source)
         library = self.source / self.library
         (library / "payload").write_text("dirty dependency")
         (library / "untracked.h").write_text("must not enter build")
         sha = self.git(self.source, "rev-parse", "HEAD")
         with patch.dict(os.environ, GITHUB_WORKSPACE=str(self.source.parent)):
             common.prepare_cached_source(self.source, sha, "windows", consumer=CONSUMER)
-        common.init_source_submodules(self.source, consumer=CONSUMER)
+        common.init_source_submodules(self.source)
         self.assertEqual((library / "payload").read_text(), "original")
         self.assertFalse((library / "untracked.h").exists())
         self.assertTrue((library / ".git").is_file())
@@ -139,7 +135,7 @@ class SubmoduleTests(unittest.TestCase):
         parent_a = self.git(self.remote, "rev-parse", "HEAD")
         self.git(self.source, "update-index", "--cacheinfo", "160000", parent_a, self.library)
         self.commit()
-        common.init_source_submodules(self.source, consumer=CONSUMER)
+        common.init_source_submodules(self.source)
         library = self.source / self.library
         self.assertEqual(self.git(library / child_path, "rev-parse", "HEAD"), old_sha)
         self.assertTrue((library / retired_path / ".git").is_file())
@@ -157,7 +153,7 @@ class SubmoduleTests(unittest.TestCase):
         sha = self.git(self.source, "rev-parse", "HEAD")
         with patch.dict(os.environ, GITHUB_WORKSPACE=str(self.source.parent)):
             common.prepare_cached_source(self.source, sha, "windows", consumer=CONSUMER)
-        common.init_source_submodules(self.source, consumer=CONSUMER)
+        common.init_source_submodules(self.source)
         self.assertEqual(self.git(library, "rev-parse", "HEAD"), parent_b)
         self.assertEqual(self.git(library / child_path, "rev-parse", "HEAD"), new_sha)
         self.assertEqual(self.git(library / child_path, "config", "--get", "remote.origin.url"), new_child.as_uri())
@@ -165,37 +161,6 @@ class SubmoduleTests(unittest.TestCase):
         self.assertFalse((library / retired_path).exists(), "Removed nested source must not survive as untracked build input")
         self.assertEqual(self.git(self.source, "status", "--porcelain", "--untracked-files=all"), "")
 
-    def test_producer_deinitializes_cached_sdk_after_pin_change_without_fetch(self):
-        producer_sdk = "App/" + common.SDK_PATH
-        if self.sdk != producer_sdk:
-            self.git(self.source, "update-index", "--force-remove", "--", self.sdk)
-            self.sdk = producer_sdk
-        self.declare("sdk", self.sdk, self.remote.as_uri())
-        self.git(self.source, "update-index", "--add", "--cacheinfo", "160000", self.pinned, self.sdk)
-        self.commit()
-        common.init_source_submodules(self.source, consumer=False)
-        self.git(self.source, "submodule", "update", "--init", "--checkout", "--depth=1", "--", self.sdk)
-        sdk_worktree = self.source / self.sdk
-        sdk_gitdir = Path(self.git(sdk_worktree, "rev-parse", "--absolute-git-dir"))
-        self.assertEqual(self.git(sdk_worktree, "rev-parse", "HEAD"), self.pinned)
-
-        (self.remote / "payload").write_text("new SDK pin not available in cached SDK")
-        self.git(self.remote, "commit", "-qam", "Advance SDK after old checkout")
-        new_sdk = self.git(self.remote, "rev-parse", "HEAD")
-        self.git(self.source, "update-index", "--cacheinfo", "160000", new_sdk, self.sdk)
-        self.commit()
-        self.remote.rename(self.remote.with_name("remote unavailable"))
-        sha = self.git(self.source, "rev-parse", "HEAD")
-        with patch.dict(os.environ, GITHUB_WORKSPACE=str(self.source.parent)):
-            common.prepare_cached_source(self.source, sha, "windows", consumer=False)
-        common.init_source_submodules(self.source, consumer=False)
-        self.assertFalse((sdk_worktree / ".git").exists())
-        self.assertTrue(sdk_gitdir.is_dir(), "Deinit must preserve the SDK Git/LFS object store")
-        self.git(sdk_gitdir, "cat-file", "-e", self.pinned + "^{commit}")
-        missing = subprocess.run(["git", "-C", str(sdk_gitdir), "cat-file", "-e", new_sdk + "^{commit}"],
-                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        self.assertNotEqual(missing.returncode, 0, "Producer must not fetch the new SDK pin")
-        self.assertEqual(self.git(self.source, "status", "--porcelain", "--untracked-files=no"), "")
 
     def test_submodule_recovers_after_two_transport_failures(self):
         original = subprocess.run
@@ -209,7 +174,7 @@ class SubmoduleTests(unittest.TestCase):
 
         with patch.object(common.subprocess, "run", side_effect=interrupted):
             with patch.object(common.time, "sleep") as sleep:
-                common.init_source_submodules(self.source, consumer=CONSUMER)
+                common.init_source_submodules(self.source)
         self.assertEqual(len(failures), 2)
         self.assertEqual(sleep.call_count, 2)
         self.assertEqual(self.git(self.source / self.library, "rev-parse", "HEAD"), self.pinned)
@@ -220,11 +185,11 @@ class SubmoduleTests(unittest.TestCase):
         self.commit()
         code = ("import sys; from pathlib import Path; "
                 "sys.path.insert(0, sys.argv[1]); import common; "
-                "common.init_source_submodules(Path(sys.argv[2]), consumer=sys.argv[3] == 'true')")
+                "common.init_source_submodules(Path(sys.argv[2]))")
         env = {key:value for key,value in os.environ.items()
                if key not in ("GPLATFORM_SOURCE_TOKEN", "GITHUB_ACTIONS")}
         result = subprocess.run([sys.executable, "-c", code, str(Path(common.__file__).parent),
-                                 str(self.source), str(CONSUMER).lower()],
+                                 str(self.source)],
                                 env=env, capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(f"Initializing pinned submodule {self.library!r} at {self.pinned}", result.stdout)
@@ -245,29 +210,22 @@ class SubmoduleTests(unittest.TestCase):
         self.git(self.source, "config", "--file", ".gitmodules", "--remove-section", "submodule.library")
         self.commit()
         with self.assertRaisesRegex(RuntimeError, "missing its .gitmodules declaration"):
-            common.init_source_submodules(self.source, consumer=CONSUMER)
+            common.init_source_submodules(self.source)
         self.assertFalse((self.source / self.library / ".git").exists())
-        self.assertFalse((self.source / self.sdk / ".git").exists())
 
-    def test_consumer_requires_actual_sdk_gitlink(self):
-        self.git(self.source, "update-index", "--force-remove", "--", self.sdk)
-        self.git(self.source, "commit", "-qm", "Remove SDK gitlink")
-        with self.assertRaisesRegex(RuntimeError, "exactly"):
-            common.init_source_submodules(self.source, consumer=True)
-        self.assertFalse((self.source / self.library / ".git").exists())
 
     def test_duplicate_declaration_is_rejected(self):
         self.declare("duplicate", self.library, self.remote)
         self.commit()
         with self.assertRaisesRegex(RuntimeError, "Duplicate submodule path"):
-            common.init_source_submodules(self.source, consumer=CONSUMER)
+            common.init_source_submodules(self.source)
 
     def test_missing_gitmodules_is_rejected_before_checkout(self):
         (self.source / ".gitmodules").unlink()
         self.git(self.source, "add", "-u", ".gitmodules")
         self.git(self.source, "commit", "-qm", "Remove declarations")
         with self.assertRaisesRegex(RuntimeError, "no .gitmodules declarations"):
-            common.init_source_submodules(self.source, consumer=CONSUMER)
+            common.init_source_submodules(self.source)
         self.assertFalse((self.source / self.library / ".git").exists())
 
 

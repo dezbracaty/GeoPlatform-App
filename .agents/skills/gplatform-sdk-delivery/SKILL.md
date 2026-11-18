@@ -23,9 +23,9 @@ description: 导出、检查或验证 GPlatform SDK 与独立 App 消费。先�
 
 1. 生产：用匹配的薄架构 preset 构建完整宿主的标准目标，核对 `sdk-export/settings.json`、导出清单与产物来源。
 2. 导出：使用宿主唯一入口 `cmake/sdk/publish_sdk.py --export <build>/sdk-export --output <build>/package`，核对包清单和校验结果。
-3. 消费：独立配置 App，以 `GPLATFORM_SDK_ROOT=<package>/SDK` 指向候选包；不要为本地验证修改源码 SDK 子模块指针。
+3. 消费：独立配置 App，以 `GPLATFORM_SDK_ROOT=<package>/SDK` 指向候选包；本地与CI均显式选择，不使用SDK子模块默认路径。
 4. 本地验证：检查 App 真正消费候选槽位，运行相关 SDK 检查与应用场景，核对实际部署/加载的库和 QML 资源。
-5. 交付与 CI：在已授权范围内按依赖顺序完成 SDK/LFS、App pin 和宿主 gitlink 的提交推送，并以固定提交运行 CI；打包流程本身不执行 Git 提交、推送或发布。
+5. 交付与 CI：四个CI入口统一在App，规范见APP_ROOT/docs/ci.md；准确冻结App/宿主SHA，不能把所选App换回Root旧gitlink。SDK固定发布到macos/windows；正式平台构建冻结各自SDK SHA并通过SDK_ROOT消费，SDK地址来自App的cmake/sdk-repository.json，不保留SDK gitlink回退。按已授权范围维护App/Root源码引用，不能把其他SDK当实际消费版本；SDK包保留真实producer身份，不为CI/pin后继循环重编。打包流程不自动提交或发布Release。
 
 上述为相关阶段的入口，不要求每个检查任务重新生产全部 SDK；已有匹配且可验证的包可直接用于所请求的消费检查。
 已授权的跨仓库任务，子仓库目标提交推送成功后，及时同步本次任务涉及的父仓库引用；开发分支引用同步不等待 CI 完成。分别报告引用已同步、CI 进行中/通过/失败和正式发布状态；正式合并/发布仍遵守对应验收及授权要求。
