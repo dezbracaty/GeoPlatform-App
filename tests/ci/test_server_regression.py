@@ -1,4 +1,6 @@
 """Exercise real HTTP/login/owned Server shutdown without launching a product App."""
+from contextlib import redirect_stdout
+import io
 import json
 import os
 from pathlib import Path
@@ -6,13 +8,16 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
+from urllib.request import OpenerDirector
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'scripts/ci'))
+import mac_regression
 from mac_regression import server_regression
 
 SERVER = r'''
 import ci_server_sibling_fixture
-import argparse,json,sys
+import argparse,json,sys,time
 from pathlib import Path
 sys.path.insert(0,sys.argv[1]);del sys.argv[1]
 from journal_server import WorkbenchServer
@@ -37,8 +42,10 @@ class Workbench:
         (self.directory/'summary.json').write_text(json.dumps(summary))
     def state(self):
         self.reads+=1
+        if self.reads == 1 and mode in ('slow-state', 'cancel-slow-state'):
+            time.sleep(.75)
         # An early all-green summary is insufficient: serial stage is still running.
-        if self.reads>=2 and self.task['state']=='running' and mode!='cancel':self.task['state']='completed'
+        if self.reads>=2 and self.task['state']=='running' and mode not in ('cancel', 'cancel-slow-state'):self.task['state']='completed'
         return {'task':self.task,'reads':self.reads}
     def pause(self): pass
     def resume(self): pass
@@ -85,6 +92,35 @@ class ServerRegressionTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError,'did not pass'):
                     self.run_fixture(mode)
                 self.assertTrue((self.output/'run/closed').is_file())
+
+    def slow_first_state_request(self, timeout=.15):
+        original = OpenerDirector.open
+        seen = False
+
+        def open_with_short_first_timeout(opener, request, *args, **kwargs):
+            nonlocal seen
+            if request.full_url.endswith('/api/state') and not seen:
+                seen = True
+                kwargs['timeout'] = timeout
+            return original(opener, request, *args, **kwargs)
+
+        return patch.object(OpenerDirector, 'open', open_with_short_first_timeout)
+
+    def test_slow_state_recovers_without_cancelling(self):
+        log = io.StringIO()
+        with self.slow_first_state_request(), redirect_stdout(log):
+            summary, directory = self.run_fixture('slow-state')
+        self.assertEqual(summary['completedCaseCount'], 2)
+        self.assertIn('Journal Server state request timed out', log.getvalue())
+        self.assertFalse((directory.parent / 'cancelled').exists())
+        self.assertTrue((directory.parent / 'closed').is_file())
+
+    def test_state_recovery_budget_exhaustion_still_cleans_up(self):
+        with self.slow_first_state_request(.55), patch.object(mac_regression, 'STATE_RECOVERY_SECONDS', .4):
+            with self.assertRaisesRegex(TimeoutError, 'state did not respond within the recovery budget'):
+                self.run_fixture('cancel-slow-state')
+        self.assertTrue((self.output/'run/cancelled').is_file())
+        self.assertTrue((self.output/'run/closed').is_file())
 
     def test_timeout_cancels_and_waits_before_closing_owned_server(self):
         with self.assertRaisesRegex(TimeoutError,'budget exhausted'):

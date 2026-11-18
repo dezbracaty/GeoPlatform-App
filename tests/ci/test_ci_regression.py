@@ -73,6 +73,7 @@ class RegressionTests(unittest.TestCase):
                 stack.enter_context(patch.object(driver.native_checks, 'architecture', return_value={'returncode': 0}))
                 stack.enter_context(patch.object(driver, 'build_sdk_package', side_effect=produce))
                 stack.enter_context(patch.object(driver, 'update_sdk', return_value={'selected_slots': ['AMD64/Release']}))
+                check_tools = stack.enter_context(patch.object(driver, 'check_ci_tools'))
                 if failure == 'cleanup':
                     stack.enter_context(patch.object(driver, 'remove_owned_tree', side_effect=RuntimeError('cleanup failure')))
                 if failure:
@@ -82,6 +83,10 @@ class RegressionTests(unittest.TestCase):
                 else:
                     driver.regress(root, 'windows', 'a'*40, 'c'*40, output, app_sha='b'*40,
                         app_repository='org/App', sdk_repository='org/SDK')
+                if failure:
+                    check_tools.assert_not_called()
+                else:
+                    check_tools.assert_called_once()
                 report = json.loads((output / 'source-regression.json').read_text())
                 self.assertEqual(report['sdk_package']['path'], str(created[0]))
                 self.assertEqual(report['status'], 'failed' if failure else 'passed')

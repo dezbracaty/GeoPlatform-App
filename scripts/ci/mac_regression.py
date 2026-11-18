@@ -18,6 +18,9 @@ import uuid
 from common import git_env, run, text_git, write_json
 
 
+STATE_RECOVERY_SECONDS = 60
+
+
 def prepare_assets(source, selected_sha=None):
     """Initialize the declared repository, then consume the independently prepared test commit."""
     source = Path(source)
@@ -35,7 +38,12 @@ def prepare_assets(source, selected_sha=None):
     if re.fullmatch('[0-9a-f]{40}', selected_sha) is None:
         raise ValueError('TestAssets must be pinned to a complete prepared SHA')
     if selected_sha != expected:
-        run(['git', '-C', assets, 'fetch', '--depth=1', 'origin', selected_sha], env=env, attempts=3)
+        # The native phase may already have fetched this exact commit.
+        cached = subprocess.run(
+            ['git', '-C', assets, 'cat-file', '-t', selected_sha],
+            env=dict(env, GIT_NO_LAZY_FETCH='1'), capture_output=True)
+        if cached.returncode or cached.stdout.strip() != b'commit':
+            run(['git', '-C', assets, 'fetch', '--depth=1', 'origin', selected_sha], env=env, attempts=3)
         run(['git', '-C', assets, 'checkout', '--detach', selected_sha], env=env)
     if text_git(assets, 'rev-parse', 'HEAD') != selected_sha:
         raise RuntimeError('TestAssets differs from the prepared regression SHA')
@@ -67,13 +75,40 @@ def server_regression(source, executable, output, env, *, timeout=14400):
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),
                                         urllib.request.ProxyHandler({}))
     base = None
-    def request(path, payload=None):
+    def request(path, payload=None, *, request_timeout=15):
         data = None if payload is None else json.dumps(payload).encode()
         req = urllib.request.Request(base + path, data=data, headers={'Content-Type': 'application/json'})
-        with opener.open(req, timeout=15) as response:
+        with opener.open(req, timeout=request_timeout) as response:
             return json.load(response)
     def operation(path, payload=None):
         return request(path, dict(payload or {}, commandId=uuid.uuid4().hex))
+
+    def read_state(until, deadline_error):
+        # A delayed read does not change the Server task. Retry the same GET,
+        # bounded by both the normal run deadline and the recovery window.
+        recovery_end = time.monotonic() + STATE_RECOVERY_SECONDS
+        stop_at = min(until, recovery_end)
+        while True:
+            if child.poll() is not None:
+                raise RuntimeError(f'Journal Server exited while reading state: exit {child.returncode}')
+            remaining = stop_at - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(deadline_error if stop_at == until else
+                                   'Journal Server state did not respond within the recovery budget')
+            try:
+                state = request('/api/state', request_timeout=min(15, remaining))
+            except (TimeoutError, urllib.error.URLError) as error:
+                if isinstance(error, urllib.error.URLError) and not isinstance(error.reason, TimeoutError):
+                    raise
+                remaining = stop_at - time.monotonic()
+                if remaining > 0:
+                    print(f'Journal Server state request timed out; retrying ({remaining:.1f}s remaining)',
+                          flush=True)
+                    time.sleep(min(1, remaining))
+            else:
+                if time.monotonic() < stop_at:
+                    return state
+
     task_id = None
     last_progress = None
     last_heartbeat = time.monotonic()
@@ -100,7 +135,7 @@ def server_regression(source, executable, output, env, *, timeout=14400):
             run_requested = True
             operation('/api/run', {'cases': ids})
             while True:
-                state = request('/api/state')
+                state = read_state(deadline, 'Journal Server regression budget exhausted')
                 task = state['task']
                 if task_id is None:
                     task_id = task['id']
@@ -134,15 +169,14 @@ def server_regression(source, executable, output, env, *, timeout=14400):
                 time.sleep(1)
         finally:
             if child.poll() is None:
-                if base and run_requested and not completed and request('/api/state')['task']['state'] in ('running', 'paused', 'cancelling'):
-                    operation('/api/cancel')
-                    until = time.monotonic() + 60
-                    while time.monotonic() < until:
-                        if request('/api/state')['task']['state'] in ('completed', 'failed', 'cancelled'):
-                            break
-                        time.sleep(.25)
-                    else:
-                        raise RuntimeError('Server cancellation did not finish; owned Server retained for cleanup')
+                if base and run_requested and not completed:
+                    cleanup_error = 'Server cancellation did not finish; owned Server retained for cleanup'
+                    state = read_state(time.monotonic() + 60, cleanup_error)['task']['state']
+                    if state in ('running', 'paused', 'cancelling'):
+                        operation('/api/cancel')
+                        until = time.monotonic() + 60
+                        while read_state(until, cleanup_error)['task']['state'] not in ('completed', 'failed', 'cancelled'):
+                            time.sleep(.25)
                 child.send_signal(signal.CTRL_BREAK_EVENT if os.name == 'nt' else signal.SIGINT)
                 child.wait(timeout=30)
             if child.returncode != 0 and completed:

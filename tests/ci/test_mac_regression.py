@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from subprocess import CompletedProcess
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts/ci'))
 from mac_regression import prepare_assets, regression
@@ -14,7 +15,8 @@ class MacRegressionTests(unittest.TestCase):
         source = Path('/fixture/source')
         declared, selected = 'a' * 40, 'b' * 40
         with patch('mac_regression.text_git', side_effect=[declared, declared, selected]), \
-                patch('mac_regression.git_env', return_value={}), patch('mac_regression.run') as execute:
+                patch('mac_regression.git_env', return_value={}), patch('mac_regression.run') as execute, \
+                patch('mac_regression.subprocess.run', return_value=CompletedProcess([], 128, b'', b'')):
             self.assertEqual(prepare_assets(source, selected), selected)
         commands = [call.args[0] for call in execute.call_args_list]
         self.assertIn(['git', '-C', source / 'tests/TestAssets', 'fetch', '--depth=1', 'origin', selected], commands)
@@ -22,9 +24,25 @@ class MacRegressionTests(unittest.TestCase):
         self.assertEqual(commands[-1], ['git', '-C', source / 'tests/TestAssets', 'lfs', 'pull'])
         self.assertFalse(any('add' in command or 'commit' in command for command in commands))
 
+    def test_cached_asset_commit_is_used_without_fetch(self):
+        source = Path('/fixture/source')
+        assets = source / 'tests/TestAssets'
+        declared, selected = 'a' * 40, 'b' * 40
+        with patch('mac_regression.text_git', side_effect=[declared, declared, selected]), \
+                patch('mac_regression.git_env', return_value={}), patch('mac_regression.run') as execute, \
+                patch('mac_regression.subprocess.run', return_value=CompletedProcess([], 0, b'commit\n', b'')) as probe:
+            self.assertEqual(prepare_assets(source, selected), selected)
+        probe.assert_called_once_with(['git', '-C', assets, 'cat-file', '-t', selected],
+                                      env={'GIT_NO_LAZY_FETCH': '1'}, capture_output=True)
+        commands = [call.args[0] for call in execute.call_args_list]
+        self.assertIn(['git', '-C', assets, 'checkout', '--detach', selected], commands)
+        self.assertNotIn('fetch', [command[3] for command in commands])
+        self.assertEqual(commands[-1], ['git', '-C', assets, 'lfs', 'pull'])
+
     def test_wrong_asset_checkout_is_rejected_before_lfs_or_replay(self):
         with patch('mac_regression.text_git', side_effect=['a' * 40, 'a' * 40, 'c' * 40]), \
-                patch('mac_regression.git_env', return_value={}), patch('mac_regression.run') as execute:
+                patch('mac_regression.git_env', return_value={}), patch('mac_regression.run') as execute, \
+                patch('mac_regression.subprocess.run', return_value=CompletedProcess([], 128, b'', b'')):
             with self.assertRaisesRegex(RuntimeError, 'prepared regression SHA'):
                 prepare_assets(Path('/fixture/source'), 'b' * 40)
         self.assertFalse(any('lfs' in call.args[0] for call in execute.call_args_list))
