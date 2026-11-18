@@ -78,7 +78,7 @@ class OwnedTerminationCheck(unittest.TestCase):
         self.assertNotIn('restoredClass', result['applicationTerminationPriority'])
 
     def test_session_final_exit_code_timeout_and_instance_boundaries(self):
-        for mode in ('owned', 'keep', 'attach', 'mac', 'timeout'):
+        for mode in ('owned', 'keep', 'attach', 'mac', 'timeout', 'timeout-exited'):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
                 root, process = Path(temporary), self.process()
                 client = RunnerClient(root)
@@ -86,6 +86,12 @@ class OwnedTerminationCheck(unittest.TestCase):
                 client.request = Mock(side_effect=lambda method, params, **kwargs:
                     {'status': 'ready', 'replayId': params['replayId']})
                 if mode == 'timeout': process.wait.side_effect = subprocess.TimeoutExpired('owned', 5)
+                if mode == 'timeout-exited':
+                    def exited_at_deadline(**kwargs):
+                        process.returncode = 1
+                        process.poll.return_value = 1
+                        raise subprocess.TimeoutExpired('owned', 5)
+                    process.wait.side_effect = exited_at_deadline
                 journal = write_journal(root/'source.json', [client.entry('action', {'code': 'existing.action'})])
                 with patch.object(sessions.sys, 'platform', 'darwin' if mode == 'mac' else 'win32'), \
                         patch.object(sessions, 'JournalSystem', return_value=client), \
@@ -105,6 +111,10 @@ class OwnedTerminationCheck(unittest.TestCase):
                     self.assertTrue(result['success'])
                     self.assertEqual(result['applicationExitCode'], 1)
                     self.assertFalse(result['applicationKeptOpen'])
+                if mode.startswith('timeout'):
+                    self.assertIn('timed out after 5', result['applicationTerminationTimeout'])
+                if mode == 'timeout-exited':
+                    self.assertNotIn('cleanupErrors', result)
                 self.assertEqual([c.args[0] for c in client.request.call_args_list],
                                  [] if mode == 'attach' else ['journal.replay.begin'])
                 if result.get('applicationLiveLogPath'): Path(result['applicationLiveLogPath']).unlink()

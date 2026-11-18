@@ -305,6 +305,7 @@ class JournalExecutionSession:
             client.disconnect()
             if process is not None:
                 result["applicationPid"] = process.pid
+                termination_timeout = None
                 process.poll()
                 if process.returncode is not None:
                     result.update(success=False, acceptance="failed",
@@ -313,10 +314,17 @@ class JournalExecutionSession:
                     # Only this session's child process. Never search/kill user PIDs.
                     try:
                         _terminate_owned_application(process, result)
-                    except (OSError, subprocess.TimeoutExpired) as exc:
+                    except subprocess.TimeoutExpired as exc:
+                        termination_timeout = str(exc)
+                        result["applicationTerminationTimeout"] = termination_timeout
+                    except OSError as exc:
                         result.setdefault("cleanupErrors", []).append(str(exc))
                 result["applicationExitCode"] = process.poll()
                 result["applicationKeptOpen"] = result["applicationExitCode"] is None
+                # The owned process can exit as the bounded wait expires.
+                # Preserve the deadline miss and block new work if it is still running.
+                if termination_timeout is not None and result["applicationKeptOpen"]:
+                    result.setdefault("cleanupErrors", []).append(termination_timeout)
             if not output_ready:
                 try:
                     if output is None:
