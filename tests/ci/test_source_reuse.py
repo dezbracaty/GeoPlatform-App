@@ -32,7 +32,11 @@ class SourceReuseTests(unittest.TestCase):
         self.git("add", ".")
         self.git("commit", "-qm", "Pinned source")
         self.sha = self.git("rev-parse", "HEAD")
-        self.environment = patch.dict(os.environ, GITHUB_WORKSPACE=str(self.workspace))
+        # Cache fixtures describe their own toolchain, independently of the runner.
+        environment = {key: value for key, value in os.environ.items()
+                       if key.upper() != "QT6_DIR" and not key.upper().startswith("CMAKE_")}
+        environment["GITHUB_WORKSPACE"] = str(self.workspace)
+        self.environment = patch.dict(os.environ, environment, clear=True)
         self.environment.start()
         self.addCleanup(self.environment.stop)
 
