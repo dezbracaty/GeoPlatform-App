@@ -18,6 +18,9 @@ from session_repository import JournalSessionRepository
 from journal_display_profile import (WINDOW_PROFILE, process_environment,
                                      validate_preconditions, wait_for_window)
 
+_OWNED_TERMINATION_INITIAL_WAIT = 5
+_WINDOWS_OWNED_TERMINATION_LIMIT = 15
+
 
 def _macos_bundle_instance(bundle, deadline, expected_pid):
     """Read LaunchServices identity without launching or changing an application."""
@@ -139,7 +142,8 @@ def _terminate_owned_application(process, result):
     # low-priority Ready threads can delay even TerminateProcess completion.
     # Normalize only this exiting child, without changing replay scheduling.
     original = None
-    if sys.platform == "win32":
+    windows = sys.platform == "win32"
+    if windows:
         evidence = result.setdefault("applicationTerminationPriority", {})
         try:
             current = _windows_priority_class(process)
@@ -149,12 +153,27 @@ def _terminate_owned_application(process, result):
                 original = current
                 evidence["temporaryClass"] = 0x20
         except Exception as exc:
-            # Priority adjustment is best effort; the existing termination and
-            # its strict five-second exit check still run and retain failures.
+            # Priority adjustment is best effort. Still try termination and
+            # check the original process handle for exit.
             evidence["error"] = str(exc)
     try:
         process.terminate()
-        process.wait(timeout=5)
+        deadline = time.monotonic() + _WINDOWS_OWNED_TERMINATION_LIMIT
+        try:
+            process.wait(timeout=_OWNED_TERMINATION_INITIAL_WAIT)
+        except subprocess.TimeoutExpired as initial_timeout:
+            if not windows:
+                raise
+            result["applicationTerminationTimeout"] = str(initial_timeout)
+            # TerminateProcess returns before Windows finishes exiting the child.
+            # Keep this replay slot occupied and the child's temporary priority
+            # in effect until the same Popen signals or the hard deadline passes.
+            if process.poll() is None:
+                try:
+                    process.wait(timeout=max(0, deadline - time.monotonic()))
+                except subprocess.TimeoutExpired as hard_timeout:
+                    raise subprocess.TimeoutExpired(
+                        initial_timeout.cmd, _WINDOWS_OWNED_TERMINATION_LIMIT) from hard_timeout
     finally:
         if original is not None and process.poll() is None:
             try:
@@ -316,7 +335,7 @@ class JournalExecutionSession:
                         _terminate_owned_application(process, result)
                     except subprocess.TimeoutExpired as exc:
                         termination_timeout = str(exc)
-                        result["applicationTerminationTimeout"] = termination_timeout
+                        result.setdefault("applicationTerminationTimeout", termination_timeout)
                     except OSError as exc:
                         result.setdefault("cleanupErrors", []).append(str(exc))
                 result["applicationExitCode"] = process.poll()

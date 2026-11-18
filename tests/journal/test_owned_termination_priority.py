@@ -2,6 +2,7 @@
 import subprocess
 import sys
 import tempfile
+from time import monotonic
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -78,14 +79,30 @@ class OwnedTerminationCheck(unittest.TestCase):
         self.assertNotIn('restoredClass', result['applicationTerminationPriority'])
 
     def test_session_final_exit_code_timeout_and_instance_boundaries(self):
-        for mode in ('owned', 'keep', 'attach', 'mac', 'timeout', 'timeout-exited'):
+        for mode in ('owned', 'keep', 'attach', 'mac', 'mac-timeout',
+                     'timeout', 'timeout-exited', 'timeout-exits-during-grace'):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
                 root, process = Path(temporary), self.process()
+                elapsed_during_wait = 0
+                clock = Mock(wraps=sessions.time)
+                clock.monotonic.side_effect = lambda: monotonic() + elapsed_during_wait
                 client = RunnerClient(root)
                 client.connect, client.disconnect = Mock(), Mock()
                 client.request = Mock(side_effect=lambda method, params, **kwargs:
                     {'status': 'ready', 'replayId': params['replayId']})
-                if mode == 'timeout': process.wait.side_effect = subprocess.TimeoutExpired('owned', 5)
+                if mode in ('timeout', 'mac-timeout'):
+                    process.wait.side_effect = subprocess.TimeoutExpired('owned', 5)
+                if mode == 'timeout-exits-during-grace':
+                    stopped = process.wait.side_effect
+                    def exited_in_grace(*, timeout):
+                        nonlocal elapsed_during_wait
+                        if process.wait.call_count == 1:
+                            elapsed_during_wait += timeout
+                            raise subprocess.TimeoutExpired('owned', timeout)
+                        self.assertGreater(timeout, 0)
+                        self.assertLessEqual(timeout, 10)
+                        return stopped()
+                    process.wait.side_effect = exited_in_grace
                 if mode == 'timeout-exited':
                     def exited_at_deadline(**kwargs):
                         process.returncode = 1
@@ -93,28 +110,34 @@ class OwnedTerminationCheck(unittest.TestCase):
                         raise subprocess.TimeoutExpired('owned', 5)
                     process.wait.side_effect = exited_at_deadline
                 journal = write_journal(root/'source.json', [client.entry('action', {'code': 'existing.action'})])
-                with patch.object(sessions.sys, 'platform', 'darwin' if mode == 'mac' else 'win32'), \
+                with patch.object(sessions.sys, 'platform', 'darwin' if mode.startswith('mac') else 'win32'), \
+                        patch.object(sessions, 'time', clock), \
                         patch.object(sessions, 'JournalSystem', return_value=client), \
                         patch.object(sessions.subprocess, 'Popen', return_value=process), \
                         patch.object(sessions, '_windows_priority_class', return_value=0x4000) as priority:
                     result = sessions.JournalExecutionSession().run(journal,
                         application=None if mode == 'attach' else sys.executable,
                         port=9999 if mode == 'attach' else 0, keep_app=mode == 'keep', output_dir=root/'output')
-                if mode in ('keep', 'attach', 'mac'): priority.assert_not_called()
+                if mode in ('keep', 'attach') or mode.startswith('mac'): priority.assert_not_called()
                 if mode in ('keep', 'attach'): process.terminate.assert_not_called()
-                elif mode == 'timeout':
+                elif mode in ('timeout', 'mac-timeout'):
                     self.assertFalse(result['success'])
                     self.assertTrue(result['applicationKeptOpen'])
                     self.assertIsNone(result['applicationExitCode'])
-                    self.assertIn('timed out after 5', ' '.join(result['cleanupErrors']))
+                    deadline = 5 if mode == 'mac-timeout' else 15
+                    self.assertIn(f'timed out after {deadline}', ' '.join(result['cleanupErrors']))
+                    self.assertEqual(process.wait.call_count, 1 if mode == 'mac-timeout' else 2)
                 else:
                     self.assertTrue(result['success'])
                     self.assertEqual(result['applicationExitCode'], 1)
                     self.assertFalse(result['applicationKeptOpen'])
-                if mode.startswith('timeout'):
+                if 'timeout' in mode:
                     self.assertIn('timed out after 5', result['applicationTerminationTimeout'])
-                if mode == 'timeout-exited':
+                if mode in ('timeout-exited', 'timeout-exits-during-grace'):
                     self.assertNotIn('cleanupErrors', result)
+                    process.terminate.assert_called_once()
+                    self.assertEqual(process.wait.call_count, 1 if mode == 'timeout-exited' else 2)
+                    self.assertNotIn('restoredClass', result['applicationTerminationPriority'])
                 self.assertEqual([c.args[0] for c in client.request.call_args_list],
                                  [] if mode == 'attach' else ['journal.replay.begin'])
                 if result.get('applicationLiveLogPath'): Path(result['applicationLiveLogPath']).unlink()
