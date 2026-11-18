@@ -165,6 +165,7 @@ set(_gplatform_libslicer_configure_args
     "-DCMAKE_INSTALL_LIBDIR=lib"
     "-DCMAKE_FETCH_CACHE=${_gplatform_libslicer_fetch_cache}"
     "-DLIBSLICER_BUILD_TESTS=OFF"
+    "-DLIBSLICER_NATIVE_REGRESSION_CMAKE=${GPLATFORM_ORCA_NATIVE_REGRESSION_CMAKE}"
     "-DSLIC3R_PCH=ON")
 
 if(WIN32)

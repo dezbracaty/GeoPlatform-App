@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-import shutil
 import signal
 import subprocess
 import sys
 import time
 
+from build import cache_value
 from common import git_env, text_git, write_json
 
 
@@ -89,7 +89,13 @@ def runtime(source, build, env):
 
 
 def windows_native_environment(provenance, env):
-    """Use the dependency versions this standalone probe actually linked."""
+    """Launch a probe with its own producer or recorded standalone dependencies."""
+    if 'producerRuntimeDirectory' in provenance:
+        directory = Path(provenance['producerRuntimeDirectory']).resolve()
+        for name in ('libslicer.dll', 'TKernel.dll', 'libgmp-10.dll'):
+            if not (directory / name).is_file():
+                raise RuntimeError(f'Native producer runtime is missing {name}: {directory}')
+        return dict(env, PATH=str(directory) + os.pathsep + env.get('PATH', ''))
     dependencies = provenance.get('dependencyCacheValues', {})
     directories = []
     for key, filename in [('OpenCASCADE_DIR', 'TKernel.dll'), ('GMP_LIBRARY', 'libgmp-10.dll')]:
@@ -137,6 +143,7 @@ def architecture(source, arch, output, report, env):
     output.mkdir()
     arguments = ['-DGPLATFORM_BUILD_TESTS=ON', '-DGPLATFORM_BUILD_SDK_CHECKS=ON',
                  '-DJOURNALSYSTEM_BUILD_TESTS=ON', '-DGPLATFORM_ENABLE_ORCA_NATIVE_REGRESSION=OFF',
+                 '-DGPLATFORM_BUILD_ORCA_NATIVE_PROBES=ON',
                  '-DQt6_DIR=' + env['Qt6_DIR'],
                  '-DPython3_EXECUTABLE=' + sys.executable]
     if os.name == 'nt':
@@ -170,20 +177,21 @@ def architecture(source, arch, output, report, env):
     else:
         phase(report, arch + '/ctest', lambda: (_ for _ in ()).throw(RuntimeError('Test build failed; no stale executable used')))
 
-    # Independent native slicer tests still run if product-test compilation failed.
-    native = build / 'ci-orca-native'
+    if not built:
+        return {'returncode': 1}
+
+    native = output / 'native-orca'
     commit = text_git(source / 'App/ThirdParty/OrcaSlicer', 'rev-parse', 'HEAD')
-    args = [sys.executable, Path(__file__).with_name('native_child.py'), 'native', '--source', source,
-            '--work-dir', native,
-            '--source-dir', source / 'App/ThirdParty/OrcaSlicer', '--source-commit', commit,
-            '--jobs', env.get('CMAKE_BUILD_PARALLEL_LEVEL', str(os.cpu_count() or 1)), '--command-timeout', '5400']
-    if os.name != 'nt':
-        args += ['--cmake-arg=-DCMAKE_OSX_ARCHITECTURES=' + arch, '--cmake-arg=-DCMAKE_OSX_DEPLOYMENT_TARGET=15.0']
-    native_ok = phase(report, arch + '/native-orca-build', lambda: {'returncode': command(args, source, env, output / 'native-build.log')})
-    if (native / 'logs').is_dir():
-        shutil.copytree(native / 'logs', output / 'native-logs')
-    if (native / 'provenance.json').is_file():
-        shutil.copy2(native / 'provenance.json', output / 'native-provenance.json')
+
+    def native_checks():
+        producer = Path(cache_value(build, 'GPLATFORM_LIBSLICER_CACHE_ROOT'))
+        build_type = cache_value(build, 'LIBSLICER_BUILD_TYPE')
+        args = [sys.executable, Path(__file__).with_name('native_child.py'), 'native', '--source', source,
+                '--work-dir', native, '--producer-build-dir', producer / ('build-' + build_type),
+                '--source-dir', source / 'App/ThirdParty/OrcaSlicer', '--source-commit', commit]
+        return {'returncode': command(args, source, env, output / 'native-checks.log')}
+
+    native_ok = phase(report, arch + '/native-orca-checks', native_checks)
     if native_ok:
         provenance = json.loads((native / 'provenance.json').read_text(encoding='utf-8'))
         assets = source / 'App/tests/TestAssets/slicing_regression'

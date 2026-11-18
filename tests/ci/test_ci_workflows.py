@@ -186,7 +186,7 @@ class Workflows(unittest.TestCase):
             self.assertIn('-SourceDir $env:CI_SOURCE_DIR', args[-1])
             self.assertIn('-Targets gplatform_sdk_artifacts', args[-1])
             self.assertEqual(json.loads(kwargs['env']['CI_CMAKE_ARGS']),
-                             ['-DGPLATFORM_BUILD_TESTS=OFF'] + (['-DQt6_DIR=' + qt_dir] if qt_dir else []))
+                             ['-DGPLATFORM_BUILD_TESTS=OFF', '-DGPLATFORM_BUILD_ORCA_NATIVE_PROBES=OFF'] + (['-DQt6_DIR=' + qt_dir] if qt_dir else []))
             self.assertNotIn(str(kwargs['cwd']), args[-1])
             if qt_dir:
                 self.assertNotIn(qt_dir, args[-1])
@@ -199,7 +199,7 @@ class Workflows(unittest.TestCase):
                 args, kwargs = calls[index * 2]
                 source = kwargs['cwd']
                 self.assertEqual(args, ['bash', APP / 'scripts/build.sh', '--source-dir', source, '--preset', preset,
-                                       '--configure-only', '--', '-DGPLATFORM_BUILD_TESTS=OFF'] +
+                                       '--configure-only', '--', '-DGPLATFORM_BUILD_TESTS=OFF', '-DGPLATFORM_BUILD_ORCA_NATIVE_PROBES=OFF'] +
                                  (['-DQt6_DIR=' + qt_dir] if qt_dir else []))
                 self.assertEqual(calls[index * 2 + 1][0],
                                  ['cmake', '--build', '--preset', preset, '--target', 'gplatform_sdk_artifacts'])

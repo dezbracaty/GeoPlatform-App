@@ -14,9 +14,12 @@ def attached_build(command, log, timeout, env=None, *, cache_values=None):
     if os.name == 'nt' and Path(str(command[0])).stem.lower() == 'ctest':
         from native_regression import windows_native_environment
         build = Path(command[command.index('--test-dir') + 1])
-        env = windows_native_environment(
-            {'dependencyCacheValues': cache_values(build / 'CMakeCache.txt')},
-            env if env is not None else os.environ)
+        cache = cache_values(build / 'CMakeCache.txt')
+        if cache.get('LIBSLICER_NATIVE_REGRESSION_CMAKE'):
+            provenance = {'producerRuntimeDirectory': str(Path(cache['CMAKE_INSTALL_PREFIX']) / 'bin')}
+        else:
+            provenance = {'dependencyCacheValues': cache}
+        env = windows_native_environment(provenance, env if env is not None else os.environ)
     print('RUN ' + json.dumps(list(map(str, command))), flush=True)
     with Path(log).open('w', encoding='utf-8') as stream:
         process = subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT, env=env)
@@ -42,8 +45,7 @@ def main():
     source = args.source.resolve()
     sys.path.insert(0, str(source / 'scripts'))
     import build_orca_candidate_probe as builder
-    # The builder owns compilation, sources and provenance. Its CTest runs
-    # before provenance exists, so resolve runtime DLLs from that build's cache.
+    # Resolve runtime DLLs for the producer's checks before provenance exists.
     builder.run = partial(attached_build, cache_values=builder.cache_values)
     return builder.main(rest)
 

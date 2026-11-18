@@ -236,6 +236,8 @@ class RegressionTests(unittest.TestCase):
             arguments = json.loads(calls[0][1]['CI_CMAKE_ARGS']) if os.name == 'nt' else calls[0][0]
             self.assertIn('-DPython3_EXECUTABLE=' + sys.executable, arguments)
             self.assertIn('-DJOURNALSYSTEM_BUILD_TESTS=ON', arguments)
+            self.assertIn('-DGPLATFORM_BUILD_ORCA_NATIVE_PROBES=ON', arguments)
+            self.assertEqual(len(calls), 1, 'A failed host build must not start another Orca build')
 
     def test_platform_assets_are_restored_to_source_pin_before_sdk_production(self):
         import contextlib
@@ -272,8 +274,7 @@ class RegressionTests(unittest.TestCase):
                 (assets / name).write_text(json.dumps({'cases': ['one', 'two']}))
             for suite in ('standard', 'extended'):
                 (assets / 'baselines' / suite).mkdir(parents=True)
-            native = source / 'build-arm64-Release/ci-orca-native'
-            native.mkdir(parents=True)
+            native = source / 'evidence/native-orca'
             dependencies = {}
             for key, filename, location in [
                     ('OpenCASCADE_DIR', 'TKernel.dll', 'lib/cmake/occt'),
@@ -282,10 +283,15 @@ class RegressionTests(unittest.TestCase):
                 (prefix / 'bin').mkdir(parents=True)
                 (prefix / 'bin' / filename).write_bytes(b'runtime path fixture; never loaded')
                 dependencies[key] = str(prefix / location)
-            (native / 'provenance.json').write_text(json.dumps({
-                'probe': str(native / 'probe'), 'dependencyCacheValues': dependencies}))
             seen = []
             def compare(args, *rest):
+                if '--producer-build-dir' in args:
+                    self.assertEqual(args[args.index('--producer-build-dir') + 1], source / 'producer/build-Release')
+                    self.assertNotIn('--jobs', args)
+                    native.mkdir()
+                    (native / 'provenance.json').write_text(json.dumps({
+                        'probe': str(native / 'probe'), 'dependencyCacheValues': dependencies}))
+                    return 0
                 catalog = Path(args[args.index('--cases') + 1])
                 baseline = Path(args[args.index('--baseline-dir') + 1])
                 self.assertEqual(catalog.parent, assets)
@@ -299,8 +305,11 @@ class RegressionTests(unittest.TestCase):
             def phase(report, name, operation):
                 if name.endswith('/original48') or name.endswith('/extended26'):
                     self.assertEqual(operation()['returncode'], 0)
-                return name.endswith('/native-orca-build')
+                if name.endswith('/native-orca-checks'):
+                    self.assertEqual(operation()['returncode'], 0)
+                return name.endswith(('/build-tests', '/native-orca-checks'))
             with patch('native_regression.phase', side_effect=phase), patch('native_regression.command', side_effect=compare), \
+                 patch('native_regression.cache_value', side_effect=[str(source / 'producer'), 'Release']), \
                  patch('native_regression.text_git', return_value='a' * 40), patch('native_regression.runtime', return_value={}):
                 regression.architecture(source, 'arm64', source / 'evidence', {'phases': []}, {'Qt6_DIR': '/fixture/Qt'})
             self.assertEqual(seen, [('cases.json', 'standard'), ('cases-extended.json', 'extended')])

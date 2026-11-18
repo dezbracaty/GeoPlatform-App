@@ -20,7 +20,7 @@ SLOTS = {"windows": ("AMD64/Release",), "macos": ("arm64/Release", "x86_64/Relea
 def build_sdk_package(source, platform, package, env):
     """Official preset producer/export used by both SDK publication and source regression."""
     source, package = Path(source).resolve(), Path(package).resolve()
-    arguments = ['-DGPLATFORM_BUILD_TESTS=OFF']
+    arguments = ['-DGPLATFORM_BUILD_TESTS=OFF', '-DGPLATFORM_BUILD_ORCA_NATIVE_PROBES=OFF']
     qt = env.get('Qt6_DIR') or env.get('QT6_DIR')
     if qt:
         arguments.append('-DQt6_DIR=' + qt)
