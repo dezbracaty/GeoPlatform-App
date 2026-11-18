@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import time
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -123,6 +124,42 @@ def load_journal(path):
         if not isinstance(entry["payload"], dict):
             raise JournalFormatError(f"entries[{index}].payload must be an object")
         payload = entry["payload"]
+        if "uiReady" in payload:
+            condition = payload["uiReady"]
+            if (entry["kind"] not in {"verify.screenshot", "verify.db"} or not isinstance(condition, dict) or
+                    not {"timeoutMs", "targets"} <= set(condition) or
+                    set(condition) - {"timeoutMs", "targets", "window"} or
+                    type(condition.get("timeoutMs")) is not int or
+                    not 1 <= condition["timeoutMs"] <= 300000 or
+                    not isinstance(condition.get("targets"), list) or not condition["targets"] or
+                    any(not isinstance(target, dict) or set(target) != {"target", "state"} or
+                        not isinstance(target.get("target"), str) or not target["target"] or
+                        not isinstance(target.get("state"), str) or
+                        target.get("state") not in {"input-ready", "hidden", "absent"}
+                        for target in condition["targets"])):
+                raise JournalFormatError(f"entries[{index}] invalid checkpoint uiReady condition")
+            if "window" in condition:
+                window = condition["window"]
+                if (not isinstance(window, dict) or set(window) != {"objectName"} or
+                        not isinstance(window["objectName"], str) or not window["objectName"]):
+                    raise JournalFormatError(f"entries[{index}] uiReady.window requires objectName")
+            window_name = condition.get("window", WINDOW_PROFILE["window"])["objectName"]
+            for target in condition["targets"]:
+                if target["state"] == "absent" and not any(
+                        prior["kind"] in {"input.mouse", "input.key", "input.wheel"} and
+                        prior["payload"].get("target") == target["target"] and
+                        isinstance(prior["payload"].get("window"), dict) and
+                        prior["payload"]["window"].get("objectName") == window_name
+                        for prior in entries[:index]):
+                    raise JournalFormatError(
+                        f"entries[{index}] absent observation requires earlier real named input to the same window and target")
+        if "readyTimeoutMs" in payload:
+            if (entry["kind"] not in {"input.mouse", "input.key", "input.wheel"} or
+                    not isinstance(payload.get("target"), str) or not payload["target"] or
+                    type(payload["readyTimeoutMs"]) is not int or
+                    not 1 <= payload["readyTimeoutMs"] <= 300000):
+                raise JournalFormatError(
+                    f"entries[{index}] readyTimeoutMs requires named mouse/key/wheel input and an integer from 1 to 300000")
         if entry["kind"] == "action" and not payload.get("code"):
             raise JournalFormatError(f"entries[{index}] action has no code")
         if entry["kind"] == "capture.db":
@@ -317,6 +354,7 @@ class ScreenshotComparisons:
         self._jobs = []
         self._summaries = {}
         self._paths = set()
+        self._submission_lock = threading.Lock()
 
     @staticmethod
     def _compare(expected, actual, diff, preparation_error, exclude_import_progress):
@@ -340,9 +378,10 @@ class ScreenshotComparisons:
         expected = output / "screenshots" / f"screenshot_{index:03d}_expected.png"
         diff = output / "screenshots" / f"screenshot_{index:03d}_diff.png"
         paths = {path.resolve() for path in (expected, actual, diff)}
-        if len(paths) != 3 or self._paths.intersection(paths):
-            raise ValueError("Screenshot output collides with pending comparison evidence")
-        self._paths.update(paths)
+        with self._submission_lock:
+            if len(paths) != 3 or self._paths.intersection(paths):
+                raise ValueError("Screenshot output collides with pending comparison evidence")
+            self._paths.update(paths)
         error = None
         exclude_import_progress = False
         try:
@@ -363,36 +402,44 @@ class ScreenshotComparisons:
         result.update(status="pending", message="Screenshot comparison queued",
                       comparison=dict(status="pending", mode="exact"), evidence=[actual])
         future = self._executor.submit(self._compare, expected, actual, diff, error, exclude_import_progress)
-        self._jobs.append((future, result, str(output.resolve())))
+        with self._submission_lock:
+            self._jobs.append((future, result, str(output.resolve())))
 
     def track(self, summary):
         if any(step.get("status") == "pending" for step in summary["results"]):
-            self._summaries[str(Path(summary["outputPath"]).resolve())] = summary
+            with self._submission_lock:
+                self._summaries[str(Path(summary["outputPath"]).resolve())] = summary
 
-    def collect(self):
-        """Apply completed work without waiting; return changed execution outputs."""
+    def collect(self, outputs=None):
+        """Apply completed comparisons only for outputs whose replay writer has ended."""
         changed = set()
-        for job in self._jobs[:]:
+        with self._submission_lock:
+            jobs = self._jobs[:]
+        for job in jobs:
             future, result, output = job
-            if not future.done():
+            if (outputs is not None and output not in outputs) or not future.done():
                 continue
             try:
                 result.update(future.result())
             except Exception as exc:
                 result.update(status="failed", message=f"Screenshot worker failed: {exc}",
                               comparison=dict(status="failed", mode="exact", error=str(exc)))
-            self._jobs.remove(job)
+            with self._submission_lock:
+                self._jobs.remove(job)
             changed.add(output)
         for output in changed:
-            if output in self._summaries:
-                finish_result(self._summaries[output])
-                if not any(step.get("status") == "pending" for step in self._summaries[output]["results"]):
-                    del self._summaries[output]
+            with self._submission_lock:
+                summary = self._summaries.get(output)
+            if summary is not None:
+                finish_result(summary)
+                if not any(step.get("status") == "pending" for step in summary["results"]):
+                    with self._submission_lock:
+                        self._summaries.pop(output, None)
         return changed
 
-    def close(self, *, wait=True):
+    def close(self):
         """The batch/standalone owner calls this only after replay has ended."""
-        self._executor.shutdown(wait=wait)
+        self._executor.shutdown(wait=True)
         return self.collect()
 
 
@@ -622,7 +669,82 @@ class JournalRunner:
         paths = self.client.paths() if output_dir is None else {}
         return JournalSessionRepository(playbacks=paths.get("playbacks")).create_playback(output_dir)
 
-    def _execute_entry(self, journal_path, output, entry, index, validate):
+    def _wait_for_readiness(self, timeout_ms, cancel_event, details, capability, probe, unavailable):
+        cancelled = cancel_event if cancel_event is not None else threading.Event()
+        started = time.monotonic()
+        deadline = started + timeout_ms / 1000.0
+        details.update(probeCount=0, ready=False,
+                       startedAt=datetime.now().astimezone().isoformat(timespec="microseconds"))
+
+        def request(method, params=None):
+            if cancelled.is_set():
+                raise InterruptedError("Replay cancelled by caller")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("UI readiness deadline exceeded")
+            return self.client.request(method, params, timeout=remaining, cancel_event=cancelled)
+
+        try:
+            capabilities = request("system.version").get("capabilities")
+            if (not isinstance(capabilities, dict) or
+                    capabilities.get(capability) is not True):
+                raise RuntimeError(unavailable)
+            while True:
+                details["probeCount"] += 1
+                ready = probe(request, details)
+                if cancelled.is_set():
+                    raise InterruptedError("Replay cancelled by caller")
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("UI readiness deadline exceeded")
+                if ready:
+                    details["ready"] = True
+                    details["readyAt"] = datetime.now().astimezone().isoformat(timespec="microseconds")
+                    return
+                if cancelled.wait(min(0.05, max(0, deadline - time.monotonic()))):
+                    raise InterruptedError("Replay cancelled by caller")
+        finally:
+            details["waitSeconds"] = time.monotonic() - started
+
+    def _wait_for_input(self, entry, timeout_ms, cancel_event, details):
+        def probe(request, evidence):
+            state = request("journal.entry.execute", {"entry": entry, "checkOnly": True})
+            if type(state.get("ready")) is not bool:
+                raise RuntimeError("Invalid named input readiness response")
+            if not state["ready"]:
+                evidence["reason"] = state.get("reason", "")
+            return state["ready"]
+        self._wait_for_readiness(timeout_ms, cancel_event, details, "namedInputReadiness", probe,
+            "Application does not support named input readiness; no input was dispatched")
+
+    def _wait_for_ui(self, condition, cancel_event, details, *, unavailable=
+                     "Application does not support named target visibility; no screenshot was captured"):
+        def probe(request, evidence):
+            observations = []
+            ready = True
+            for target in condition["targets"]:
+                descriptor = {"target": target["target"],
+                    "window": condition.get("window", WINDOW_PROFILE["window"])}
+                state = request("journal.entry.execute", {"checkOnly": True, "observeTarget": descriptor})
+                if any(type(state.get(field)) is not bool for field in ("exists", "visible", "ready")):
+                    raise RuntimeError("Invalid named target visibility response")
+                if not state["exists"] and (state["visible"] or state["ready"]):
+                    raise RuntimeError("Inconsistent named target visibility response")
+                if target["state"] == "hidden" and not state["exists"]:
+                    raise RuntimeError("Hidden observation target does not exist: " + target["target"])
+                if target["state"] == "input-ready":
+                    satisfied = state["ready"]
+                elif target["state"] == "absent":
+                    satisfied = not state["exists"]
+                else:
+                    satisfied = not state["visible"]
+                ready = ready and satisfied
+                observations.append(dict(target, **state))
+            evidence["observations"] = observations
+            return ready
+        self._wait_for_readiness(condition["timeoutMs"], cancel_event, details, "namedTargetVisibility", probe,
+                                unavailable)
+
+    def _execute_entry(self, journal_path, output, entry, index, validate, *, cancel_event=None):
         result = {"index": index, "kind": entry["kind"],
                   "atMs": entry["atMs"], "status": "passed",
                   "message": "executed", "evidence": []}
@@ -657,6 +779,14 @@ class JournalRunner:
                     if validate:
                         screenshot_standard = self.comparisons.prepare(
                             journal_path, output, entry["payload"], index, screenshot_path)
+                if "readyTimeoutMs" in dispatched["payload"]:
+                    dispatched = copy.deepcopy(dispatched)
+                    timeout_ms = dispatched["payload"].pop("readyTimeoutMs")
+                    self._wait_for_input(dispatched, timeout_ms, cancel_event,
+                                         result.setdefault("inputReadiness", {}))
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise InterruptedError("Replay cancelled by caller")
+                    result["inputReadiness"]["dispatchRequestedAt"] = datetime.now().astimezone().isoformat(timespec="microseconds")
                 self.client.execute_entry(dispatched)
                 if screenshot_path is not None:
                     if not screenshot_path.is_file() or screenshot_path.stat().st_size == 0:
@@ -685,6 +815,13 @@ class JournalRunner:
                 result["status"] = "skipped"
                 result["message"] = "validation disabled by caller"
             elif entry["kind"] == "verify.db":
+                if "uiReady" in entry["payload"]:
+                    self._wait_for_ui(entry["payload"]["uiReady"], cancel_event,
+                        result.setdefault("uiReadiness", {}), unavailable=
+                        "Application does not support named target visibility; no DB state was read")
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise InterruptedError("Replay cancelled by caller")
+                    result["uiReadiness"]["serializeRequestedAt"] = datetime.now().astimezone().isoformat(timespec="microseconds")
                 actual_result = self.client.serialize_db(
                     entry["payload"]["dbInstanceId"])
                 expected_format = entry["payload"]["serializationFormat"]
@@ -715,9 +852,16 @@ class JournalRunner:
                 else:
                     result["message"] = "complete TransDB state matches"
             elif entry["kind"] == "verify.screenshot":
+                if "uiReady" in entry["payload"]:
+                    self._wait_for_ui(entry["payload"]["uiReady"], cancel_event,
+                                      result.setdefault("uiReadiness", {}))
                 actual_path = (
                     output / "screenshots" / f"screenshot_{index:03d}_actual.png")
                 standard = self.comparisons.prepare(journal_path, output, entry["payload"], index, actual_path)
+                if "uiReady" in entry["payload"]:
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise InterruptedError("Replay cancelled by caller")
+                    result["uiReadiness"]["captureRequestedAt"] = datetime.now().astimezone().isoformat(timespec="microseconds")
                 capture = self.client.capture_screenshot()
                 actual_path.write_bytes(capture["png"])
                 self.comparisons.submit(output, standard, actual_path, result)
@@ -759,7 +903,13 @@ class JournalRunner:
                     started = now - scheduled
                 if progress:
                     progress(index, len(document["entries"]), entry)
-                result = self._execute_entry(journal_path, output, entry, index, validate)
+                result = self._execute_entry(journal_path, output, entry, index, validate,
+                    **({"cancel_event": cancel_event} if
+                       "readyTimeoutMs" in entry["payload"] or "uiReady" in entry["payload"] else {}))
+                # Only the explicitly requested readiness wait pauses the
+                # recorded clock, preserving the following press/release gaps.
+                started += result.get("inputReadiness", {}).get("waitSeconds", 0)
+                started += result.get("uiReadiness", {}).get("waitSeconds", 0)
                 summary["results"].append(result)
                 if result["status"] == "failed":
                     break

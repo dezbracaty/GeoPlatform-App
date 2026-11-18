@@ -1,5 +1,9 @@
 #include "ApplicationModuleRegistration.hpp"
 #include "SliceSettingsBridge.hpp"
+#ifdef GPLATFORM_TEST_RENDER_HOST_COMPONENTS
+#include "ScreenshotHandler.hpp"
+#include "OrcaViewNavigator.hpp"
+#endif
 #include "SlicingBackend.hpp"
 #include "ModelPropertyBridge.hpp"
 #include "SelectionBridge.hpp"
@@ -40,6 +44,37 @@ namespace {
 void require(bool ok, const char* message) {
     if (!ok) throw std::runtime_error(message);
 }
+#ifdef GPLATFORM_TEST_RENDER_HOST_COMPONENTS
+void verifyCaptureDispatchesDueAlignment() {
+    QQuickWindow window;
+    window.setFlags(Qt::Window | Qt::WindowDoesNotAcceptFocus);
+    window.resize(176, 176);
+    window.setColor(Qt::white);
+    OrcaViewNavigator cube(window.contentItem());
+    cube.setSize(QSizeF(88, 88));
+    cube.setViewUp({0, 0, 1});
+    cube.setViewDirection({1, 0, 0});
+    window.show();
+    QTest::qWait(280);
+    QCoreApplication::processEvents();
+    const auto aligned = [&] {
+        return (cube.directionAt({44, 16}) - QVector3D(1, 0, 1).normalized()).length() < .001f;
+    };
+    require(aligned(), "Capture fixture did not reach stable aligned navigator");
+    const QImage expected = ScreenshotHandler::captureApplicationWindow();
+    require(!expected.isNull(), "Capture fixture has no rendered pixels");
+
+    cube.setViewDirection({1, 1, 1});
+    cube.setViewDirection({1, 0, 0});
+    // Deliberately block this fixture's event loop beyond the production 140ms
+    // timer. No replay timing or production timer is changed by this check.
+    QTest::qSleep(180);
+    require(!aligned(), "Capture fixture unexpectedly dispatched the due timer");
+    const QImage actual = ScreenshotHandler::captureApplicationWindow();
+    require(aligned(), "Screenshot did not dispatch the already-due navigator alignment");
+    require(actual == expected, "Screenshot captured pixels before the due alignment repaint");
+}
+#endif
 void logGeometry(const char* phase, const QQuickWindow& window, const QQuickItem& bounds,
                  const QQuickItem& panel) {
     const auto rect = [](const QRectF& value) {
@@ -176,6 +211,10 @@ int main(int argc, char** argv) {
             std::cout << "Slicing progress Chinese presentation and source fallback passed\n";
             return 0;
         }
+#ifdef GPLATFORM_TEST_RENDER_HOST_COMPONENTS
+        if (!layoutOnly && !app.arguments().contains("--setting-rejection"))
+            verifyCaptureDispatchesDueAlignment();
+#endif
         auto* settings = SliceSettingsBridge::instance();
         const auto initialLayerHeight = settings->getSetting("layer_height").toDouble();
         require(initialLayerHeight > 0, "No real active configuration");

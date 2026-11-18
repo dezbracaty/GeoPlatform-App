@@ -53,6 +53,16 @@ set_source_files_properties(${_project_catalogs} PROPERTIES GENERATED TRUE)
 qt_add_resources(Model3MFIntegrationCheck "project_i18n"
     PREFIX "/" BASE "${PROJECT_BINARY_DIR}" FILES ${_project_catalogs})
 add_dependencies(Model3MFIntegrationCheck gplatform_i18n_mo)
+if(WIN32 AND GPLATFORM_ENABLE_LIBSLICER)
+    # The production backend resolves presets relative to this test executable.
+    add_custom_target(gplatform_app_test_libslicer_resources
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            "${LIBSLICER_RESOURCE_DIR}"
+            "$<TARGET_FILE_DIR:Model3MFIntegrationCheck>/resources/libslicer"
+        COMMENT "Deploying libslicer resources for App integration checks"
+        VERBATIM)
+    add_dependencies(Model3MFIntegrationCheck gplatform_app_test_libslicer_resources)
+endif()
 add_test(NAME Model3MFIntegrationCheck COMMAND Model3MFIntegrationCheck)
 set_tests_properties(Model3MFIntegrationCheck PROPERTIES TIMEOUT 90)
 
@@ -89,6 +99,15 @@ target_include_directories(FloatingPrintConfigurationCheck PRIVATE
 gplatform_link_registered_modules(FloatingPrintConfigurationCheck)
 target_link_libraries(FloatingPrintConfigurationCheck PRIVATE Qt6::Test Qt6::QuickControls2
     SmoothUIplugin SmoothUIControlsplugin SmoothUIImplplugin)
+if(GPLATFORM_CORE_SOURCE_DIR AND TARGET Render)
+    # Preserve the source-host navigator/capture fixture without exposing
+    # renderer implementation headers to the independent SDK consumer.
+    target_compile_definitions(FloatingPrintConfigurationCheck PRIVATE
+        GPLATFORM_TEST_RENDER_HOST_COMPONENTS=1)
+    target_include_directories(FloatingPrintConfigurationCheck PRIVATE
+        ${GPLATFORM_CORE_SOURCE_DIR}/src/Render/components)
+    target_link_libraries(FloatingPrintConfigurationCheck PRIVATE Render)
+endif()
 set(_floating_catalogs
     "${PROJECT_BINARY_DIR}/i18n/zh_CN/gplatform.mo"
     "${PROJECT_BINARY_DIR}/i18n/zh_CN/libslicer.mo")

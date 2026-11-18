@@ -77,6 +77,8 @@ metadata v3 声明 `id/name/testPurpose/scope/inputs/unverifiedScopes/verificati
 5. 按固定注册表调用公共检查器，并汇总每类必需方法的结果；metadata 不能提供任意脚本或 shell 命令。
 6. 输出每项检查、场景最终结论与批次汇总。每次输出目录必须是新目录。
 
+Journal Web Server 默认并行数为3，可通过`--parallelism`或批次启动前的网页输入配置正整数。首轮全部回放、比较、清理完成后，仅对失败场景完整串行复测一次；不按窗口名强制串行。两轮分别保存在`<run>/<id>`与`<run>/serial-recheck/<id>`，汇总中的`attempts`保留每轮原始结果，`result`指向最后一次结果。复测通过仍保留首轮失败，另标`outcome=passed_after_recheck`；`recheckPassedCount`独立统计。准备阻塞、pending、取消不作为复测失败项，清理失败或程序、部署依赖、输入/标准变化时停止后续执行。CLI 定点默认仍为串行，需显式`--recheck-failed-serial`启用复测。
+
 公共检查器 `gcode-job` 参数化检查层数、立方体尺寸、喷头高度段、耗材、多喷头配置、裙边/擦料塔、
 打印区、温度等待、挤出截面积和包内外 G-code 一致性，作为既有专项检查单独记录，不满足 DB 或截图验收。
 DB 与截图验收分别复用正式 `verify.db` 与 `verify.screenshot`，入口自动纳入方法结果。
@@ -214,16 +216,10 @@ python App/tools/run_acceptance.py --cases <comma-separated-ids> --application <
 Journal 默认录制和回放使用 1382×954 逻辑窗口，保留系统原生 DPR；DPR 2 的整窗截图为
 2764×1908 像素。会话结束恢复原窗口大小、限制及显示状态；窗口放不下时明确失败。
 默认不强制 DPR=1，也不通过缩放补偿重启程序。既有基线的 DPR 不作为启动时强制设置。
-全部 Journal 使用执行电脑预先配置的浅色主题。执行器不读取、切换或校验场景主题，
-环境不符在执行电脑上处理。Windows/macOS 批次启动时保存已有 INI 原始字节，
-全部测试实例结束后才恢复；运行期间不在场景之间改写公共设置文件。
-其他平台可使用 `--settings-file` 指定同一项批次结束恢复操作。
-
-Windows/macOS 共用默认 3 个独立测试实例的调度器，`--jobs 1` 可用于定点串行排障。
-端口、PID、场景输出及导出目录独立，模型和标准资源共用。全部并行实例及后台比较完成后，
-执行／断言失败的场景串行复跑一次；预检阻塞、取消及未验证结果不能因此通过。
-首次失败保存在 `.parallel-failures/<场景>/`，复跑结果留在正常场景目录，
-汇总及场景结果的 `attempts` 同时保留两次结论；复跑仍失败则批次失败。
+批次入口在每个场景启动前按 `preconditions.theme`（`light`／`dark`）准备现有 App INI 的
+`darkMode` 配置；已有相同值时不重写。执行器不备份、恢复或删除 INI，应用保存的配置继续保留。
+Windows/macOS 自动定位该 INI，其他平台使用 `--settings-file`。这是 App 验收侧的环境准备，
+不增加 Journal 主题协议，也不修改系统主题。
 正式截图验收仍比较原始图像，尺寸不同会失败；对照窗口的派生图可跨已知 DPR 展示，
 但不会代替自动验证。更新标准仍需核对独立预期、保留原始证据，并在目标环境的新进程中复跑。
 

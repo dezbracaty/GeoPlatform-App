@@ -9,6 +9,7 @@ import os
 import subprocess
 import time
 import socket
+import threading
 import shutil
 from html.parser import HTMLParser
 from urllib.parse import unquote, urlparse
@@ -48,6 +49,10 @@ class FakeSocket:
     def sendall(self, data):
         self.sent.extend(data)
 
+    def send(self, data):
+        self.sent.extend(data)
+        return len(data)
+
     def gettimeout(self):
         return self.timeout
 
@@ -61,6 +66,67 @@ class FakeSocket:
 def frame(document):
     payload = json.dumps(document, separators=(",", ":")).encode("utf-8")
     return str(len(payload)).encode("ascii") + b":" + payload
+
+
+class JournalTransportRecoveryCheck(unittest.TestCase):
+    def client_with(self, chunks=()):
+        wire = FakeSocket(chunks)
+        wire.close = Mock()
+        client = JournalSystem()
+        client.client = wire
+        return client, wire
+
+    def test_default_timeout_does_not_allow_cleanup_to_read_late_reply(self):
+        client, wire = self.client_with()
+        wire.recv = Mock(side_effect=[socket.timeout("timed out"),
+            frame({"requestId": 1, "success": True, "result": {}})])
+        with self.assertRaises(TimeoutError):
+            client.request("journal.entry.execute", timeout=.01)
+        sent = bytes(wire.sent)
+        self.assertIsNone(client.client)
+        self.assertEqual(client._buffer, bytearray())
+        wire.close.assert_called_once()
+        with self.assertRaises(ConnectionError):
+            client.request("journal.replay.end")
+        self.assertEqual(bytes(wire.sent), sent)
+        self.assertEqual(wire.recv.call_count, 1)
+
+    def test_default_partial_or_invalid_frames_close_uncertain_stream(self):
+        for chunks in ([b"12:{", b""], [b"bad:frame"], [b"1:{"], [b"1:\xff"],
+                       [frame([])], [frame({"requestId": 99, "success": True, "result": {}})]):
+            with self.subTest(chunks=chunks):
+                client, wire = self.client_with(chunks)
+                with self.assertRaises((ConnectionError, RuntimeError, ValueError, UnicodeError)):
+                    client.request("system.version")
+                self.assertIsNone(client.client)
+                self.assertEqual(client._buffer, bytearray())
+                wire.close.assert_called_once()
+
+    def test_default_send_error_closes_connection(self):
+        client, wire = self.client_with()
+        wire.sendall = Mock(side_effect=OSError("send failed after partial write"))
+        with self.assertRaises(OSError):
+            client.request("system.version")
+        self.assertIsNone(client.client)
+        wire.close.assert_called_once()
+
+    def test_complete_business_rejection_preserves_next_request(self):
+        client, wire = self.client_with([
+            frame({"requestId": 1, "success": False, "error": "UI target not found"}),
+            frame({"requestId": 2, "success": True, "result": {"ready": True}})])
+        with self.assertRaisesRegex(RuntimeError, "UI target not found"):
+            client.request("journal.entry.execute")
+        self.assertIs(client.client, wire)
+        self.assertEqual(client.request("system.version"), {"ready": True})
+        wire.close.assert_not_called()
+
+    def test_local_serialization_failure_does_not_close_unsent_request(self):
+        client, wire = self.client_with()
+        with self.assertRaises(TypeError):
+            client.request("system.version", {"invalid": object()})
+        self.assertIs(client.client, wire)
+        self.assertEqual(wire.sent, bytearray())
+        wire.close.assert_not_called()
 
 
 class RunnerClient:
@@ -154,6 +220,374 @@ def restart_probe_directory():
 
 
 class JournalPythonClientCheck(unittest.TestCase):
+    def _run_db_after_done(self, client, *, cancelled=None, ui_ready=True, actual=b'complete-original-db'):
+        expected = b'complete-original-db'
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = {'dbInstanceId': '42', 'serializationFormat': DB_SERIALIZATION_FORMAT,
+                       'expectedSerialized': base64.b64encode(expected).decode('ascii')}
+            if ui_ready:
+                payload['uiReady'] = {'timeoutMs': 100, 'targets': [
+                    {'target': 'paint.done', 'state': 'absent'}]}
+            journal = write_journal(root / 'Journal.json', [
+                JournalSystem.entry('input.mouse', {'window': {'objectName': 'gplatform.main'},
+                    'target': 'paint.done', 'event': 'press', 'button': 1, 'buttons': 1}, 0),
+                JournalSystem.entry('input.mouse', {'window': {'objectName': 'gplatform.main'},
+                    'target': 'paint.done', 'event': 'release', 'button': 1, 'buttons': 0}, 1),
+                JournalSystem.entry('verify.db', payload, 2)])
+            client.serialize_db.return_value = {'serializationFormat': DB_SERIALIZATION_FORMAT,
+                'serialized': base64.b64encode(actual).decode('ascii')}
+            output = JournalSessionRepository(playbacks=root / 'playbacks').create_playback(root / 'result')
+            return JournalRunner(client).run(load_journal(journal), output, cancel_event=cancelled)
+
+    def test_db_absent_wait_is_not_hidden_or_disabled_then_reads_original_bytes_once(self):
+        for actual in (b'complete-original-db', b'wrong-but-finished-db'):
+            client = Mock()
+            client.request.side_effect = [{'capabilities': {'namedTargetVisibility': True}},
+                {'exists': True, 'visible': True, 'ready': False},
+                {'exists': True, 'visible': False, 'ready': False},
+                {'exists': False, 'visible': False, 'ready': False}]
+            cancelled = Mock(); cancelled.is_set.return_value = False; cancelled.wait.return_value = False
+            with patch('journal_runner.time.monotonic', return_value=0):
+                result = self._run_db_after_done(client, cancelled=cancelled, actual=actual)
+            row = result['results'][-1]
+            self.assertEqual(row['status'], 'passed' if actual == b'complete-original-db' else 'failed')
+            self.assertEqual(row['uiReadiness']['probeCount'], 3)
+            self.assertIn('serializeRequestedAt', row['uiReadiness'])
+            client.serialize_db.assert_called_once_with('42')
+            self.assertEqual(client.execute_entry.call_count, 2)
+            self.assertEqual(client.request.call_count, 4)
+
+    def test_db_absent_wait_rejects_no_capability_errors_cancel_and_timeout_without_reading(self):
+        for mode in ('legacy', 'ambiguous', 'cancel', 'timeout'):
+            clock, client, cancelled = [0.0], Mock(), Mock()
+            cancelled.is_set.return_value = False
+            cancelled.wait.side_effect = lambda seconds: (clock.__setitem__(0, clock[0] + seconds) or False)
+            def request(method, *_args, **_kwargs):
+                if method == 'system.version':
+                    return {'capabilities': {} if mode == 'legacy' else {'namedTargetVisibility': True}}
+                if mode == 'ambiguous': raise RuntimeError('Ambiguous UI target')
+                if mode == 'cancel': cancelled.is_set.return_value = True
+                return {'exists': mode == 'timeout', 'visible': False, 'ready': False}
+            client.request.side_effect = request
+            with patch('journal_runner.time.monotonic', side_effect=lambda: clock[0]):
+                result = self._run_db_after_done(client, cancelled=cancelled)
+            self.assertEqual(result['results'][-1]['status'], 'failed')
+            self.assertNotIn('serializeRequestedAt', result['results'][-1]['uiReadiness'])
+            client.serialize_db.assert_not_called()
+            if mode == 'legacy': self.assertEqual(client.request.call_count, 1)
+
+    def test_db_absent_wait_requires_successful_prior_input_and_default_db_has_no_probe(self):
+        client = Mock()
+        client.execute_entry.side_effect = RuntimeError('UI target not found')
+        result = self._run_db_after_done(client)
+        self.assertEqual(len(result['results']), 1)
+        client.request.assert_not_called()
+        client.serialize_db.assert_not_called()
+        client = Mock()
+        result = self._run_db_after_done(client, ui_ready=False)
+        self.assertEqual(result['results'][-1]['status'], 'passed')
+        client.request.assert_not_called()
+        client.serialize_db.assert_called_once_with('42')
+
+    def test_absent_file_contract_requires_earlier_same_explicit_window_named_input(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'Journal.json'
+            checkpoint = {'atMs': 1, 'kind': 'verify.screenshot', 'payload': {'baseline': 'original.png',
+                'uiReady': {'timeoutMs': 100, 'targets': [{'target': 'paint.done', 'state': 'absent'}]}}}
+            for prior in (None,
+                    {'atMs': 0, 'kind': 'action', 'payload': {'code': 'paint.done'}},
+                    {'atMs': 0, 'kind': 'input.mouse', 'payload': {'target': 'paint.done'}},
+                    {'atMs': 0, 'kind': 'input.mouse', 'payload': {'target': 'paint.done', 'window': {'objectName': 'other'}}},
+                    {'atMs': 0, 'kind': 'input.mouse', 'payload': {'target': 'other', 'window': {'objectName': 'gplatform.main'}}}):
+                path.write_text(json.dumps({'formatVersion': 2, 'entries': ([prior] if prior else []) + [checkpoint]}))
+                with self.assertRaisesRegex(JournalFormatError, 'earlier real named input'): load_journal(path)
+            later = {'atMs': 2, 'kind': 'input.mouse', 'payload': {'target': 'paint.done', 'window': {'objectName': 'gplatform.main'}}}
+            path.write_text(json.dumps({'formatVersion': 2, 'entries': [checkpoint, later]}))
+            with self.assertRaisesRegex(JournalFormatError, 'earlier real named input'): load_journal(path)
+
+    def _run_ready_screenshot(self, client, *, cancelled=None, ui_ready=True):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            baseline = root / 'baseline.png'
+            Image.new('RGBA', tuple(WINDOW_PROFILE['logicalSize']), (255, 255, 255, 255)).save(baseline)
+            client.capture_screenshot.return_value = {'png': baseline.read_bytes()}
+            payload = {'baseline': str(baseline), 'tolerance': 1.0}
+            if ui_ready:
+                payload['uiReady'] = {'timeoutMs': 100, 'targets': [
+                    {'target': 'preview.selector', 'state': 'input-ready'},
+                    {'target': 'notification.overlay', 'state': 'hidden'}]}
+            output = JournalSessionRepository(playbacks=root / 'playbacks').create_playback(root / 'result')
+            return JournalRunner(client).run({'journalPath': str(root / 'Journal.json'),
+                'journalSha256': 'test', 'entries': [{'atMs': 0, 'kind': 'verify.screenshot',
+                                                   'payload': payload}]}, output, cancel_event=cancelled)
+
+    def test_ui_observation_has_its_own_capability_and_no_fake_input_or_capture_on_mismatch(self):
+        client = Mock()
+        client.request.return_value = {'capabilities': {'namedInputReadiness': True}}
+        result = self._run_ready_screenshot(client)
+        self.assertIn('no screenshot was captured', result['results'][0]['message'])
+        self.assertEqual([c.args[0] for c in client.request.call_args_list], ['system.version'])
+        client.execute_entry.assert_not_called()
+        client.capture_screenshot.assert_not_called()
+
+    def test_ui_observation_waits_for_actual_hidden_state_then_captures_once(self):
+        client = Mock()
+        available = {'exists': True, 'visible': True, 'ready': True}
+        client.request.side_effect = [{'capabilities': {'namedTargetVisibility': True}}, available,
+            {'exists': True, 'visible': True, 'ready': False}, available,
+            {'exists': True, 'visible': False, 'ready': False}]
+        cancelled = Mock(); cancelled.is_set.return_value = False; cancelled.wait.return_value = False
+        with patch('journal_runner.time.monotonic', return_value=0):
+            result = self._run_ready_screenshot(client, cancelled=cancelled)
+        self.assertEqual(result['results'][0]['status'], 'passed')
+        self.assertEqual(result['results'][0]['uiReadiness']['probeCount'], 2)
+        client.execute_entry.assert_not_called()
+        client.capture_screenshot.assert_called_once()
+        for call in client.request.call_args_list[1:]:
+            self.assertIs(call.args[1]['checkOnly'], True)
+            self.assertEqual(set(call.args[1]), {'checkOnly', 'observeTarget'})
+            self.assertNotIn('entry', call.args[1])
+
+    def test_ui_observation_missing_hidden_invalid_and_cancelled_never_capture(self):
+        for mode in ('missing', 'invalid', 'cancel'):
+            client, cancelled = Mock(), threading.Event()
+            def request(method, params=None, **_kwargs):
+                if method == 'system.version': return {'capabilities': {'namedTargetVisibility': True}}
+                if params['observeTarget']['target'] == 'preview.selector':
+                    return {'exists': True, 'visible': True, 'ready': True}
+                if mode == 'invalid': raise RuntimeError('Ambiguous UI target')
+                if mode == 'cancel': cancelled.set()
+                return {'exists': mode != 'missing', 'visible': False, 'ready': False}
+            client.request.side_effect = request
+            result = self._run_ready_screenshot(client, cancelled=cancelled)
+            self.assertEqual(result['results'][0]['status'], 'failed')
+            self.assertNotIn('captureRequestedAt', result['results'][0]['uiReadiness'])
+            client.execute_entry.assert_not_called()
+            client.capture_screenshot.assert_not_called()
+
+    def test_ui_observation_timeout_and_default_screenshot_policy(self):
+        clock, client, cancelled = [0.0], Mock(), Mock()
+        cancelled.is_set.return_value = False
+        cancelled.wait.side_effect = lambda seconds: (clock.__setitem__(0, clock[0] + seconds) or False)
+        client.request.side_effect = lambda method, *_a, **_k: (
+            {'capabilities': {'namedTargetVisibility': True}} if method == 'system.version' else
+            {'exists': True, 'visible': True, 'ready': True})
+        with patch('journal_runner.time.monotonic', side_effect=lambda: clock[0]):
+            result = self._run_ready_screenshot(client, cancelled=cancelled)
+        self.assertIn('deadline', result['results'][0]['message'])
+        self.assertAlmostEqual(clock[0], .1)
+        client.capture_screenshot.assert_not_called()
+        client = Mock()
+        result = self._run_ready_screenshot(client, ui_ready=False)
+        self.assertEqual(result['results'][0]['status'], 'passed')
+        client.request.assert_not_called()
+        client.capture_screenshot.assert_called_once()
+
+    def test_ui_observation_does_not_retry_a_captured_image_until_it_matches(self):
+        from PIL import Image
+        from io import BytesIO
+        different = BytesIO()
+        image = Image.new('RGBA', tuple(WINDOW_PROFILE['logicalSize']), (255, 255, 255, 255))
+        image.putpixel((0, 0), (0, 0, 0, 255))
+        image.save(different, format='PNG')
+        client = Mock()
+        client.request.side_effect = [{'capabilities': {'namedTargetVisibility': True}},
+            {'exists': True, 'visible': True, 'ready': True},
+            {'exists': True, 'visible': False, 'ready': False}]
+        client.capture_screenshot.side_effect = lambda: {'png': different.getvalue()}
+        with patch('journal_runner.time.monotonic', return_value=0):
+            result = self._run_ready_screenshot(client)
+        self.assertEqual(result['results'][0]['status'], 'failed')
+        self.assertEqual(result['results'][0]['comparison']['differentPixels'], 1)
+        client.capture_screenshot.assert_called_once()
+        self.assertEqual(client.request.call_count, 3)
+
+    def test_ui_observation_cancel_during_standard_preparation_does_not_capture(self):
+        client, cancelled = Mock(), threading.Event()
+        client.request.side_effect = [{'capabilities': {'namedTargetVisibility': True}},
+            {'exists': True, 'visible': True, 'ready': True},
+            {'exists': True, 'visible': False, 'ready': False}]
+        original = ScreenshotComparisons.prepare
+        def prepare(*args, **kwargs):
+            result = original(*args, **kwargs)
+            cancelled.set()
+            return result
+        with patch.object(ScreenshotComparisons, 'prepare', autospec=True, side_effect=prepare):
+            result = self._run_ready_screenshot(client, cancelled=cancelled)
+        self.assertIn('cancelled', result['results'][0]['message'])
+        self.assertNotIn('captureRequestedAt', result['results'][0]['uiReadiness'])
+        client.capture_screenshot.assert_not_called()
+
+    def test_screenshot_ui_ready_contract_is_narrow_and_explicit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'Journal.json'
+            valid = {'timeoutMs': 100, 'targets': [{'target': 'overlay', 'state': 'hidden'}]}
+            invalid = [None, {}, dict(valid, timeoutMs=True), dict(valid, timeoutMs=0),
+                dict(valid, targets=[]), dict(valid, targets=[{'target': 'overlay', 'state': []}]),
+                dict(valid, targets=[{'target': 'overlay', 'state': 'opacity-zero'}]),
+                dict(valid, window={'title': 'any'}), dict(valid, arbitraryProperty='value')]
+            for condition in invalid:
+                path.write_text(json.dumps({'formatVersion': 2, 'entries': [{'atMs': 0,
+                    'kind': 'verify.screenshot', 'payload': {'baseline': 'baseline.png', 'uiReady': condition}}]}))
+                with self.assertRaisesRegex(JournalFormatError, 'uiReady'): load_journal(path)
+            path.write_text(json.dumps({'formatVersion': 2, 'entries': [{'atMs': 0,
+                'kind': 'input.key', 'payload': {'target': 'x', 'uiReady': valid}}]}))
+            with self.assertRaisesRegex(JournalFormatError, 'uiReady'): load_journal(path)
+
+    def _run_ready_input(self, client, *, cancelled=None):
+        with tempfile.TemporaryDirectory() as temporary:
+            return JournalRunner(client).run({"journalPath": "readiness.json", "journalSha256": "test",
+                "entries": [{"atMs": 0, "kind": "input.key", "payload": {
+                    "target": "preview.selector", "event": "press", "key": 16777232,
+                    "readyTimeoutMs": 100}}]}, temporary, cancel_event=cancelled)
+
+    def test_readiness_requires_explicit_capability_before_any_probe_or_input(self):
+        for capabilities in (None, {}, {"namedInputReadiness": 1}, {"namedInputReadiness": "true"}):
+            client = Mock()
+            client.request.return_value = {"capabilities": capabilities}
+            result = self._run_ready_input(client)
+            self.assertEqual(result['results'][0]['status'], 'failed')
+            self.assertIn('does not support', result['results'][0]['message'])
+            self.assertEqual([c.args[0] for c in client.request.call_args_list], ['system.version'])
+            client.execute_entry.assert_not_called()
+
+    def test_readiness_waits_without_dispatch_then_sends_real_input_once(self):
+        client = Mock()
+        client.request.side_effect = [{'capabilities': {'namedInputReadiness': True}},
+                                      {'ready': False}, {'ready': True}]
+        cancelled = Mock()
+        cancelled.is_set.return_value = False
+        cancelled.wait.return_value = False
+        with patch('journal_runner.time.monotonic', return_value=0):
+            result = self._run_ready_input(client, cancelled=cancelled)
+        self.assertEqual(result['results'][0]['status'], 'passed')
+        self.assertEqual(result['results'][0]['inputReadiness']['probeCount'], 2)
+        evidence = result['results'][0]['inputReadiness']
+        self.assertLessEqual(evidence['startedAt'], evidence['readyAt'])
+        self.assertLessEqual(evidence['readyAt'], evidence['dispatchRequestedAt'])
+        client.execute_entry.assert_called_once()
+        sent = client.execute_entry.call_args.args[0]
+        self.assertNotIn('readyTimeoutMs', sent['payload'])
+        for call in client.request.call_args_list[1:]:
+            self.assertIs(call.args[1]['checkOnly'], True)
+            self.assertNotIn('readyTimeoutMs', call.args[1]['entry']['payload'])
+
+    def test_readiness_cancel_and_probe_error_never_dispatch_real_input(self):
+        for mode in ('cancel-before', 'cancel-wait', 'cancel-ready', 'invalid', 'transport'):
+            cancelled = threading.Event()
+            client = Mock()
+            if mode == 'cancel-before': cancelled.set()
+            def request(method, *_args, **_kwargs):
+                if method == 'system.version': return {'capabilities': {'namedInputReadiness': True}}
+                if mode.startswith('cancel-'):
+                    cancelled.set()
+                    return {'ready': mode == 'cancel-ready'}
+                raise RuntimeError('Ambiguous UI target' if mode == 'invalid' else 'Journal connection closed')
+            client.request.side_effect = request
+            result = self._run_ready_input(client, cancelled=cancelled)
+            self.assertEqual(result.get('error') or result['results'][0]['status'],
+                             'Replay cancelled by caller' if mode == 'cancel-before' else 'failed')
+            client.execute_entry.assert_not_called()
+
+    def test_readiness_timeout_and_target_disappearance_do_not_retry_input(self):
+        clock = [0.0]
+        cancelled = Mock()
+        cancelled.is_set.return_value = False
+        cancelled.wait.side_effect = lambda seconds: (clock.__setitem__(0, clock[0] + seconds) or False)
+        client = Mock()
+        client.request.side_effect = lambda method, *_a, **_k: (
+            {'capabilities': {'namedInputReadiness': True}} if method == 'system.version' else {'ready': False})
+        with patch('journal_runner.time.monotonic', side_effect=lambda: clock[0]):
+            result = self._run_ready_input(client, cancelled=cancelled)
+        self.assertIn('deadline', result['results'][0]['message'])
+        self.assertNotIn('dispatchRequestedAt', result['results'][0]['inputReadiness'])
+        self.assertAlmostEqual(clock[0], .1)
+        client.execute_entry.assert_not_called()
+        client = Mock()
+        client.request.side_effect = [{'capabilities': {'namedInputReadiness': True}}, {'ready': True}]
+        client.execute_entry.side_effect = RuntimeError('UI target disappeared')
+        result = self._run_ready_input(client)
+        self.assertEqual(result['results'][0]['status'], 'failed')
+        client.execute_entry.assert_called_once()
+        self.assertEqual(client.request.call_count, 2)
+
+    def test_readiness_wait_preserves_release_and_later_recorded_gaps(self):
+        for key, kind in (('inputReadiness', 'input.key'),
+                          ('uiReadiness', 'verify.screenshot'), ('uiReadiness', 'verify.db')):
+            clock, dispatched = [0.0], []
+            runner = JournalRunner(Mock())
+            entries = [{'atMs': at, 'kind': 'input.key', 'payload': {}} for at in (0, 1, 201)]
+            if key == 'inputReadiness':
+                entries[0]['payload']['readyTimeoutMs'] = 10000
+            else:
+                entries[0].update(kind=kind, payload={'uiReady': {}})
+            def execute(*_args, **_kwargs):
+                dispatched.append(clock[0])
+                if len(dispatched) == 1:
+                    clock[0] += 5
+                    return {'status': 'passed', key: {'waitSeconds': 5}}
+                return {'status': 'passed'}
+            with patch('journal_runner.time.monotonic', side_effect=lambda: clock[0]), \
+                    patch('journal_runner.time.sleep', side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
+                    patch.object(runner, '_execute_entry', side_effect=execute):
+                runner.run({'journalPath': 'case.json', 'journalSha256': 'test', 'entries': entries}, '.')
+            for actual, expected in zip(dispatched, (0, 5.001, 5.201)):
+                self.assertAlmostEqual(actual, expected)
+
+    def test_opt_in_receive_has_absolute_fragment_deadline_and_inflight_cancel(self):
+        for chunks in ([b'1', b'0:', b'0123456789'], [b'10:', b'01234', b'56789'],
+                       [b'10:', b'0123456789']):
+            clock = [0.0]
+            sock = FakeSocket(chunks)
+            original = sock.recv
+            def receive(size):
+                clock[0] += .06
+                return original(size)
+            sock.recv = receive
+            client = JournalSystem(); client.client = sock
+            with patch('journalsystem.journalsystem.time.monotonic', side_effect=lambda: clock[0]):
+                with self.assertRaisesRegex(TimeoutError, 'deadline'):
+                    client.request('system.version', timeout=.1, cancel_event=threading.Event())
+            self.assertIsNone(client.client)
+        cancelled = threading.Event()
+        client = JournalSystem(); client.client = FakeSocket()
+        def cancel_during_receive(_size):
+            cancelled.set()
+            raise socket.timeout()
+        client.client.recv = cancel_during_receive
+        with self.assertRaisesRegex(InterruptedError, 'cancelled'):
+            client.request('system.version', timeout=1, cancel_event=cancelled)
+        self.assertIsNone(client.client)
+
+    def test_opt_in_send_is_bounded_and_partial_frame_is_not_restarted(self):
+        clock = [0.0]
+        sock = FakeSocket()
+        def send_part(data):
+            clock[0] += .06
+            sock.sent.extend(data[:1])
+            return 1
+        sock.send = send_part
+        client = JournalSystem(); client.client = sock
+        with patch('journalsystem.journalsystem.time.monotonic', side_effect=lambda: clock[0]):
+            with self.assertRaisesRegex(TimeoutError, 'deadline'):
+                client.request('system.version', timeout=.1, cancel_event=threading.Event())
+        self.assertIsNone(client.client)
+        self.assertEqual(len(sock.sent), 2)
+
+    def test_readiness_timeout_file_contract_rejects_implicit_or_invalid_waits(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'Journal.json'
+            for value in (True, 0, -1, 1.5, '100', 300001):
+                path.write_text(json.dumps({'formatVersion': 2, 'entries': [{
+                    'atMs': 0, 'kind': 'input.key', 'payload': {'target': 'x', 'readyTimeoutMs': value}}]}))
+                with self.assertRaisesRegex(JournalFormatError, 'readyTimeoutMs'): load_journal(path)
+            for kind, payload in [('action', {'code': 'x'}), ('input.key', {})]:
+                path.write_text(json.dumps({'formatVersion': 2, 'entries': [{
+                    'atMs': 0, 'kind': kind, 'payload': dict(payload, readyTimeoutMs=100)}]}))
+                with self.assertRaisesRegex(JournalFormatError, 'readyTimeoutMs'): load_journal(path)
+
     def test_scene_discovery_rejects_nested_journals_instead_of_omitting_them(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -390,14 +824,14 @@ class JournalPythonClientCheck(unittest.TestCase):
         for actual, expected in zip(dispatched, [0.0, 0.01, 0.02]):
             self.assertAlmostEqual(actual, expected)
 
-    def test_macos_activation_waits_for_owned_registration_without_launching(self):
-        from journal_execution_session import _activate_owned_macos_application
+    def test_macos_registration_waits_for_owned_registration_without_launching(self):
+        from journal_execution_session import _identify_owned_macos_application
         executable = Path("/Applications/Test App.app/Contents/MacOS/Test").resolve()
         process = Mock(pid=123)
         process.poll.return_value = None
         identity = ('{ "CFBundleExecutablePath"="/Applications/Test App.app/Contents/MacOS/Test", '
                     '"LSASN"=ASN:0x0-0x123:, "LSBundlePath"="/Applications/Test App.app", "pid"=123 }\n---\n')
-        replies = ["", "ASN:0x0-0x123:", identity, "", "ASN:0x0-0x123:", identity]
+        replies = ["", "ASN:0x0-0x123:", identity]
         commands = []
         def run(command, **kwargs):
             commands.append(command)
@@ -406,18 +840,39 @@ class JournalPythonClientCheck(unittest.TestCase):
                 patch("journal_execution_session.subprocess.run", side_effect=run), \
                 patch("journal_execution_session.subprocess.Popen") as launch, \
                 patch("journal_execution_session.time.sleep"):
-            result = _activate_owned_macos_application(process, executable, time.monotonic() + 10)
+            result = _identify_owned_macos_application(process, executable, time.monotonic() + 10)
         self.assertEqual(result["pid"], 123)
-        self.assertEqual(result["mechanism"], "LaunchServices.setfront")
-        self.assertEqual([c for c in commands if "setfront" in c],
-                         [["/usr/bin/lsappinfo", "setfront", "#123"]])
+        self.assertEqual(result["mechanism"], "LaunchServices.identity")
+        self.assertFalse(any("setfront" in c for c in commands))
         self.assertTrue(all(c[0] == "/usr/bin/lsappinfo" for c in commands))
         self.assertTrue(all("-all" in c for c in commands if "info" in c))
         launch.assert_not_called()
 
 
-    def test_macos_activation_rejects_ambiguous_or_wrong_identity_before_activation(self):
-        from journal_execution_session import _activate_owned_macos_application
+    def test_serial_activation_only_targets_verified_owned_pid_and_rechecks_identity(self):
+        from journal_execution_session import _identify_owned_macos_application
+        executable = Path('/Applications/Test.app/Contents/MacOS/Test').resolve()
+        process = Mock(pid=123)
+        process.poll.return_value = None
+        identity = dict(pid=123, LSBundlePath=str(executable.parent.parent.parent),
+                        CFBundleExecutablePath=str(executable))
+        for final in (identity, dict(identity, pid=456)):
+            with self.subTest(final=final), \
+                    patch('journal_execution_session.sys.platform', 'darwin'), \
+                    patch('journal_execution_session._macos_bundle_instance', side_effect=[identity, final]), \
+                    patch('journal_execution_session.subprocess.run') as run:
+                if final['pid'] == 123:
+                    result = _identify_owned_macos_application(process, executable,
+                        time.monotonic() + 10, activate=True)
+                    self.assertEqual(result['mechanism'], 'LaunchServices.setfront')
+                else:
+                    with self.assertRaisesRegex(RuntimeError, 'does not match'):
+                        _identify_owned_macos_application(process, executable,
+                            time.monotonic() + 10, activate=True)
+                self.assertEqual(run.call_args.args[0], ['/usr/bin/lsappinfo', 'setfront', '#123'])
+
+    def test_macos_registration_rejects_ambiguous_or_wrong_identity_before_activation(self):
+        from journal_execution_session import _identify_owned_macos_application
         executable = Path("/Applications/Test.app/Contents/MacOS/Test").resolve()
         process = Mock(pid=123)
         process.poll.return_value = None
@@ -438,15 +893,15 @@ class JournalPythonClientCheck(unittest.TestCase):
                 with patch("journal_execution_session.sys.platform", "darwin"), \
                         patch("journal_execution_session.subprocess.run", side_effect=run):
                     with self.assertRaises(RuntimeError):
-                        _activate_owned_macos_application(process, executable, time.monotonic() + 10)
+                        _identify_owned_macos_application(process, executable, time.monotonic() + 10)
 
 
-    def test_macos_activation_child_exit_or_timeout_never_launches_replacement(self):
-        from journal_execution_session import _activate_owned_macos_application
+    def test_macos_registration_child_exit_or_timeout_never_launches_replacement(self):
+        from journal_execution_session import _identify_owned_macos_application
         executable = Path("/Applications/Test.app/Contents/MacOS/Test").resolve()
         identity = ('"pid"=123\n"LSBundlePath"="/Applications/Test.app"\n'
                     '"CFBundleExecutablePath"="/Applications/Test.app/Contents/MacOS/Test"\n')
-        for polls in ([5], [None, 5], [None, None, 5]):
+        for polls in ([5], [None, 5]):
             with self.subTest(polls=polls):
                 process = Mock(pid=123)
                 process.poll.side_effect = polls
@@ -458,47 +913,31 @@ class JournalPythonClientCheck(unittest.TestCase):
                 with patch("journal_execution_session.sys.platform", "darwin"), \
                         patch("journal_execution_session.subprocess.run", side_effect=run):
                     with self.assertRaises(RuntimeError):
-                        _activate_owned_macos_application(process, executable, time.monotonic() + 10)
+                        _identify_owned_macos_application(process, executable, time.monotonic() + 10)
                 self.assertTrue(all(c[0] == "/usr/bin/lsappinfo" for c in commands))
         process = Mock(pid=123)
         process.poll.return_value = None
         with patch("journal_execution_session.sys.platform", "darwin"), \
                 patch("journal_execution_session.subprocess.run") as run:
             with self.assertRaises(TimeoutError):
-                _activate_owned_macos_application(process, executable, time.monotonic() - 1)
+                _identify_owned_macos_application(process, executable, time.monotonic() - 1)
             run.assert_not_called()
 
 
-    def test_activation_leaves_other_platforms_and_unbundled_executables_unchanged(self):
-        from journal_execution_session import _activate_owned_macos_application
+    def test_registration_leaves_other_platforms_and_unbundled_executables_unchanged(self):
+        from journal_execution_session import _identify_owned_macos_application
         for platform, executable in [("linux", "/tmp/Test.app/Contents/MacOS/Test"),
                                      ("win32", "/tmp/Test.app/Contents/MacOS/Test"),
                                      ("darwin", "/tmp/Test")]:
             with self.subTest(platform=platform):
                 with patch("journal_execution_session.sys.platform", platform), \
                         patch("journal_execution_session.subprocess.run") as run:
-                    self.assertIsNone(_activate_owned_macos_application(Mock(), Path(executable), 0))
+                    self.assertIsNone(_identify_owned_macos_application(Mock(), Path(executable), 0))
                     run.assert_not_called()
 
 
-    def test_macos_activation_rechecks_owned_identity_after_setfront(self):
-        from journal_execution_session import _activate_owned_macos_application
-        executable = Path("/Applications/Test.app/Contents/MacOS/Test").resolve()
-        process = Mock(pid=123)
-        process.poll.return_value = None
-        identity = ('"pid"=123\n"LSBundlePath"="/Applications/Test.app"\n'
-                    '"CFBundleExecutablePath"="/Applications/Test.app/Contents/MacOS/Test"\n')
-        for after in ("", "ASN:0x0-0x123: ASN:0x0-0x456:"):
-            replies = ["ASN:0x0-0x123:", identity, "", after] + ([identity, identity] if after else [])
-            with self.subTest(after=after), \
-                    patch("journal_execution_session.sys.platform", "darwin"), \
-                    patch("journal_execution_session.subprocess.run", side_effect=lambda command, **kwargs:
-                          subprocess.CompletedProcess(command, 0, stdout=replies.pop(0))):
-                with self.assertRaises(RuntimeError):
-                    _activate_owned_macos_application(process, executable, time.monotonic() + 10)
-
-    def test_macos_activation_selects_owned_child_while_recording_instance_stays_open(self):
-        from journal_execution_session import _activate_owned_macos_application
+    def test_macos_registration_selects_owned_child_while_recording_instance_stays_open(self):
+        from journal_execution_session import _identify_owned_macos_application
         executable = Path('/Applications/Test.app/Contents/MacOS/Test').resolve()
         process = Mock(pid=123)
         process.poll.return_value = None
@@ -516,13 +955,12 @@ class JournalPythonClientCheck(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0, stdout=value)
         with patch('journal_execution_session.sys.platform', 'darwin'), \
                 patch('journal_execution_session.subprocess.run', side_effect=run):
-            result = _activate_owned_macos_application(process, executable, time.monotonic() + 10)
+            result = _identify_owned_macos_application(process, executable, time.monotonic() + 10)
         self.assertEqual(result['pid'], 123)
-        self.assertEqual([c for c in commands if 'setfront' in c],
-            [['/usr/bin/lsappinfo', 'setfront', '#123']])
+        self.assertFalse(any('setfront' in c for c in commands))
 
 
-    def test_execution_retains_activation_evidence_and_original_readiness_handshake(self):
+    def test_execution_retains_registration_evidence_and_original_readiness_handshake(self):
         from journal_execution_session import JournalExecutionSession
         with tempfile.TemporaryDirectory() as temporary:
             client = RunnerClient(temporary)
@@ -534,14 +972,14 @@ class JournalPythonClientCheck(unittest.TestCase):
             process = Mock(pid=123, returncode=None)
             process.poll.return_value = None
             process.wait.side_effect = lambda **kwargs: setattr(process.poll, "return_value", -15)
-            activation = {"mechanism": "LaunchServices.setfront", "pid": 123}
+            activation = {"mechanism": "LaunchServices.identity", "pid": 123}
             with patch("journal_execution_session.JournalSystem", return_value=client), \
                     patch("journal_execution_session.subprocess.Popen", return_value=process), \
-                    patch("journal_execution_session._activate_owned_macos_application", return_value=activation):
+                    patch("journal_execution_session._identify_owned_macos_application", return_value=activation):
                 result = JournalExecutionSession().run(journal, application=sys.executable)
-            self.assertEqual(result["applicationActivation"], activation)
+            self.assertEqual(result["applicationRegistration"], activation)
             saved = json.loads((Path(result["outputPath"]) / "execution_result.json").read_text(encoding="utf-8"))
-            self.assertEqual(saved["applicationActivation"], activation)
+            self.assertEqual(saved["applicationRegistration"], activation)
             self.assertEqual(client.request.call_args.args[0], "journal.replay.begin")
             self.assertTrue(result["success"])
 
@@ -1026,6 +1464,9 @@ class JournalPythonClientCheck(unittest.TestCase):
                 self.assertIn("--journal-replay-id", command)
                 self.assertEqual(launch.call_args.kwargs["env"]["GPLATFORM_JOURNAL_SESSION"],
                                  "1")
+                if sys.platform == "darwin":
+                    self.assertNotIn("QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM",
+                                     launch.call_args.kwargs["env"])
                 self.assertTrue(client.request.call_args.args[1]["resume"])
                 client.begin_replay.assert_not_called()
                 runner.return_value.play.assert_not_called()
@@ -1040,6 +1481,35 @@ class JournalPythonClientCheck(unittest.TestCase):
                 self.assertEqual(saved["applicationPath"], result["applicationPath"])
                 self.assertEqual(result["applicationPid"], 123)
                 self.assertEqual(saved["applicationPid"], 123)
+
+    def test_child_focus_policy_overrides_ambient_settings_and_matches_activation(self):
+        from journal_execution_session import JournalExecutionSession
+        for background in (True, False):
+            with self.subTest(background=background), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                client = RunnerClient(root)
+                client.connect = Mock()
+                client.disconnect = Mock()
+                client.request = Mock(side_effect=lambda method, params, **kw:
+                    {'status': 'ready', 'replayId': params['replayId']})
+                journal = write_journal(root / 'case.json', [client.entry('action', {'code': 'existing.action'})])
+                process = Mock(pid=123, returncode=None)
+                process.poll.return_value = None
+                process.wait.side_effect = lambda **kw: setattr(process.poll, 'return_value', -15)
+                with patch('journal_execution_session.sys.platform', 'darwin'), \
+                        patch.dict(os.environ, {'QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM': '1'}), \
+                        patch('journal_execution_session.JournalSystem', return_value=client), \
+                        patch('journal_execution_session.subprocess.Popen', return_value=process) as launch, \
+                        patch('journal_execution_session._identify_owned_macos_application', return_value=None) as identify:
+                    result = JournalExecutionSession().run(journal, application=sys.executable,
+                        environment_overrides={'QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM': '1' if background else '0'})
+                self.assertTrue(result['success'])
+                env = launch.call_args.kwargs['env']
+                if background:
+                    self.assertEqual(env['QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM'], '1')
+                else:
+                    self.assertNotIn('QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM', env)
+                self.assertEqual(identify.call_args.kwargs['activate'], not background)
 
     def test_session_applies_scenario_environment_to_its_child(self):
         from journal_execution_session import JournalExecutionSession
@@ -1197,6 +1667,50 @@ class JournalPythonClientCheck(unittest.TestCase):
             self.assertEqual(result["acceptance"], "failed")
             self.assertIn("cancelled", result["error"])
             self.assertEqual(json.loads((root / "result/execution_result.json").read_text(encoding="utf-8"))["acceptance"], "failed")
+
+    def test_interrupted_probe_cleans_owned_child_and_reports_retained_or_attached_replay(self):
+        from journal_execution_session import JournalExecutionSession
+        for mode in ('owned', 'retained', 'attached'):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                client = RunnerClient(root)
+                client.connect = Mock()
+                client.disconnect = Mock(side_effect=lambda: setattr(client, 'client', None))
+                client.request = Mock(side_effect=lambda method, params, **kwargs:
+                    {'status': 'ready', 'replayId': params['replayId']})
+                client.end_replay = Mock(side_effect=ConnectionError('Replay connection closed'))
+                journal = write_journal(root / 'source.json', [
+                    client.entry('input.key', {'target': 'x', 'event': 'press', 'readyTimeoutMs': 100})])
+                process = Mock(pid=123, returncode=None)
+                process.poll.return_value = None
+                process.wait.side_effect = lambda **kwargs: setattr(process.poll, 'return_value', -15)
+                def interrupted(*_args, **kwargs):
+                    client.disconnect()
+                    return {'journalPath': str(journal), 'journalSha256': 'test', 'totalEntries': 1,
+                        'outputPath': str(kwargs['output_dir']), 'results': [{
+                            'index': 1, 'kind': 'input.key', 'atMs': 0, 'status': 'failed',
+                            'message': 'Replay cancelled by caller'}]}
+                with patch('journal_execution_session.JournalSystem', return_value=client), \
+                        patch('journal_execution_session.subprocess.Popen', return_value=process), \
+                        patch('journal_execution_session.JournalRunner') as runner:
+                    runner.return_value.run.side_effect = interrupted
+                    result = JournalExecutionSession().run(journal,
+                        application=None if mode == 'attached' else sys.executable,
+                        port=9999 if mode == 'attached' else 0,
+                        keep_app=mode == 'retained', output_dir=root / 'result')
+                self.assertEqual(result['results'][0]['message'], 'Replay cancelled by caller')
+                if mode == 'owned':
+                    self.assertNotIn('cleanupErrors', result)
+                    self.assertEqual(result['replayCleanup'], 'owned-process-termination')
+                    client.end_replay.assert_not_called()
+                    process.terminate.assert_called_once()
+                    self.assertFalse(result['applicationKeptOpen'])
+                else:
+                    self.assertEqual(result['cleanupErrors'], ['Replay connection closed'])
+                    client.end_replay.assert_called_once()
+                    process.terminate.assert_not_called()
+                if result.get('applicationLiveLogPath'):
+                    Path(result['applicationLiveLogPath']).unlink()
 
     def test_cancel_before_start_never_launches_application(self):
         import threading

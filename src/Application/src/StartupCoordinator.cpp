@@ -34,6 +34,11 @@ StartupCoordinator::~StartupCoordinator() {
     // application and logger still exist; no late callback may create QObjects.
     try { if (m_presetsScheduled) m_presetTask.waitForFinished(); } catch (...) {}
 }
+bool StartupCoordinator::backgroundReplay() const {
+    return m_replayMode &&
+        qEnvironmentVariableIntValue("QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM") == 1;
+}
+
 QString StartupCoordinator::version() const { return QCoreApplication::applicationVersion(); }
 
 void StartupCoordinator::setStage(const QString& stage, const QString& text) {
@@ -88,8 +93,10 @@ void StartupCoordinator::preparePresets(std::function<void()> continuation) {
 void StartupCoordinator::setSplash(QQuickWindow* window) {
     m_splash = window;
     if (!window) { fail(tr("Cannot create the startup window")); return; }
-    window->raise();
-    window->requestActivate();
+    if (!window->flags().testFlag(Qt::WindowDoesNotAcceptFocus)) {
+        window->raise();
+        window->requestActivate();
+    }
     window->update();
     connect(window, &QQuickWindow::sceneGraphError, this,
         [this](QQuickWindow::SceneGraphError, const QString& message) {
@@ -136,8 +143,10 @@ void StartupCoordinator::attachMainWindow(QObject* object) {
 #endif
     if (m_splash) {
         m_splash->setTransientParent(window);
-        m_splash->raise();
-        m_splash->requestActivate();
+        if (!m_splash->flags().testFlag(Qt::WindowDoesNotAcceptFocus)) {
+            m_splash->raise();
+            m_splash->requestActivate();
+        }
     }
     connect(window, &QQuickWindow::sceneGraphError, this,
         [this](QQuickWindow::SceneGraphError, const QString& error) { fail(error); },
@@ -243,6 +252,7 @@ QQuickWindow* StartupCoordinator::mainWindow() const { return m_main.data(); }
 
 void StartupCoordinator::activateMainWindow() {
     if (!ready() || !m_main) return;
+    if (m_main->flags().testFlag(Qt::WindowDoesNotAcceptFocus)) return;
     m_main->setWindowStates(m_main->windowStates() & ~Qt::WindowMinimized);
     m_main->show(); m_main->raise(); m_main->requestActivate();
 }
@@ -263,8 +273,10 @@ void StartupCoordinator::checkFrame() {
     // a gap with no application windows or retain its input/focus ownership.
     if (m_splash) m_splash->hide();
     qGuiApp->setQuitOnLastWindowClosed(true);
-    m_main->raise();
-    m_main->requestActivate();
+    if (!m_main->flags().testFlag(Qt::WindowDoesNotAcceptFocus)) {
+        m_main->raise();
+        m_main->requestActivate();
+    }
     emit startupReady();
 }
 
@@ -280,7 +292,7 @@ void StartupCoordinator::tick() {
         ? m_splash.data() : m_main.data();
     if ((m_stage == "Bootstrap" || m_stage == "FirstFrame" || waitingForShell) && window &&
         window->isExposed() && window->windowState() != Qt::WindowMinimized &&
-        qGuiApp->applicationState() == Qt::ApplicationActive) {
+        (m_replayMode || qGuiApp->applicationState() == Qt::ApplicationActive)) {
         m_waitMs += delta;
         window->update();
         if (m_waitMs >= 30000)

@@ -39,6 +39,14 @@ class ConnectionCodeTests(unittest.TestCase):
         self.assertEqual(error.exception.code, 2)
         create.assert_not_called()
 
+    def test_cli_passes_explicit_assets_to_workbench(self):
+        with patch('journal_server.JournalWorkbench', side_effect=WorkbenchError('stop before serving')) as create, \
+                patch('sys.stderr', new_callable=io.StringIO):
+            with self.assertRaises(SystemExit) as error:
+                server_main(['--assets', 'platform-assets', '--no-browser'])
+        self.assertEqual(error.exception.code, 2)
+        self.assertEqual(create.call_args.kwargs['assets'], Path('platform-assets'))
+
 
 class WorkbenchTests(unittest.TestCase):
     def setUp(self):
@@ -48,7 +56,7 @@ class WorkbenchTests(unittest.TestCase):
         self.program = self.root / 'GPlatform'
         self.program.write_bytes(b'not executed')
         with patch.object(JournalWorkbench, 'load_cases'):
-            self.workbench = JournalWorkbench(self.program, self.root / 'App', output_root=self.root / 'runs')
+            self.workbench = JournalWorkbench(self.program, self.root / 'App', output_root=self.root / 'runs', parallelism=1)
         self.w = self.workbench
         self.w.repository.recordings = self.root / 'recordings'
         self.w.application_hash = hashlib.sha256(self.program.read_bytes()).hexdigest()
@@ -68,14 +76,12 @@ class WorkbenchTests(unittest.TestCase):
 
     def test_selected_batch_uses_formal_entry_and_browser_disconnection_does_not_cancel(self):
         entered, release = threading.Event(), threading.Event()
-        def main(args, *, session_factory, cancel_event, pause_requested, progress, between_cases):
+        def main(args, *, session, progress, between_cases):
             self.assertEqual(args[args.index('--cases') + 1], 'b,a')
             progress(dict(case='b', index=1, total=2, phase='begin'))
             entered.set()
             release.wait(2)
-            self.assertFalse(cancel_event.is_set())
-            self.assertEqual(args[args.index('--jobs') + 1], '3')
-            self.assertIsNot(session_factory('a'), session_factory('b'))
+            self.assertFalse(session.cancel_event.is_set())
             output = Path(args[args.index('--output') + 1])
             self.summary(output, cases=[dict(id='b', status='passed'), dict(id='a', status='passed')])
             return 0
@@ -93,12 +99,44 @@ class WorkbenchTests(unittest.TestCase):
         self.assertEqual(state['task']['state'], 'completed')
         self.assertEqual([r['id'] for r in state['task']['rows']], ['b', 'a'])
 
+    def test_explicit_assets_are_used_for_discovery_execution_and_report(self):
+        assets = self.root / 'windows-assets'
+        scenario = assets / 'scenarios/a'
+        (scenario / 'events').mkdir(parents=True)
+        (assets / 'catalog.json').write_text('{}')
+        (scenario / 'metadata.json').write_text(json.dumps(dict(name='Windows A', acceptanceTarget='platform fixture')))
+        (scenario / 'events/Journal.json').write_text('{"formatVersion":2,"entries":[]}')
+        case = dict(metadata=dict(verification=dict(requiredMethods=['db'])), verificationPlan=dict(checks=[]), hashes={})
+        with patch('journal_workbench.run_acceptance.load_case', return_value=case) as load:
+            self.w = JournalWorkbench(self.program, self.root / 'App', assets=assets,
+                                      output_root=self.root / 'runs', parallelism=1)
+        load.assert_called_once()
+        self.assertEqual(load.call_args.args[:2], (assets, 'a'))
+        self.assertEqual(self.w.repository.scenarios, assets / 'scenarios')
+        self.assertEqual(self.w.state()['config']['assetsRoot'], str(assets))
+        observed = []
+        def main(args, **kwargs):
+            observed.extend(args)
+            self.summary(Path(args[args.index('--output') + 1]), planned=['a'], cases=[dict(id='a', status='passed')])
+            return 0
+        with patch('journal_workbench.run_acceptance.main', side_effect=main):
+            self.w.run(dict(cases=['a']))
+            self.wait()
+        self.assertEqual(observed[observed.index('--assets') + 1], str(assets))
+        summary = json.loads(next((self.root / 'runs').glob('*/summary.json')).read_text())
+        self.assertEqual(summary['assetsRoot'], str(assets))
+
+    def test_assets_default_stays_in_app_and_explicit_invalid_directory_fails(self):
+        self.assertEqual(self.w.assets, self.root / 'App/tests/TestAssets')
+        for assets in (self.root / 'missing', self.root):
+            with self.subTest(assets=assets), self.assertRaises(WorkbenchError):
+                JournalWorkbench(self.program, self.root / 'App', assets=assets)
+
     def test_pause_refreshes_background_comparisons_and_cancel_wakes_boundary(self):
         refreshed = threading.Event()
-        def main(args, *, session_factory, cancel_event, pause_requested, progress, between_cases):
+        def main(args, *, session, progress, between_cases):
             between_cases(refreshed.set)
-            self.assertTrue(cancel_event.is_set())
-            self.assertEqual(args[args.index('--jobs') + 1], '1')
+            self.assertTrue(session.cancel_event.is_set())
             self.summary(Path(args[args.index('--output') + 1]), status='not_verified')
             return 2
         with patch('journal_workbench.run_acceptance.main', side_effect=main):
@@ -110,23 +148,55 @@ class WorkbenchTests(unittest.TestCase):
         self.assertEqual(self.w.task['state'], 'cancelled')
         self.assertTrue(all(row['status'] != 'passed' for row in self.w.state()['task']['rows']))
 
-    def test_task_rows_show_all_active_cases_and_serial_retry_evidence(self):
-        self.w.task.update(state='running', plannedCases=['a', 'b'], activeCases=['a', 'b'],
-                           caseProgress={'a':dict(step=4, totalSteps=10)})
-        rows = self.w.state()['task']['rows']
-        self.assertEqual([row['status'] for row in rows], ['running', 'running'])
-        self.assertEqual(rows[0]['step'], 4)
-
-    def test_selecting_every_case_keeps_full_inventory_scope(self):
-        def main(args, **kwargs):
-            self.assertEqual(args[args.index('--cases') + 1], 'all')
-            self.assertEqual(args[args.index('--jobs') + 1], '3')
-            self.summary(Path(args[args.index('--output') + 1]))
+    def test_server_default_three_is_exposed_and_used_without_browser_override(self):
+        self.w.parallelism = 3
+        observed = []
+        def main(args, *, session, session_factory, **kwargs):
+            observed.extend(args)
+            self.summary(Path(args[args.index('--output') + 1]), planned=['a'], cases=[dict(id='a', status='passed')])
             return 0
         with patch('journal_workbench.run_acceptance.main', side_effect=main):
-            self.w.run(dict(cases=['a', 'b']))
+            self.w.run(dict(cases=['a']))
             self.wait()
-        self.assertEqual(self.w.task['state'], 'completed')
+        self.assertEqual(self.w.state()['config']['parallelism'], 3)
+        self.assertEqual(observed[observed.index('--jobs') + 1], '3')
+        self.assertIn('--recheck-failed-serial', observed)
+        self.assertEqual(self.w.task['parallelism'], 3)
+
+    def test_parallel_batch_tracks_both_sessions_and_shares_cancellation(self):
+        entered, release = threading.Event(), threading.Event()
+        instances = []
+        def main(args, *, session, session_factory, progress, between_cases, pause_requested):
+            self.assertEqual(args[args.index('--jobs') + 1], '2')
+            for index, name in enumerate(('a', 'b'), 1):
+                progress(dict(case=name, index=index, total=2, phase='begin'))
+                instance = session_factory(name)
+                instance.progress(index, 5, dict(kind='input.mouse'))
+                instances.append(instance)
+            entered.set()
+            release.wait(2)
+            self.assertTrue(all(s.cancel_event.is_set() for s in instances))
+            self.summary(Path(args[args.index('--output') + 1]), status='failed')
+            return 1
+        with patch('journal_workbench.run_acceptance.main', side_effect=main):
+            self.w.run(dict(cases=['a', 'b'], parallelism=2))
+            self.assertTrue(entered.wait(2))
+            rows = self.w.state()['task']['rows']
+            self.assertEqual([r['status'] for r in rows], ['running', 'running'])
+            self.assertEqual([r['step'] for r in rows], [1, 2])
+            self.assertIsNot(instances[0], instances[1])
+            self.w.cancel()
+            release.set()
+            self.wait()
+        self.assertEqual(self.w.state()['task']['state'], 'cancelled')
+
+    def test_parallelism_validation_does_not_start_invalid_tasks(self):
+        for value in (0, -1, True, '2'):
+            with self.subTest(value=value), self.assertRaises(WorkbenchError):
+                self.w.run(dict(cases=['a'], parallelism=value))
+        with self.assertRaises(WorkbenchError):
+            self.w.run(dict(cases=['a'], parallelism=2, pauseAfterEach=True))
+        self.assertIsNone(self.w.worker)
 
     def test_default_exports_use_host_temp_and_isolate_repeated_single_case_runs(self):
         self.w.cases[0]['needsExports'] = True
@@ -201,7 +271,7 @@ class WorkbenchTests(unittest.TestCase):
 
     def test_resume_keeps_same_batch_and_boundary_only_pauses_when_requested(self):
         paused, done = threading.Event(), threading.Event()
-        def main(args, *, session_factory, cancel_event, pause_requested, progress, between_cases):
+        def main(args, *, session, progress, between_cases):
             between_cases(paused.set)
             done.set()
             self.summary(Path(args[args.index('--output') + 1]))
@@ -304,6 +374,29 @@ class WorkbenchTests(unittest.TestCase):
         self.assertFalse(result['checkpoints'][0]['canReview'])
         self.assertEqual(json.loads((output / 'summary.json').read_text()), data)
 
+    def test_recheck_result_exposes_both_db_attempts_and_latest_actual_result(self):
+        output = self.w.repository.playbacks / 'session_recheck'
+        attempts = [dict(stage='initial', status='failed', result='a/case_result.json'),
+                    dict(stage='serial-recheck', status='passed', result='serial-recheck/a/case_result.json')]
+        case = dict(id='a', status='passed', outcome='passed_after_recheck', attempts=attempts, result=attempts[-1]['result'])
+        data = self.summary(output, planned=['a'], cases=[case])
+        (output / 'screenshot_review.json').write_text(json.dumps(dict(schemaVersion=1,
+            scope='batch-screenshot-review', runId='test-run', status='passed', cases=[case], checkpoints=[])))
+        for attempt in attempts:
+            directory = (output / attempt['result']).parent
+            directory.mkdir(parents=True)
+            (directory / 'case_result.json').write_text(json.dumps(dict(status=attempt['status'],
+                provenance=dict(applicationSha256=self.w.application_hash, inputs=self.w.case_hashes['a']))))
+            (directory / 'execution_result.json').write_text(json.dumps(dict(results=[dict(index=2,
+                kind='verify.db', status=attempt['status'], evidence=['raw.json'])])))
+            (directory / 'raw.json').write_text(json.dumps(dict(status=attempt['status'])))
+        result = self.w.result(self.w._register_run(output))
+        self.assertEqual([p['automaticStatus'] for p in result['checkpoints']], ['failed', 'passed'])
+        self.assertNotEqual(result['checkpoints'][0]['id'], result['checkpoints'][1]['id'])
+        self.assertIn('serial-recheck', result['checkpoints'][1]['evidence'][0]['url'])
+        self.assertEqual(self.w.state()['cases'][0]['latestStatus'], 'passed')
+        self.assertEqual(self.w.state()['cases'][0]['latestOutcome'], 'passed_after_recheck')
+
     def test_latest_case_result_rejects_changed_binary_or_inputs(self):
         output = self.w.repository.playbacks / 'session_1'
         self.summary(output, cases=[dict(id='a', status='passed')])
@@ -318,6 +411,21 @@ class WorkbenchTests(unittest.TestCase):
         case['provenance']['inputs'] = {'journal': 'changed'}
         case_file.write_text(json.dumps(case))
         self.assertIsNone(self.w.state()['cases'][0]['latestStatus'])
+
+    def test_latest_cleanup_failure_overrides_pass_and_recheck_labels(self):
+        for outcome in ('passed', 'passed_after_recheck'):
+            with self.subTest(outcome=outcome):
+                output = self.w.repository.playbacks / ('session_' + outcome)
+                summary = self.summary(output, planned=['a'], cases=[dict(id='a', status='passed', outcome=outcome)])
+                summary['cleanupError'] = 'Another owned process did not exit'
+                (output / 'summary.json').write_text(json.dumps(summary))
+                (output / 'a').mkdir()
+                (output / 'a/case_result.json').write_text(json.dumps(dict(status='passed', provenance=dict(
+                    applicationSha256=self.w.application_hash, inputs=self.w.case_hashes['a']))))
+                case = self.w.state()['cases'][0]
+                self.assertEqual(case['latestStatus'], 'failed')
+                self.assertEqual(case['latestOutcome'], 'failed')
+                self.assertEqual(case['latestError'], summary['cleanupError'])
 
     def test_active_batch_keeps_upcoming_cases_waiting_in_result_view(self):
         output = self.root / 'run'
