@@ -17,6 +17,9 @@ description: 编写或执行 GPlatform 的真实应用 Journal 验收。先明�
 
 ## 先查已有场景和工具
 
+新增跨平台 Journal 场景遵循 [跨平台场景迁移](../../../docs/acceptance.md#跨平台场景迁移)。
+Mac mini 先验收，Windows 用相同场景 ID 迁入并独立验证平台适配。
+
 查最接近场景的 Journal、metadata、输入资产、预期来源和当前页面/Action；不能只复制旧坐标、DB ID、延迟或截图路径。确定本次需要触发什么、观察什么，以及哪些现有断言已能覆盖。
 优先使用可复用的受控模型、独立参考和现有 JSON/runner/session/repository。增加普通场景只写声明式场景与必要资产，不为每个用例创建专属 Python 执行器、私有 RPC 或另一套报告。
 活动回放必须统一登记为 `scenarios/<id>/events/Journal.json`；禁止在 `replay/` 等嵌套目录留下第二套入口。使用共享 `discover_scenarios()` 检查整库，不以扫描出的数量代替完整性检查；未登记 Journal 必须阻断回归。

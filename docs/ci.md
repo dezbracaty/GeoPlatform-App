@@ -22,6 +22,9 @@
 | windows | windows | AMD64/Release | windows |
 | macos | macos | arm64/Release、x86_64/Release | macmini |
 
+新增 Journal 场景按 [跨平台场景迁移](acceptance.md#跨平台场景迁移) 执行，先在 `macmini` 新增和验收，
+再按场景迁入 `windows`。回归分别以两平台实际冻结的资产 SHA 和场景清单核对覆盖。
+
 SDK 长期使用这两个固定分支，不创建任务 SDK 分支。源码按正常功能分支开发；所有分支在 prepare 一次解析为完整 SHA，后续不重新解析分支头。`platform=all` 两平台独立并行，fail-fast=false；Mac 自身两个薄架构遵循现有标准构建顺序。
 
 App 是被测代码的主身份：先冻结 `app_ref`，再冻结 `host_ref`。完整宿主按选定 Root SHA 检出，`App/` 明确检出本轮 App SHA，不能默认回到 Root 旧 App gitlink。报告同时记录宿主原声明 App gitlink 和实际选定 App SHA；Root 自身源码、App 自身源码及各自依赖分别严格校验。
