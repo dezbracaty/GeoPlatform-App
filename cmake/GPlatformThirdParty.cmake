@@ -35,7 +35,6 @@ foreach(fork OrcaSlicer)
 endforeach()
 
 include(fetch_spdlog)
-include(fetch_eigen3)
 include(fetch_qhull)
 include(fetch_cereal)
 include(fetch_rttr)
@@ -44,8 +43,6 @@ include(fetch_occt)
 if(ENABLE_BREAKPAD)
     include(fetch_breakpad)
 endif()
-set(VTK_VERSION "9.5.0" CACHE STRING "VTK version to use")
-include(fetch_vtk)
 include(fetch_renderer_environment)
 if(GPLATFORM_ENABLE_FILAMENT)
     set(FILAMENT_VERSION "1.75.0" CACHE STRING "Filament version to use")
@@ -99,3 +96,9 @@ elseif(NOT TARGET miniz)
     add_subdirectory("${GPLATFORM_THIRDPARTY_SOURCE_DIR}/OrcaSlicer/deps_src/miniz"
         "${CMAKE_BINARY_DIR}/third_party/miniz" EXCLUDE_FROM_ALL)
 endif()
+
+# Orca resolves Eigen in its own directory before the App defines Eigen3::Eigen.
+include(fetch_eigen3)
+# Run VTK's FindZLIB after Orca has prepared the pinned compression dependencies.
+set(VTK_VERSION "9.5.0" CACHE STRING "VTK version to use")
+include(fetch_vtk)
