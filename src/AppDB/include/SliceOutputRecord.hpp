@@ -33,6 +33,7 @@ struct SliceOutputRecord {
     int displayModelId = -1;
     ToolpathPreviewStats stats;
     bool geometryAvailable = false;
+    bool requiresPreview = false;
     QString previewError;
     QStringList warnings;
     // Calibration outputs retain their native task identity. A shared validity

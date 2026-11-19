@@ -21,6 +21,9 @@ Item {
     property bool resultSubmitted: false
     property bool formContextValid: true
     property bool updatingForm: false
+    property bool fiberForm: form.mode === 14 || form.mode === 15
+    property int fiberSampleCount: 0
+    property bool fiberCanSlice: false
 
     function applyForm(view) {
         formError=Calib.message(view.error)
@@ -35,6 +38,8 @@ Item {
             keys.push(field.key)
         })
         form=view.values
+        fiberSampleCount = view.fiberSampleCount || 0
+        fiberCanSlice = !!view.fiberCanSlice
         if(view.context)context=view.context
         // Keep field rows and unchanged option groups alive across edits and
         // visibility changes. Metadata and values have separate bindings.
@@ -113,7 +118,7 @@ Item {
         parent:QtControls.Overlay.overlay
         preferredWidth:600
         preferredHeight:Math.min(parent?parent.height-32:680,
-            [1,2,3].indexOf(root.form.mode)>=0?(root.form.mode===2?674:558):root.form.mode===5?590:[10,11].indexOf(root.form.mode)>=0?650:root.form.mode===13?320:560)
+            root.form.mode===14?700:root.form.mode===15?240:[1,2,3].indexOf(root.form.mode)>=0?(root.form.mode===2?674:558):root.form.mode===5?590:[10,11].indexOf(root.form.mode)>=0?650:root.form.mode===13?320:560)
         title:Calib.title(root.form.mode)+"校准"
         windowEscapeEnabled:true
         ScrollView {
@@ -124,6 +129,7 @@ Item {
                 width:parent.width
                 spacing:Theme.space12
                 Label {
+                    visible:root.form.mode!==15
                     Layout.fillWidth:true
                     text:(root.context.printer||SliceSettingsBridge.selectedMachineModelId)+" / "+(root.context.material||SliceSettingsBridge.selectedFilamentPresetName)+" · 材料槽 "+(Number(root.context.slot||0)+1)
                     font:Typography.caption;color:Theme.res.textFillColorSecondary;wrapMode:Text.Wrap
@@ -196,6 +202,7 @@ Item {
                                 objectName:"calibrationField_"+fieldRow.definition.key
                                 Layout.preferredWidth:["speeds","accelerations"].indexOf(fieldRow.definition.key)>=0?220:150
                                 horizontalAlignment:Text.AlignRight
+                                placeholderText:fieldRow.definition.key==="trial_spacing"?qsTr("Auto"):""
                                 text:String(root.form[fieldRow.definition.key]===undefined?"":root.form[fieldRow.definition.key])
                                 onTextEdited:root.setValue(fieldRow.definition.key,text)
                                 onActiveFocusChanged:{
@@ -226,11 +233,12 @@ Item {
         }
         footerData:RowLayout {
             anchors.fill:parent;anchors.leftMargin:16;anchors.rightMargin:16
-            Button {flat:true;text:"校准指南";onClicked:Qt.openUrlExternally("https://www.orcaslicer.com/wiki/"+({1:"pressure_advance_calib",2:"pressure_advance_calib",3:"pressure_advance_calib",5:"flow_ratio_calib",6:"temp_calib",7:"volumetric_speed_calib",8:"vfa_calib",9:"retraction_calib",10:"input_shaping_calib",11:"input_shaping_calib",12:"cornering_calib"}[root.form.mode]||"calibration_guide"))}
+            Button {visible:!root.fiberForm;flat:true;text:"校准指南";onClicked:Qt.openUrlExternally("https://www.orcaslicer.com/wiki/"+({1:"pressure_advance_calib",2:"pressure_advance_calib",3:"pressure_advance_calib",5:"flow_ratio_calib",6:"temp_calib",7:"volumetric_speed_calib",8:"vfa_calib",9:"retraction_calib",10:"input_shaping_calib",11:"input_shaping_calib",12:"cornering_calib"}[root.form.mode]||"calibration_guide"))}
+            Label { visible: root.fiberForm && root.fiberSampleCount > 0; text: qsTr("%1 fiber test lines").arg(root.fiberSampleCount) }
             Item {Layout.fillWidth:true}
             Button {visible:!root.formContextValid;text:"重新载入配置";onClicked:root.open(root.form.mode)}
             Button {text:"取消";onClicked:parametersPopup.close()}
-            Button {objectName:"calibrationPrepareButton";text:"准备并切片";highlighted:true;enabled:!TaskStateNotifier.isBusy&&root.formContextValid;onClicked:root.begin()}
+            Button {objectName:"calibrationPrepareButton";text:"准备并切片";highlighted:true;enabled:!TaskStateNotifier.isBusy&&root.formContextValid&&(!root.fiberForm||root.fiberCanSlice);onClicked:root.begin()}
         }
     }
     ContentDialog {

@@ -125,7 +125,8 @@ Item {
                 return
             const modes = {"calibration.pa":3,"calibration.flow":5,"calibration.temperature":6,
                 "calibration.volumetric":7,"calibration.vfa":8,"calibration.retraction":9,
-                "calibration.frequency":10,"calibration.damping":11,"calibration.cornering":12,"calibration.tolerance":13}
+                "calibration.frequency":10,"calibration.damping":11,"calibration.cornering":12,"calibration.tolerance":13,
+                "calibration.fiber.landing":14,"calibration.fiber.temperature":15}
             if (modes[actionCode] !== undefined) {
                 calibrationLoader.active = true
                 const mode = modes[actionCode]
