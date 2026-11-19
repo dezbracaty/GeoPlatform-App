@@ -41,7 +41,9 @@ void PrintBedDB::initializeSubActorProperties() {
     setPickable(false);
 }
 
-void PrintBedDB::afterSubActorPropertiesInitialized() {
+void PrintBedDB::onFullyInitialized() {
+    ActorDB::onFullyInitialized();
+
     // OrcaSlicer dark bed: Bed3D::DEFAULT_MODEL_COLOR_DARK * 0.8.
     auto material = getMaterial();
     if (!material) return;

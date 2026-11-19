@@ -15,6 +15,11 @@ from screenshot_review import checkpoint_declarations, collect_screenshots
 
 
 DEFAULT_PARALLELISM = 3
+SERIAL_RECHECK_STAGES = ('serial-recheck', 'serial-recheck-2')
+
+
+def case_directory(root, name, stage):
+    return (root if stage == 'initial' else root / stage) / name
 
 
 def validate_parallelism(value):
@@ -90,7 +95,7 @@ def main(argv=None, *, session=None, session_factory=None, progress=None, betwee
     parser.add_argument('--jobs', type=int, default=1,
                         help='Maximum simultaneous independent App instances')
     parser.add_argument('--recheck-failed-serial', action='store_true',
-                        help='Re-run failed scenarios once serially after all initial comparisons finish')
+                        help='Re-run remaining failed scenarios serially in up to two rounds')
     parser.add_argument('--capture-candidates', action='store_true',
                         help='Capture DB/screenshots at existing checkpoints for review; never adopts standards or passes formal acceptance')
     parser.add_argument('--output', type=Path)
@@ -228,11 +233,10 @@ def main(argv=None, *, session=None, session_factory=None, progress=None, betwee
         if progress:
             progress(dict(case=name, index=case_index, total=len(selected), phase='begin', stage=stage))
         print('BEGIN ' + name, flush=True)
-        case_output = output / name if stage == 'initial' else output / 'serial-recheck' / name
+        case_output = case_directory(output, name, stage)
         case_exports = args.exports
         if args.exports is not None and (len(selected) > 1 or args.recheck_failed_serial):
-            case_exports = (args.exports / output.name / name if stage == 'initial' else
-                            args.exports / output.name / 'serial-recheck' / name)
+            case_exports = case_directory(args.exports / output.name, name, stage)
             case_exports.mkdir(parents=True, exist_ok=False)
         instance = session_factory(name) if session_factory else session if session is not None else JournalExecutionSession()
         return run_case(args.assets, name, args.application, case_output, case_exports,
@@ -294,7 +298,7 @@ def main(argv=None, *, session=None, session_factory=None, progress=None, betwee
                 while (not errors and not cancelled() and not pause_pending and
                        len(futures) < jobs and index < len(names) and case_theme(names[index]) == theme):
                     name = names[index]
-                    if stage == 'serial-recheck':
+                    if stage in SERIAL_RECHECK_STAGES:
                         first = next(c for c in summary['cases'] if c['id'] == name)['attempts'][0]
                         original = json.loads((output / first['result']).read_text(encoding='utf-8'))
                         if (digest(args.application) != summary['applicationSha256'] or
@@ -315,7 +319,7 @@ def main(argv=None, *, session=None, session_factory=None, progress=None, betwee
                     except Exception as exc:
                         errors.append(exc)
                         continue  # Drain peers and retain their completed evidence.
-                    relative = f'{name}/case_result.json' if stage == 'initial' else f'serial-recheck/{name}/case_result.json'
+                    relative = (case_directory(Path(), name, stage) / 'case_result.json').as_posix()
                     attempt = dict(stage=stage, parallelism=jobs, status=result['status'], result=relative)
                     case = next((c for c in summary['cases'] if c['id'] == name), None)
                     if case is None:
@@ -360,12 +364,17 @@ def main(argv=None, *, session=None, session_factory=None, progress=None, betwee
         run_stage(selected, args.jobs, 'initial')
         failed = [c['id'] for c in summary['cases'] if c['status'] == 'failed']
         summary['initialFailedCases'] = failed
-        if args.recheck_failed_serial and failed and not args.capture_candidates:
-            if between_cases is not None:
-                between_cases(refresh_pending)
-            check_cancelled()
-            comparisons = ScreenshotComparisons()
-            run_stage(failed, 1, 'serial-recheck')
+        if args.recheck_failed_serial and not args.capture_candidates:
+            for stage in SERIAL_RECHECK_STAGES:
+                if not failed:
+                    break
+                if between_cases is not None:
+                    between_cases(refresh_pending)
+                check_cancelled()
+                comparisons = ScreenshotComparisons()
+                run_stage(failed, 1, stage)
+                failed = [c['id'] for c in summary['cases']
+                          if c['attempts'][-1]['stage'] == stage and c['status'] == 'failed']
         summary['stage'] = 'finished'
     except Exception as exc:
         summary.update(status='failed', error=str(exc))

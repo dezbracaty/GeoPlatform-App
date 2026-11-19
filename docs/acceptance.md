@@ -77,7 +77,7 @@ metadata v3 声明 `id/name/testPurpose/scope/inputs/unverifiedScopes/verificati
 5. 按固定注册表调用公共检查器，并汇总每类必需方法的结果；metadata 不能提供任意脚本或 shell 命令。
 6. 输出每项检查、场景最终结论与批次汇总。每次输出目录必须是新目录。
 
-Journal Web Server 默认并行数为3，可通过`--parallelism`或批次启动前的网页输入配置正整数。首轮全部回放、比较、清理完成后，仅对失败场景完整串行复测一次；不按窗口名强制串行。两轮分别保存在`<run>/<id>`与`<run>/serial-recheck/<id>`，汇总中的`attempts`保留每轮原始结果，`result`指向最后一次结果。复测通过仍保留首轮失败，另标`outcome=passed_after_recheck`；`recheckPassedCount`独立统计。准备阻塞、pending、取消不作为复测失败项，清理失败或程序、部署依赖、输入/标准变化时停止后续执行。CLI 定点默认仍为串行，需显式`--recheck-failed-serial`启用复测。
+Journal Web Server 默认并行数为3，可通过`--parallelism`或批次启动前的网页输入配置正整数。首轮全部回放、比较、清理完成后，对失败场景最多串行复测两轮。第二轮仅复测第一轮仍失败的项。三次尝试分别保存在`<run>/<id>`、`<run>/serial-recheck/<id>`和`<run>/serial-recheck-2/<id>`，汇总中的`attempts`保留每轮原始结果，`result`指向最后一次结果。复测通过仍保留首轮失败，另标`outcome=passed_after_recheck`；`recheckPassedCount`独立统计。准备阻塞、pending、取消不作为复测失败项，清理失败或程序、部署依赖、输入/标准变化时停止后续执行。CLI 定点默认仍为串行，需显式`--recheck-failed-serial`启用复测。
 
 公共检查器 `gcode-job` 参数化检查层数、立方体尺寸、喷头高度段、耗材、多喷头配置、裙边/擦料塔、
 打印区、温度等待、挤出截面积和包内外 G-code 一致性，作为既有专项检查单独记录，不满足 DB 或截图验收。

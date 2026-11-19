@@ -372,11 +372,6 @@ set(COMMON_LIBRARIES
 
 list(APPEND COMMON_LIBRARIES Qt6::Multimedia)
 
-if(WIN32 AND TARGET libslicer::libslicer)
-    file(GLOB _libslicer_private_dlls CONFIGURE_DEPENDS
-        "${GPLATFORM_LIBSLICER_INSTALL_DIR}/bin/*.dll")
-endif()
-
 if(GPLATFORM_ENABLE_LIBSLICER)
     if(NOT TARGET libslicer::libslicer)
         message(FATAL_ERROR "GPLATFORM_ENABLE_LIBSLICER is ON, but libslicer::libslicer is unavailable")
@@ -487,64 +482,48 @@ if(GPLATFORM_ENABLE_LIBSLICER)
         endif()
     endif()
 
-    # A runtime- or profile-only edit may not relink the application. Track
-    # both inputs so the existing deployment task also updates the runnable
-    # bundle when POST_BUILD does not run.
-    file(GLOB_RECURSE _gplatform_libslicer_runtime_resources
-        CONFIGURE_DEPENDS LIST_DIRECTORIES FALSE
-        "${LIBSLICER_RESOURCE_DIR}/*")
+    # A resource-only edit also refreshes the existing runnable application.
     set(_gplatform_libslicer_resource_stamp
         "${CMAKE_CURRENT_BINARY_DIR}/libslicer-runtime-resources.stamp")
-    set(_gplatform_libslicer_private_commands "")
-    if(_libslicer_private_dlls)
-        list(APPEND _gplatform_libslicer_private_commands
+    if(WIN32)
+        set(_gplatform_libslicer_runtime_copy
+            COMMAND "${CMAKE_COMMAND}" -E copy_directory
+                "${GPLATFORM_LIBSLICER_RUNTIME_DIR}" "${_gplatform_libslicer_runtime_dir}")
+    else()
+        set(_gplatform_libslicer_runtime_copy
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                ${_libslicer_private_dlls} "${_gplatform_libslicer_runtime_dir}")
+                "$<TARGET_FILE:libslicer::libslicer>"
+                "${_gplatform_libslicer_runtime_dir}/$<TARGET_FILE_NAME:libslicer::libslicer>")
     endif()
     add_custom_command(
         OUTPUT "${_gplatform_libslicer_resource_stamp}"
         COMMAND "${CMAKE_COMMAND}" -E remove_directory
-            "${_gplatform_libslicer_resource_dir}/profiles/CFSYS"
-        COMMAND "${CMAKE_COMMAND}" -E copy_directory
-            "${LIBSLICER_RESOURCE_DIR}"
             "${_gplatform_libslicer_resource_dir}"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory
-            "${_gplatform_libslicer_runtime_dir}"
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-            "$<TARGET_FILE:libslicer::libslicer>"
-            "${_gplatform_libslicer_runtime_dir}/$<TARGET_FILE_NAME:libslicer::libslicer>"
-        ${_gplatform_libslicer_private_commands}
-        COMMAND "${CMAKE_COMMAND}" -E touch
-            "${_gplatform_libslicer_resource_stamp}"
-        DEPENDS ${_gplatform_libslicer_runtime_resources}
-            ${_libslicer_private_dlls} "$<TARGET_FILE:libslicer::libslicer>"
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            "${LIBSLICER_RESOURCE_DIR}" "${_gplatform_libslicer_resource_dir}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${_gplatform_libslicer_runtime_dir}"
+        ${_gplatform_libslicer_runtime_copy}
+        COMMAND "${CMAKE_COMMAND}" -E touch "${_gplatform_libslicer_resource_stamp}"
+        DEPENDS gplatform_libslicer_install "${GPLATFORM_LIBSLICER_INSTALL_STAMP}"
         COMMENT "Deploying updated libslicer runtime and preset resources"
         VERBATIM)
     add_custom_target(${PROJECT_NAME}_libslicer_resources
         DEPENDS "${_gplatform_libslicer_resource_stamp}")
     add_dependencies(${PROJECT_NAME} ${PROJECT_NAME}_libslicer_resources)
 
-    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND "${CMAKE_COMMAND}" -E make_directory
-            "${_gplatform_libslicer_runtime_dir}"
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-            "$<TARGET_FILE:libslicer::libslicer>"
-            "${_gplatform_libslicer_runtime_dir}/$<TARGET_FILE_NAME:libslicer::libslicer>"
-        COMMAND "${CMAKE_COMMAND}" -E copy_directory
-            "${LIBSLICER_RESOURCE_DIR}"
-            "${_gplatform_libslicer_resource_dir}"
-        COMMENT "Deploying libslicer runtime and owned preset resources"
-        VERBATIM)
-
     if(APPLE)
-        install(IMPORTED_RUNTIME_ARTIFACTS libslicer::libslicer
-            LIBRARY DESTINATION "${PROJECT_APP_NAME}.app/Contents/Frameworks")
+        install(FILES "${GPLATFORM_LIBSLICER_INSTALL_DIR}/${CMAKE_INSTALL_LIBDIR}/$<TARGET_FILE_NAME:libslicer::libslicer>"
+            DESTINATION "${PROJECT_APP_NAME}.app/Contents/Frameworks")
         install(DIRECTORY "${LIBSLICER_RESOURCE_DIR}/"
             DESTINATION "${PROJECT_APP_NAME}.app/Contents/Resources/libslicer")
     else()
-        install(IMPORTED_RUNTIME_ARTIFACTS libslicer::libslicer
-            RUNTIME DESTINATION "."
-            LIBRARY DESTINATION ".")
+        if(WIN32)
+            install(DIRECTORY "${GPLATFORM_LIBSLICER_RUNTIME_DIR}/"
+                DESTINATION "." FILES_MATCHING PATTERN "*.dll")
+        else()
+            install(FILES "${GPLATFORM_LIBSLICER_INSTALL_DIR}/${CMAKE_INSTALL_LIBDIR}/$<TARGET_FILE_NAME:libslicer::libslicer>"
+                DESTINATION ".")
+        endif()
         install(DIRECTORY "${LIBSLICER_RESOURCE_DIR}/"
             DESTINATION "resources/libslicer")
     endif()
@@ -569,9 +548,9 @@ if(WIN32)
             list(APPEND commands COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${RTTR_DLL_LOCATION}" "${destination}")
         endif()
-        if(_libslicer_private_dlls)
-            list(APPEND commands COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                ${_libslicer_private_dlls} "${destination}")
+        if(GPLATFORM_ENABLE_LIBSLICER)
+            list(APPEND commands COMMAND "${CMAKE_COMMAND}" -E copy_directory
+                "${GPLATFORM_LIBSLICER_RUNTIME_DIR}" "${destination}")
         endif()
         if(COMMAND gplatform_get_sdk_runtime_files)
             gplatform_get_sdk_runtime_files(sdk_runtime)

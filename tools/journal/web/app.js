@@ -223,8 +223,9 @@
       headline = '并行回放 · ' + active.length + ' / ' + task.parallelism;
       subtitle = active.map(r => (caseById(r.id)?.name || r.id) + (r.totalSteps ? ' · ' + r.step + '/' + r.totalSteps : '')).join('；') || '正在比较或准备下一组';
     }
-    if (running && task.stage === 'serial-recheck' && task.state === 'running') {
-      headline = '失败场景串行复测';
+    const recheckRound = { 'serial-recheck': 1, 'serial-recheck-2': 2 }[task.stage];
+    if (running && recheckRound && task.state === 'running') {
+      headline = '失败场景串行复测 · 第 ' + recheckRound + ' 轮';
       subtitle = (task.case ? (caseById(task.case)?.name || task.case) : '') + (task.totalSteps ? ' · 步骤 ' + task.step + '/' + task.totalSteps : '');
     }
     const rechecked = rows.filter(r => r.outcome === 'passed_after_recheck').length;

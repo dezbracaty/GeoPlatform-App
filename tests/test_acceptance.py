@@ -674,25 +674,27 @@ class AcceptanceCheck(unittest.TestCase):
         self.assertEqual(peak[0], 2)
         self.assertEqual(read_json(output / 'summary.json')['completedCaseCount'], 2)
 
-    def test_serial_recheck_runs_only_failed_cases_once_and_preserves_both_reports(self):
+    def test_two_serial_rechecks_only_retry_remaining_failures(self):
         import run_acceptance
         import shutil
         import collections
         from unittest.mock import patch
         self.metadata.update(artifacts={}, checks=[])
         self.save_metadata()
-        for name in ('job2', 'job3'):
+        for name in ('job2', 'job3', 'job4'):
             shutil.copytree(self.scenario, self.assets / 'scenarios' / name)
             write_json(self.assets / 'scenarios' / name / 'metadata.json', dict(self.metadata, id=name))
         counts = collections.Counter()
         instances = []
         output = self.root / 'recheck'
+        exports = self.root / 'exports'
         def factory(name):
             counts[name] += 1
             if counts[name] > 1:
                 self.assertEqual(counts['job3'], 1, 'Recheck started before initial replay drained')
                 self.assertEqual(read_json(output / 'job/case_result.json')['status'], 'failed')
-            failed = name == 'job2' or (name == 'job' and counts[name] == 1)
+            failed = (name == 'job4' or (name == 'job2' and counts[name] < 3) or
+                      (name == 'job' and counts[name] == 1))
             instance = SessionFixture(overrides=dict(success=not failed, acceptance='failed' if failed else 'passed',
                 error='controlled failure') if failed else {})
             instances.append((counts[name], instance))
@@ -700,18 +702,18 @@ class AcceptanceCheck(unittest.TestCase):
         events = []
         with patch('builtins.print'), patch('run_acceptance.sys.platform', 'darwin'):
             code = run_acceptance.main(['--assets', str(self.assets), '--application', str(self.application),
-                '--cases', 'all', '--jobs', '3', '--recheck-failed-serial', '--output', str(output)],
-                session_factory=factory, progress=events.append)
+                '--cases', 'all', '--jobs', '3', '--recheck-failed-serial', '--output', str(output),
+                '--exports', str(exports)], session_factory=factory, progress=events.append)
         for attempt, instance in instances:
             self.assertEqual(instance.environments, [dict(
                 QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM='1' if attempt == 1 else '0')])
-        self.assertEqual(len({id(instance.environments[0]) for _, instance in instances}), 5)
+        self.assertEqual(len({id(instance.environments[0]) for _, instance in instances}), 9)
         summary = read_json(output / 'summary.json')
         self.assertEqual(code, 1, summary)
-        self.assertEqual(dict(counts), dict(job=2, job2=2, job3=1))
-        self.assertEqual(summary['initialFailedCases'], ['job', 'job2'])
-        self.assertEqual(summary['recheckPassedCount'], 1)
-        self.assertEqual(summary['completedCaseCount'], 3)
+        self.assertEqual(dict(counts), dict(job=2, job2=3, job3=1, job4=3))
+        self.assertEqual(summary['initialFailedCases'], ['job', 'job2', 'job4'])
+        self.assertEqual(summary['recheckPassedCount'], 2)
+        self.assertEqual(summary['completedCaseCount'], 4)
         self.assertTrue(summary['runComplete'])
         recovered = summary['cases'][0]
         self.assertEqual(recovered['status'], 'passed')
@@ -720,13 +722,25 @@ class AcceptanceCheck(unittest.TestCase):
         self.assertEqual([a['parallelism'] for a in recovered['attempts']], [3, 1])
         self.assertEqual(read_json(output / 'job/case_result.json')['status'], 'failed')
         self.assertEqual(read_json(output / recovered['result'])['status'], 'passed')
-        self.assertEqual([e['case'] for e in events if e.get('stage') == 'serial-recheck' and e['phase'] == 'begin'], ['job', 'job2'])
+        self.assertEqual([(e['stage'], e['case']) for e in events
+                          if e['stage'] != 'initial' and e['phase'] == 'begin'],
+                         [('serial-recheck', 'job'), ('serial-recheck', 'job2'), ('serial-recheck', 'job4'),
+                          ('serial-recheck-2', 'job2'), ('serial-recheck-2', 'job4')])
+        second, persistent = summary['cases'][1], summary['cases'][3]
+        self.assertEqual(second['result'], 'serial-recheck-2/job2/case_result.json')
+        self.assertEqual([a['status'] for a in second['attempts']], ['failed', 'failed', 'passed'])
+        self.assertEqual([a['status'] for a in persistent['attempts']], ['failed', 'failed', 'failed'])
+        for relative in ('job2', 'serial-recheck/job2', 'serial-recheck-2/job2'):
+            self.assertTrue((exports / output.name / relative).is_dir())
         from review_model import ReviewBatch
         document = ReviewBatch(output).document
         self.assertEqual(document['cases'][0]['result'], recovered['result'])
-        self.assertIn('serial-recheck/job/case_report.html', (output / 'report.html').read_text())
+        html = (output / 'report.html').read_text(encoding='utf-8')
+        self.assertIn('serial-recheck/job/case_report.html', html)
+        self.assertIn('serial-recheck-2/job2/case_report.html', html)
+        self.assertIn('串行复测第 2 轮', html)
 
-    def test_serial_recheck_waits_for_pixels_and_keeps_both_image_attempts(self):
+    def test_serial_rechecks_wait_for_pixels_and_keep_all_image_attempts(self):
         import run_acceptance
         import threading
         from io import BytesIO
@@ -738,49 +752,51 @@ class AcceptanceCheck(unittest.TestCase):
         Image.new('RGBA', (8, 8), 'white').save(self.assets / 'approved.png')
         write_json(self.scenario / 'events/Journal.json', dict(formatVersion=2, entries=[
             dict(atMs=0, kind='verify.screenshot', payload=dict(baseline='../../../approved.png'))]))
-        released, completed = threading.Event(), threading.Event()
+        released = {directory: threading.Event() for directory in ('job', 'serial-recheck')}
         original_compare = ScreenshotComparisons._compare
         output = self.root / 'pending-recheck'
         attempts = []
         def compare(expected, actual, *args):
-            if 'serial-recheck' not in str(actual):
-                self.assertTrue(released.wait(3), 'Comparison must run behind replay')
-            result = original_compare(expected, actual, *args)
-            completed.set()
-            return result
+            directory = Path(actual).relative_to(output).parts[0]
+            if directory in released:
+                self.assertTrue(released[directory].wait(3), 'Comparison must run behind replay')
+            return original_compare(expected, actual, *args)
         class ReplaySession:
             def run(inner, journal, *, output_dir, comparisons, **kwargs):
-                serial = 'serial-recheck' in output_dir.parts
-                if serial:
-                    self.assertTrue(completed.is_set())
-                    self.assertEqual(read_json(output / 'job/case_result.json')['status'], 'failed')
-                attempts.append(serial)
+                relative = output_dir.relative_to(output)
+                if attempts:
+                    self.assertEqual(read_json(output / attempts[-1] / 'case_result.json')['status'], 'failed')
+                attempts.append(relative)
                 (output_dir / 'screenshots').mkdir(parents=True)
                 (output_dir / 'reports').mkdir()
-                image = Image.new('RGBA', (8, 8), 'white' if serial else 'black')
+                image = Image.new('RGBA', (8, 8), 'white' if relative.parts[0] == 'serial-recheck-2' else 'black')
                 png = BytesIO()
                 image.save(png, format='PNG')
                 client = Mock()
                 client.capture_screenshot.return_value = dict(png=png.getvalue())
                 return finish_result(JournalRunner(client, comparisons=comparisons).run(formal_loader(journal), output_dir))
         def progress(event):
-            if event['phase'] == 'end' and event['stage'] == 'initial':
-                self.assertEqual(read_json(output / 'job/case_result.json')['status'], 'pending')
-                released.set()
+            if event['phase'] == 'end':
+                relative = attempts[-1]
+                directory = relative.parts[0]
+                if directory in released:
+                    self.assertEqual(read_json(output / relative / 'case_result.json')['status'], 'pending')
+                    released[directory].set()
         with patch.object(ScreenshotComparisons, '_compare', side_effect=compare), patch('builtins.print'):
             code = run_acceptance.main(['--assets', str(self.assets), '--application', str(self.application),
                 '--cases', 'job', '--jobs', '3', '--recheck-failed-serial', '--output', str(output)],
                 session_factory=lambda _: ReplaySession(), progress=progress)
         self.assertEqual(code, 0, read_json(output / 'summary.json'))
-        self.assertEqual(attempts, [False, True])
+        self.assertEqual(attempts, [Path('job'), Path('serial-recheck/job'), Path('serial-recheck-2/job')])
         summary = read_json(output / 'summary.json')
         self.assertEqual(summary['recheckPassedCount'], 1)
         manifest = read_json(output / 'screenshot_review.json')
         rows = manifest['checkpoints']
-        self.assertEqual(len(rows), 2)
-        self.assertNotEqual(rows[0]['id'], rows[1]['id'])
-        self.assertEqual([r['executionStatus'] for r in rows], ['failed', 'passed'])
-        self.assertEqual([r['attemptStage'] for r in rows], ['initial', 'serial-recheck'])
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(len({row['id'] for row in rows}), 3)
+        self.assertEqual([r['executionStatus'] for r in rows], ['failed', 'failed', 'passed'])
+        self.assertEqual([r['attemptStage'] for r in rows], ['initial', 'serial-recheck', 'serial-recheck-2'])
+        self.assertIn('串行复测第 2 轮', rows[2]['label'])
         self.assertTrue(all((output / r['actual']).is_file() for r in rows))
 
     def test_changed_program_prevents_serial_recheck(self):
@@ -802,7 +818,7 @@ class AcceptanceCheck(unittest.TestCase):
         self.assertIn('changed before serial recheck', read_json(output / 'summary.json')['error'])
         self.assertFalse((output / 'serial-recheck').exists())
 
-    def test_changed_deployed_library_prevents_serial_recheck(self):
+    def test_changed_deployed_library_prevents_second_serial_recheck(self):
         import run_acceptance
         from unittest.mock import patch
         self.metadata.update(artifacts={}, checks=[])
@@ -811,7 +827,7 @@ class AcceptanceCheck(unittest.TestCase):
         library.write_bytes(b'original runtime library')
         instance = SessionFixture(overrides=dict(success=False, acceptance='failed'))
         def progress(event):
-            if event['phase'] == 'end':
+            if event['phase'] == 'end' and event['stage'] == 'serial-recheck':
                 library.write_bytes(b'changed runtime library')
         output = self.root / 'changed-library'
         with patch('builtins.print'):
@@ -819,7 +835,8 @@ class AcceptanceCheck(unittest.TestCase):
                 '--cases', 'job', '--recheck-failed-serial', '--output', str(output)],
                 session=instance, progress=progress)
         self.assertEqual(code, 1)
-        self.assertEqual(instance.calls, 1)
+        self.assertEqual(instance.calls, 2)
+        self.assertFalse((output / 'serial-recheck-2').exists())
         self.assertIn('changed before serial recheck', read_json(output / 'summary.json')['error'])
 
     def test_fallback_report_links_both_attempts(self):
@@ -886,33 +903,36 @@ class AcceptanceCheck(unittest.TestCase):
         self.assertEqual(summary['cases'][0]['status'], 'passed')
         self.assertEqual(summary['error'], 'worker startup failed')
 
-    def test_cancelled_or_unclean_batch_does_not_start_serial_recheck(self):
+    def test_cancelled_or_unclean_batch_stops_before_the_next_round(self):
         import run_acceptance
         import threading
         from unittest.mock import patch
         self.metadata.update(artifacts={}, checks=[])
         self.save_metadata()
-        for mode in ('cancel', 'cleanup'):
-            with self.subTest(mode=mode):
+        for mode, stop_attempt in (('cancel', 1), ('cleanup', 1), ('cancel', 2), ('cleanup', 2)):
+            with self.subTest(mode=mode, stop_attempt=stop_attempt):
                 control = SessionFixture()
                 control.cancel_event = threading.Event()
                 instances = []
                 def factory(name):
-                    instance = SessionFixture(overrides=dict(success=False, acceptance='failed',
-                        cleanupErrors=['owned process did not exit']) if mode == 'cleanup' else dict(success=False, acceptance='failed'))
+                    overrides = dict(success=False, acceptance='failed')
+                    if mode == 'cleanup' and len(instances) + 1 == stop_attempt:
+                        overrides['cleanupErrors'] = ['owned process did not exit']
+                    instance = SessionFixture(overrides=overrides)
                     instances.append(instance)
                     return instance
                 def progress(event):
-                    if mode == 'cancel' and event['phase'] == 'end':
+                    if mode == 'cancel' and event['phase'] == 'end' and len(instances) == stop_attempt:
                         control.cancel_event.set()
-                output = self.root / mode
+                output = self.root / f'{mode}-{stop_attempt}'
                 with patch('builtins.print'):
                     code = run_acceptance.main(['--assets', str(self.assets), '--application', str(self.application),
                         '--cases', 'job', '--recheck-failed-serial', '--output', str(output)],
                         session=control, session_factory=factory, progress=progress)
                 self.assertEqual(code, 1)
-                self.assertEqual(len(instances), 1)
-                self.assertFalse((output / 'serial-recheck').exists())
+                self.assertEqual(len(instances), stop_attempt)
+                self.assertEqual((output / 'serial-recheck').exists(), stop_attempt == 2)
+                self.assertFalse((output / 'serial-recheck-2').exists())
                 summary = read_json(output / 'summary.json')
                 self.assertTrue(summary.get('cancelled') if mode == 'cancel' else summary.get('cleanupError'))
 

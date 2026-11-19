@@ -48,17 +48,24 @@ def expression(value, needs, platform="all", attempt="1", steps=None, mode="arti
 
 
 class Workflows(unittest.TestCase):
-    def test_regression_build_upload_and_cleanup_share_the_platform_report_root(self):
+    def test_regression_uploads_only_summaries_and_keeps_the_platform_report(self):
         job = load(APP / '.github/workflows/run-regression.yml')['jobs']['regression']
         steps = {step.get('name'): step for step in job['steps']}
+        prepare = steps['Resolve owned regression report directory']
         build = steps['SDK consumer and complete platform regression']['run']
-        upload = steps['Retain regression evidence even on failure']['with']['path']
-        cleanup = steps['Clean uploaded report staging']
-        self.assertEqual(upload,
-            "${{ matrix.platform == 'windows' && runner.temp || github.workspace }}"
-            "/regression-results/${{ github.run_id }}-${{ github.run_attempt }}/${{ matrix.platform }}")
+        upload = steps['Upload regression summaries']
+        cleanup = steps['Clean temporary control checkout']
+        reference = '${{ steps.report_path.outputs.directory }}'
+        self.assertEqual(prepare['id'], 'report_path')
+        self.assertEqual(upload['with']['path'].splitlines(), [
+            f'{reference}/source-regression.json',
+            f'{reference}/journals/run/session_*/summary.json',
+        ])
+        self.assertEqual(upload['with']['if-no-files-found'], 'error')
+        self.assertNotIn('Clean uploaded report staging', steps)
+        self.assertEqual(steps['SDK consumer and complete platform regression']['env']['REPORT_DIRECTORY'], reference)
         for outcome in ('success', 'failure', 'skipped'):
-            self.assertEqual(expression(cleanup['if'], {}, steps={'evidence': SimpleNamespace(outcome=outcome)}),
+            self.assertEqual(expression(upload['if'], {}, steps={'report_path': SimpleNamespace(outcome=outcome)}),
                              outcome == 'success')
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory).resolve()
@@ -67,29 +74,40 @@ class Workflows(unittest.TestCase):
             runner.mkdir()
             for platform in ('windows', 'macos'):
                 with self.subTest(platform=platform):
+                    github_output = base / f'github-output-{platform}'
                     env = dict(os.environ, GITHUB_WORKSPACE=str(workspace), RUNNER_TEMP=str(runner),
                         GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='2', PLATFORM=platform,
                         SOURCE_SHA='a' * 40, APP_SHA='b' * 40, GITHUB_REPOSITORY='owner/App',
-                        ASSETS_SHA='c' * 40, ASSETS_REF=platform, SDK_SOURCE='source', SDK_REPOSITORY='owner/SDK')
+                        ASSETS_SHA='c' * 40, ASSETS_REF=platform, SDK_SOURCE='source', SDK_REPOSITORY='owner/SDK',
+                        GITHUB_OUTPUT=str(github_output))
+                    with patch.dict(os.environ, env):
+                        exec(compile(prepare['run'], '<workflow-report-path>', 'exec'), {})
+                    key, value = github_output.read_text(encoding='utf-8').strip().split('=', 1)
+                    self.assertEqual(key, 'directory')
+                    env['REPORT_DIRECTORY'] = value
                     calls = []
                     with patch.dict(os.environ, env), patch.object(subprocess, 'run', side_effect=lambda *a, **k: calls.append(a)):
                         exec(compile(build, '<workflow-build>', 'exec'), {})
                     command = calls[0][0]
                     output = Path(command[command.index('--output') + 1])
-                    root = runner if platform == 'windows' else workspace
+                    root = runner.parent if platform == 'windows' else workspace
                     self.assertEqual(output, root / 'regression-results/123-2' / platform)
                     output.mkdir(parents=True)
-                    (output / 'report.json').write_text('preserve until uploaded')
-                    other = (workspace if platform == 'windows' else runner) / 'unrelated'
-                    other.mkdir(exist_ok=True)
+                    report = output / 'source-regression.json'
+                    report.write_text('{}', encoding='utf-8')
+                    if platform == 'windows':
+                        runner.rmdir()
+                        runner.mkdir()
+                    control = workspace / 'control'
+                    (control / '.git').mkdir(parents=True)
                     with patch.dict(os.environ, env):
                         exec(compile(cleanup['run'], '<workflow-cleanup>', 'exec'), {})
-                    self.assertFalse(output.exists())
-                    self.assertTrue(other.is_dir())
+                    self.assertFalse(control.exists())
+                    self.assertEqual(report.read_text(encoding='utf-8'), '{}')
 
-    def test_regression_cleanup_rejects_redirected_platform_report_root(self):
+    def test_regression_report_resolution_rejects_redirected_platform_report_root(self):
         job = load(APP / '.github/workflows/run-regression.yml')['jobs']['regression']
-        cleanup = next(step['run'] for step in job['steps'] if step.get('name') == 'Clean uploaded report staging')
+        prepare = next(step['run'] for step in job['steps'] if step.get('id') == 'report_path')
         for platform in ('windows', 'macos'):
             with self.subTest(platform=platform), tempfile.TemporaryDirectory() as directory:
                 base = Path(directory).resolve()
@@ -98,12 +116,12 @@ class Workflows(unittest.TestCase):
                     root.mkdir()
                 sentinel = outside / 'sentinel'
                 sentinel.write_text('keep')
-                root = runner if platform == 'windows' else workspace
+                root = runner.parent if platform == 'windows' else workspace
                 directory_link(root / 'regression-results', outside)
                 env = dict(os.environ, GITHUB_WORKSPACE=str(workspace), RUNNER_TEMP=str(runner),
                            GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='2', PLATFORM=platform)
                 with patch.dict(os.environ, env), self.assertRaisesRegex(RuntimeError, 'redirected report'):
-                    exec(compile(cleanup, '<workflow-cleanup>', 'exec'), {})
+                    exec(compile(prepare, '<workflow-report-path>', 'exec'), {})
                 self.assertEqual(sentinel.read_text(), 'keep')
 
     def test_installer_does_not_implicitly_publish_a_release(self):
@@ -214,14 +232,79 @@ class Workflows(unittest.TestCase):
                 text=path.read_text()
                 for forbidden in ('actions/setup-python@','PSExecutionPolicyPreference','GITHUB_PATH','runtime_windows','runtime_macos'):
                     self.assertNotIn(forbidden,text)
-        for job in self.platform_jobs():
+        for job_type, job in zip(('sdk', 'installer'), self.platform_jobs(), strict=True):
             self.assertEqual(job['steps'][0]['id'],'environment')
             self.assertEqual(job['steps'][0]['shell'],'python')
             for step in job['steps']:
                 if not step.get('name','').startswith('Clean '):continue
                 owner='artifacts' if step['name'].startswith('Clean owned') else 'environment'
-                for outcome in ('success','failure','skipped'):
-                    self.assertEqual(expression(step['if'],{},steps={owner:SimpleNamespace(outcome=outcome)}),outcome=='success')
+                needs_package_success = job_type == 'installer' and owner == 'artifacts'
+                outcomes = ('success', 'failure', 'skipped')
+                for outcome, package in itertools.product(outcomes, repeat=2):
+                    states = {owner: SimpleNamespace(outcome=outcome), 'package': SimpleNamespace(outcome=package)}
+                    self.assertEqual(expression(step['if'], {}, steps=states),
+                                     outcome == 'success' and
+                                     (not needs_package_success or package == 'success'))
+
+    def test_sdk_delivery_uploads_package_only_in_artifacts_mode(self):
+        job = load(APP / '.github/workflows/build-sdk.yml')['jobs']['build_publish']
+        upload = next(step for step in job['steps'] if step.get('id') == 'artifacts')
+        self.assertEqual(upload['with']['path'].splitlines(), [
+            "${{ inputs.mode == 'artifacts' && format('{0}/SDK', env.SDK_PACKAGE_ROOT) || '' }}",
+            '${{ env.SDK_PACKAGE_ROOT }}/source-receipt.json',
+            '${{ env.SDK_PACKAGE_ROOT }}/package-manifest.json',
+        ])
+
+    def test_installers_and_published_regression_keep_the_same_sdk_checkout(self):
+        installer = load(APP / '.github/workflows/build-installer.yml')['jobs']['build']
+        regression = load(APP / '.github/workflows/run-regression.yml')['jobs']['regression']
+        sdk_ref = "${{ matrix.platform == 'windows' && needs.prepare.outputs.windows_sdk_sha || needs.prepare.outputs.macos_sdk_sha }}"
+        for job in (installer, regression):
+            sdk_checkout, = [step for step in job['steps'] if step.get('with', {}).get('path') == 'sdk']
+            self.assertEqual(sdk_checkout['with']['ref'], sdk_ref)
+            self.assertEqual(sdk_checkout['with']['lfs'], 'false')
+            self.assertEqual(sdk_checkout['with']['persist-credentials'], 'false')
+            self.assertEqual(sdk_checkout.get('if'), "inputs.sdk_source == 'published'" if job is regression else None)
+            with tempfile.TemporaryDirectory() as directory:
+                workspace = Path(directory)
+                objects = workspace / 'sdk/.git/lfs/objects'
+                objects.mkdir(parents=True)
+                cleanup = next(step['run'] for step in job['steps'] if step.get('name') == 'Clean temporary control checkout')
+                with patch.dict(os.environ, GITHUB_WORKSPACE=str(workspace)):
+                    exec(compile(cleanup, '<workflow-control-cleanup>', 'exec'), {})
+                self.assertTrue(objects.is_dir())
+
+    def test_installer_upload_is_explicit_and_cleanup_retains_diagnostics(self):
+        steps = {step.get('id') or step.get('name'): step
+                 for step in load(APP / '.github/workflows/build-installer.yml')['jobs']['build']['steps']}
+        upload = steps['artifacts']
+        self.assertEqual(upload['if'], "always() && steps.package.outputs.report != ''")
+        self.assertEqual(upload['with']['path'].splitlines(), [
+            '${{ steps.package.outputs.report }}',
+            "${{ steps.package.outcome == 'success' && steps.package.outputs.package || '' }}",
+            "${{ steps.package.outcome == 'success' && steps.package.outputs.checksum || '' }}",
+        ])
+        cleanup = steps['Clean owned package staging']['run']
+        for platform in ('windows', 'macos'):
+            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                workspace, runner = root / 'workspace', root / 'runner-temp'
+                workspace.mkdir()
+                runner.mkdir()
+                result_root = root if platform == 'windows' else workspace
+                result = result_root / 'installer-results/123-2' / platform
+                package, diagnostics = result / 'package', result / 'startup'
+                package.mkdir(parents=True)
+                diagnostics.mkdir()
+                report = result / 'build-result.json'
+                report.write_text('{}', encoding='utf-8')
+                env = dict(GITHUB_WORKSPACE=str(workspace), RUNNER_TEMP=str(runner), PLATFORM=platform,
+                           GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='2', REPORT_FILE=str(report))
+                with patch.dict(os.environ, env):
+                    exec(compile(cleanup, '<workflow-package-cleanup>', 'exec'), {})
+                self.assertFalse(package.exists())
+                self.assertTrue(diagnostics.is_dir())
+                self.assertEqual(report.read_text(encoding='utf-8'), '{}')
 
     def test_failed_control_checkout_can_be_cleaned_without_control_helper(self):
         for job in self.platform_jobs():
@@ -234,14 +317,11 @@ class Workflows(unittest.TestCase):
                     obj.write_bytes(b'partial checkout')
                     obj.chmod(stat.S_IREAD)
                 steps = {step.get('name'):step for step in job['steps'] if step.get('name')}
-                package = next(step for name,step in steps.items() if name.startswith('Clean owned'))
-                env = {key:value for key,value in os.environ.items()
-                       if key not in ('SDK_PACKAGE_ROOT', 'APP_PACKAGE_ROOT')}
-                env['GITHUB_WORKSPACE'] = str(workspace)
-                for step in (package, steps['Clean temporary control checkout']):
-                    result = subprocess.run([os.sys.executable, '-c', step['run']], cwd=workspace,
-                                            env=env, capture_output=True)
-                    self.assertEqual(result.returncode, 0, result.stderr.decode())
+                cleanup = steps['Clean temporary control checkout']
+                env = dict(os.environ, GITHUB_WORKSPACE=str(workspace))
+                result = subprocess.run([os.sys.executable, '-c', cleanup['run']], cwd=workspace,
+                                        env=env, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr.decode())
                 self.assertTrue((workspace / 'source/.git/objects/partial-pack').exists())
                 self.assertFalse((workspace / 'control').exists())
 
@@ -318,7 +398,7 @@ class Workflows(unittest.TestCase):
                     self.assertEqual(steps[0]['id'], 'environment')
                     for step in steps:
                         if step.get('uses', '').startswith('actions/checkout@'):
-                            expected = 20 if step['with']['path'] in ('source','host-source','sdk','selected-sdk') else 5
+                            expected = 20 if step['with']['path'] in ('source','host-source','sdk') else 5
                             self.assertEqual(int(step['timeout-minutes']), expected)
 
     def test_windows_ownership_exceptions_are_exact_job_scoped_gitlinks(self):
@@ -378,7 +458,13 @@ class Workflows(unittest.TestCase):
             workflow = load(path)
             allowed = {'pull_request'} if path.name == 'pr-checks.yml' else {'workflow_dispatch', 'workflow_call'}
             self.assertFalse(set(workflow['on']) - allowed)
-            self.assertNotIn('continue-on-error', path.read_text())
+            tolerated_steps = []
+            for job_id, job in workflow['jobs'].items():
+                self.assertNotIn('continue-on-error', job)
+                tolerated_steps.extend((job_id, step.get('name'), step['continue-on-error'])
+                                       for step in job.get('steps', []) if 'continue-on-error' in step)
+            expected_tolerance = [('regression', 'Upload regression summaries', 'true')]
+            self.assertEqual(tolerated_steps, expected_tolerance if path.name == 'run-regression.yml' else [])
             self.assertNotIn('control_ref', path.read_text())
             self.assertNotIn('run-build-app.yml', path.read_text())
             self.assertNotIn('dezbracaty/GPlatform/.github/workflows/', path.read_text())

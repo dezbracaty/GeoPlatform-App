@@ -191,6 +191,16 @@ jobs:
           ref: ${{ github.workflow_sha }}
           path: control
           persist-credentials: false
+      - name: Resolve owned regression report directory
+        id: report_path
+        shell: python
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          import os, sys
+          sys.path.insert(0, 'control/scripts/ci')
+          from common import regression_report_path, write_outputs
+          write_outputs({'directory': regression_report_path(os.environ).as_posix()})
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         timeout-minutes: 20
         with:
@@ -207,7 +217,8 @@ jobs:
         with:
           repository: ${{ needs.prepare.outputs.sdk_repository }}
           ref: ${{ matrix.platform == 'windows' && needs.prepare.outputs.windows_sdk_sha || needs.prepare.outputs.macos_sdk_sha }}
-          path: selected-sdk
+          # Share the checkout and its LFS objects with Build Installer.
+          path: sdk
           token: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
           persist-credentials: false
           lfs: false
@@ -223,49 +234,29 @@ jobs:
           SDK_REPOSITORY: ${{ needs.prepare.outputs.sdk_repository }}
           ASSETS_REF: ${{ matrix.platform == 'windows' && inputs.windows_test_assets_ref || inputs.macos_test_assets_ref }}
           ASSETS_SHA: ${{ matrix.platform == 'windows' && needs.prepare.outputs.windows_assets_sha || needs.prepare.outputs.macos_assets_sha }}
+          REPORT_DIRECTORY: ${{ steps.report_path.outputs.directory }}
         run: |
-          import os, pathlib, subprocess, sys
-          root = pathlib.Path(os.environ['RUNNER_TEMP'] if os.environ['PLATFORM'] == 'windows' else os.environ['GITHUB_WORKSPACE'])
-          output = root / 'regression-results' / (os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT']) / os.environ['PLATFORM']
+          import os, subprocess, sys
           command = [sys.executable, 'control/scripts/ci/source_regression.py', '--source-dir', 'host-source',
               '--source-sha', os.environ['SOURCE_SHA'], '--app-sha', os.environ['APP_SHA'],
               '--app-repository', os.environ['GITHUB_REPOSITORY'], '--assets-sha', os.environ['ASSETS_SHA'], '--assets-ref', os.environ['ASSETS_REF'],
-              '--platform', os.environ['PLATFORM'], '--output', str(output),
+              '--platform', os.environ['PLATFORM'], '--output', os.environ['REPORT_DIRECTORY'],
               '--sdk-source', os.environ['SDK_SOURCE'], '--sdk-repository', os.environ['SDK_REPOSITORY']]
           if os.environ['SDK_SOURCE'] == 'published':
-              command += ['--sdk-root', 'selected-sdk', '--sdk-sha', os.environ['SDK_SHA']]
+              command += ['--sdk-root', 'sdk', '--sdk-sha', os.environ['SDK_SHA']]
           subprocess.run(command, check=True)
-      - name: Retain regression evidence even on failure
-        id: evidence
-        if: always()
+      - name: Upload regression summaries
+        if: always() && steps.report_path.outcome == 'success'
+        continue-on-error: true
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: regression-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ matrix.platform == 'windows' && runner.temp || github.workspace }}/regression-results/${{ github.run_id }}-${{ github.run_attempt }}/${{ matrix.platform }}
+          path: |
+            ${{ steps.report_path.outputs.directory }}/source-regression.json
+            ${{ steps.report_path.outputs.directory }}/journals/run/session_*/summary.json
           if-no-files-found: error
           retention-days: 7
           compression-level: 6
-      - name: Clean uploaded report staging
-        if: always() && steps.evidence.outcome == 'success'
-        shell: python
-        env:
-          PLATFORM: ${{ matrix.platform }}
-        run: |
-          import os, pathlib, re, sys
-          sys.path.insert(0, 'control/scripts/ci')
-          from common import remove_owned_tree
-          identity = os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT']
-          platform = os.environ['PLATFORM']
-          if not re.fullmatch(r'[0-9]+-[0-9]+', identity) or platform not in ('windows', 'macos'):
-              raise RuntimeError('Invalid owned report identity')
-          workspace = pathlib.Path(os.environ['RUNNER_TEMP'] if platform == 'windows' else os.environ['GITHUB_WORKSPACE']).resolve()
-          root = workspace / 'regression-results'
-          parent = root / identity
-          path = parent / platform
-          for entry in (root, parent, path):
-              if entry.is_symlink() or entry.is_junction() or entry.resolve() != entry:
-                  raise RuntimeError('Refusing to clean a redirected report directory')
-          remove_owned_tree(path, parent)
       - name: Clean temporary control checkout
         if: always() && steps.environment.outcome == 'success'
         shell: python
@@ -281,14 +272,13 @@ jobs:
               os.chmod(filename, mode | stat.S_IWRITE)
               function(filename)
           workspace = pathlib.Path(os.environ['GITHUB_WORKSPACE']).resolve()
-          for name in ('control', 'selected-sdk'):
-              path = workspace / name
-              if path.is_symlink() or path.resolve().parent != workspace:
-                  raise RuntimeError('Refusing to clean a checkout outside this workspace')
-              if path.exists():
-                  if not (path / '.git').exists():
-                      raise RuntimeError('Refusing to clean a directory without its task checkout marker')
-                  shutil.rmtree(path, onexc=retry_readonly)
+          path = workspace / 'control'
+          if path.is_symlink() or path.resolve().parent != workspace:
+              raise RuntimeError('Refusing to clean a checkout outside this workspace')
+          if path.exists():
+              if not (path / '.git').exists():
+                  raise RuntimeError('Refusing to clean a directory without its task checkout marker')
+              shutil.rmtree(path, onexc=retry_readonly)
   queue_guard:
     needs: prepare
     if: needs.prepare.outputs.attempt == github.run_attempt

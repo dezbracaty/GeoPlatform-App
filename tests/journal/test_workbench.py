@@ -386,10 +386,11 @@ class WorkbenchTests(unittest.TestCase):
         self.assertFalse(result['checkpoints'][0]['canReview'])
         self.assertEqual(json.loads((output / 'summary.json').read_text()), data)
 
-    def test_recheck_result_exposes_both_db_attempts_and_latest_actual_result(self):
+    def test_recheck_result_exposes_all_db_attempts_and_latest_actual_result(self):
         output = self.w.repository.playbacks / 'session_recheck'
         attempts = [dict(stage='initial', status='failed', result='a/case_result.json'),
-                    dict(stage='serial-recheck', status='passed', result='serial-recheck/a/case_result.json')]
+                    dict(stage='serial-recheck', status='failed', result='serial-recheck/a/case_result.json'),
+                    dict(stage='serial-recheck-2', status='passed', result='serial-recheck-2/a/case_result.json')]
         case = dict(id='a', status='passed', outcome='passed_after_recheck', attempts=attempts, result=attempts[-1]['result'])
         data = self.summary(output, planned=['a'], cases=[case])
         (output / 'screenshot_review.json').write_text(json.dumps(dict(schemaVersion=1,
@@ -403,9 +404,11 @@ class WorkbenchTests(unittest.TestCase):
                 kind='verify.db', status=attempt['status'], evidence=['raw.json'])])))
             (directory / 'raw.json').write_text(json.dumps(dict(status=attempt['status'])))
         result = self.w.result(self.w._register_run(output))
-        self.assertEqual([p['automaticStatus'] for p in result['checkpoints']], ['failed', 'passed'])
-        self.assertNotEqual(result['checkpoints'][0]['id'], result['checkpoints'][1]['id'])
+        self.assertEqual([p['automaticStatus'] for p in result['checkpoints']], ['failed', 'failed', 'passed'])
+        self.assertEqual(len({checkpoint['id'] for checkpoint in result['checkpoints']}), 3)
         self.assertIn('serial-recheck', result['checkpoints'][1]['evidence'][0]['url'])
+        self.assertIn('serial-recheck-2', result['checkpoints'][2]['evidence'][0]['url'])
+        self.assertIn('串行复测第 2 轮', result['checkpoints'][2]['label'])
         self.assertEqual(self.w.state()['cases'][0]['latestStatus'], 'passed')
         self.assertEqual(self.w.state()['cases'][0]['latestOutcome'], 'passed_after_recheck')
 

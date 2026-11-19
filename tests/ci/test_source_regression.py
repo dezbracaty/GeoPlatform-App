@@ -2,6 +2,7 @@ import base64
 """MR controller boundaries; no platform build or Journal success is mocked as acceptance."""
 import contextlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -16,6 +17,26 @@ import source_regression as controller
 
 
 class SourceMRRegression(unittest.TestCase):
+    def test_regression_build_keeps_full_log_locally_and_prints_only_failure_tail(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            for exit_code in (0, 7):
+                console = io.StringIO()
+                with self.subTest(exit_code=exit_code), contextlib.redirect_stdout(console):
+                    def execute():
+                        with controller.build_log(output, 'sdk-build') as log:
+                            controller.run([sys.executable, '-c',
+                                f'print("early output"); print("x" * 5000); print("last output"); raise SystemExit({exit_code})'],
+                                log=log)
+                    if exit_code:
+                        with self.assertRaisesRegex(RuntimeError, 'exit 7'):
+                            execute()
+                    else:
+                        execute()
+                    self.assertIn('early output', (output / 'sdk-build.log').read_text())
+                    self.assertNotIn('early output', console.getvalue())
+                    self.assertEqual('last output' in console.getvalue(), bool(exit_code))
+
     def test_freezes_platform_branches_without_resolving_published_sdk(self):
         class API:
             def __init__(self): self.calls = []
@@ -147,7 +168,7 @@ sys.meta_path.insert(0, NoOptionalPackages())
                     'cases':[{'id':'one','status':'passed'},{'id':'two','status':'passed'}]}))
                 (output/'journal-receipt.json').write_text(json.dumps({'status':'passed','assets_sha':receipt_assets,
                     'expected_cases':['one','two'],'summary_path':str(summary)}))
-        def produce(source, platform, package, env):
+        def produce(source, platform, package, env, *, log):
             if compiler_error: raise RuntimeError('compiler failed')
             self.assertEqual(package.parent, root.resolve())
             self.assertEqual(package.name, 'regression-sdk')

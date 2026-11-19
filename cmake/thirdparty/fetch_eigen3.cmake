@@ -72,7 +72,8 @@ message(STATUS "📊 状态汇总: Install=${HAS_INSTALL}, Source=${HAS_SOURCE},
 # 决定操作策略
 if(HAS_INSTALL)
     message(STATUS "🚀 使用缓存的 Eigen3 库，跳过下载")
-    set(Eigen3_DIR "${EIGEN3_INSTALL_DIR}/share/eigen3/cmake" CACHE PATH "Eigen3 directory")
+    # Select the App's pinned Eigen in this scope, independently of Orca's cache.
+    set(Eigen3_DIR "${EIGEN3_INSTALL_DIR}/share/eigen3/cmake")
     find_package(Eigen3 REQUIRED PATHS ${Eigen3_DIR} NO_DEFAULT_PATH)
     return()
 
@@ -106,7 +107,7 @@ set(EIGEN3_FOUND TRUE)
 ")
 
     message(STATUS "✅ Eigen3 安装成功")
-    set(Eigen3_DIR "${EIGEN3_INSTALL_DIR}/share/eigen3/cmake" CACHE PATH "Eigen3 directory")
+    set(Eigen3_DIR "${EIGEN3_INSTALL_DIR}/share/eigen3/cmake")
     find_package(Eigen3 REQUIRED PATHS ${Eigen3_DIR} NO_DEFAULT_PATH)
     return()
 

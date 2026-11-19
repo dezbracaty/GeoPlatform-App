@@ -161,15 +161,18 @@ def branch_ref(value):
     return f"refs/heads/{value}"
 
 
-def run(args, *, cwd=None, env=None, data=None, capture=False, attempts=1):
+def run(args, *, cwd=None, env=None, data=None, capture=False, attempts=1, log=None):
     if attempts < 1:
         raise ValueError("Attempt count must be positive")
+    if capture and log is not None:
+        raise ValueError("Captured output cannot also be redirected to a log")
     for attempt in range(attempts):
         if attempts > 1:
             print(f"Transfer attempt {attempt + 1}/{attempts}", flush=True)
         result = subprocess.run([str(a) for a in args], cwd=cwd, env=env, input=data,
-                                stdout=subprocess.PIPE if capture else None,
-                                stderr=subprocess.PIPE if capture and attempts == 1 else None)
+                                stdout=subprocess.PIPE if capture else log,
+                                stderr=subprocess.STDOUT if log is not None else
+                                subprocess.PIPE if capture and attempts == 1 else None)
         if not result.returncode:
             return result.stdout if capture else None
         if attempt + 1 == attempts:
@@ -454,6 +457,29 @@ def remove_owned_tree(path, parent, *, require_git=False):
     if require_git and not (path / ".git").exists():
         raise RuntimeError("Refusing to clean a directory without its task checkout marker")
     shutil.rmtree(path, onexc=_retry_readonly)
+
+
+def runner_report_path(env, directory):
+    platform = env["PLATFORM"]
+    identity = env["GITHUB_RUN_ID"] + "-" + env["GITHUB_RUN_ATTEMPT"]
+    if platform not in ("windows", "macos") or not re.fullmatch(r"[0-9]+-[0-9]+", identity):
+        raise RuntimeError("Invalid owned report identity")
+    if platform == "windows":
+        # The runner clears RUNNER_TEMP after the job even when upload fails.
+        workspace = Path(env["RUNNER_TEMP"]).resolve().parent
+    else:
+        workspace = Path(env["GITHUB_WORKSPACE"]).resolve()
+    root = workspace / directory
+    parent = root / identity
+    path = parent / platform
+    for entry in (root, parent, path):
+        if entry.is_symlink() or entry.is_junction() or entry.resolve() != entry:
+            raise RuntimeError("Refusing a redirected report directory")
+    return path
+
+
+def regression_report_path(env):
+    return runner_report_path(env, "regression-results")
 
 
 def write_json(path, value):

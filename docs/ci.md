@@ -13,7 +13,7 @@
 | Build Installer | `.github/workflows/build-installer.yml` | 手动 | 检查、构建、部署、打包、必要启动验证和上传 |
 | MR Checks | `.github/workflows/pr-checks.yml` | App MR 自动触发 | 固定 MR head，强制双平台源码模式完整回归 |
 
-所有本轮报告、SDK 附件和安装包附件在 App 仓库 Actions 查看。GPlatform 保留完整宿主源码、标准 presets、原生测试、SDK 导出入口；SDK/TestAssets 仓库保留平台产物和测试数据。
+回归摘要、SDK 附件和安装包附件在 App 仓库 Actions 查看。GPlatform 保留完整宿主源码、标准 presets、原生测试、SDK 导出入口；SDK/TestAssets 仓库保留平台产物和测试数据。
 
 ## 固定分支与候选身份
 
@@ -37,13 +37,13 @@ App 是被测代码的主身份：先冻结 `app_ref`，再冻结 `host_ref`。�
 | app_ref | 分支/完整 SHA | feature/gplatform-ui | 参与生产的 App 源码 |
 | host_ref | 分支/完整 SHA | feature/gplatform-ui | GPlatform 完整宿主源码 |
 | platform | windows / macos / all | windows | 仅调度所选平台 |
-| mode | artifacts / publish | artifacts | 仅产包上传，或校验后发布固定平台分支并上传 |
+| mode | artifacts / publish | artifacts | 上传完整 SDK 包，或发布到固定平台分支并上传发布摘要 |
 
 执行：冻结 App/宿主/依赖 → 检出准确组合 → 工具链和源码检查 → 正式 preset configure/build → `cmake/sdk/publish_sdk.py` 导出 → 完整来源、manifest、槽位、LFS/ABI 检查 → 可选 CAS 发布 → 上传证据。
 
 发布目标始终为 SDK 的 windows/macos；prepare 分别冻结平台分支 expected-base，每个平台只更新自身槽位。Windows 不等待 Mac，不向另一平台分支合槽。Mac 两槽必须来自同一候选和一致契约。
 
-构建、导出校验、SDK 仓库发布、Actions 上传分别记录。上传失败不撤销已完成发布，也不据此重新编译。此入口不修改 App 源码、不发布 GitHub Release、不自动启动回归或 installer。
+构建、导出校验、SDK 仓库发布、Actions 上传分别记录。`artifacts` 上传完整 SDK 包、回执和清单。`publish` 的二进制交付位于对应平台 SDK 分支，Actions 只上传 `source-receipt.json` 和 `package-manifest.json`。上传失败不撤销已完成发布，也不据此重新编译。此入口不修改 App 源码、不发布 GitHub Release、不自动启动回归或 installer。
 
 ## Run Regression
 
@@ -60,9 +60,11 @@ App 是被测代码的主身份：先冻结 `app_ref`，再冻结 `host_ref`。�
 
 source 模式禁止填写 SDK refs，按本轮 Root/App 候选生产 SDK 文件包，仅供本轮使用，不发布 SDK 分支。published 模式使用冻结的 SDK 提交，并核对实际来源与候选契约；不兼容或来源不符必须明确失败，不回退旧 SDK。未选择的平台不解析其 SDK/资产，不调度其 runner。
 
-完整执行：冻结版本 → 准备本平台 TestAssets → 宿主原生 CTest/原生切片检查 → 生成或获取 SDK → 构建 SDK 消费 App → 必需 SDK 检查及实际部署/资源检查 → 启动 Journal Web Server → 使用该 Server 的 /api/run 创建全量任务 → 严格验收 → 按既有规则一次串行复查 → 汇总。
+完整执行：冻结版本 → 准备本平台 TestAssets → 宿主原生 CTest/原生切片检查 → 生成或获取 SDK → 构建 SDK 消费 App → 必需 SDK 检查及实际部署/资源检查 → 启动 Journal Web Server → 使用该 Server 的 /api/run 创建全量任务 → 严格验收 → 最多两轮串行复查，第二轮只复查仍失败项 → 汇总。
 
-宿主回归显式开启 `GPLATFORM_BUILD_ORCA_NATIVE_PROBES`。原生探针与运行库在同一个 Orca 构建目录中链接同一份核心归档；编译结束后由回归入口单独执行原生检查。普通 preset 和 SDK 生产不启用探针目标。
+两平台的 SDK 生产和消费构建将编译明细写入 Runner 本机日志，Actions 记录阶段起止并在失败时显示日志尾部。Journal 在阶段或状态变化时输出汇总，同一阶段每 60 秒输出一次进度。场景及步骤明细保存在 Runner 本机，附件在任务结束时一次上传回归总报告和 Journal 摘要。上传失败在该步骤留痕，平台验收仍按实际回归结果判定。
+
+宿主回归显式开启 `GPLATFORM_BUILD_ORCA_NATIVE_PROBES`。原生探针与运行库在同一个 Orca 构建目录中链接同一份核心归档。支撑重叠和微填充由宿主 CTest 执行一次，后续 Orca 来源核验复用同批清单、日志和 JUnit。两个检查使用 CTest 的统一默认时限。普通 preset 和 SDK 生产不启用探针目标。
 
 原生 configure 显式使用已预检依赖的 Python3_EXECUTABLE，并打开既有 JOURNALSYSTEM_BUILD_TESTS。原生与 GUI 使用同一冻结资产；SDK 生产/消费前恢复 App 自己声明的测试资产 gitlink，不能把平台资产选择当作脏产品源码。GUI 再选择冻结资产。
 
@@ -82,6 +84,8 @@ source 模式禁止填写 SDK refs，按本轮 Root/App 候选生产 SDK 文件�
 执行：冻结 App/SDK → 完整包、来源、UI 输入、Qt/编译器/ABI 兼容检查 → 显式 GPLATFORM_SDK_ROOT → App 正式 configure/build → SDK 消费检查 → 正式部署与 installer 目标 → 包内容、架构、依赖、哈希及必要启动检查 → 上传产物与报告。
 
 Windows 生成 AMD64 `.exe` installer，Mac 生成 Universal `.dmg`，all 并行。此入口不构建完整宿主、不重新生产 SDK、不下载 TestAssets、不跑全量 Journal、不发布 Release，没有跳过必需检查的公开参数。打包通过不满足 MR 全量门禁。
+
+安装包附件包含 `build-result.json`，以及通过校验时 `package/` 下的安装包和 SHA256 文件。构建或检查失败时只上传已生成的结果 JSON。启动截图、打包诊断文件和完整检查记录留在 Runner 的 `installer-results/<run>-<attempt>/<platform>`，根路径与回归报告一致。只有合格包上传成功才清理本轮的 `package/`；构建、检查或上传失败会保留已有文件。
 
 正式交付填写已验收候选的完整 App/SDK SHA，不用后来可能前进的分支名冒充同一版本。App 不再记录 SDK gitlink。本地与 CI 每层都必须使用同一显式 GPLATFORM_SDK_ROOT；缺失或不兼容直接失败，不回退旧 SDK、不补拼 DLL/dylib。
 
@@ -123,7 +127,9 @@ CI 工具测试依赖在 runner 准备阶段用同一 Python 安装 `tests/ci/re
 
 App runner 的完整宿主检出固定使用工作区内 `host-source`，installer 的独立 App 检出继续使用 `source`。宿主和独立 App 保留各自经校验的 preset 构建目录，每个依赖切换到固定 gitlink 后只清理一次。回归的源码 SDK 使用 runner 临时目录下固定短路径 `regression-sdk`，每轮重新生成并校验来源和载荷，App 按标准 preset 增量构建。缓存不兼容时明确失败，不消费旧 SDK 或不匹配的 App。
 
-回归报告保留 `regression-results/<run>-<attempt>/<platform>` 布局；Windows 根目录使用 `RUNNER_TEMP`，避免串行复查的记录归档路径超过 Windows 文件接口限制，Mac 仍使用工作区。构建、上传与清理使用同一受管路径；无论执行成功或失败均上传报告，仅上传成功后清理受管暂存，上传失败保留本机报告。原子 JSON 替换仅对 Windows 短暂读句柄争用进行有界重试，持续占用或其他错误仍使流程失败。
+同一 Runner 工作区的 Installer 与 `published` 回归共用 `sdk` 检出，保留 Git 和 LFS 对象。每次检出冻结的 SDK SHA，按所选平台获取槽位并执行完整校验。新的工作区或重建的检出会重新获取缺少的对象。
+
+回归报告保留 `regression-results/<run>-<attempt>/<platform>` 布局。Windows 报告放在 `RUNNER_TEMP` 的父目录下，保持归档路径短，并避开 Runner 在任务结束时清理的临时目录。Mac 使用工作区。成功和失败的任务只上传已经生成的 `source-regression.json` 和 Journal 会话的 `summary.json`，包含版本、各阶段结果、计数和逐场景判定。完整日志、截图和导出文件留在 Runner 本机，上传后保留报告目录。原子 JSON 替换仅对 Windows 短暂读句柄争用进行有界重试，持续占用或其他错误仍使流程失败。
 
 两仓 runner 若在同一机器，继续共用现有机器锁，不能并发争抢同一缓存/桌面。迁移需核对 App runner 的正式工具链、宿主源码工作路径和兼容缓存；路径不一致不能手改 CMakeCache 或拼库冒充复用。编译不固定为两路并行；未显式配置 CMAKE_BUILD_PARALLEL_LEVEL 时按现有工具调度。
 

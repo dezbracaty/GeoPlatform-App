@@ -90,7 +90,8 @@ class SourceReuseTests(unittest.TestCase):
         host = self.workspace / 'host-source'
         self.source.rename(host)
         self.source = host
-        with patch.dict(os.environ, GIT_ALLOW_PROTOCOL='file'):
+        qt_config = self.workspace / 'qt' / 'lib/cmake/Qt6'
+        with patch.dict(os.environ, GIT_ALLOW_PROTOCOL='file', Qt6_DIR=str(qt_config)):
             orca = self.workspace / 'orca-upstream'
             subprocess.run(['git', 'clone', '-q', str(app), str(orca)], check=True)
             app_git('submodule', 'add', str(orca), 'ThirdParty/OrcaSlicer')
@@ -101,7 +102,8 @@ class SourceReuseTests(unittest.TestCase):
             orphan = self.marker('App/build-Debug')
             cache = marker.parent / 'CMakeCache.txt'
             cache.write_text(f'CMAKE_HOME_DIRECTORY:INTERNAL={host / "App"}\n'
-                             'CMAKE_GENERATOR:INTERNAL=Ninja\nCMAKE_BUILD_TYPE:STRING=Release\n')
+                             'CMAKE_GENERATOR:INTERNAL=Ninja\nCMAKE_BUILD_TYPE:STRING=Release\n'
+                             f'Qt6_DIR:PATH={qt_config}\n')
             prepare_cached_source(host, self.git('rev-parse', 'HEAD'), 'windows', host=True)
             self.assertTrue(marker.exists(), 'host source reset removed the App preset cache')
             common._init_pinned_submodules(host, common.git_env(), producer=True,
