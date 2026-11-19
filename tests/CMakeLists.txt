@@ -53,16 +53,6 @@ set_source_files_properties(${_project_catalogs} PROPERTIES GENERATED TRUE)
 qt_add_resources(Model3MFIntegrationCheck "project_i18n"
     PREFIX "/" BASE "${PROJECT_BINARY_DIR}" FILES ${_project_catalogs})
 add_dependencies(Model3MFIntegrationCheck gplatform_i18n_mo)
-if(WIN32 AND GPLATFORM_ENABLE_LIBSLICER)
-    # The production backend resolves presets relative to this test executable.
-    add_custom_target(gplatform_app_test_libslicer_resources
-        COMMAND "${CMAKE_COMMAND}" -E copy_directory
-            "${LIBSLICER_RESOURCE_DIR}"
-            "$<TARGET_FILE_DIR:Model3MFIntegrationCheck>/resources/libslicer"
-        COMMENT "Deploying libslicer resources for App integration checks"
-        VERBATIM)
-    add_dependencies(Model3MFIntegrationCheck gplatform_app_test_libslicer_resources)
-endif()
 add_test(NAME Model3MFIntegrationCheck COMMAND Model3MFIntegrationCheck)
 add_test(NAME ModelFileExportCheck COMMAND Model3MFIntegrationCheck --model-file-export)
 set_tests_properties(ModelFileExportCheck PROPERTIES TIMEOUT 90)
@@ -117,6 +107,22 @@ set_source_files_properties(${_floating_catalogs} PROPERTIES GENERATED TRUE)
 qt_add_resources(FloatingPrintConfigurationCheck "floating_config_i18n"
     PREFIX "/" BASE "${PROJECT_BINARY_DIR}" FILES ${_floating_catalogs})
 add_dependencies(FloatingPrintConfigurationCheck gplatform_i18n_mo)
+if(TARGET gplatform_libslicer_install)
+    set(_app_test_libslicer_resources gplatform_libslicer_install)
+    if(WIN32)
+        # The production backend resolves Windows presets relative to the executable.
+        add_custom_target(gplatform_app_test_libslicer_resources
+            COMMAND "${CMAKE_COMMAND}" -E copy_directory
+                "${LIBSLICER_RESOURCE_DIR}"
+                "$<TARGET_FILE_DIR:Model3MFIntegrationCheck>/resources/libslicer"
+            COMMENT "Deploying libslicer resources for App integration checks"
+            VERBATIM)
+        add_dependencies(gplatform_app_test_libslicer_resources gplatform_libslicer_install)
+        set(_app_test_libslicer_resources gplatform_app_test_libslicer_resources)
+    endif()
+    add_dependencies(Model3MFIntegrationCheck "${_app_test_libslicer_resources}")
+    add_dependencies(FloatingPrintConfigurationCheck "${_app_test_libslicer_resources}")
+endif()
 add_test(NAME FloatingPrintConfigurationCheck COMMAND FloatingPrintConfigurationCheck)
 add_test(NAME FloatingPrintConfigurationLayoutCheck COMMAND FloatingPrintConfigurationCheck --layout)
 add_test(NAME SlicingSettingRejectionCheck COMMAND FloatingPrintConfigurationCheck --setting-rejection)

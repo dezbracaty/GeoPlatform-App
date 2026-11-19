@@ -51,6 +51,12 @@ endif()
 set(EMBREE_VERSION "4.4.0" CACHE STRING "Embree version to use")
 include(fetch_embree)
 
+function(_gplatform_add_embedded_libslicer source_dir binary_dir install_dir)
+    # Match the resource fallback compiled by Orca to our staged installation.
+    set(CMAKE_INSTALL_PREFIX "${install_dir}")
+    add_subdirectory("${source_dir}" "${binary_dir}" EXCLUDE_FROM_ALL)
+endfunction()
+
 if(GPLATFORM_ENABLE_LIBSLICER)
     include(GNUInstallDirs)
     set(GPLATFORM_LIBSLICER_SOURCE_DIR "${GPLATFORM_THIRDPARTY_SOURCE_DIR}/OrcaSlicer"
@@ -66,8 +72,8 @@ if(GPLATFORM_ENABLE_LIBSLICER)
     # Orca and App share the OCCT targets selected by the host.
     set(LIBSLICER_EXTERNAL_OCCT_DIR "${OpenCASCADE_DIR}"
         CACHE INTERNAL "OCCT package selected by the App or host")
-    add_subdirectory("${GPLATFORM_LIBSLICER_SOURCE_DIR}" "${_libslicer_binary_dir}"
-        EXCLUDE_FROM_ALL)
+    _gplatform_add_embedded_libslicer(
+        "${GPLATFORM_LIBSLICER_SOURCE_DIR}" "${_libslicer_binary_dir}" "${_libslicer_install_dir}")
     set(LIBSLICER_RESOURCE_DIR
         "${GPLATFORM_LIBSLICER_INSTALL_DIR}/${LIBSLICER_INSTALL_RESOURCEDIR}")
     set(GPLATFORM_LIBSLICER_RUNTIME_DIR
