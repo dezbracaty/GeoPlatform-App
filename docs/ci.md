@@ -91,7 +91,7 @@ Windows 生成 AMD64 `.exe` installer，Mac 生成 Universal `.dmg`，all 并行
 
 正式交付填写已验收候选的完整宿主/App SHA。报告记录 SDK 生产源码和文件包清单 SHA256。构建、部署和检查使用同一显式 GPLATFORM_SDK_ROOT；产物缺失、来源不一致或不兼容直接失败。
 
-检查范围：Mac 挂载实际 DMG，核对包内完整载荷与双架构依赖并启动 App；Windows 核对正式 Inno 输入、AMD64 发行目录和载荷哈希并启动发行 App。未执行的 Windows 实装、注册表、升级卸载必须明确标注未验证，不能把发行 App 启动称为实装通过。
+检查范围：Mac 在部署时排除薄包内可执行文件旁的本机 Journal 数据，再挂载实际 DMG，核对包内完整载荷与双架构依赖并启动 App；Windows 核对正式 Inno 输入、AMD64 发行目录和载荷哈希并启动发行 App。未执行的 Windows 实装、注册表、升级卸载必须明确标注未验证，不能把发行 App 启动称为实装通过。
 
 ## MR Checks
 

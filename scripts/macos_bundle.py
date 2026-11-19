@@ -106,8 +106,17 @@ def check_deployment(bundle, log):
 
 
 def deploy_bundle(source, deployed, build, qt_deploy, log, environment, qml_directory):
-    shutil.copytree(source, deployed, symlinks=True,
-                    ignore=shutil.ignore_patterns("*.dSYM", ".DS_Store"))
+    ignore_build_files = shutil.ignore_patterns("*.dSYM", ".DS_Store")
+    executable_directory = source / "Contents/MacOS"
+
+    def ignore_runtime_files(directory, entries):
+        ignored = ignore_build_files(directory, entries)
+        if Path(directory) == executable_directory:
+            # Journal writes local replay state beside the executable.
+            ignored.add("Journal")
+        return ignored
+
+    shutil.copytree(source, deployed, symlinks=True, ignore=ignore_runtime_files)
     cache = (build / "CMakeCache.txt").read_text(encoding="utf-8")
     match = re.search(r"^QML_IMPORT_PATH:[^=]*=(.*)$", cache, re.MULTILINE)
     if not match or not match[1]:

@@ -14,6 +14,28 @@ driver = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(driver)
 
 
+class BundleDeploymentTests(unittest.TestCase):
+    def test_staged_bundle_excludes_local_journal_state_and_preserves_resources(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            build = root / 'build'
+            source = build / 'GPlatform.app'
+            deployed = root / 'staged/GPlatform.app'
+            local_result = source / 'Contents/MacOS/Journal/playbacks/latest-result.json'
+            resource = source / 'Contents/Resources/Journal/example.json'
+            local_result.parent.mkdir(parents=True)
+            resource.parent.mkdir(parents=True)
+            local_result.write_text('local result')
+            resource.write_text('application resource')
+            (build / 'CMakeCache.txt').write_text('QML_IMPORT_PATH:STRING=/qml\n')
+            with patch('macos_bundle.run'), patch('macos_bundle.check_deployment', return_value=[]):
+                driver.deploy_bundle(source, deployed, build, 'macdeployqt', root / 'deploy.log', {}, root / 'qml')
+
+            self.assertFalse((deployed / 'Contents/MacOS/Journal').exists())
+            self.assertEqual((deployed / resource.relative_to(source)).read_text(), 'application resource')
+            self.assertEqual(local_result.read_text(), 'local result')
+
+
 @unittest.skipUnless(sys.platform == 'darwin', 'Requires the macOS Universal driver and native fcntl lock')
 class UniversalSDKTests(unittest.TestCase):
     def fixture(self, root, *, producer=False, roots=None):
