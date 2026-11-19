@@ -18,6 +18,7 @@ from journal_runner import JournalRunner, load_journal
 from journal_execution_session import JournalExecutionSession
 from session_repository import JournalSessionRepository
 from review_model import ReviewBatch
+from screenshot_review import attempt_stage_label
 import run_acceptance
 
 
@@ -219,7 +220,8 @@ class JournalWorkbench:
                 status = (details['status'] if details.get('phase') == 'end' else
                     'running' if (details.get('phase') == 'begin' or name == task.get('case')) and task['state'] in ('running', 'cancelling') else
                     'not_run' if task['state'] in ('completed', 'cancelled', 'failed') else 'waiting')
-            if details.get('phase') == 'begin' and details.get('stage') == 'serial-recheck' and task['state'] in ('running', 'cancelling'):
+            if (details.get('phase') == 'begin' and details.get('stage') in run_acceptance.SERIAL_RECHECK_STAGES
+                    and task['state'] in ('running', 'cancelling')):
                 status = 'running'
             row = dict(by_id.get(name, {}), id=name, status=status)
             if details:
@@ -535,7 +537,7 @@ class JournalWorkbench:
             if not directory.is_relative_to(root):
                 continue
             identity = case_name + (':' + stage if stage else '')
-            label_prefix = ('串行复测 · ' if stage == 'serial-recheck' else '首轮 · ') if stage else ''
+            label_prefix = attempt_stage_label(stage) + ' · ' if stage else ''
             try:
                 execution = json.loads((directory / 'execution_result.json').read_text(encoding='utf8'))
                 for step in execution['results']:

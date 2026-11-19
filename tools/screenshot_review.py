@@ -11,6 +11,11 @@ import uuid
 
 
 WINDOW_SIZE = (1382, 954)
+ATTEMPT_STAGE_LABELS = {'serial-recheck': '串行复测第 1 轮', 'serial-recheck-2': '串行复测第 2 轮'}
+
+
+def attempt_stage_label(stage):
+    return ATTEMPT_STAGE_LABELS.get(stage, '首轮')
 
 
 def checkpoint_declarations(document):
@@ -180,7 +185,7 @@ def write_batch_report(output, summary):
                 if attempt.get('stage'):
                     identity.append(attempt['result'])
                     row['attemptStage'] = attempt['stage']
-                    row['label'] = ('串行复测' if attempt['stage'] == 'serial-recheck' else '首轮') + ' · ' + row['label']
+                    row['label'] = attempt_stage_label(attempt['stage']) + ' · ' + row['label']
                 row['id'] = hashlib.sha256(json.dumps(identity, separators=(',', ':')).encode()).hexdigest()
                 for key in ('expected', 'actual', 'expectedView', 'actualView', 'diff', 'rawDiff'):
                     if row.get(key):
@@ -201,7 +206,7 @@ def write_batch_report(output, summary):
     links = ''.join('<tr><td>{}</td><td>{}</td><td>{}</td></tr>'.format(escape(case['id']),
         '复测通过' if case.get('outcome') == 'passed_after_recheck' else escape(case['status']),
         ' · '.join('<a href="{}">{}</a>'.format(quote(Path(a['result']).with_name('case_report.html').as_posix()),
-            '串行复测' if a.get('stage') == 'serial-recheck' else '首轮')
+            attempt_stage_label(a.get('stage')))
             for a in case.get('attempts', [])) or ('<a href="{}">场景报告</a>'.format(
                 quote(Path(case['result']).with_name('case_report.html').as_posix())) if case['result'] else '未执行')) for case in cases)
     images = ''.join('<tr class="checkpoint"><td>{} / #{} / {}</td><td>{}</td><td>{}</td></tr>'.format(

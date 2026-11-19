@@ -19,7 +19,7 @@ from urllib.parse import quote
 from acceptance_checks import validate_expectations, verify_job, validate_project_gcode_expectations, verify_project_gcode
 import acceptance_calibration
 from verification_methods import SUPPLEMENTAL_VALIDATORS, journal_checks, method_results, verification_plan
-from screenshot_review import snapshot_checkpoints, collect_screenshots, write_batch_report
+from screenshot_review import attempt_stage_label, snapshot_checkpoints, collect_screenshots, write_batch_report
 
 
 class ContractError(ValueError):
@@ -312,7 +312,7 @@ def write_summary(output, summary):
             '复测通过' if case.get('outcome') == 'passed_after_recheck' else html.escape(case['status']),
             ' · '.join('<a href="{}">{}</a>'.format(
                 quote(Path(attempt['result']).with_name('case_report.html').as_posix()),
-                '串行复测' if attempt.get('stage') == 'serial-recheck' else '首轮')
+                attempt_stage_label(attempt.get('stage')))
                 for attempt in case.get('attempts', [dict(result=case.get('result', case['id'] + '/case_result.json'))])))
             for case in summary['cases'])
         (output / 'report.html').write_text(

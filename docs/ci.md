@@ -60,7 +60,7 @@ App 是被测代码的主身份：先冻结 `app_ref`，再冻结 `host_ref`。�
 
 source 模式禁止填写 SDK refs，按本轮 Root/App 候选生产 SDK 文件包，仅供本轮使用，不发布 SDK 分支。published 模式使用冻结的 SDK 提交，并核对实际来源与候选契约；不兼容或来源不符必须明确失败，不回退旧 SDK。未选择的平台不解析其 SDK/资产，不调度其 runner。
 
-完整执行：冻结版本 → 准备本平台 TestAssets → 宿主原生 CTest/原生切片检查 → 生成或获取 SDK → 构建 SDK 消费 App → 必需 SDK 检查及实际部署/资源检查 → 启动 Journal Web Server → 使用该 Server 的 /api/run 创建全量任务 → 严格验收 → 按既有规则一次串行复查 → 汇总。
+完整执行：冻结版本 → 准备本平台 TestAssets → 宿主原生 CTest/原生切片检查 → 生成或获取 SDK → 构建 SDK 消费 App → 必需 SDK 检查及实际部署/资源检查 → 启动 Journal Web Server → 使用该 Server 的 /api/run 创建全量任务 → 严格验收 → 最多两轮串行复查，第二轮只复查仍失败项 → 汇总。
 
 两平台的 SDK 生产和消费构建将编译明细写入 Runner 本机日志，Actions 记录阶段起止并在失败时显示日志尾部。Journal 在阶段或状态变化时输出汇总，同一阶段每 60 秒输出一次进度。场景及步骤明细保存在 Runner 本机，附件在任务结束时一次上传回归总报告和 Journal 摘要。上传失败在该步骤留痕，平台验收仍按实际回归结果判定。
 
