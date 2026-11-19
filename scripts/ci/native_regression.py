@@ -185,6 +185,7 @@ def architecture(source, arch, output, report, env):
     def native_checks():
         args = [sys.executable, Path(__file__).with_name('native_child.py'), 'native', '--source', source,
                 '--work-dir', native, '--producer-build-dir', build,
+                '--ctest-results-dir', output,
                 '--source-dir', source / 'App/ThirdParty/OrcaSlicer', '--source-commit', commit]
         return {'returncode': command(args, source, env, output / 'native-checks.log')}
 

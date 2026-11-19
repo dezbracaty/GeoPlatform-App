@@ -292,6 +292,7 @@ class RegressionTests(unittest.TestCase):
             def compare(args, *rest):
                 if '--producer-build-dir' in args:
                     self.assertEqual(args[args.index('--producer-build-dir') + 1], source / 'build-arm64-Release')
+                    self.assertEqual(args[args.index('--ctest-results-dir') + 1], source / 'evidence')
                     self.assertNotIn('--jobs', args)
                     native.mkdir()
                     (native / 'provenance.json').write_text(json.dumps({
