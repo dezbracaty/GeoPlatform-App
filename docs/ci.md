@@ -107,9 +107,9 @@ App MR 创建、重新打开、提交更新、转为可审核、变更目标分�
 
 本地独立 App 与 CI 均显式传 `-DGPLATFORM_SDK_ROOT=<checkout-or-package/SDK>`。SDK 不再作为 App 子模块自动下载；长期分支仍是 macos/windows，运行时冻结完整 SHA。完整宿主生产 SDK 不需要该消费路径。
 
-Universal 独立 App 的 outer configure 将同一 SDK_ROOT 传给两个薄架构；merge-only 必须核对两侧缓存实际消费同一选择。CI 构建/打包适配器来自固定 workflow 实现，使用现有 `--source-dir`/`-SourceDir` 选择产品项目，产品 presets、CMake、资源、source_inputs 与 Journal 工具来自被测版本。
+Universal 独立 App 的 outer configure 将同一 SDK_ROOT 传给两个薄架构；merge-only 必须核对两侧缓存实际消费同一选择。CI 构建/打包适配器来自固定 workflow 实现，使用现有 `--source-dir`/`-SourceDir` 选择产品项目。产品 presets、CMake、资源、source_inputs 和全量回归的 Journal 工具来自被测版本。Installer 启动观察脚本和所用 Journal 客户端来自固定的 workflow 提交。
 
-Build Installer 使用本轮源码 SDK 做消费检查、打包和必要启动观察。完整 Journal 由 Run Regression 执行；安装包的启动观察沿用现有 owned 生命周期。
+Build Installer 使用本轮源码 SDK 做消费检查、打包和必要启动观察。安装包启动观察在自身启动的实例中按桌面自然尺寸截图，检查图像有效性。完整 Journal 由 Run Regression 执行，继续使用固定回放窗口和比较标准。
 
 ## 日常流程
 

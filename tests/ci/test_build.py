@@ -13,7 +13,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts/ci"))
-from build import cache_value, main, validate_sdk, validate_source_inputs, windows_entry
+from build import cache_value, main, smoke_application, validate_sdk, validate_source_inputs, windows_entry
 from common import digest
 from fs_fixture import directory_link
 
@@ -359,6 +359,19 @@ class InstallerPayloadChecks(unittest.TestCase):
 
 
 class InstallerSelectionChecks(unittest.TestCase):
+    def test_startup_uses_control_tools_and_keeps_native_display(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / 'selected-app'
+            executable = root / 'GPlatform.exe'
+            executable.write_bytes(b'fixture')
+            with patch('build.run') as invoke:
+                smoke_application(source, executable, root / 'startup', {'QT_SCALE_FACTOR': '2'})
+            command = invoke.call_args.args[0]
+            self.assertEqual(command[3], Path(__file__).resolve().parents[2] / 'tools/journal')
+            self.assertIn('validate=False,native_window=True', command[2])
+            self.assertNotIn('QT_SCALE_FACTOR', invoke.call_args.kwargs['env'])
+
     def test_installer_reports_failures_and_exposes_only_checked_packages(self):
         from build import build
         source_sha, app_sha = 'a' * 40, 'b' * 40

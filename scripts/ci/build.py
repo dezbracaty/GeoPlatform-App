@@ -136,7 +136,7 @@ from pathlib import Path
 sys.path.insert(0,sys.argv[1])
 from journal_execution_session import JournalExecutionSession
 result=JournalExecutionSession().run(Path(sys.argv[2]),application=Path(sys.argv[3]),
-    output_dir=Path(sys.argv[4]),startup_timeout=120,validate=False,log=print)
+    output_dir=Path(sys.argv[4]),startup_timeout=120,validate=False,native_window=True,log=print)
 if not result.get('success') or result.get('applicationKeptOpen') or result.get('cleanupErrors'):
     raise RuntimeError('Owned application startup/observation/cleanup failed: '+str(result.get('error')))
 from PIL import Image
@@ -147,7 +147,8 @@ with Image.open(Path(sys.argv[4])/'startup.png') as image:
     native = dict(env)
     for key in ('QT_QPA_PLATFORM', 'QT_SCALE_FACTOR', 'QT_SCREEN_SCALE_FACTORS', 'QT_DEVICE_PIXEL_RATIO'):
         native.pop(key, None)
-    run([sys.executable, '-c', script, source / 'tools/journal', journal, executable, output / 'session'],
+    tools = Path(__file__).resolve().parents[2] / 'tools/journal'
+    run([sys.executable, '-c', script, tools, journal, executable, output / 'session'],
         cwd=source, env=native)
     return dict(status='passed', application=str(executable), application_sha256=digest(executable),
                 report=str(output / 'session/execution_result.json'), full_regression='not_requested')

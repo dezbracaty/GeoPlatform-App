@@ -173,7 +173,9 @@ class JournalExecutionSession:
 
     def run(self, journal_path, *, application=None, host="127.0.0.1", port=0,
             output_dir=None, keep_app=False, startup_timeout=30, progress=None, log=None,
-            environment_overrides=None, comparisons=None, validate=True):
+            environment_overrides=None, comparisons=None, validate=True, native_window=False):
+        if native_window and (validate or not application):
+            raise ValueError("native_window requires an owned application and validate=False")
         progress = progress if progress is not None else self.progress
         log = log if log is not None else self.log
         journal_path = Path(journal_path).resolve()
@@ -256,8 +258,10 @@ class JournalExecutionSession:
                     activate=environment.get("QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM") != "1")
                 if activation is not None:
                     emit(f"已核对本会话的 macOS 测试实例，PID {process.pid}，{activation['mechanism']}")
-                response = client.request("journal.replay.begin", {
-                    "replayId": replay_id, "resume": True, "windowProfile": WINDOW_PROFILE},
+                params = {"replayId": replay_id, "resume": True}
+                if not native_window:
+                    params["windowProfile"] = WINDOW_PROFILE
+                response = client.request("journal.replay.begin", params,
                     timeout=min(3.0, max(0.01, deadline-time.monotonic())))
                 if response.get("status") != "ready" or response.get("replayId") != replay_id:
                     raise RuntimeError("Application startup identity/readiness mismatch")
@@ -270,7 +274,8 @@ class JournalExecutionSession:
                 # lifecycle as GUI playback, including its restart/ready barrier.
                 client.begin_replay(timeout=startup_timeout, window_profile=WINDOW_PROFILE)
                 handshake = True
-            actual_window = wait_for_window(client)
+            actual_window = (client.window_info(WINDOW_PROFILE["window"]) if native_window
+                             else wait_for_window(client))
             paths = client.paths()
             output = JournalSessionRepository(playbacks=paths["playbacks"]).create_playback(output)
             output_ready = True
@@ -280,7 +285,8 @@ class JournalExecutionSession:
                 cancel_event=self.cancel_event)
             if environment_overrides is not None:
                 result["environmentOverrides"] = dict(environment_overrides)
-            result["windowProfile"] = WINDOW_PROFILE
+            if not native_window:
+                result["windowProfile"] = WINDOW_PROFILE
             result["actualWindow"] = actual_window
             if activation is not None:
                 result["applicationRegistration"] = activation
