@@ -54,12 +54,48 @@ endif()
 set(EMBREE_VERSION "4.4.0" CACHE STRING "Embree version to use")
 include(fetch_embree)
 
-if(NOT TARGET miniz)
+if(GPLATFORM_ENABLE_LIBSLICER)
+    include(GNUInstallDirs)
+    set(GPLATFORM_LIBSLICER_SOURCE_DIR "${GPLATFORM_THIRDPARTY_SOURCE_DIR}/OrcaSlicer"
+        CACHE INTERNAL "Orca source used by this build")
+    set(_libslicer_binary_dir "${CMAKE_BINARY_DIR}/libslicer")
+    set(_libslicer_install_dir "${_libslicer_binary_dir}/install")
+    set(GPLATFORM_LIBSLICER_INSTALL_DIR "${_libslicer_install_dir}"
+        CACHE INTERNAL "Staged libslicer package for this build")
+    set(LIBSLICER_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
+    set(LIBSLICER_BUILD_TESTS OFF)
+    set(LIBSLICER_NATIVE_REGRESSION_CMAKE "${GPLATFORM_ORCA_NATIVE_REGRESSION_CMAKE}"
+        CACHE INTERNAL "Opt-in Orca probe targets for this build")
+    # Orca and App share the OCCT targets selected by the host.
+    set(LIBSLICER_EXTERNAL_OCCT_DIR "${OpenCASCADE_DIR}"
+        CACHE INTERNAL "OCCT package selected by the App or host")
+    add_subdirectory("${GPLATFORM_LIBSLICER_SOURCE_DIR}" "${_libslicer_binary_dir}"
+        EXCLUDE_FROM_ALL)
+    set(LIBSLICER_RESOURCE_DIR
+        "${GPLATFORM_LIBSLICER_INSTALL_DIR}/${LIBSLICER_INSTALL_RESOURCEDIR}")
+    set(GPLATFORM_LIBSLICER_RUNTIME_DIR
+        "${_libslicer_install_dir}/${CMAKE_INSTALL_BINDIR}"
+        CACHE INTERNAL "Staged Windows runtime dependencies for libslicer")
+
+    # Stage Orca's curated resources and private runtime dependencies with its
+    # existing install rules. Linking uses the in-tree target directly.
+    file(GLOB_RECURSE _libslicer_resources CONFIGURE_DEPENDS LIST_DIRECTORIES FALSE
+        "${GPLATFORM_LIBSLICER_SOURCE_DIR}/resources/*")
+    set(_libslicer_resource_list "${_libslicer_binary_dir}/resources.txt")
+    file(GENERATE OUTPUT "${_libslicer_resource_list}" CONTENT "${_libslicer_resources}")
+    set(GPLATFORM_LIBSLICER_INSTALL_STAMP "${_libslicer_install_dir}/.installed")
+    add_custom_command(OUTPUT "${GPLATFORM_LIBSLICER_INSTALL_STAMP}"
+        COMMAND "${CMAKE_COMMAND}" -E rm -rf "${_libslicer_install_dir}"
+        COMMAND "${CMAKE_COMMAND}" --install "${_libslicer_binary_dir}"
+            --prefix "${_libslicer_install_dir}" --config "$<CONFIG>"
+        COMMAND "${CMAKE_COMMAND}" -E touch "${GPLATFORM_LIBSLICER_INSTALL_STAMP}"
+        DEPENDS libslicer_api "${_libslicer_resource_list}" ${_libslicer_resources}
+            "${_libslicer_binary_dir}/cmake_install.cmake"
+        COMMENT "Staging libslicer runtime and resources"
+        VERBATIM)
+    add_custom_target(gplatform_libslicer_install
+        DEPENDS "${GPLATFORM_LIBSLICER_INSTALL_STAMP}")
+elseif(NOT TARGET miniz)
     add_subdirectory("${GPLATFORM_THIRDPARTY_SOURCE_DIR}/OrcaSlicer/deps_src/miniz"
         "${CMAKE_BINARY_DIR}/third_party/miniz" EXCLUDE_FROM_ALL)
-endif()
-if(GPLATFORM_ENABLE_LIBSLICER)
-    include(fetch_libslicer)
-    set(libslicer_DIR "${GPLATFORM_LIBSLICER_PACKAGE_DIR}" CACHE PATH "Exact libslicer package directory used by GPlatform" FORCE)
-    find_package(libslicer CONFIG REQUIRED PATHS "${GPLATFORM_LIBSLICER_PACKAGE_DIR}" NO_DEFAULT_PATH)
 endif()

@@ -291,7 +291,7 @@ class RegressionTests(unittest.TestCase):
             seen = []
             def compare(args, *rest):
                 if '--producer-build-dir' in args:
-                    self.assertEqual(args[args.index('--producer-build-dir') + 1], source / 'producer/build-Release')
+                    self.assertEqual(args[args.index('--producer-build-dir') + 1], source / 'build-arm64-Release')
                     self.assertNotIn('--jobs', args)
                     native.mkdir()
                     (native / 'provenance.json').write_text(json.dumps({
@@ -314,7 +314,6 @@ class RegressionTests(unittest.TestCase):
                     self.assertEqual(operation()['returncode'], 0)
                 return name.endswith(('/build-tests', '/native-orca-checks'))
             with patch('native_regression.phase', side_effect=phase), patch('native_regression.command', side_effect=compare), \
-                 patch('native_regression.cache_value', side_effect=[str(source / 'producer'), 'Release']), \
                  patch('native_regression.text_git', return_value='a' * 40), patch('native_regression.runtime', return_value={}):
                 regression.architecture(source, 'arm64', source / 'evidence', {'phases': []}, {'Qt6_DIR': '/fixture/Qt'})
             self.assertEqual(seen, [('cases.json', 'standard'), ('cases-extended.json', 'extended')])

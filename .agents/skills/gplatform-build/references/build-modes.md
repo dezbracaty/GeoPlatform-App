@@ -32,9 +32,8 @@ Ninja、Python、Git/LFS 与各平台工具按当前构建诊断检查；依赖�
 
 ## libslicer 与增量来源
 
-`cmake/thirdparty/fetch_libslicer.cmake` 根据源码路径、架构、编译器/ABI 和配置建立有锁的稳定缓存，configure 时执行独立配置、构建和 install。源码依赖参与重新配置。
-在选定 cache 查 `CMAKE_HOME_DIRECTORY`、`CMAKE_BUILD_TYPE`、`Qt6_DIR`、`GPLATFORM_SDK_ROOT`、`GPLATFORM_LIBSLICER_CACHE_ROOT`、`GPLATFORM_LIBSLICER_INSTALL_DIR`、`GPLATFORM_LIBSLICER_PACKAGE_DIR`、`libslicer_DIR` 等实际存在的项。
-宿主使用的 libslicer 配置可能由 `LIBSLICER_BUILD_TYPE` 和平台依赖约束决定，不根据主应用 Debug/Release 自行猜测。
+`GPlatformThirdParty.cmake` 将仓库里的 OrcaSlicer 加入宿主或独立 App 的同一套 CMake 构建。库沿用当前 preset 的架构与配置，Ninja 管理增量编译，Orca 的安装规则在 build 阶段把运行库和资源部署到当前构建目录的 `libslicer/install/`。
+在当前 `CMakeCache.txt` 核对 `CMAKE_HOME_DIRECTORY`、`CMAKE_BUILD_TYPE`、`Qt6_DIR`、`GPLATFORM_SDK_ROOT`、`GPLATFORM_LIBSLICER_SOURCE_DIR` 和 `GPLATFORM_LIBSLICER_INSTALL_DIR`，再核对 App 实际加载的库。
 
 ## 找到实际运行产物
 

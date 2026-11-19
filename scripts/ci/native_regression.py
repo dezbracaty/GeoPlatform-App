@@ -8,7 +8,6 @@ import subprocess
 import sys
 import time
 
-from build import cache_value
 from common import git_env, text_git, write_json
 
 
@@ -184,10 +183,8 @@ def architecture(source, arch, output, report, env):
     commit = text_git(source / 'App/ThirdParty/OrcaSlicer', 'rev-parse', 'HEAD')
 
     def native_checks():
-        producer = Path(cache_value(build, 'GPLATFORM_LIBSLICER_CACHE_ROOT'))
-        build_type = cache_value(build, 'LIBSLICER_BUILD_TYPE')
         args = [sys.executable, Path(__file__).with_name('native_child.py'), 'native', '--source', source,
-                '--work-dir', native, '--producer-build-dir', producer / ('build-' + build_type),
+                '--work-dir', native, '--producer-build-dir', build,
                 '--source-dir', source / 'App/ThirdParty/OrcaSlicer', '--source-commit', commit]
         return {'returncode': command(args, source, env, output / 'native-checks.log')}
 

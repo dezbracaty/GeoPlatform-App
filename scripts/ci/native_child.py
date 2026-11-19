@@ -15,7 +15,9 @@ def attached_build(command, log, timeout, env=None, *, cache_values=None):
         from native_regression import windows_native_environment
         build = Path(command[command.index('--test-dir') + 1])
         cache = cache_values(build / 'CMakeCache.txt')
-        if cache.get('LIBSLICER_NATIVE_REGRESSION_CMAKE'):
+        if cache.get('GPLATFORM_LIBSLICER_RUNTIME_DIR'):
+            provenance = {'producerRuntimeDirectory': cache['GPLATFORM_LIBSLICER_RUNTIME_DIR']}
+        elif cache.get('LIBSLICER_NATIVE_REGRESSION_CMAKE'):
             provenance = {'producerRuntimeDirectory': str(Path(cache['CMAKE_INSTALL_PREFIX']) / 'bin')}
         else:
             provenance = {'dependencyCacheValues': cache}
