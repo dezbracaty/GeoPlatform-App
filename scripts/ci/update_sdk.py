@@ -4,6 +4,7 @@ import argparse
 import json
 import hashlib
 import importlib.util
+import os
 import sys
 from pathlib import Path
 import shutil
@@ -17,8 +18,18 @@ from common import (clone_branch, commit_tree, digest, git, git_env, push_exact_
 SLOTS = {"windows": ("AMD64/Release",), "macos": ("arm64/Release", "x86_64/Release")}
 
 
+def source_sdk_package():
+    """Reuse the runner's source SDK path across consumer builds."""
+    runner_temp = os.environ.get('RUNNER_TEMP')
+    if not runner_temp:
+        return Path(tempfile.mkdtemp(prefix='sdk-package-')).resolve()
+    package = Path(runner_temp).resolve() / 'regression-sdk'
+    package.mkdir()
+    return package
+
+
 def build_sdk_package(source, platform, package, env, *, log=None):
-    """Official preset producer/export used by both SDK publication and source regression."""
+    """Produce a source SDK with the official presets and exporter."""
     source, package = Path(source).resolve(), Path(package).resolve()
     arguments = ['-DGPLATFORM_BUILD_TESTS=OFF', '-DGPLATFORM_BUILD_ORCA_NATIVE_PROBES=OFF']
     qt = env.get('Qt6_DIR') or env.get('QT6_DIR')

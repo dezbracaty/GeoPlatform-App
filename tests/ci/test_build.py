@@ -361,13 +361,15 @@ class InstallerPayloadChecks(unittest.TestCase):
 class InstallerSelectionChecks(unittest.TestCase):
     def test_installer_reports_failures_and_exposes_only_checked_packages(self):
         from build import build
-        app_sha, sdk_sha = 'a' * 40, 'b' * 40
+        source_sha, app_sha = 'a' * 40, 'b' * 40
         for platform in ('windows', 'macos'):
-            for failure in (None, 'consumer build failed', 'installer check failed'):
+            for failure in (None, 'SDK build failed', 'consumer build failed', 'installer check failed'):
                 with self.subTest(platform=platform, failure=failure), tempfile.TemporaryDirectory() as temporary:
                     base = Path(temporary).resolve()
                     workspace, runner = base / 'work space', base / 'runner-temp'
-                    source, sdk = workspace / 'source', workspace / 'sdk'
+                    host = workspace / 'host-source'
+                    source = host / 'App'
+                    sdk_package = runner / 'regression-sdk'
                     runner.mkdir()
                     (source / 'package').mkdir(parents=True)
                     universal = source / 'build-universal-Release'
@@ -396,15 +398,23 @@ class InstallerSelectionChecks(unittest.TestCase):
                         return checks
 
                     packager = SimpleNamespace(create_disk_image=create_disk_image)
+
+                    def produce(host_path, selected_platform, package, env, *, log):
+                        self.assertEqual((host_path, selected_platform, package), (host, platform, sdk_package))
+                        log.write(b'producer log')
+                        if failure == 'SDK build failed':
+                            raise RuntimeError(failure)
+                        (package / 'package-manifest.json').write_bytes(b'fixture manifest')
+
                     with (
                         patch.dict(os.environ, env, clear=True),
-                        patch('build.text_git', side_effect=[app_sha, 'c' * 40]),
+                        patch('build.text_git', side_effect=['c' * 40, app_sha, 'd' * 40]),
                         patch('build.machine_lock', return_value=nullcontext()),
-                        patch('build.prepare_cached_source'),
-                        patch('build.init_source_submodules'),
-                        patch('build.materialize_sdk', return_value=sdk),
+                        patch('build.prepare_cached_source') as prepare,
+                        patch('build.init_host_submodules') as initialize,
+                        patch('build.build_sdk_package', side_effect=produce),
                         patch('build.build_consumer', return_value={'metadata': {}},
-                              side_effect=RuntimeError(failure) if failure == 'consumer build failed' else None),
+                              side_effect=RuntimeError(failure) if failure == 'consumer build failed' else None) as consume,
                         patch('build.windows_entry', side_effect=lambda *args: (
                             source / 'package' / 'GPlatform.exe').write_bytes(b'checked package')),
                         patch('build.run'),
@@ -415,15 +425,28 @@ class InstallerSelectionChecks(unittest.TestCase):
                     ):
                         if failure:
                             with self.assertRaisesRegex(RuntimeError, failure):
-                                build(source, platform, app_sha, sdk_sha, sdk_root=sdk)
+                                build(host, platform, source_sha, app_sha, 'org/App')
                         else:
-                            build(source, platform, app_sha, sdk_sha, sdk_root=sdk)
+                            build(host, platform, source_sha, app_sha, 'org/App')
+                        prepare.assert_called_once_with(host, source_sha, platform, host=True)
+                        initialize.assert_called_once_with(host, app_sha, 'org/App', host_platform=platform)
+                        if failure == 'SDK build failed':
+                            consume.assert_not_called()
+                        else:
+                            (actual_source, selected_platform, actual_sdk, _), checks = consume.call_args
+                            self.assertEqual((actual_source, selected_platform, actual_sdk),
+                                             (source, platform, sdk_package / 'SDK'))
+                            self.assertEqual(checks, dict(producer_root_sha=source_sha, producer_app_sha=app_sha))
 
                     values = dict(line.split('=', 1) for line in outputs.read_text(encoding='utf-8').splitlines())
                     report_path = result / 'build-result.json'
                     self.assertEqual(values['report'], report_path.as_posix())
                     report = json.loads(report_path.read_text(encoding='utf-8'))
-                    self.assertEqual((report['app_sha'], report['sdk_sha']), (app_sha, sdk_sha))
+                    self.assertEqual((report['source_sha'], report['app_sha'], report['sdk_source']),
+                                     (source_sha, app_sha, 'source'))
+                    self.assertEqual(report['declared_app_sha'], 'd' * 40)
+                    self.assertNotIn('sdk_sha', report)
+                    self.assertEqual(sdk_package.exists(), failure is not None)
                     package = result / 'package' / ('GPlatform.exe' if platform == 'windows' else 'GPlatform.dmg')
                     if failure:
                         self.assertEqual(set(values), {'report'})
@@ -433,6 +456,8 @@ class InstallerSelectionChecks(unittest.TestCase):
                     else:
                         self.assertEqual(set(values), {'report', 'package', 'checksum'})
                         self.assertEqual(report['status'], 'passed')
+                        self.assertEqual(report['sdk_package_manifest_sha256'],
+                                         hashlib.sha256(b'fixture manifest').hexdigest())
                         self.assertEqual(values['package'], package.as_posix())
                         self.assertEqual(Path(values['checksum']).read_text(encoding='utf-8').split()[0],
                                          digest(package))
@@ -441,21 +466,22 @@ class InstallerSelectionChecks(unittest.TestCase):
                             self.assertEqual(report['checks']['distribution_files'], 1)
                             full_checks = json.loads((result / 'installer-checks.json').read_text(encoding='utf-8'))
                             self.assertEqual(full_checks['distribution'], {'GPlatform.exe': 'fixture hash'})
-                    self.assertEqual((result / 'startup.png').exists(), failure != 'consumer build failed')
+                    self.assertEqual((result / 'startup.png').exists(), failure not in ('SDK build failed', 'consumer build failed'))
 
-    def test_packaging_requires_explicit_sdk_without_regression_controls(self):
-        arguments = ['build.py', '--source-dir', 'source', '--platform', 'macos',
-                     '--app-sha', 'a' * 40, '--sdk-sha', 'b' * 40, '--sdk-root', 'sdk']
+    def test_packaging_requires_the_frozen_host_and_app(self):
+        arguments = ['build.py', '--source-dir', 'host-source', '--platform', 'macos',
+                     '--source-sha', 'a' * 40, '--app-sha', 'b' * 40, '--app-repository', 'org/App']
         with patch('sys.argv', arguments), patch('build.build') as execute:
             main()
-        execute.assert_called_once_with(Path('source'), 'macos', 'a' * 40, 'b' * 40, sdk_root=Path('sdk'))
+        execute.assert_called_once_with(Path('host-source'), 'macos', 'a' * 40, 'b' * 40, 'org/App')
 
-    def test_missing_sdk_and_retired_regression_flags_fail_before_build(self):
+    def test_missing_host_and_retired_sdk_or_regression_flags_fail_before_build(self):
         import contextlib, io
-        base = ['build.py', '--source-dir', 'source', '--platform', 'macos',
-                '--app-sha', 'a' * 40, '--sdk-sha', 'b' * 40]
-        for extra in [[], ['--sdk-root', 'sdk', '--run-journal'],
-                      ['--sdk-root', 'sdk', '--test-assets-sha', 'c' * 40]]:
+        base = ['build.py', '--source-dir', 'host-source', '--platform', 'macos',
+                '--app-sha', 'a' * 40, '--app-repository', 'org/App']
+        host = ['--source-sha', 'b' * 40]
+        for extra in [[], host + ['--sdk-root', 'sdk'], host + ['--sdk-sha', 'c' * 40],
+                      host + ['--run-journal'], host + ['--test-assets-sha', 'c' * 40]]:
             with self.subTest(extra=extra), patch('sys.argv', base + extra), patch('build.build') as execute, contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit) as error:
                     main()

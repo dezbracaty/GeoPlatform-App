@@ -80,17 +80,16 @@ source 模式禁止填写 SDK refs，按本轮 Root/App 候选生产 SDK 文件�
 | 参数 | 类型 | 默认值 | 含义 |
 | --- | --- | --- | --- |
 | app_ref | 分支/完整 SHA | feature/gplatform-ui | 要打包的 App |
+| host_ref | 分支/完整 SHA | feature/gplatform-ui | 生产本轮 SDK 的完整宿主 |
 | platform | windows / macos / all | windows | 所选平台 |
-| macos_sdk_ref | 分支/完整 SHA | macos | Mac SDK |
-| windows_sdk_ref | 分支/完整 SHA | windows | Windows SDK |
 
-执行：冻结 App/SDK → 完整包、来源、UI 输入、Qt/编译器/ABI 兼容检查 → 显式 GPLATFORM_SDK_ROOT → App 正式 configure/build → SDK 消费检查 → 正式部署与 installer 目标 → 包内容、架构、依赖、哈希及必要启动检查 → 上传产物与报告。
+执行：冻结宿主/App → 各平台按正式 preset 生产并导出本轮 SDK → 校验 SDK 包、生产源码 SHA、UI 输入和 Qt/编译器/ABI → 使用该包的 GPLATFORM_SDK_ROOT 配置并构建独立 App → SDK 消费检查 → 正式部署与 installer 目标 → 包内容、架构、依赖、哈希及必要启动检查 → 上传安装包与报告。
 
-Windows 生成 AMD64 `.exe` installer，Mac 生成 Universal `.dmg`，all 并行。此入口不构建完整宿主、不重新生产 SDK、不下载 TestAssets、不跑全量 Journal、不发布 Release，没有跳过必需检查的公开参数。打包通过不满足 MR 全量门禁。
+Windows 生成 AMD64 `.exe` installer，Mac 生成 Universal `.dmg`，all 并行。两平台分别生产临时 SDK，均使用同一组宿主/App SHA。此入口不访问 SDK 分支、不发布 SDK 或 GitHub Release、不下载 TestAssets、不跑全量 Journal。打包通过不满足 MR 全量门禁。
 
 安装包附件包含 `build-result.json`，以及通过校验时 `package/` 下的安装包和 SHA256 文件。构建或检查失败时只上传已生成的结果 JSON。启动截图、打包诊断文件和完整检查记录留在 Runner 的 `installer-results/<run>-<attempt>/<platform>`，根路径与回归报告一致。只有合格包上传成功才清理本轮的 `package/`；构建、检查或上传失败会保留已有文件。
 
-正式交付填写已验收候选的完整 App/SDK SHA，不用后来可能前进的分支名冒充同一版本。App 不再记录 SDK gitlink。本地与 CI 每层都必须使用同一显式 GPLATFORM_SDK_ROOT；缺失或不兼容直接失败，不回退旧 SDK、不补拼 DLL/dylib。
+正式交付填写已验收候选的完整宿主/App SHA。报告记录 SDK 生产源码和文件包清单 SHA256。构建、部署和检查使用同一显式 GPLATFORM_SDK_ROOT；产物缺失、来源不一致或不兼容直接失败。
 
 检查范围：Mac 挂载实际 DMG，核对包内完整载荷与双架构依赖并启动 App；Windows 核对正式 Inno 输入、AMD64 发行目录和载荷哈希并启动发行 App。未执行的 Windows 实装、注册表、升级卸载必须明确标注未验证，不能把发行 App 启动称为实装通过。
 
@@ -110,15 +109,14 @@ App MR 创建、重新打开、提交更新、转为可审核、变更目标分�
 
 Universal 独立 App 的 outer configure 将同一 SDK_ROOT 传给两个薄架构；merge-only 必须核对两侧缓存实际消费同一选择。CI 构建/打包适配器来自固定 workflow 实现，使用现有 `--source-dir`/`-SourceDir` 选择产品项目，产品 presets、CMake、资源、source_inputs 与 Journal 工具来自被测版本。
 
-Build Installer 内部只保留打包、消费检查和必要启动观察，不再提供 run_journal/test_assets 参数或“打包并跑全量”分支；完整 Journal 由 Run Regression 唯一承担。必要启动观察使用现有 owned 生命周期，不属于完整回归，也不能代替完整回归。
+Build Installer 使用本轮源码 SDK 做消费检查、打包和必要启动观察。完整 Journal 由 Run Regression 执行；安装包的启动观察沿用现有 owned 生命周期。
 
 ## 日常流程
 
 1. 在 App 功能分支开发、提交、创建 MR。
 2. MR 自动执行准确 head 的双平台源码模式完整回归；失败修复后新提交自动验收新候选。
-3. 需要交付时，手动 Build SDK，填写已验收的 App/宿主 SHA，mode=publish，生成对应平台 SDK SHA。
-4. 手动 Build Installer，填写同一 App SHA 和刚生成的准确 SDK SHA。
-5. 核查真实包和上传报告后交付。MR 通过不自动发布 SDK 或打包；三个手动入口相互独立。
+3. 需要安装包时，手动 Build Installer，填写已验收的 App/宿主 SHA 和目标平台，核查实际包和上传报告后交付。
+4. 需要向其他消费者交付 SDK 时，独立运行 Build SDK，填写已验收的 App/宿主 SHA 和目标平台，以 mode=publish 更新对应平台分支。
 
 ## 仓库配置与执行环境
 
@@ -128,9 +126,9 @@ App runner 标签使用 GPLATFORM_WINDOWS_RUNNER_LABELS/GPLATFORM_MACOS_RUNNER_L
 
 CI 工具测试依赖在 runner 准备阶段用同一 Python 安装 `tests/ci/requirements.txt`，截图验证沿用 Pillow 依赖。回归在 Journal 全量通过后再检查 CI 工具合同，工具检查失败仍阻止最终通过。runner 只复用测试输入和本机工具环境一致的通过记录，记录包含源检查提交，工具输入变化或无通过记录时重新执行。仅改变 TestAssets gitlink 不改变工具测试输入。
 
-App runner 的完整宿主检出固定使用工作区内 `host-source`，installer 的独立 App 检出继续使用 `source`。宿主和独立 App 保留各自经校验的 preset 构建目录，每个依赖切换到固定 gitlink 后只清理一次。回归的源码 SDK 使用 runner 临时目录下固定短路径 `regression-sdk`，每轮重新生成并校验来源和载荷，App 按标准 preset 增量构建。缓存不兼容时明确失败，不消费旧 SDK 或不匹配的 App。
+App runner 的完整宿主统一使用工作区内 `host-source`。宿主和嵌套独立 App 保留各自经校验的 preset 构建目录，每个依赖切换到固定 gitlink 后只清理一次。源码回归和 Installer 复用 runner 临时目录下的固定 SDK 路径 `regression-sdk`，每轮重新生成并校验来源和载荷。App 按标准 preset 增量构建。
 
-同一 Runner 工作区的 Installer 与 `published` 回归共用 `sdk` 检出，保留 Git 和 LFS 对象。每次检出冻结的 SDK SHA，按所选平台获取槽位并执行完整校验。新的工作区或重建的检出会重新获取缺少的对象。
+`published` 回归的 `sdk` 检出保留 Git 和 LFS 对象，按冻结的 SDK SHA 获取所选平台槽位并执行完整校验。
 
 回归报告保留 `regression-results/<run>-<attempt>/<platform>` 布局。Windows 报告放在 `RUNNER_TEMP` 的父目录下，保持归档路径短，并避开 Runner 在任务结束时清理的临时目录。Mac 使用工作区。成功和失败的任务只上传已经生成的 `source-regression.json` 和 Journal 会话的 `summary.json`，包含版本、各阶段结果、计数和逐场景判定。完整日志、截图和导出文件留在 Runner 本机，上传后保留报告目录。原子 JSON 替换仅对 Windows 短暂读句柄争用进行有界重试，持续占用或其他错误仍使流程失败。
 

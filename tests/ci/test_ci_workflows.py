@@ -150,7 +150,7 @@ class Workflows(unittest.TestCase):
         expected={
           ROOT/'.github/workflows/build-sdk.yml':{'app_ref','host_ref','platform','mode'},
           ROOT/'.github/workflows/run-regression.yml':{'app_ref','host_ref','platform','sdk_source','macos_sdk_ref','windows_sdk_ref','macos_test_assets_ref','windows_test_assets_ref'},
-          APP/'.github/workflows/build-installer.yml':{'app_ref','platform','macos_sdk_ref','windows_sdk_ref'}}
+          APP/'.github/workflows/build-installer.yml':{'app_ref','host_ref','platform'}}
         for path,keys in expected.items():
             self.assertEqual(set(load(path)['on']['workflow_dispatch']['inputs']),keys)
 
@@ -181,9 +181,9 @@ class Workflows(unittest.TestCase):
                     self.assertEqual(reusable[name].get('default', ''), parameters[name].get('default', ''))
 
     def test_source_is_retained_and_sdk_prepare_receives_fixed_sha(self):
-        for job, expected_path in zip(self.platform_jobs(), ('host-source', 'source')):
+        for job in self.platform_jobs():
             source = next(step for step in job['steps'] if step.get('with', {}).get('path') in ('source', 'host-source'))
-            self.assertEqual(source['with']['path'], expected_path)
+            self.assertEqual(source['with']['path'], 'host-source')
             self.assertEqual(source['with']['clean'], 'false')
             self.assertEqual(source['with']['persist-credentials'], 'false')
         job = load(ROOT / '.github/workflows/build-sdk.yml')['jobs']['build_publish']
@@ -255,16 +255,15 @@ class Workflows(unittest.TestCase):
             '${{ env.SDK_PACKAGE_ROOT }}/package-manifest.json',
         ])
 
-    def test_installers_and_published_regression_keep_the_same_sdk_checkout(self):
-        installer = load(APP / '.github/workflows/build-installer.yml')['jobs']['build']
+    def test_only_published_regression_checks_out_the_sdk_repository(self):
         regression = load(APP / '.github/workflows/run-regression.yml')['jobs']['regression']
         sdk_ref = "${{ matrix.platform == 'windows' && needs.prepare.outputs.windows_sdk_sha || needs.prepare.outputs.macos_sdk_sha }}"
-        for job in (installer, regression):
-            sdk_checkout, = [step for step in job['steps'] if step.get('with', {}).get('path') == 'sdk']
-            self.assertEqual(sdk_checkout['with']['ref'], sdk_ref)
-            self.assertEqual(sdk_checkout['with']['lfs'], 'false')
-            self.assertEqual(sdk_checkout['with']['persist-credentials'], 'false')
-            self.assertEqual(sdk_checkout.get('if'), "inputs.sdk_source == 'published'" if job is regression else None)
+        sdk_checkout, = [step for step in regression['steps'] if step.get('with', {}).get('path') == 'sdk']
+        self.assertEqual(sdk_checkout['with']['ref'], sdk_ref)
+        self.assertEqual(sdk_checkout['with']['lfs'], 'false')
+        self.assertEqual(sdk_checkout['with']['persist-credentials'], 'false')
+        self.assertEqual(sdk_checkout['if'], "inputs.sdk_source == 'published'")
+        for job in (*self.platform_jobs(), regression):
             with tempfile.TemporaryDirectory() as directory:
                 workspace = Path(directory)
                 objects = workspace / 'sdk/.git/lfs/objects'

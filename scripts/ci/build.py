@@ -1,4 +1,4 @@
-"""Use the existing standalone App build/check/package entries."""
+"""Package an App against an SDK produced from the same frozen host and App."""
 from __future__ import annotations
 import argparse
 import importlib.util
@@ -12,8 +12,10 @@ from pathlib import Path
 import shutil
 import sys
 
-from common import (digest, git_env, init_source_submodules, machine_lock, materialize_sdk,
-                    prepare_cached_source, run, runner_report_path, text_git, write_json, write_outputs)
+from common import (build_log, digest, git_env, init_host_submodules, machine_lock,
+                    prepare_cached_source, remove_owned_tree, require_sha, run,
+                    runner_report_path, text_git, write_json, write_outputs)
+from update_sdk import build_sdk_package, source_sdk_package
 
 
 def cache_value(build, key):
@@ -208,25 +210,34 @@ def inspect_installer(source, platform, package, output, env):
         write_json(output / 'installer-checks.json', result)
 
 
-def build(source, platform, app_sha, sdk_sha, *, sdk_root):
-    source = source.resolve()
+def build(host, platform, source_sha, app_sha, app_repository):
+    host = host.resolve()
+    source = host / "App"
+    require_sha(source_sha)
+    require_sha(app_sha)
     output = runner_report_path(dict(os.environ, PLATFORM=platform), "installer-results")
     output.mkdir(parents=True, exist_ok=False)
     package_dir = output / "package"
     report_path = output / "build-result.json"
-    report = dict(status="failed", platform=platform, app_sha=app_sha, sdk_sha=sdk_sha,
+    report = dict(status="failed", platform=platform, source_sha=source_sha, app_sha=app_sha, sdk_source="source",
                   run_id=os.environ.get("GITHUB_RUN_ID"), run_attempt=os.environ.get("GITHUB_RUN_ATTEMPT"),
                   installation_tested=False)
     try:
-        if text_git(source, "rev-parse", "HEAD") != app_sha:
-            raise RuntimeError("App source SHA changed")
         report["control_sha"] = text_git(Path(__file__).resolve().parents[2], "rev-parse", "HEAD")
         env = git_env()
         with machine_lock():
-            prepare_cached_source(source, app_sha, platform, consumer=True)
-            init_source_submodules(source)
-            actual_sdk = materialize_sdk(sdk_root, sdk_sha, platform)
-            consumer = build_consumer(source, platform, actual_sdk, env)
+            prepare_cached_source(host, source_sha, platform, host=True)
+            init_host_submodules(host, app_sha, app_repository, host_platform=platform)
+            if text_git(source, "rev-parse", "HEAD") != app_sha:
+                raise RuntimeError("App source SHA changed")
+            report["declared_app_sha"] = text_git(host, "rev-parse", source_sha + ":App")
+            sdk_package = source_sdk_package()
+            with build_log(output, "sdk-build") as log:
+                build_sdk_package(host, platform, sdk_package, env, log=log)
+            report["sdk_package_manifest_sha256"] = digest(sdk_package / "package-manifest.json")
+            actual_sdk = sdk_package / "SDK"
+            consumer = build_consumer(source, platform, actual_sdk, env,
+                                      producer_root_sha=source_sha, producer_app_sha=app_sha)
             report.update(sdk_root=str(actual_sdk), sdk_consumer_check="passed",
                           sdk_producers={slot: {key: data.get(key) for key in ("SOURCE_STATE", "APP_SOURCE_STATE")}
                                          for slot, data in consumer["metadata"].items()})
@@ -265,6 +276,7 @@ def build(source, platform, app_sha, sdk_sha, *, sdk_root):
             checksum = checks["package_sha256"]
             checksum_path = package.with_suffix(package.suffix + ".sha256")
             checksum_path.write_text(f"{checksum}  {package.name}\n", encoding="utf-8")
+            remove_owned_tree(sdk_package, sdk_package.parent)
         check_summary = {key: checks[key] for key in ("status", "payload_check", "startup", "not_tested",
                                                       "installer_script_sha256") if key in checks}
         if "distribution" in checks:
@@ -286,11 +298,11 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--source-dir", type=Path, required=True)
     p.add_argument("--platform", choices=("windows", "macos"), required=True)
+    p.add_argument("--source-sha", required=True)
     p.add_argument("--app-sha", required=True)
-    p.add_argument("--sdk-sha", required=True)
-    p.add_argument("--sdk-root", type=Path, required=True, help="Explicit frozen SDK checkout")
+    p.add_argument("--app-repository", required=True)
     a = p.parse_args()
-    build(a.source_dir, a.platform, a.app_sha, a.sdk_sha, sdk_root=a.sdk_root)
+    build(a.source_dir, a.platform, a.source_sha, a.app_sha, a.app_repository)
 
 
 if __name__ == "__main__":

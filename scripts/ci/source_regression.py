@@ -1,7 +1,6 @@
 """Build a fixed full host and run App's maintained platform Journal regression."""
 from __future__ import annotations
 import argparse
-from contextlib import contextmanager
 import hashlib
 from importlib.metadata import distributions
 import json
@@ -13,29 +12,14 @@ import shutil
 import sys
 import tempfile
 
-from common import (repository_url, digest, git, git_env, init_host_submodules, machine_lock,
+from common import (build_log, repository_url, digest, git, git_env, init_host_submodules, machine_lock,
                     prepare_cached_source, require_sha, run, text_git, write_json)
 from common import freeze_candidate, app_dependency_repository, resolve_ref
 from common import remove_owned_tree
-from update_sdk import build_sdk_package, update_sdk
+from update_sdk import build_sdk_package, source_sdk_package, update_sdk
 import native_regression as native_checks
 
 ASSET_BRANCHES = {'macos': 'macmini', 'windows': 'windows'}
-
-
-@contextmanager
-def build_log(output, name):
-    path = output / (name + '.log')
-    print(f'{name} started. Runner log: {path}', flush=True)
-    with path.open('w+b') as log:
-        try:
-            yield log
-        except Exception:
-            end = log.seek(0, os.SEEK_END)
-            log.seek(max(0, end - 4096))
-            print(log.read().decode('utf-8', errors='replace'), flush=True)
-            raise
-    print(f'{name} finished.', flush=True)
 
 
 def prepare(api, app_repository, app_ref, host_repository, host_ref, *, platform='all', sdk_source='source',
@@ -212,13 +196,7 @@ def regress(source, platform, source_sha, assets_sha, output, *, app_sha, app_re
             if sdk_source == 'source':
                 # A short, stable SDK_ROOT lets the incremental consumer
                 # keep its build graph while receiving the current package.
-                runner_temp = os.environ.get('RUNNER_TEMP')
-                if runner_temp:
-                    package_path = Path(runner_temp).resolve() / 'regression-sdk'
-                    package_path.mkdir()
-                    package = package_path
-                else:
-                    package = Path(tempfile.mkdtemp(prefix='sdk-package-')).resolve()
+                package = source_sdk_package()
                 report['sdk_package'] = dict(path=str(package), retained=True)
                 with build_log(output, 'sdk-build') as log:
                     build_sdk_package(source, platform, package, env, log=log)
