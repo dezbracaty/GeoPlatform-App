@@ -1,6 +1,7 @@
 """Build a fixed full host and run App's maintained platform Journal regression."""
 from __future__ import annotations
 import argparse
+from contextlib import contextmanager
 import hashlib
 from importlib.metadata import distributions
 import json
@@ -20,6 +21,21 @@ from update_sdk import build_sdk_package, update_sdk
 import native_regression as native_checks
 
 ASSET_BRANCHES = {'macos': 'macmini', 'windows': 'windows'}
+
+
+@contextmanager
+def build_log(output, name):
+    path = output / (name + '.log')
+    print(f'{name} started. Runner log: {path}', flush=True)
+    with path.open('w+b') as log:
+        try:
+            yield log
+        except Exception:
+            end = log.seek(0, os.SEEK_END)
+            log.seek(max(0, end - 4096))
+            print(log.read().decode('utf-8', errors='replace'), flush=True)
+            raise
+    print(f'{name} finished.', flush=True)
 
 
 def prepare(api, app_repository, app_ref, host_repository, host_ref, *, platform='all', sdk_source='source',
@@ -204,7 +220,8 @@ def regress(source, platform, source_sha, assets_sha, output, *, app_sha, app_re
                 else:
                     package = Path(tempfile.mkdtemp(prefix='sdk-package-')).resolve()
                 report['sdk_package'] = dict(path=str(package), retained=True)
-                build_sdk_package(source, platform, package, env)
+                with build_log(output, 'sdk-build') as log:
+                    build_sdk_package(source, platform, package, env, log=log)
                 receipt = update_sdk(source, source_sha, platform, package,
                                      repository_url(sdk_repository), app_sha=app_sha, publish=False)
                 report['sdk'] = dict(receipt, package_manifest_sha256=digest(package / 'package-manifest.json'))
@@ -227,7 +244,9 @@ def regress(source, platform, source_sha, assets_sha, output, *, app_sha, app_re
             consumer_payload = dict(app=str(app), ci_dir=ci_dir, platform=platform, sdk_root=str(selected_sdk),
                 producer_root_sha=source_sha, producer_app_sha=report['app_sha'],
                 receipt=str(output / 'consumer-receipt.json'))
-            run([sys.executable, '-c', APP_CONSUMER, json.dumps(consumer_payload)], cwd=source, env=dict(os.environ))
+            with build_log(output, 'sdk-consumer') as log:
+                run([sys.executable, '-c', APP_CONSUMER, json.dumps(consumer_payload)],
+                    cwd=source, env=dict(os.environ), log=log)
             consumer = json.loads((output / 'consumer-receipt.json').read_text(encoding='utf8'))
             report['consumer'] = consumer
             executable = Path(consumer['executable'])

@@ -62,6 +62,8 @@ source 模式禁止填写 SDK refs，按本轮 Root/App 候选生产 SDK 文件�
 
 完整执行：冻结版本 → 准备本平台 TestAssets → 宿主原生 CTest/原生切片检查 → 生成或获取 SDK → 构建 SDK 消费 App → 必需 SDK 检查及实际部署/资源检查 → 启动 Journal Web Server → 使用该 Server 的 /api/run 创建全量任务 → 严格验收 → 按既有规则一次串行复查 → 汇总。
 
+两平台的 SDK 生产和消费构建将编译明细写入 Runner 本机日志，Actions 记录阶段起止并在失败时显示日志尾部。Journal 在阶段或状态变化时输出汇总，同一阶段每 60 秒输出一次进度。场景及步骤明细保存在 Runner 本机，附件在任务结束时一次上传回归总报告和 Journal 摘要。上传失败在该步骤留痕，平台验收仍按实际回归结果判定。
+
 宿主回归显式开启 `GPLATFORM_BUILD_ORCA_NATIVE_PROBES`。原生探针与运行库在同一个 Orca 构建目录中链接同一份核心归档。支撑重叠和微填充由宿主 CTest 执行一次，后续 Orca 来源核验复用同批清单、日志和 JUnit。两个检查使用 CTest 的统一默认时限。普通 preset 和 SDK 生产不启用探针目标。
 
 原生 configure 显式使用已预检依赖的 Python3_EXECUTABLE，并打开既有 JOURNALSYSTEM_BUILD_TESTS。原生与 GUI 使用同一冻结资产；SDK 生产/消费前恢复 App 自己声明的测试资产 gitlink，不能把平台资产选择当作脏产品源码。GUI 再选择冻结资产。

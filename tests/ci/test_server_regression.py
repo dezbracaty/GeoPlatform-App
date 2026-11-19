@@ -45,7 +45,12 @@ class Workbench:
         if self.reads == 1 and mode in ('slow-state', 'cancel-slow-state'):
             time.sleep(.75)
         # An early all-green summary is insufficient: serial stage is still running.
-        if self.reads>=2 and self.task['state']=='running' and mode not in ('cancel', 'cancel-slow-state'):self.task['state']='completed'
+        if mode=='progress':
+            self.task.update(case='one' if self.reads==1 else 'two', step=self.reads, total=2,
+                stage='initial' if self.reads<3 else 'serial-recheck',
+                rows=[{'status':'passed'},{'status':'running' if self.reads<4 else 'passed'}])
+            if self.reads>=4:self.task['state']='completed'
+        elif self.reads>=2 and self.task['state']=='running' and mode not in ('cancel', 'cancel-slow-state'):self.task['state']='completed'
         return {'task':self.task,'reads':self.reads}
     def pause(self): pass
     def resume(self): pass
@@ -84,6 +89,20 @@ class ServerRegressionTests(unittest.TestCase):
         state=json.loads((self.output/'server-state.json').read_text())
         self.assertGreaterEqual(state['reads'],2)
         self.assertTrue((self.output/'run/closed').is_file())
+
+    def test_progress_prints_stage_changes_and_terminal_counts_without_each_case(self):
+        log = io.StringIO()
+        with redirect_stdout(log):
+            self.run_fixture('progress')
+        progress = [json.loads(line.removeprefix('Journal ')) for line in log.getvalue().splitlines()
+                    if line.startswith('Journal {')]
+        self.assertEqual([(item['state'], item['stage'], item['passed']) for item in progress],
+                         [('running', 'initial', 1), ('running', 'serial-recheck', 1),
+                          ('completed', 'serial-recheck', 2)])
+        self.assertNotIn('case', progress[0])
+        self.assertNotIn('step', progress[0])
+        state = json.loads((self.output / 'server-state.json').read_text())
+        self.assertEqual(state['task']['step'], 4)
 
     def test_candidate_partial_and_cleanup_failure_cannot_pass(self):
         for mode in ['candidate','partial','cleanup']:

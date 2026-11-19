@@ -1,5 +1,6 @@
 """Run the maintained App regression entry against the audited macOS delivery bundle."""
 from __future__ import annotations
+from collections import Counter
 import getpass
 import json
 import os
@@ -19,6 +20,7 @@ from common import git_env, run, text_git, write_json
 
 
 STATE_RECOVERY_SECONDS = 60
+PROGRESS_HEARTBEAT_SECONDS = 60
 
 
 def prepare_assets(source, selected_sha=None):
@@ -142,11 +144,14 @@ def server_regression(source, executable, output, env, *, timeout=14400):
                 if task.get('id') != task_id:
                     raise RuntimeError('Server task identity changed')
                 write_json(output / 'server-state.json', state)
-                progress = (task['state'], task.get('stage'), task.get('caseIndex'), task.get('case'))
-                if progress != last_progress or time.monotonic() - last_heartbeat >= 30:
-                    print('Journal ' + json.dumps({key:task.get(key) for key in
-                        ('state','stage','caseIndex','total','case','step','totalSteps')}, ensure_ascii=False), flush=True)
-                    last_progress, last_heartbeat = progress, time.monotonic()
+                progress = (task['state'], task.get('stage'))
+                now = time.monotonic()
+                if progress != last_progress or now - last_heartbeat >= PROGRESS_HEARTBEAT_SECONDS:
+                    counts = Counter(row['status'] for row in task.get('rows', []))
+                    print('Journal ' + json.dumps(dict(state=progress[0], stage=progress[1],
+                        total=len(ids), passed=counts['passed'], failed=counts['failed'],
+                        running=counts['running']), ensure_ascii=False), flush=True)
+                    last_progress, last_heartbeat = progress, now
                 if task['state'] in ('completed', 'failed', 'cancelled'):
                     completed = True
                     directory = Path(task['output']).resolve()
@@ -160,7 +165,12 @@ def server_regression(source, executable, output, env, *, timeout=14400):
                             or summary.get('completedCaseCount') != len(ids)
                             or sorted(c['id'] for c in summary.get('cases', [])) != sorted(ids)
                             or any(c.get('status') != 'passed' for c in summary.get('cases', []))):
-                        raise RuntimeError(f'Journal Server full regression did not pass; see {directory}')
+                        failures = [case['id'] for case in summary.get('cases', []) if case.get('status') != 'passed']
+                        detail = ', '.join(failures[:10])
+                        if len(failures) > 10:
+                            detail += f' and {len(failures) - 10} more'
+                        reason = summary.get('cleanupError') or task.get('error') or detail or task['state']
+                        raise RuntimeError(f'Journal Server full regression did not pass ({reason}); see {directory}')
                     return summary, directory
                 if child.poll() is not None:
                     raise RuntimeError('Journal Server exited before the task completed')

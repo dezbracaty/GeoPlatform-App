@@ -26,7 +26,7 @@ class RegressionTests(unittest.TestCase):
                     'SDK/AMD64/Release/sdk-build.json': b'{"source":"original bytes"}',
                     'SDK/AMD64/Release/sdk-manifest.json': b'{"payload":"original bytes"}'}
                 created = []
-                def produce(source, platform, package, env):
+                def produce(source, platform, package, env, *, log):
                     self.assertEqual(package.parent, scratch)
                     self.assertFalse(package.is_relative_to(output))
                     created.append(package)
@@ -253,7 +253,7 @@ class RegressionTests(unittest.TestCase):
             def execute(args, **kwargs):
                 if '-c' in args and args[2] == driver.APP_NATIVE_ASSETS:
                     selections.append(args[4])
-            def produce(*args):
+            def produce(*args, log):
                 self.assertEqual(selections, ['c' * 40, ''])
                 raise RuntimeError('SDK boundary reached after restoring source fixtures')
             stack.enter_context(patch.dict(os.environ, RUNNER_TEMP=str(source)))

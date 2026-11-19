@@ -247,6 +247,7 @@ jobs:
           subprocess.run(command, check=True)
       - name: Upload regression summaries
         if: always() && steps.report_path.outcome == 'success'
+        continue-on-error: true
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: regression-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}

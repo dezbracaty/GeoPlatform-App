@@ -161,15 +161,18 @@ def branch_ref(value):
     return f"refs/heads/{value}"
 
 
-def run(args, *, cwd=None, env=None, data=None, capture=False, attempts=1):
+def run(args, *, cwd=None, env=None, data=None, capture=False, attempts=1, log=None):
     if attempts < 1:
         raise ValueError("Attempt count must be positive")
+    if capture and log is not None:
+        raise ValueError("Captured output cannot also be redirected to a log")
     for attempt in range(attempts):
         if attempts > 1:
             print(f"Transfer attempt {attempt + 1}/{attempts}", flush=True)
         result = subprocess.run([str(a) for a in args], cwd=cwd, env=env, input=data,
-                                stdout=subprocess.PIPE if capture else None,
-                                stderr=subprocess.PIPE if capture and attempts == 1 else None)
+                                stdout=subprocess.PIPE if capture else log,
+                                stderr=subprocess.STDOUT if log is not None else
+                                subprocess.PIPE if capture and attempts == 1 else None)
         if not result.returncode:
             return result.stdout if capture else None
         if attempt + 1 == attempts:

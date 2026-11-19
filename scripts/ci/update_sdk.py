@@ -17,7 +17,7 @@ from common import (clone_branch, commit_tree, digest, git, git_env, push_exact_
 SLOTS = {"windows": ("AMD64/Release",), "macos": ("arm64/Release", "x86_64/Release")}
 
 
-def build_sdk_package(source, platform, package, env):
+def build_sdk_package(source, platform, package, env, *, log=None):
     """Official preset producer/export used by both SDK publication and source regression."""
     source, package = Path(source).resolve(), Path(package).resolve()
     arguments = ['-DGPLATFORM_BUILD_TESTS=OFF', '-DGPLATFORM_BUILD_ORCA_NATIVE_PROBES=OFF']
@@ -29,20 +29,20 @@ def build_sdk_package(source, platform, package, env):
                    "& $env:CI_BUILD_ENTRY -SourceDir $env:CI_SOURCE_DIR -Preset release -Targets gplatform_sdk_artifacts "
                    "-CMakeArgs @($env:CI_CMAKE_ARGS | ConvertFrom-Json); exit $LASTEXITCODE "
                    "} catch { [Console]::Error.WriteLine($_); exit 1 }")
-        run(['pwsh', '-NoProfile', '-Command', command], cwd=source,
+        run(['pwsh', '-NoProfile', '-Command', command], cwd=source, log=log,
             env=dict(env, CI_BUILD_ENTRY=str(Path(__file__).resolve().parents[1] / 'build.ps1'), CI_SOURCE_DIR=str(source), CI_CMAKE_ARGS=json.dumps(arguments)))
         builds = ['build-Release']
     elif platform == 'macos':
         builds = []
         for preset, directory in [('arm_release', 'build-arm64-Release'), ('x86_release', 'build-x86_64-Release')]:
-            run(['bash', Path(__file__).resolve().parents[1] / 'build.sh', '--source-dir', source, '--preset', preset, '--configure-only', '--', *arguments], cwd=source, env=env)
-            run(['cmake', '--build', '--preset', preset, '--target', 'gplatform_sdk_artifacts'], cwd=source, env=env)
+            run(['bash', Path(__file__).resolve().parents[1] / 'build.sh', '--source-dir', source, '--preset', preset, '--configure-only', '--', *arguments], cwd=source, env=env, log=log)
+            run(['cmake', '--build', '--preset', preset, '--target', 'gplatform_sdk_artifacts'], cwd=source, env=env, log=log)
             builds.append(directory)
     else:
         raise ValueError('Unknown SDK platform')
     for directory in builds:
         run([sys.executable, source / 'cmake/sdk/publish_sdk.py', '--export', source / directory / 'sdk-export',
-             '--output', package], cwd=source, env=env)
+             '--output', package], cwd=source, env=env, log=log)
     return package
 
 

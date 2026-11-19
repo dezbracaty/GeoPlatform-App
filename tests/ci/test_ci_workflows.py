@@ -458,7 +458,13 @@ class Workflows(unittest.TestCase):
             workflow = load(path)
             allowed = {'pull_request'} if path.name == 'pr-checks.yml' else {'workflow_dispatch', 'workflow_call'}
             self.assertFalse(set(workflow['on']) - allowed)
-            self.assertNotIn('continue-on-error', path.read_text())
+            tolerated_steps = []
+            for job_id, job in workflow['jobs'].items():
+                self.assertNotIn('continue-on-error', job)
+                tolerated_steps.extend((job_id, step.get('name'), step['continue-on-error'])
+                                       for step in job.get('steps', []) if 'continue-on-error' in step)
+            expected_tolerance = [('regression', 'Upload regression summaries', 'true')]
+            self.assertEqual(tolerated_steps, expected_tolerance if path.name == 'run-regression.yml' else [])
             self.assertNotIn('control_ref', path.read_text())
             self.assertNotIn('run-build-app.yml', path.read_text())
             self.assertNotIn('dezbracaty/GPlatform/.github/workflows/', path.read_text())
