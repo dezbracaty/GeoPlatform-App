@@ -143,6 +143,7 @@ jobs:
         with:
           repository: ${{ needs.prepare.outputs.sdk_repository }}
           ref: ${{ matrix.platform == 'windows' && needs.prepare.outputs.windows_sdk_sha || needs.prepare.outputs.macos_sdk_sha }}
+          # Share the checkout and its LFS objects with published-SDK regression.
           path: sdk
           token: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
           persist-credentials: false
@@ -160,30 +161,36 @@ jobs:
           subprocess.run([sys.executable, 'control/scripts/ci/build.py', '--source-dir', 'source',
               '--platform', os.environ['PLATFORM'], '--app-sha', os.environ['APP_SHA'],
               '--sdk-sha', os.environ['SDK_SHA'], '--sdk-root', 'sdk'], check=True)
-      - name: Upload required installer and checksums
+      - name: Upload installer results
         id: artifacts
-        if: always() && steps.package.outputs.deliverables != ''
+        if: always() && steps.package.outputs.report != ''
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: app-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ steps.package.outputs.deliverables }}
+          path: |
+            ${{ steps.package.outputs.report }}
+            ${{ steps.package.outcome == 'success' && steps.package.outputs.package || '' }}
+            ${{ steps.package.outcome == 'success' && steps.package.outputs.checksum || '' }}
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
       - name: Clean owned package staging
-        if: always() && steps.artifacts.outcome == 'success'
+        if: always() && steps.package.outcome == 'success' && steps.artifacts.outcome == 'success'
         shell: python
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          REPORT_FILE: ${{ steps.package.outputs.report }}
         run: |
           import os, pathlib, sys
-          value = os.environ.get('APP_PACKAGE_ROOT')
-          if value:
-              sys.path.insert(0, 'control/scripts/ci')
-              from common import remove_owned_tree
-              path = pathlib.Path(value).resolve()
-              parent = pathlib.Path(os.environ['RUNNER_TEMP']).resolve()
-              if path.parent != parent or not path.name.startswith('app-package-'):
-                  raise RuntimeError('Refusing to clean an unowned directory')
-              remove_owned_tree(path, parent)
+          sys.path.insert(0, 'control/scripts/ci')
+          from common import remove_owned_tree, runner_report_path
+          report = runner_report_path(os.environ, 'installer-results')
+          if pathlib.Path(os.environ['REPORT_FILE']) != report / 'build-result.json':
+              raise RuntimeError('Refusing to clean a different installer package than the uploaded one')
+          package = report / 'package'
+          if package.is_junction():
+              raise RuntimeError('Refusing to clean a redirected installer package')
+          remove_owned_tree(package, report)
       - name: Clean temporary control checkout
         if: always() && steps.environment.outcome == 'success'
         shell: python
@@ -199,14 +206,13 @@ jobs:
               os.chmod(filename, mode | stat.S_IWRITE)
               function(filename)
           workspace = pathlib.Path(os.environ['GITHUB_WORKSPACE']).resolve()
-          for name in ('control', 'sdk'):
-              path = workspace / name
-              if path.is_symlink() or path.resolve().parent != workspace:
-                  raise RuntimeError('Refusing to clean a checkout outside this workspace')
-              if path.exists():
-                  if not (path / '.git').exists():
-                      raise RuntimeError('Refusing to clean a directory without its task checkout marker')
-                  shutil.rmtree(path, onexc=retry_readonly)
+          path = workspace / 'control'
+          if path.is_symlink() or path.resolve().parent != workspace:
+              raise RuntimeError('Refusing to clean a checkout outside this workspace')
+          if path.exists():
+              if not (path / '.git').exists():
+                  raise RuntimeError('Refusing to clean a directory without its task checkout marker')
+              shutil.rmtree(path, onexc=retry_readonly)
   queue_guard:
     needs: prepare
     if: needs.prepare.outputs.attempt == github.run_attempt

@@ -11,9 +11,9 @@ import os
 from pathlib import Path
 import shutil
 import sys
-import tempfile
 
-from common import digest, git_env, init_source_submodules, machine_lock, materialize_sdk, prepare_cached_source, run, text_git, write_json
+from common import (digest, git_env, init_source_submodules, machine_lock, materialize_sdk,
+                    prepare_cached_source, run, runner_report_path, text_git, write_json, write_outputs)
 
 
 def cache_value(build, key):
@@ -210,79 +210,76 @@ def inspect_installer(source, platform, package, output, env):
 
 def build(source, platform, app_sha, sdk_sha, *, sdk_root):
     source = source.resolve()
-    if text_git(source, "rev-parse", "HEAD") != app_sha:
-        raise RuntimeError("App source SHA changed")
-    output = Path(tempfile.mkdtemp(prefix="app-package-", dir=os.environ["RUNNER_TEMP"]))
-    with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
-        f.write(f"deliverables={output}\n")
-    with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
-        f.write(f"APP_PACKAGE_ROOT={output}\n")
-    env = git_env()
-    with machine_lock():
-        prepare_cached_source(source, app_sha, platform, consumer=True)
-        init_source_submodules(source)
-        actual_sdk = materialize_sdk(sdk_root, sdk_sha, platform)
-        consumer = build_consumer(source, platform, actual_sdk, env)
-        sdk_identity = dict(sdk_root=str(actual_sdk),
-                            control_sha=text_git(Path(__file__).resolve().parents[2], 'rev-parse', 'HEAD'),
-                            run_id=os.environ.get('GITHUB_RUN_ID'), run_attempt=os.environ.get('GITHUB_RUN_ATTEMPT'),
-                            sdk_producers={slot: {key: data.get(key) for key in ('SOURCE_STATE', 'APP_SOURCE_STATE')}
-                                           for slot, data in consumer['metadata'].items()})
-        cmake_args = ['-DGPLATFORM_BUILD_SDK_CHECKS=ON', '-DGPLATFORM_SDK_ROOT=' + str(actual_sdk)]
-        if os.environ.get('Qt6_DIR') or os.environ.get('QT6_DIR'):
-            cmake_args.append('-DQt6_DIR=' + (os.environ.get('Qt6_DIR') or os.environ['QT6_DIR']))
-        if platform == 'windows':
-            for old in (source / "package").glob("*.exe"):
-                old.unlink()
-            windows_entry(source, ["GPlatform_installer"], cmake_args, env)
-            packages = list((source / "package").glob("*.exe"))
-            if len(packages) != 1:
-                raise RuntimeError("Expected exactly one Windows installer")
-            package = packages[0]
-            architecture = "x64"
-        else:
-            run([sys.executable, Path(__file__).resolve().parents[1] / "build_macos_universal.py", "--source-dir", source,
-                 "--config", "Release", "--merge-only", "--sdk-root", actual_sdk], cwd=source, env=env)
-            report = json.loads((source / "build-universal-Release/report.json").read_text())
-            if report.get("status") != "passed" or report.get("architectures") != ["arm64", "x86_64"]:
-                raise RuntimeError("Universal package audit did not pass")
-            bundle = source / "build-universal-Release/GPlatform.app"
-            # Package only after the completed Universal payload has passed its audit.
-            spec = importlib.util.spec_from_file_location('selected_macos_bundle', Path(__file__).resolve().parents[1] / 'macos_bundle.py')
-            packaging = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(packaging)
-            package = output / 'GPlatform.dmg'
-            def make_installer():
-                packaging.create_disk_image(bundle, package, output / 'dmg.log')
-                if not package.is_file() or not package.stat().st_size:
-                    raise RuntimeError('Installer is missing or empty')
-                checksum = digest(package)
-                (output / (package.name + '.sha256')).write_text(f'{checksum}  {package.name}\n')
-                checks = inspect_installer(source, platform, package, output, env)
-                return dict(package=package.name, sha256=checksum, checks=checks)
-            installer = dict(status='failed')
-            try:
-                installer.update(make_installer(), status='passed')
-            except Exception as error:
-                installer['error'] = f'{type(error).__name__}: {error}'
-                raise
-            finally:
-                write_json(output / 'build-result.json', dict(app_sha=app_sha, sdk_sha=sdk_sha,
-                    platform=platform, architecture='universal', **sdk_identity, sdk_consumer_check='passed',
-                    installer=installer, installation_tested=False))
-            print('macOS installer and package checks passed')
-            return
-        if not package.is_file() or not package.stat().st_size:
-            raise RuntimeError("Installer is missing or empty")
-        destination = output / package.name
-        shutil.copy2(package, destination)
-        checksum = digest(destination)
-        (output / (destination.name + ".sha256")).write_text(f"{checksum}  {destination.name}\n")
-        checks = inspect_installer(source, platform, destination, output, env)
-        write_json(output / "build-result.json", dict(app_sha=app_sha, sdk_sha=sdk_sha, checks=checks,
-                   platform=platform, architecture=architecture, **sdk_identity, sdk_consumer_check="passed",
-                   package=destination.name, sha256=checksum, installation_tested=False))
-    print(f"Build and package checks passed: {destination.name}")
+    output = runner_report_path(dict(os.environ, PLATFORM=platform), "installer-results")
+    output.mkdir(parents=True, exist_ok=False)
+    package_dir = output / "package"
+    report_path = output / "build-result.json"
+    report = dict(status="failed", platform=platform, app_sha=app_sha, sdk_sha=sdk_sha,
+                  run_id=os.environ.get("GITHUB_RUN_ID"), run_attempt=os.environ.get("GITHUB_RUN_ATTEMPT"),
+                  installation_tested=False)
+    try:
+        if text_git(source, "rev-parse", "HEAD") != app_sha:
+            raise RuntimeError("App source SHA changed")
+        report["control_sha"] = text_git(Path(__file__).resolve().parents[2], "rev-parse", "HEAD")
+        env = git_env()
+        with machine_lock():
+            prepare_cached_source(source, app_sha, platform, consumer=True)
+            init_source_submodules(source)
+            actual_sdk = materialize_sdk(sdk_root, sdk_sha, platform)
+            consumer = build_consumer(source, platform, actual_sdk, env)
+            report.update(sdk_root=str(actual_sdk), sdk_consumer_check="passed",
+                          sdk_producers={slot: {key: data.get(key) for key in ("SOURCE_STATE", "APP_SOURCE_STATE")}
+                                         for slot, data in consumer["metadata"].items()})
+            package_dir.mkdir()
+            if platform == "windows":
+                cmake_args = ["-DGPLATFORM_BUILD_SDK_CHECKS=ON", "-DGPLATFORM_SDK_ROOT=" + str(actual_sdk)]
+                qt = env.get("Qt6_DIR") or env.get("QT6_DIR")
+                if qt:
+                    cmake_args.append("-DQt6_DIR=" + qt)
+                for old in (source / "package").glob("*.exe"):
+                    old.unlink()
+                windows_entry(source, ["GPlatform_installer"], cmake_args, env)
+                packages = list((source / "package").glob("*.exe"))
+                if len(packages) != 1:
+                    raise RuntimeError("Expected exactly one Windows installer")
+                package = package_dir / packages[0].name
+                shutil.copy2(packages[0], package)
+                report["architecture"] = "x64"
+            else:
+                scripts = Path(__file__).resolve().parents[1]
+                run([sys.executable, scripts / "build_macos_universal.py", "--source-dir", source,
+                     "--config", "Release", "--merge-only", "--sdk-root", actual_sdk], cwd=source, env=env)
+                universal = source / "build-universal-Release"
+                audit = json.loads((universal / "report.json").read_text())
+                if audit.get("status") != "passed" or audit.get("architectures") != ["arm64", "x86_64"]:
+                    raise RuntimeError("Universal package audit did not pass")
+                spec = importlib.util.spec_from_file_location("selected_macos_bundle", scripts / "macos_bundle.py")
+                packaging = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(packaging)
+                package = package_dir / "GPlatform.dmg"
+                packaging.create_disk_image(universal / "GPlatform.app", package, output / "dmg.log")
+                report["architecture"] = "universal"
+            if not package.is_file() or not package.stat().st_size:
+                raise RuntimeError("Installer is missing or empty")
+            checks = inspect_installer(source, platform, package, output, env)
+            checksum = checks["package_sha256"]
+            checksum_path = package.with_suffix(package.suffix + ".sha256")
+            checksum_path.write_text(f"{checksum}  {package.name}\n", encoding="utf-8")
+        check_summary = {key: checks[key] for key in ("status", "payload_check", "startup", "not_tested",
+                                                      "installer_script_sha256") if key in checks}
+        if "distribution" in checks:
+            check_summary["distribution_files"] = len(checks["distribution"])
+        report.update(status="passed", package=package.name, sha256=checksum, checks=check_summary)
+    except Exception as error:
+        report["error"] = f"{type(error).__name__}: {error}"
+        raise
+    finally:
+        write_json(report_path, report)
+        files = dict(report=report_path.as_posix())
+        if report["status"] == "passed":
+            files.update(package=package.as_posix(), checksum=checksum_path.as_posix())
+        write_outputs(files)
+    print(f"Build and package checks passed: {package.name}")
 
 
 def main():

@@ -217,7 +217,8 @@ jobs:
         with:
           repository: ${{ needs.prepare.outputs.sdk_repository }}
           ref: ${{ matrix.platform == 'windows' && needs.prepare.outputs.windows_sdk_sha || needs.prepare.outputs.macos_sdk_sha }}
-          path: selected-sdk
+          # Share the checkout and its LFS objects with Build Installer.
+          path: sdk
           token: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
           persist-credentials: false
           lfs: false
@@ -242,7 +243,7 @@ jobs:
               '--platform', os.environ['PLATFORM'], '--output', os.environ['REPORT_DIRECTORY'],
               '--sdk-source', os.environ['SDK_SOURCE'], '--sdk-repository', os.environ['SDK_REPOSITORY']]
           if os.environ['SDK_SOURCE'] == 'published':
-              command += ['--sdk-root', 'selected-sdk', '--sdk-sha', os.environ['SDK_SHA']]
+              command += ['--sdk-root', 'sdk', '--sdk-sha', os.environ['SDK_SHA']]
           subprocess.run(command, check=True)
       - name: Upload regression summaries
         if: always() && steps.report_path.outcome == 'success'
@@ -270,14 +271,13 @@ jobs:
               os.chmod(filename, mode | stat.S_IWRITE)
               function(filename)
           workspace = pathlib.Path(os.environ['GITHUB_WORKSPACE']).resolve()
-          for name in ('control', 'selected-sdk'):
-              path = workspace / name
-              if path.is_symlink() or path.resolve().parent != workspace:
-                  raise RuntimeError('Refusing to clean a checkout outside this workspace')
-              if path.exists():
-                  if not (path / '.git').exists():
-                      raise RuntimeError('Refusing to clean a directory without its task checkout marker')
-                  shutil.rmtree(path, onexc=retry_readonly)
+          path = workspace / 'control'
+          if path.is_symlink() or path.resolve().parent != workspace:
+              raise RuntimeError('Refusing to clean a checkout outside this workspace')
+          if path.exists():
+              if not (path / '.git').exists():
+                  raise RuntimeError('Refusing to clean a directory without its task checkout marker')
+              shutil.rmtree(path, onexc=retry_readonly)
   queue_guard:
     needs: prepare
     if: needs.prepare.outputs.attempt == github.run_attempt

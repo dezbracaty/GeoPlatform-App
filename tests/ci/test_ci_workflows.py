@@ -232,14 +232,79 @@ class Workflows(unittest.TestCase):
                 text=path.read_text()
                 for forbidden in ('actions/setup-python@','PSExecutionPolicyPreference','GITHUB_PATH','runtime_windows','runtime_macos'):
                     self.assertNotIn(forbidden,text)
-        for job in self.platform_jobs():
+        for job_type, job in zip(('sdk', 'installer'), self.platform_jobs(), strict=True):
             self.assertEqual(job['steps'][0]['id'],'environment')
             self.assertEqual(job['steps'][0]['shell'],'python')
             for step in job['steps']:
                 if not step.get('name','').startswith('Clean '):continue
                 owner='artifacts' if step['name'].startswith('Clean owned') else 'environment'
-                for outcome in ('success','failure','skipped'):
-                    self.assertEqual(expression(step['if'],{},steps={owner:SimpleNamespace(outcome=outcome)}),outcome=='success')
+                needs_package_success = job_type == 'installer' and owner == 'artifacts'
+                outcomes = ('success', 'failure', 'skipped')
+                for outcome, package in itertools.product(outcomes, repeat=2):
+                    states = {owner: SimpleNamespace(outcome=outcome), 'package': SimpleNamespace(outcome=package)}
+                    self.assertEqual(expression(step['if'], {}, steps=states),
+                                     outcome == 'success' and
+                                     (not needs_package_success or package == 'success'))
+
+    def test_sdk_delivery_uploads_package_only_in_artifacts_mode(self):
+        job = load(APP / '.github/workflows/build-sdk.yml')['jobs']['build_publish']
+        upload = next(step for step in job['steps'] if step.get('id') == 'artifacts')
+        self.assertEqual(upload['with']['path'].splitlines(), [
+            "${{ inputs.mode == 'artifacts' && format('{0}/SDK', env.SDK_PACKAGE_ROOT) || '' }}",
+            '${{ env.SDK_PACKAGE_ROOT }}/source-receipt.json',
+            '${{ env.SDK_PACKAGE_ROOT }}/package-manifest.json',
+        ])
+
+    def test_installers_and_published_regression_keep_the_same_sdk_checkout(self):
+        installer = load(APP / '.github/workflows/build-installer.yml')['jobs']['build']
+        regression = load(APP / '.github/workflows/run-regression.yml')['jobs']['regression']
+        sdk_ref = "${{ matrix.platform == 'windows' && needs.prepare.outputs.windows_sdk_sha || needs.prepare.outputs.macos_sdk_sha }}"
+        for job in (installer, regression):
+            sdk_checkout, = [step for step in job['steps'] if step.get('with', {}).get('path') == 'sdk']
+            self.assertEqual(sdk_checkout['with']['ref'], sdk_ref)
+            self.assertEqual(sdk_checkout['with']['lfs'], 'false')
+            self.assertEqual(sdk_checkout['with']['persist-credentials'], 'false')
+            self.assertEqual(sdk_checkout.get('if'), "inputs.sdk_source == 'published'" if job is regression else None)
+            with tempfile.TemporaryDirectory() as directory:
+                workspace = Path(directory)
+                objects = workspace / 'sdk/.git/lfs/objects'
+                objects.mkdir(parents=True)
+                cleanup = next(step['run'] for step in job['steps'] if step.get('name') == 'Clean temporary control checkout')
+                with patch.dict(os.environ, GITHUB_WORKSPACE=str(workspace)):
+                    exec(compile(cleanup, '<workflow-control-cleanup>', 'exec'), {})
+                self.assertTrue(objects.is_dir())
+
+    def test_installer_upload_is_explicit_and_cleanup_retains_diagnostics(self):
+        steps = {step.get('id') or step.get('name'): step
+                 for step in load(APP / '.github/workflows/build-installer.yml')['jobs']['build']['steps']}
+        upload = steps['artifacts']
+        self.assertEqual(upload['if'], "always() && steps.package.outputs.report != ''")
+        self.assertEqual(upload['with']['path'].splitlines(), [
+            '${{ steps.package.outputs.report }}',
+            "${{ steps.package.outcome == 'success' && steps.package.outputs.package || '' }}",
+            "${{ steps.package.outcome == 'success' && steps.package.outputs.checksum || '' }}",
+        ])
+        cleanup = steps['Clean owned package staging']['run']
+        for platform in ('windows', 'macos'):
+            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                workspace, runner = root / 'workspace', root / 'runner-temp'
+                workspace.mkdir()
+                runner.mkdir()
+                result_root = root if platform == 'windows' else workspace
+                result = result_root / 'installer-results/123-2' / platform
+                package, diagnostics = result / 'package', result / 'startup'
+                package.mkdir(parents=True)
+                diagnostics.mkdir()
+                report = result / 'build-result.json'
+                report.write_text('{}', encoding='utf-8')
+                env = dict(GITHUB_WORKSPACE=str(workspace), RUNNER_TEMP=str(runner), PLATFORM=platform,
+                           GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='2', REPORT_FILE=str(report))
+                with patch.dict(os.environ, env):
+                    exec(compile(cleanup, '<workflow-package-cleanup>', 'exec'), {})
+                self.assertFalse(package.exists())
+                self.assertTrue(diagnostics.is_dir())
+                self.assertEqual(report.read_text(encoding='utf-8'), '{}')
 
     def test_failed_control_checkout_can_be_cleaned_without_control_helper(self):
         for job in self.platform_jobs():
@@ -252,14 +317,11 @@ class Workflows(unittest.TestCase):
                     obj.write_bytes(b'partial checkout')
                     obj.chmod(stat.S_IREAD)
                 steps = {step.get('name'):step for step in job['steps'] if step.get('name')}
-                package = next(step for name,step in steps.items() if name.startswith('Clean owned'))
-                env = {key:value for key,value in os.environ.items()
-                       if key not in ('SDK_PACKAGE_ROOT', 'APP_PACKAGE_ROOT')}
-                env['GITHUB_WORKSPACE'] = str(workspace)
-                for step in (package, steps['Clean temporary control checkout']):
-                    result = subprocess.run([os.sys.executable, '-c', step['run']], cwd=workspace,
-                                            env=env, capture_output=True)
-                    self.assertEqual(result.returncode, 0, result.stderr.decode())
+                cleanup = steps['Clean temporary control checkout']
+                env = dict(os.environ, GITHUB_WORKSPACE=str(workspace))
+                result = subprocess.run([os.sys.executable, '-c', cleanup['run']], cwd=workspace,
+                                        env=env, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr.decode())
                 self.assertTrue((workspace / 'source/.git/objects/partial-pack').exists())
                 self.assertFalse((workspace / 'control').exists())
 
@@ -336,7 +398,7 @@ class Workflows(unittest.TestCase):
                     self.assertEqual(steps[0]['id'], 'environment')
                     for step in steps:
                         if step.get('uses', '').startswith('actions/checkout@'):
-                            expected = 20 if step['with']['path'] in ('source','host-source','sdk','selected-sdk') else 5
+                            expected = 20 if step['with']['path'] in ('source','host-source','sdk') else 5
                             self.assertEqual(int(step['timeout-minutes']), expected)
 
     def test_windows_ownership_exceptions_are_exact_job_scoped_gitlinks(self):

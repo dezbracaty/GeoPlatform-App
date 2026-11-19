@@ -240,13 +240,13 @@ jobs:
           value['package_manifest_sha256'] = digest(os.path.join(os.environ['SDK_PACKAGE_ROOT'], 'package-manifest.json'))
           write_json(os.path.join(os.environ['SDK_PACKAGE_ROOT'], 'source-receipt.json'), value)
           write_outputs(value)
-      - name: Upload SDK artifacts and fixed-source receipt
+      - name: Upload SDK delivery evidence
         id: artifacts
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
           name: sdk-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            ${{ env.SDK_PACKAGE_ROOT }}/SDK
+            ${{ inputs.mode == 'artifacts' && format('{0}/SDK', env.SDK_PACKAGE_ROOT) || '' }}
             ${{ env.SDK_PACKAGE_ROOT }}/source-receipt.json
             ${{ env.SDK_PACKAGE_ROOT }}/package-manifest.json
           if-no-files-found: error

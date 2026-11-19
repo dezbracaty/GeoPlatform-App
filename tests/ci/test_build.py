@@ -7,6 +7,8 @@ import subprocess
 from pathlib import Path
 import sys
 import tempfile
+from contextlib import nullcontext
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -357,6 +359,90 @@ class InstallerPayloadChecks(unittest.TestCase):
 
 
 class InstallerSelectionChecks(unittest.TestCase):
+    def test_installer_reports_failures_and_exposes_only_checked_packages(self):
+        from build import build
+        app_sha, sdk_sha = 'a' * 40, 'b' * 40
+        for platform in ('windows', 'macos'):
+            for failure in (None, 'consumer build failed', 'installer check failed'):
+                with self.subTest(platform=platform, failure=failure), tempfile.TemporaryDirectory() as temporary:
+                    base = Path(temporary).resolve()
+                    workspace, runner = base / 'work space', base / 'runner-temp'
+                    source, sdk = workspace / 'source', workspace / 'sdk'
+                    runner.mkdir()
+                    (source / 'package').mkdir(parents=True)
+                    universal = source / 'build-universal-Release'
+                    universal.mkdir()
+                    (universal / 'report.json').write_text(json.dumps(
+                        dict(status='passed', architectures=['arm64', 'x86_64'])), encoding='utf-8')
+                    result_root = base if platform == 'windows' else workspace
+                    result = result_root / 'installer-results/123-2' / platform
+                    outputs = base / 'github-output'
+                    env = dict(GITHUB_WORKSPACE=str(workspace), RUNNER_TEMP=str(runner),
+                               GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='2', GITHUB_OUTPUT=str(outputs))
+
+                    def create_disk_image(bundle, package, log):
+                        package.write_bytes(b'checked package')
+                        log.write_text('diagnostic', encoding='utf-8')
+
+                    def inspect(source, platform, package, output, env):
+                        self.assertFalse(outputs.exists())
+                        (output / 'startup.png').write_bytes(b'local diagnostic')
+                        if failure == 'installer check failed':
+                            raise RuntimeError(failure)
+                        checks = dict(status='passed', package_sha256=digest(package))
+                        if platform == 'windows':
+                            checks['distribution'] = {'GPlatform.exe': 'fixture hash'}
+                        (output / 'installer-checks.json').write_text(json.dumps(checks), encoding='utf-8')
+                        return checks
+
+                    packager = SimpleNamespace(create_disk_image=create_disk_image)
+                    with (
+                        patch.dict(os.environ, env, clear=True),
+                        patch('build.text_git', side_effect=[app_sha, 'c' * 40]),
+                        patch('build.machine_lock', return_value=nullcontext()),
+                        patch('build.prepare_cached_source'),
+                        patch('build.init_source_submodules'),
+                        patch('build.materialize_sdk', return_value=sdk),
+                        patch('build.build_consumer', return_value={'metadata': {}},
+                              side_effect=RuntimeError(failure) if failure == 'consumer build failed' else None),
+                        patch('build.windows_entry', side_effect=lambda *args: (
+                            source / 'package' / 'GPlatform.exe').write_bytes(b'checked package')),
+                        patch('build.run'),
+                        patch('build.importlib.util.spec_from_file_location',
+                              return_value=SimpleNamespace(loader=SimpleNamespace(exec_module=lambda module: None))),
+                        patch('build.importlib.util.module_from_spec', return_value=packager),
+                        patch('build.inspect_installer', side_effect=inspect),
+                    ):
+                        if failure:
+                            with self.assertRaisesRegex(RuntimeError, failure):
+                                build(source, platform, app_sha, sdk_sha, sdk_root=sdk)
+                        else:
+                            build(source, platform, app_sha, sdk_sha, sdk_root=sdk)
+
+                    values = dict(line.split('=', 1) for line in outputs.read_text(encoding='utf-8').splitlines())
+                    report_path = result / 'build-result.json'
+                    self.assertEqual(values['report'], report_path.as_posix())
+                    report = json.loads(report_path.read_text(encoding='utf-8'))
+                    self.assertEqual((report['app_sha'], report['sdk_sha']), (app_sha, sdk_sha))
+                    package = result / 'package' / ('GPlatform.exe' if platform == 'windows' else 'GPlatform.dmg')
+                    if failure:
+                        self.assertEqual(set(values), {'report'})
+                        self.assertEqual(report['status'], 'failed')
+                        self.assertIn(failure, report['error'])
+                        self.assertEqual(package.exists(), failure == 'installer check failed')
+                    else:
+                        self.assertEqual(set(values), {'report', 'package', 'checksum'})
+                        self.assertEqual(report['status'], 'passed')
+                        self.assertEqual(values['package'], package.as_posix())
+                        self.assertEqual(Path(values['checksum']).read_text(encoding='utf-8').split()[0],
+                                         digest(package))
+                        self.assertNotIn('distribution', report['checks'])
+                        if platform == 'windows':
+                            self.assertEqual(report['checks']['distribution_files'], 1)
+                            full_checks = json.loads((result / 'installer-checks.json').read_text(encoding='utf-8'))
+                            self.assertEqual(full_checks['distribution'], {'GPlatform.exe': 'fixture hash'})
+                    self.assertEqual((result / 'startup.png').exists(), failure != 'consumer build failed')
+
     def test_packaging_requires_explicit_sdk_without_regression_controls(self):
         arguments = ['build.py', '--source-dir', 'source', '--platform', 'macos',
                      '--app-sha', 'a' * 40, '--sdk-sha', 'b' * 40, '--sdk-root', 'sdk']

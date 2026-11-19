@@ -456,7 +456,7 @@ def remove_owned_tree(path, parent, *, require_git=False):
     shutil.rmtree(path, onexc=_retry_readonly)
 
 
-def regression_report_path(env):
+def runner_report_path(env, directory):
     platform = env["PLATFORM"]
     identity = env["GITHUB_RUN_ID"] + "-" + env["GITHUB_RUN_ATTEMPT"]
     if platform not in ("windows", "macos") or not re.fullmatch(r"[0-9]+-[0-9]+", identity):
@@ -466,13 +466,17 @@ def regression_report_path(env):
         workspace = Path(env["RUNNER_TEMP"]).resolve().parent
     else:
         workspace = Path(env["GITHUB_WORKSPACE"]).resolve()
-    root = workspace / "regression-results"
+    root = workspace / directory
     parent = root / identity
     path = parent / platform
     for entry in (root, parent, path):
         if entry.is_symlink() or entry.is_junction() or entry.resolve() != entry:
             raise RuntimeError("Refusing a redirected report directory")
     return path
+
+
+def regression_report_path(env):
+    return runner_report_path(env, "regression-results")
 
 
 def write_json(path, value):
