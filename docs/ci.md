@@ -13,7 +13,7 @@
 | Build Installer | `.github/workflows/build-installer.yml` | 手动 | 检查、构建、部署、打包、必要启动验证和上传 |
 | MR Checks | `.github/workflows/pr-checks.yml` | App MR 自动触发 | 固定 MR head，强制双平台源码模式完整回归 |
 
-所有本轮报告、SDK 附件和安装包附件在 App 仓库 Actions 查看。GPlatform 保留完整宿主源码、标准 presets、原生测试、SDK 导出入口；SDK/TestAssets 仓库保留平台产物和测试数据。
+回归摘要、SDK 附件和安装包附件在 App 仓库 Actions 查看。GPlatform 保留完整宿主源码、标准 presets、原生测试、SDK 导出入口；SDK/TestAssets 仓库保留平台产物和测试数据。
 
 ## 固定分支与候选身份
 
@@ -123,7 +123,7 @@ CI 工具测试依赖在 runner 准备阶段用同一 Python 安装 `tests/ci/re
 
 App runner 的完整宿主检出固定使用工作区内 `host-source`，installer 的独立 App 检出继续使用 `source`。宿主和独立 App 保留各自经校验的 preset 构建目录，每个依赖切换到固定 gitlink 后只清理一次。回归的源码 SDK 使用 runner 临时目录下固定短路径 `regression-sdk`，每轮重新生成并校验来源和载荷，App 按标准 preset 增量构建。缓存不兼容时明确失败，不消费旧 SDK 或不匹配的 App。
 
-回归报告保留 `regression-results/<run>-<attempt>/<platform>` 布局；Windows 根目录使用 `RUNNER_TEMP`，避免串行复查的记录归档路径超过 Windows 文件接口限制，Mac 仍使用工作区。构建、上传与清理使用同一受管路径；无论执行成功或失败均上传报告，仅上传成功后清理受管暂存，上传失败保留本机报告。原子 JSON 替换仅对 Windows 短暂读句柄争用进行有界重试，持续占用或其他错误仍使流程失败。
+回归报告保留 `regression-results/<run>-<attempt>/<platform>` 布局。Windows 报告放在 `RUNNER_TEMP` 的父目录下，保持归档路径短，并避开 Runner 在任务结束时清理的临时目录。Mac 使用工作区。成功和失败的任务只上传已经生成的 `source-regression.json` 和 Journal 会话的 `summary.json`，包含版本、各阶段结果、计数和逐场景判定。完整日志、截图和导出文件留在 Runner 本机，上传后保留报告目录。原子 JSON 替换仅对 Windows 短暂读句柄争用进行有界重试，持续占用或其他错误仍使流程失败。
 
 两仓 runner 若在同一机器，继续共用现有机器锁，不能并发争抢同一缓存/桌面。迁移需核对 App runner 的正式工具链、宿主源码工作路径和兼容缓存；路径不一致不能手改 CMakeCache 或拼库冒充复用。编译不固定为两路并行；未显式配置 CMAKE_BUILD_PARALLEL_LEVEL 时按现有工具调度。
 
