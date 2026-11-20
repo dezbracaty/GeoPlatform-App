@@ -48,6 +48,28 @@ metadata v3 声明 `id/name/testPurpose/scope/inputs/unverifiedScopes/verificati
 生产 Action 创建的模型记录 Action 和完整参数，并与 Journal 核对。
 模型几何预期来自解析构造；任务预期来自明确业务要求，不能直接采纳当前错误输出。
 
+## 跨平台场景迁移
+
+1. **Mac mini 新增并验收。** 在 TestAssets 的 `macmini` 维护新场景。固定本轮 App 和资产，
+   通过 Mac mini 的 Journal 工作台执行新场景，核对声明的 DB、截图及导出检查后提交。交接时记录 Mac
+   来源提交、场景 ID、依赖的模型和验收结果，供 Windows 迁入时核对。
+2. **Windows 按场景迁入。** 从 TestAssets 的 `windows` 基线开始，按 Mac 来源提交选择这批
+   场景及其实际依赖。保持相同的场景 ID、业务目的及断言，复用共用步骤、模型和独立预期。
+   依赖新增模型时同步相关清单条目及 LFS 实体。合并清单时以 Windows 分支为底稿，按需补条目。
+   整条 `macmini` 分支继续独立维护。
+3. **验证 Windows 差异后纳入回归。** 在 Windows Journal 工作台逐项回放。确有平台差异时，
+   调整对应的真实输入或界面观察点，用独立预期审核本平台的截图、DB 和声明产物。
+   需要采集新基线时按 [Windows 基准采集](#windows-基准采集) 执行，通过正式回放后纳入
+   `windows`，并记录 Mac 来源 SHA、Windows 资产 SHA、改动理由和报告。
+
+App 的 `tests/TestAssets` gitlink 固定默认 Mac 资产版本。若交付需要更新该引用，先确认 Mac 资产提交可从远端取得，
+再同步 App 和宿主的 gitlink。Windows 回归通过 [平台 CI](ci.md#固定分支与候选身份) 独立选择并冻结
+`windows` 资产 SHA，本地工作台使用 `--assets` 指定 Windows 资产目录。
+
+每个平台的全量范围由冻结后的 TestAssets 提交和 `discover_scenarios()` 决定。
+Mac 先新增、Windows 仍在适配期间，两平台的活动清单可以不同。分别以计划场景和实际验收结果核对覆盖；
+新增场景的通过记录来自包含该场景的固定候选，历史通过结果按原资产 SHA 保留。
+
 ## 统一入口与处理顺序
 
 正式 `--application`／GUI 新进程回放由 `JournalExecutionSession` 统一设置

@@ -78,13 +78,16 @@ class OwnedTerminationCheck(unittest.TestCase):
         self.assertNotIn('restoredClass', result['applicationTerminationPriority'])
 
     def test_session_final_exit_code_timeout_and_instance_boundaries(self):
-        for mode in ('owned', 'keep', 'attach', 'mac', 'timeout'):
+        for mode in ('owned', 'keep', 'attach', 'mac', 'timeout', 'native-window'):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
                 root, process = Path(temporary), self.process()
                 client = RunnerClient(root)
                 client.connect, client.disconnect = Mock(), Mock()
                 client.request = Mock(side_effect=lambda method, params, **kwargs:
                     {'status': 'ready', 'replayId': params['replayId']})
+                if mode == 'native-window':
+                    client.window_info = Mock(return_value=dict(logicalSize=[1200, 800],
+                        devicePixelRatio=1.25, availableLogicalSize=[1536, 912]))
                 if mode == 'timeout': process.wait.side_effect = subprocess.TimeoutExpired('owned', 5)
                 journal = write_journal(root/'source.json', [client.entry('action', {'code': 'existing.action'})])
                 with patch.object(sessions.sys, 'platform', 'darwin' if mode == 'mac' else 'win32'), \
@@ -93,7 +96,8 @@ class OwnedTerminationCheck(unittest.TestCase):
                         patch.object(sessions, '_windows_priority_class', return_value=0x4000) as priority:
                     result = sessions.JournalExecutionSession().run(journal,
                         application=None if mode == 'attach' else sys.executable,
-                        port=9999 if mode == 'attach' else 0, keep_app=mode == 'keep', output_dir=root/'output')
+                        port=9999 if mode == 'attach' else 0, keep_app=mode == 'keep', output_dir=root/'output',
+                        native_window=mode == 'native-window', validate=mode != 'native-window')
                 if mode in ('keep', 'attach', 'mac'): priority.assert_not_called()
                 if mode in ('keep', 'attach'): process.terminate.assert_not_called()
                 elif mode == 'timeout':
@@ -107,7 +111,19 @@ class OwnedTerminationCheck(unittest.TestCase):
                     self.assertFalse(result['applicationKeptOpen'])
                 self.assertEqual([c.args[0] for c in client.request.call_args_list],
                                  [] if mode == 'attach' else ['journal.replay.begin'])
+                if mode == 'native-window':
+                    self.assertNotIn('windowProfile', client.request.call_args.args[1])
+                    self.assertNotIn('windowProfile', result)
+                    self.assertEqual(result['actualWindow']['logicalSize'], [1200, 800])
+                elif mode != 'attach':
+                    self.assertEqual(client.request.call_args.args[1]['windowProfile'], sessions.WINDOW_PROFILE)
                 if result.get('applicationLiveLogPath'): Path(result['applicationLiveLogPath']).unlink()
+
+    def test_native_window_rejects_baseline_verification_and_attach_before_launch(self):
+        with self.assertRaisesRegex(ValueError, 'requires an owned application and validate=False'):
+            sessions.JournalExecutionSession().run('unused.json', application=sys.executable, native_window=True)
+        with self.assertRaisesRegex(ValueError, 'requires an owned application and validate=False'):
+            sessions.JournalExecutionSession().run('unused.json', validate=False, native_window=True)
 
 
 if __name__ == '__main__':

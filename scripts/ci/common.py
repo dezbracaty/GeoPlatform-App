@@ -132,14 +132,19 @@ def sdk_repository(api, repository, app_sha):
     return parse_sdk_repository(content)
 
 
-def freeze_candidate(api, app_repository, app_ref, host_repository, host_ref):
+def freeze_source_candidate(api, app_repository, app_ref, host_repository, host_ref):
     """Freeze independent App/host commits; never replace the selected App by a host pin."""
     app_sha = resolve_ref(api, app_repository, app_ref)
     source_sha = resolve_ref(api, host_repository, host_ref)
     declared = source_app_sha(api, host_repository, source_sha, app_repository)
     return dict(app_sha=app_sha, source_sha=source_sha, declared_app_sha=declared,
-                host_repository=host_repository, app_repository=app_repository,
-                sdk_repository=sdk_repository(api, app_repository, app_sha))
+                host_repository=host_repository, app_repository=app_repository)
+
+
+def freeze_candidate(api, app_repository, app_ref, host_repository, host_ref):
+    result = freeze_source_candidate(api, app_repository, app_ref, host_repository, host_ref)
+    result['sdk_repository'] = sdk_repository(api, app_repository, result['app_sha'])
+    return result
 
 
 def require_sha(value):
@@ -186,6 +191,21 @@ def run(args, *, cwd=None, env=None, data=None, capture=False, attempts=1, log=N
         delay = 2 ** attempt
         print(f"Transfer failed (exit {result.returncode}); retrying in {delay}s", flush=True)
         time.sleep(delay)
+
+
+@contextlib.contextmanager
+def build_log(output, name):
+    path = output / (name + '.log')
+    print(f'{name} started. Runner log: {path}', flush=True)
+    with path.open('w+b') as log:
+        try:
+            yield log
+        except Exception:
+            end = log.seek(0, os.SEEK_END)
+            log.seek(max(0, end - 4096))
+            print(log.read().decode('utf-8', errors='replace'), flush=True)
+            raise
+    print(f'{name} finished.', flush=True)
 
 
 def git(repo, *args, env=None, data=None, attempts=1):

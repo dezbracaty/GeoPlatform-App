@@ -217,7 +217,6 @@ jobs:
         with:
           repository: ${{ needs.prepare.outputs.sdk_repository }}
           ref: ${{ matrix.platform == 'windows' && needs.prepare.outputs.windows_sdk_sha || needs.prepare.outputs.macos_sdk_sha }}
-          # Share the checkout and its LFS objects with Build Installer.
           path: sdk
           token: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
           persist-credentials: false
