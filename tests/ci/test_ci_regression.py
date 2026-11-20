@@ -9,7 +9,7 @@ import subprocess
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts/ci'))
-from native_regression import build_environment, command, comparison_verdict, phase, wait_windows_tree, windows_native_environment
+from native_regression import build_environment, command, phase, wait_windows_tree
 
 
 class RegressionTests(unittest.TestCase):
@@ -127,96 +127,6 @@ class RegressionTests(unittest.TestCase):
             cleanup.assert_not_called()
             self.assertEqual((sdk / 'sentinel').read_bytes(), b'keep')
 
-    def test_windows_native_ctest_resolves_runtime_before_provenance_exists(self):
-        from types import SimpleNamespace
-        from unittest.mock import Mock
-        import native_child as child
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary).resolve()
-            build = root / 'native-build'
-            build.mkdir()
-            dependencies = {}
-            directories = []
-            for key, filename, location in [
-                    ('OpenCASCADE_DIR', 'TKernel.dll', 'lib/cmake/occt'),
-                    ('GMP_LIBRARY', 'libgmp-10.dll', 'lib/libgmp-10.lib')]:
-                prefix = root / key / 'install-Release'
-                (prefix / 'bin').mkdir(parents=True)
-                (prefix / 'bin' / filename).write_bytes(b'path fixture; never loaded')
-                dependencies[key] = str(prefix / location)
-                directories.append(str(prefix / 'bin'))
-            base = dict(PATH='unrelated-sdk-runtime', UNCHANGED='value')
-            cache = Mock(return_value=dependencies)
-            process = Mock()
-            process.wait.return_value = 0
-            with patch.object(child, 'os', SimpleNamespace(name='nt', environ=base)), \
-                 patch.object(child.subprocess, 'Popen', return_value=process) as spawn:
-                child.attached_build(['ctest.exe', '--test-dir', str(build)], root / 'test.log',
-                                     10, env=base, cache_values=cache)
-            cache.assert_called_once_with(build / 'CMakeCache.txt')
-            self.assertEqual(spawn.call_args.kwargs['env']['PATH'],
-                             os.pathsep.join(directories + [base['PATH']]))
-            self.assertEqual(spawn.call_args.kwargs['env']['UNCHANGED'], 'value')
-            self.assertEqual(base['PATH'], 'unrelated-sdk-runtime')
-            self.assertFalse((build.parent / 'provenance.json').exists())
-
-            # Invalid or ambiguous configured dependencies fail before launching
-            # the check instead of borrowing an unrelated DLL from PATH.
-            for condition in ('missing-key', 'missing-dll', 'ambiguous-dll'):
-                with self.subTest(condition=condition):
-                    fixture = dict(dependencies)
-                    if condition == 'missing-key':
-                        del fixture['GMP_LIBRARY']
-                    elif condition == 'missing-dll':
-                        (root / 'GMP_LIBRARY/install-Release/bin/libgmp-10.dll').unlink()
-                    else:
-                        other = root / 'OpenCASCADE_DIR/install-Release/other'
-                        other.mkdir()
-                        (other / 'TKernel.dll').write_bytes(b'ambiguous')
-                    with patch.object(child, 'os', SimpleNamespace(name='nt', environ=base)), \
-                         patch.object(child.subprocess, 'Popen') as spawn:
-                        with self.assertRaises(RuntimeError):
-                            child.attached_build(['ctest', '--test-dir', str(build)], root / 'bad.log',
-                                                 10, cache_values=Mock(return_value=fixture))
-                    spawn.assert_not_called()
-
-    def test_native_non_ctest_and_mac_commands_keep_the_original_environment(self):
-        from types import SimpleNamespace
-        from unittest.mock import Mock
-        import native_child as child
-        with tempfile.TemporaryDirectory() as temporary:
-            for system, command in [('nt', ['cmake', '--preset', 'release']),
-                                    ('nt', ['cmake', '--build', '--preset', 'release']),
-                                    ('posix', ['ctest', '--test-dir', temporary])]:
-                for env in (None, {'PATH': 'original'}):
-                    with self.subTest(system=system, command=command, env=env):
-                        process = Mock()
-                        process.wait.return_value = 0
-                        cache = Mock()
-                        with patch.object(child, 'os', SimpleNamespace(name=system)), \
-                             patch.object(child.subprocess, 'Popen', return_value=process) as spawn:
-                            child.attached_build(command, Path(temporary) / 'test.log', 10,
-                                                 env=env, cache_values=cache)
-                        self.assertIs(spawn.call_args.kwargs['env'], env)
-                        cache.assert_not_called()
-
-    def test_native_child_uses_the_selected_builders_cache_reader(self):
-        from types import SimpleNamespace
-        from unittest.mock import Mock
-        import native_child as child
-        builder = SimpleNamespace(cache_values=Mock(), main=Mock(return_value=0))
-        with tempfile.TemporaryDirectory() as temporary, \
-             patch.dict(sys.modules, {'build_orca_candidate_probe': builder}), \
-             patch.object(sys, 'argv', ['native_child', 'native', '--source', temporary, '--jobs', '16']):
-            original_path = list(sys.path)
-            try:
-                self.assertEqual(child.main(), 0)
-            finally:
-                sys.path[:] = original_path
-        self.assertIs(builder.run.func, child.attached_build)
-        self.assertIs(builder.run.keywords['cache_values'], builder.cache_values)
-        builder.main.assert_called_once_with(['--jobs', '16'])
-
     def test_native_ctest_uses_the_same_python_as_driver_admission(self):
         import native_regression as regression
         with tempfile.TemporaryDirectory() as temporary:
@@ -268,56 +178,51 @@ class RegressionTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'SDK boundary reached'):
                 driver.regress(source, 'macos', 'a' * 40, 'c' * 40, source / 'report', app_sha='b'*40, app_repository='org/App')
 
-    def test_native_comparisons_use_initialized_app_asset_catalogs_and_baselines(self):
+    def test_native_regression_uses_one_ctest_after_build(self):
         import native_regression as regression
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary).resolve()
-            assets = source / 'App/tests/TestAssets/slicing_regression'
-            assets.mkdir(parents=True)
-            (assets / 'candidate-config.json').write_text('{}')
-            for name in ('cases.json', 'cases-extended.json'):
-                (assets / name).write_text(json.dumps({'cases': ['one', 'two']}))
-            for suite in ('standard', 'extended'):
-                (assets / 'baselines' / suite).mkdir(parents=True)
-            native = source / 'evidence/native-orca'
-            dependencies = {}
-            for key, filename, location in [
-                    ('OpenCASCADE_DIR', 'TKernel.dll', 'lib/cmake/occt'),
-                    ('GMP_LIBRARY', 'libgmp-10.dll', 'lib/libgmp-10.lib')]:
-                prefix = source / ('fixture-' + key) / 'x64/install-Release'
-                (prefix / 'bin').mkdir(parents=True)
-                (prefix / 'bin' / filename).write_bytes(b'runtime path fixture; never loaded')
-                dependencies[key] = str(prefix / location)
-            seen = []
-            def compare(args, *rest):
-                if '--producer-build-dir' in args:
-                    self.assertEqual(args[args.index('--producer-build-dir') + 1], source / 'build-arm64-Release')
-                    self.assertEqual(args[args.index('--ctest-results-dir') + 1], source / 'evidence')
-                    self.assertNotIn('--jobs', args)
-                    native.mkdir()
-                    (native / 'provenance.json').write_text(json.dumps({
-                        'probe': str(native / 'probe'), 'dependencyCacheValues': dependencies}))
-                    return 0
-                catalog = Path(args[args.index('--cases') + 1])
-                baseline = Path(args[args.index('--baseline-dir') + 1])
-                self.assertEqual(catalog.parent, assets)
-                self.assertTrue(baseline.is_dir())
-                destination = Path(args[args.index('--output') + 1])
-                destination.mkdir()
-                (destination / 'report.json').write_text(json.dumps({'status': 'passed',
-                    'summary': {'cases': len(json.loads(catalog.read_text())['cases']), 'failed': 0, 'strictFailed': 0}}))
-                seen.append((catalog.name, baseline.name))
+            output = source / 'evidence'
+            windows = os.name == 'nt'
+            build = source / ('build-Release' if windows else 'build-arm64-Release')
+            tests = []
+            for name, executable in regression.NATIVE_TESTS.items():
+                arguments = [str(build / executable)]
+                if name.startswith('OrcaNativeRegression_'):
+                    arguments += [name.split('_', 1)[1], str(source), 'assets', 'platform',
+                                  str(build / 'OrcaCandidateGCodeProbe'), 'commit', 'resources', 'reports']
+                if name == 'OrcaMicroFillCoverageCheck':
+                    arguments.append('--check-micro-fill-coverage')
+                tests.append({'name': name, 'command': arguments})
+
+            calls = []
+            def run(args, cwd, env, log):
+                calls.append(args[0])
+                if args[0] == 'ctest':
+                    self.assertEqual(env['GPLATFORM_NATIVE_REGRESSION_REPORT_DIR'], str(output / 'orca-gcode'))
+                    cases = ''.join(f'<testcase name="{name}" status="run"/>' for name in regression.NATIVE_TESTS)
+                    (output / 'ctest.xml').write_text(f'<testsuite>{cases}</testsuite>')
                 return 0
-            def phase(report, name, operation):
-                if name.endswith('/original48') or name.endswith('/extended26'):
-                    self.assertEqual(operation()['returncode'], 0)
-                if name.endswith('/native-orca-checks'):
-                    self.assertEqual(operation()['returncode'], 0)
-                return name.endswith(('/build-tests', '/native-orca-checks'))
-            with patch('native_regression.phase', side_effect=phase), patch('native_regression.command', side_effect=compare), \
-                 patch('native_regression.text_git', return_value='a' * 40), patch('native_regression.runtime', return_value={}):
-                regression.architecture(source, 'arm64', source / 'evidence', {'phases': []}, {'Qt6_DIR': '/fixture/Qt'})
-            self.assertEqual(seen, [('cases.json', 'standard'), ('cases-extended.json', 'extended')])
+
+            inventory = json.dumps({'tests': tests}).encode()
+            with (patch.object(regression, 'command', side_effect=run),
+                  patch.object(regression, 'runtime', return_value={}),
+                  patch.object(regression.subprocess, 'check_output', return_value=inventory)):
+                report = {'output': str(output), 'phases': []}
+                result = regression.architecture(source, 'x64' if windows else 'arm64', output, report, {'Qt6_DIR': '/fixture/Qt'})
+            self.assertEqual(result, {'returncode': 0})
+            self.assertEqual(calls, ['pwsh', 'ctest'] if windows else ['bash', 'cmake', 'ctest'])
+
+            with self.assertRaisesRegex(RuntimeError, 'exactly one registered'):
+                regression.verify_native_inventory(tests[:-1], build)
+            tests[-1]['command'][5] = str(source / 'previous-build' / 'OrcaCandidateGCodeProbe')
+            with self.assertRaisesRegex(RuntimeError, 'probe from this build'):
+                regression.verify_native_inventory(tests, build)
+            junit = output / 'ctest.xml'
+            content = junit.read_text().replace('status="run"/>', 'status="run"><skipped/></testcase>', 1)
+            junit.write_text(content)
+            with self.assertRaisesRegex(RuntimeError, 'did not pass exactly once'):
+                regression.verify_native_junit(junit)
 
     def test_native_fixtures_are_prepared_before_configure_and_failure_blocks_build(self):
         import contextlib
@@ -352,31 +257,6 @@ class RegressionTests(unittest.TestCase):
                 self.assertEqual(report['status'], 'failed')
                 if not missing:
                     self.assertEqual(report['native_assets_sha'], 'c' * 40)
-
-    def test_native_describe_inherits_exact_linked_runtime_versions(self):
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp).resolve()
-            occt = root/'occt-7.6/x64/install-Release'
-            gmp = root/'gmp-vendored/x64/install-Release'
-            for directory, name in [(occt/'bin/occt', 'TKernel.dll'), (gmp/'bin', 'libgmp-10.dll')]:
-                directory.mkdir(parents=True)
-                (directory/name).write_bytes(b'fixture')
-            # A different installed version must not win through the base PATH.
-            base = dict(os.environ, PATH=str(root/'occt-7.9/bin'), UNCHANGED='value')
-            metadata = {'dependencyCacheValues': {'OpenCASCADE_DIR': str(occt/'lib/cmake/occt'),
-                                                'GMP_LIBRARY': str(gmp/'lib/libgmp-10.lib')}}
-            env = windows_native_environment(metadata, base)
-            code = "import json,os;print(json.dumps(os.environ['PATH'].split(os.pathsep)))"
-            inherited = json.loads(subprocess.check_output([sys.executable, '-c', code], env=env))
-            self.assertEqual(inherited, [str(occt/'bin/occt'), str(gmp/'bin'), base['PATH']])
-            self.assertEqual(env['UNCHANGED'], 'value')
-            self.assertEqual(base['PATH'], str(root/'occt-7.9/bin'))
-            # Ambiguous runtime selection fails instead of silently using a DLL
-            # from another location or the unrelated product SDK deployment.
-            (occt/'other').mkdir()
-            (occt/'other/TKernel.dll').write_bytes(b'other')
-            with self.assertRaisesRegex(RuntimeError, 'found 2'):
-                windows_native_environment(metadata, base)
 
     def test_windows_bootstrap_cancellation_reaps_its_owned_tree(self):
         from unittest.mock import Mock
@@ -446,41 +326,18 @@ class RegressionTests(unittest.TestCase):
 
 
 
-    def test_semantic_diagnostic_cannot_hide_strict_gcode_difference(self):
-        report = {'status': 'passed', 'summary': {'cases': 48, 'failed': 0, 'strictFailed': 1}}
-        self.assertNotEqual(comparison_verdict(0, report, 48)['returncode'], 0)
-        report['summary']['strictFailed'] = 0
-        self.assertEqual(comparison_verdict(0, report, 48)['returncode'], 0)
-        self.assertNotEqual(comparison_verdict(7, report, 48)['returncode'], 0)
-        self.assertNotEqual(comparison_verdict(0, report, 26)['returncode'], 0)
-
-    def test_only_explicitly_reviewed_metadata_can_differ(self):
-        report = {'status': 'passed', 'summary': {'cases': 48, 'failed': 0,
-            'strictFailed': 1, 'approvedMetadataDifferences': 1}}
-        self.assertEqual(comparison_verdict(0, report, 48)['returncode'], 0)
-        report['summary']['strictFailed'] = 2
-        self.assertNotEqual(comparison_verdict(0, report, 48)['returncode'], 0)
-        report['summary'].update(strictFailed=1, failed=1)
-        self.assertNotEqual(comparison_verdict(0, report, 48)['returncode'], 0)
-
     def assert_stopped(self, pid):
         process = subprocess.run(['ps', '-o', 'stat=', '-p', str(pid)], capture_output=True, text=True)
         self.assertTrue(not process.stdout.strip() or process.stdout.strip().startswith('Z'), process.stdout)
 
     @unittest.skipIf(os.name == 'nt', 'POSIX group ownership fixture')
-    def test_nested_native_builder_timeout_cleans_actual_compile_subtree(self):
+    def test_ctest_timeout_cleans_actual_probe_subtree(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            (root/'scripts').mkdir()
             child = "import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(60)"
             worker = f"import subprocess,sys,time;from pathlib import Path;p=subprocess.Popen([sys.executable,'-c',{child!r}]);Path({str(root/'pid')!r}).write_text(str(p.pid));time.sleep(60)"
-            (root/'scripts/build_orca_candidate_probe.py').write_text(
-                "import sys\nfrom pathlib import Path\n"
-                "def cache_values(path):\n raise AssertionError('POSIX compile must not resolve DLLs')\n"
-                f"def main(argv):\n run([sys.executable,'-c',{worker!r}],Path({str(root/'native.log')!r}),60)\n")
             with self.assertRaises(TimeoutError):
-                command([sys.executable, Path(__file__).resolve().parents[2]/'scripts/ci/native_child.py',
-                         'native', '--source', root], root, None, root/'wrapper.log', timeout=1)
+                command([sys.executable, '-c', worker], root, None, root/'ctest.log', timeout=1)
             pid = int((root/'pid').read_text())
             self.assert_stopped(pid)
 
