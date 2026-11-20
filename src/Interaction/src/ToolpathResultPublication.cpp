@@ -134,7 +134,7 @@ ToolpathPublicationResult publishToolpathResult(std::shared_ptr<SliceOutputRecor
         const auto outcome = attempt(true);
         if (outcome != Attempt::PreviewFailed) return result;
     }
-    if (output->sourceScope == ToolpathPreviewSourceScope::ImportedGCode) {
+    if (output->requiresPreview || output->sourceScope == ToolpathPreviewSourceScope::ImportedGCode) {
         result.error = output->previewError.isEmpty() ? QStringLiteral("G-code has no compatible preview") : output->previewError;
         return result;
     }

@@ -50,6 +50,8 @@ QString title(libslicer::CalibMode mode) {
     case libslicer::CalibMode::Calib_Input_shaping_damp: return QStringLiteral("输入整形 · 阻尼");
     case libslicer::CalibMode::Calib_Cornering: return QStringLiteral("转角");
     case libslicer::CalibMode::Calib_Tolerance_Model: return QStringLiteral("公差测试");
+    case libslicer::CalibMode::Calib_Fiber_Landing: return CalibrationBridge::tr("Fiber landing calibration");
+    case libslicer::CalibMode::Calib_Fiber_Temperature: return CalibrationBridge::tr("Fiber temperature calibration");
     default: return QStringLiteral("校准");
     }
 }
@@ -90,7 +92,7 @@ QVariantMap formView(const libslicer::CalibrationParameters& form) {
         QVariantList choices;
         for (const auto& choice : f.enum_items) {
             auto label = QString::fromStdString(choice.label);
-            if (f.key == "flow_filament_slot") {
+            if (f.key == "flow_filament_slot" || f.key == "base_filament_slot" || f.key == "fiber_filament_slot") {
                 const auto index = QString::fromStdString(choice.value).toInt();
                 if (index >= 0 && index < materials.size()) {
                     const auto material = materials[index].toMap();
@@ -107,8 +109,13 @@ QVariantMap formView(const libslicer::CalibrationParameters& form) {
     }
     auto view = formDiagnostics(form.diagnostics);
     view.insert("values", formValues(form)); view.insert("fields", fields); view.insert("canRefine", form.can_refine);
+    if (libslicer::is_fiber_calibration(form.mode)) {
+        view.insert("fiberSampleCount", qulonglong(form.fiber_sample_count));
+        view.insert("fiberCanSlice", form.fiber_sample_count > 0 && view.value("error").toString().isEmpty());
+    }
     const auto values = formValues(form);
-    const int slot = form.mode == libslicer::CalibMode::Calib_Flow_Rate ? values.value("flow_filament_slot").toInt() : 0;
+    const int slot = libslicer::is_fiber_calibration(form.mode) ? values.value("fiber_filament_slot").toInt() :
+        form.mode == libslicer::CalibMode::Calib_Flow_Rate ? values.value("flow_filament_slot").toInt() : 0;
     const auto material = slot >= 0 && slot < materials.size() ? materials[slot].toMap() : QVariantMap{};
     view.insert("context", QVariantMap{{"slot", slot}, {"material", material.value("presetName")},
         {"printer", SliceSettingsBridge::instance()->selectedMachine().value("name")},
@@ -260,7 +267,8 @@ bool CalibrationBridge::prepare(const QVariantMap& parameters) {
         m_form = form;
     } catch (const std::exception& e) { m_error = QString::fromUtf8(e.what()); emit changed(); return false; }
     const auto materials = SliceSettingsBridge::instance()->filamentSlots();
-    const auto slot = session->request.mode == libslicer::CalibMode::Calib_Flow_Rate ? session->request.flow_filament_slot : 0;
+    const auto slot = session->request.fiber ? session->request.fiber->fiber_filament_slot :
+        session->request.mode == libslicer::CalibMode::Calib_Flow_Rate ? session->request.flow_filament_slot : 0;
     if (slot >= std::size_t(materials.size())) { m_error = QStringLiteral("目标材料不存在。"); emit changed(); return false; }
     session->materialName = materials[qsizetype(slot)].toMap().value("presetName").toString();
     session->request.config = profile->config;
@@ -366,6 +374,7 @@ void CalibrationBridge::startWork(bool prepareTask, int plate) {
                     };
                     libslicer::CalibrationOutputOptions options;
                     options.generate_preview = true; options.generate_gcode_3mf = true;
+                    const bool fiber = libslicer::is_fiber_calibration(session->request.mode);
                     auto result = GPlatform::SlicingBackend::instance().sliceCalibration(*session->task, i, options, callbacks);
                     auto output = std::make_shared<GPlatform::SliceOutputRecord>();
                     output->setArtifacts(QString::fromStdString(result.output.path),
@@ -378,6 +387,7 @@ void CalibrationBridge::startWork(bool prepareTask, int plate) {
                     }
                     output->name = title(session->request.mode)+QStringLiteral("_plate_%1").arg(i+1);
                     output->sourceScope = GPlatform::ToolpathPreviewSourceScope::Calibration;
+                    output->requiresPreview = fiber;
                     output->printBedId = session->bed;
                     output->calibrationTaskId = session->id;
                     output->calibrationPlateIndex = int(i);
@@ -399,6 +409,12 @@ void CalibrationBridge::startWork(bool prepareTask, int plate) {
                 auto source = GPlatform::captureToolpathSource(selected.output->gcode.path, cancelled);
                 session->prepared = GPlatform::prepareToolpathPreview(*selected.preview, std::move(source), cancelled);
             } else session->prepared.error = QStringLiteral("校准输出可用，但没有工具路径预览。");
+            if (selected.output->requiresPreview && !session->prepared.geometryAvailable && !cancelled()) {
+                session->error = session->prepared.error.isEmpty() ? tr("Fiber calibration has no drawable preview.") : session->prepared.error;
+                selected.output.reset();
+                selected.preview.reset();
+                return;
+            }
             session->cancelled.store(cancelled() || session->prepared.cancelled);
             session->success = !session->cancelled.load();
         } catch (const std::exception& e) { session->error = QString::fromUtf8(e.what()); }

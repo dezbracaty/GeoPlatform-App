@@ -53,7 +53,11 @@
                 ]},
                 {"text": "VFA…", "actionCode": "calibration.vfa", "enabled": true},
                 {"separator": true},
-                {"text": "公差测试模型", "actionCode": "calibration.tolerance", "enabled": true}
+                {"text": "公差测试模型", "actionCode": "calibration.tolerance", "enabled": true},
+                {"text": "纤维丝校准", "isMenu": true, "items": [
+                  {"text": "落点校准…", "actionCode": "calibration.fiber.landing", "enabled": true},
+                  {"text": "温度校准…", "actionCode": "calibration.fiber.temperature", "enabled": true}
+                ]}
               ]
             },
             {

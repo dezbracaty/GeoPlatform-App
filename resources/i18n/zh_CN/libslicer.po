@@ -16923,3 +16923,15 @@ msgstr "正在加载 G-code"
 
 msgid "G-code preview ready"
 msgstr "G-code 预览已就绪"
+
+msgid "Fiber contour layer interval"
+msgstr "纤维轮廓铺设间隔"
+
+msgid "Fiber infill layer interval"
+msgstr "纤维填充铺设间隔"
+
+msgid "Lay fiber contours once every N model layers. 1 means every layer; 2 skips one layer between contour layers."
+msgstr "每 N 个模型层铺设一次纤维轮廓。1 表示每层铺设；2 表示铺一层、跳过一层。"
+
+msgid "Lay fiber infill once every N model layers, independently of fiber contours. 1 means every layer; 2 skips one layer between infill layers."
+msgstr "每 N 个模型层铺设一次纤维填充，与纤维轮廓独立。1 表示每层铺设；2 表示铺一层、跳过一层。"

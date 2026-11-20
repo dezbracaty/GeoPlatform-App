@@ -1,5 +1,6 @@
 """Maintained full-host native checks used by App platform regression."""
 from __future__ import annotations
+from collections import Counter
 import json
 import os
 from pathlib import Path
@@ -8,7 +9,9 @@ import subprocess
 import sys
 import time
 
-from common import git_env, text_git, write_json
+from xml.etree import ElementTree
+
+from common import git_env, write_json
 
 
 def command(args, cwd, env, log, timeout=7200, input_data=None):
@@ -87,33 +90,6 @@ def runtime(source, build, env):
     return result
 
 
-def windows_native_environment(provenance, env):
-    """Launch a probe with its own producer or recorded standalone dependencies."""
-    if 'producerRuntimeDirectory' in provenance:
-        directory = Path(provenance['producerRuntimeDirectory']).resolve()
-        for name in ('libslicer.dll', 'TKernel.dll', 'libgmp-10.dll'):
-            if not (directory / name).is_file():
-                raise RuntimeError(f'Native producer runtime is missing {name}: {directory}')
-        return dict(env, PATH=str(directory) + os.pathsep + env.get('PATH', ''))
-    dependencies = provenance.get('dependencyCacheValues', {})
-    directories = []
-    for key, filename in [('OpenCASCADE_DIR', 'TKernel.dll'), ('GMP_LIBRARY', 'libgmp-10.dll')]:
-        location = dependencies.get(key)
-        if not location:
-            raise RuntimeError(f'Native provenance is missing {key}')
-        prefix = next((p for p in Path(location).resolve().parents
-                       if p.name.lower().startswith('install-')), None)
-        if prefix is None:
-            raise RuntimeError(f'Cannot locate native dependency installation: {key}')
-        candidates = list(prefix.rglob(filename))
-        if len(candidates) != 1:
-            raise RuntimeError(f'Expected one {filename} in {prefix}, found {len(candidates)}')
-        directories.append(candidates[0].parent)
-    result = dict(env)
-    result['PATH'] = os.pathsep.join(map(str, directories)) + os.pathsep + env.get('PATH', '')
-    return result
-
-
 def build_environment():
     env = git_env()
     # os.environ is case-insensitive on Windows, dict(os.environ) is not.
@@ -125,13 +101,44 @@ def build_environment():
     return env
 
 
-def comparison_verdict(code, details, expected):
-    summary = details.get('summary', {})
-    return {'returncode': code or int(details.get('status') != 'passed' or
-                summary.get('cases') != expected or summary.get('failed', 1) != 0 or
-                summary.get('strictFailed', 1) != summary.get('approvedMetadataDifferences', 0)),
-            'summary': summary, 'expected_cases': expected, 'setup_error': details.get('setupError'),
-            'reference': 'current compiled-platform G-code baseline'}
+NATIVE_TESTS = {
+    'OrcaSupportOverlapCheck': 'OrcaSupportOverlapCheck',
+    'OrcaMicroFillCoverageCheck': 'OrcaCandidateGCodeProbe',
+    'OrcaNativeRegression_original48': 'OrcaNativeRegression',
+    'OrcaNativeRegression_extended26': 'OrcaNativeRegression',
+}
+
+
+def verify_native_inventory(tests, build):
+    names = Counter(test['name'] for test in tests)
+    for name in NATIVE_TESTS:
+        if names[name] != 1:
+            raise RuntimeError(f'Expected exactly one registered CTest: {name}')
+    for test in tests:
+        name = test['name']
+        if name not in NATIVE_TESTS:
+            continue
+        command = test.get('command', [])
+        executable = Path(command[0]).resolve() if command else None
+        if executable is None or executable.stem != NATIVE_TESTS[name] or not executable.is_relative_to(build.resolve()):
+            raise RuntimeError(f'{name} must use the executable from this build')
+        if name == 'OrcaMicroFillCoverageCheck' and command[1:] != ['--check-micro-fill-coverage']:
+            raise RuntimeError('Incorrect CTest micro-fill mode')
+        if name.startswith('OrcaNativeRegression_'):
+            if len(command) != 9 or command[1] != name.split('_', 1)[1]:
+                raise RuntimeError(f'Incorrect CTest arguments for {name}')
+            probe = Path(command[5]).resolve()
+            if probe.stem != 'OrcaCandidateGCodeProbe' or not probe.is_relative_to(build.resolve()):
+                raise RuntimeError(f'{name} must use the Orca probe from this build')
+
+
+def verify_native_junit(path):
+    cases = ElementTree.parse(path).findall('.//testcase')
+    for name in NATIVE_TESTS:
+        matching = [case for case in cases if case.get('name') == name]
+        if (len(matching) != 1 or matching[0].get('status') != 'run' or
+                any(matching[0].find(tag) is not None for tag in ('failure', 'error', 'skipped'))):
+            raise RuntimeError(f'Required native CTest did not pass exactly once: {name}')
 
 
 def architecture(source, arch, output, report, env):
@@ -141,7 +148,7 @@ def architecture(source, arch, output, report, env):
     build = source / directory
     output.mkdir()
     arguments = ['-DGPLATFORM_BUILD_TESTS=ON', '-DGPLATFORM_BUILD_SDK_CHECKS=ON',
-                 '-DJOURNALSYSTEM_BUILD_TESTS=ON', '-DGPLATFORM_ENABLE_ORCA_NATIVE_REGRESSION=OFF',
+                 '-DJOURNALSYSTEM_BUILD_TESTS=ON',
                  '-DGPLATFORM_BUILD_ORCA_NATIVE_PROBES=ON',
                  '-DQt6_DIR=' + env['Qt6_DIR'],
                  '-DPython3_EXECUTABLE=' + sys.executable]
@@ -162,62 +169,24 @@ def architecture(source, arch, output, report, env):
         return {'returncode': code}
     built = phase(report, arch + '/build-tests', build_tests)
     test_env = runtime(source, build, env)
-    if built:
-        def ctest():
-            inventory = subprocess.check_output(['ctest', '--test-dir', str(build), '--show-only=json-v1'], env=test_env)
-            (output / 'ctest-inventory.json').write_bytes(inventory)
-            tests = json.loads(inventory)['tests']
-            if not tests:
-                raise RuntimeError('CTest registered no tests')
-            return {'returncode': command(['ctest', '--test-dir', build, '--output-on-failure',
-                '--no-tests=error', '--timeout', '180', '--parallel', '1', '--output-junit', output / 'ctest.xml'],
-                source, test_env, output / 'ctest.log'), 'registered_tests': len(tests)}
-        phase(report, arch + '/ctest', ctest)
-    else:
-        phase(report, arch + '/ctest', lambda: (_ for _ in ()).throw(RuntimeError('Test build failed; no stale executable used')))
-
     if not built:
         return {'returncode': 1}
 
-    native = output / 'native-orca'
-    commit = text_git(source / 'App/ThirdParty/OrcaSlicer', 'rev-parse', 'HEAD')
+    def ctest():
+        inventory = subprocess.check_output(['ctest', '--test-dir', str(build), '--show-only=json-v1'], env=test_env)
+        (output / 'ctest-inventory.json').write_bytes(inventory)
+        tests = json.loads(inventory)['tests']
+        verify_native_inventory(tests, build)
+        junit = output / 'ctest.xml'
+        test_env['GPLATFORM_NATIVE_REGRESSION_REPORT_DIR'] = str((output / 'orca-gcode').resolve())
+        code = command(['ctest', '--test-dir', build, '--output-on-failure', '--no-tests=error',
+                        '--timeout', '180', '--parallel', '1', '--output-junit', junit],
+                       source, test_env, output / 'ctest.log')
+        if code == 0:
+            verify_native_junit(junit)
+        return {'returncode': code, 'registered_tests': len(tests)}
 
-    def native_checks():
-        args = [sys.executable, Path(__file__).with_name('native_child.py'), 'native', '--source', source,
-                '--work-dir', native, '--producer-build-dir', build,
-                '--ctest-results-dir', output,
-                '--source-dir', source / 'App/ThirdParty/OrcaSlicer', '--source-commit', commit]
-        return {'returncode': command(args, source, env, output / 'native-checks.log')}
-
-    native_ok = phase(report, arch + '/native-orca-checks', native_checks)
-    if native_ok:
-        provenance = json.loads((native / 'provenance.json').read_text(encoding='utf-8'))
-        assets = source / 'App/tests/TestAssets/slicing_regression'
-        profile_path = assets / 'candidate-config.json'
-        profile = json.loads(profile_path.read_text(encoding='utf-8'))
-        # Only bind the tested source. Counts, approved extension values and
-        # expected defaults hash stay frozen; incompatible current defaults fail.
-        profile['candidateSourceCommit'] = commit
-        write_json(output / 'candidate-profile.json', profile)
-        for suite, catalog, baseline in [('original48', 'cases.json', 'standard'),
-                                          ('extended26', 'cases-extended.json', 'extended')]:
-            def compare(suite=suite, catalog=catalog, baseline=baseline):
-                destination = output / suite
-                # describe() inherits its parent's environment; the existing
-                # comparator only supplies its probe_env to later slice calls.
-                compare_env = windows_native_environment(provenance, env) if os.name == 'nt' else env
-                code = command([sys.executable, source / 'scripts/compare_orca_candidate.py',
-                    '--cases', assets / catalog,
-                    '--baseline-dir', assets / 'baselines' / baseline,
-                    '--extensions', output / 'candidate-profile.json', '--probe', provenance['probe'],
-                    '--source-metadata', native / 'provenance.json', '--resource-dir', source / 'App/ThirdParty/OrcaSlicer/resources',
-                    '--output', destination, '--repeats', '2', '--timeout', '120'], source, compare_env, output / (suite + '.log'))
-                details = json.loads((destination / 'report.json').read_text(encoding='utf-8'))
-                expected = len(json.loads((assets / catalog).read_text(encoding='utf-8'))['cases'])
-                return comparison_verdict(code, details, expected)
-            phase(report, arch + '/' + suite, compare)
-    return {'returncode': int(any(p['status'] != 'passed' for p in report['phases']
-        if p['name'].startswith(arch + '/') and p['name'] != arch + '/all-stages'))}
+    return {'returncode': 0 if phase(report, arch + '/ctest', ctest) else 1}
 
 
 def windows_environment(*, script=None):

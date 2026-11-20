@@ -4403,3 +4403,15 @@ msgstr "导出所属模型为 STL…"
 
 msgid "Export Owning Model as 3MF…"
 msgstr "导出所属模型为 3MF…"
+
+msgid "%1 fiber test lines"
+msgstr "%1 根纤维试线"
+
+msgid "Fiber landing calibration"
+msgstr "纤维丝落点校准"
+
+msgid "Fiber temperature calibration"
+msgstr "纤维丝温度校准"
+
+msgid "Fiber calibration has no drawable preview."
+msgstr "纤维校准未生成可显示的预览。"

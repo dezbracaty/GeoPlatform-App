@@ -446,6 +446,25 @@ ApplicationWindow {
             QFile saved(destination), original(newInput);
             check(saved.open(QIODevice::ReadOnly) && original.open(QIODevice::ReadOnly) && saved.readAll() == original.readAll(), "Output-only saved incorrect bytes");
         }
+        const auto previous = bridge->currentOutput();
+        const auto fiberInput = fixture.filePath("fiber-calibration.gcode");
+        write(fiberInput, "G90\nG1 X50 E2 F600\n");
+        for (const bool preparedGeometry : {false, true}) {
+            auto output = std::make_shared<GPlatform::SliceOutputRecord>();
+            output->setArtifacts(fiberInput, false, {}, false);
+            output->sourceScope = GPlatform::ToolpathPreviewSourceScope::Calibration;
+            output->printBedId = bed->getDBInstanceID();
+            output->requiresPreview = true;
+            GPlatform::PreparedToolpathPreview prepared;
+            prepared.geometryAvailable = preparedGeometry;
+            const auto rejected = GPlatform::publishToolpathResult(output, std::move(prepared),
+                bridge->beginOutputTask(), [](auto stage) {
+                    if (stage == GPlatform::PreviewPublicationStage::Create)
+                        throw std::runtime_error("Injected fiber preview creation failure");
+                });
+            check(!rejected.accepted && !rejected.error.isEmpty() && bridge->currentOutput() == previous,
+                  "Fiber calibration must preserve the previous result if its preview cannot be published");
+        }
         auto* exportButton = root->findChild<QQuickItem*>("printOutputExportButton");
         eval(root.get(), "SliceSettingsBridge.hasPendingReslice = true");
         QTest::qWait(30);
