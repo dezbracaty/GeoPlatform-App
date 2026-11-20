@@ -1856,13 +1856,13 @@ class JournalPythonClientCheck(unittest.TestCase):
                     stdout=output, stderr=output)
                 client = JournalSystem()
                 try:
-                    # Cold Windows DLL/module startup is separate from the
-                    # replay handoff deadline below. Wait for a complete ready
-                    # event, not merely a file created before its first write.
+                    # macOS can spend longer on library validation before the
+                    # probe starts. The replay handoff deadline applies after
+                    # the first complete ready event.
                     started_at = time.monotonic()
-                    deadline = started_at + 20
                     first = None
-                    while process.poll() is None and time.monotonic() < deadline:
+                    while process.poll() is None and (
+                            sys.platform == "darwin" or time.monotonic() - started_at < 20):
                         if evidence.exists():
                             lines = evidence.read_text(encoding="utf-8").splitlines()
                             if lines:

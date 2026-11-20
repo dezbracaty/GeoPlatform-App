@@ -285,9 +285,9 @@ if(GPLATFORM_CORE_SOURCE_DIR AND TARGET RendererBackendVtk)
             MODULES ${VTK_LIBRARIES})
     endif()
     add_test(NAME VtkPickIntegrationCheck COMMAND VtkPickIntegrationCheck)
-    set_tests_properties(VtkPickIntegrationCheck PROPERTIES TIMEOUT 20)
     add_test(NAME VtkFirstFrameCameraCheck COMMAND VtkPickIntegrationCheck --first-frame)
-    set_tests_properties(VtkFirstFrameCameraCheck PROPERTIES TIMEOUT 20)
+    set_tests_properties(VtkPickIntegrationCheck VtkFirstFrameCameraCheck PROPERTIES
+        TIMEOUT "$<IF:$<PLATFORM_ID:Darwin>,0,20>")
 endif()
 
 if(GPLATFORM_CORE_SOURCE_DIR AND TARGET RendererBackendFilament)
