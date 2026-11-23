@@ -4,6 +4,8 @@
 #include <QJSEngine>
 
 #include <QDataStream>
+#include <QDebug>
+#include <QFile>
 #include <QStandardPaths>
 #include <QUrl>
 
@@ -34,8 +36,22 @@ void SettingsHelper::init(char* argv[]) {
     QString applicationPath = QString::fromStdString(argv[0]);
     const QFileInfo fileInfo(applicationPath);
     const QString iniFileName = fileInfo.completeBaseName() + ".ini";
-    const QString iniFilePath =
+    QString iniFilePath =
         QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/" + iniFileName;
+#ifdef Q_OS_WIN
+    const QString localData = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+    if (!localData.isEmpty()) {
+        const QString flatPath = QDir(localData).filePath(QStringLiteral("GPlatform/") + iniFileName);
+        QFile legacy(iniFilePath);
+        if (QFileInfo::exists(flatPath) || !legacy.exists() ||
+            legacy.copy(flatPath) || QFileInfo::exists(flatPath)) {
+            iniFilePath = flatPath;
+        } else {
+            qWarning() << "Could not migrate settings from" << iniFilePath << "to" << flatPath
+                       << legacy.errorString();
+        }
+    }
+#endif
     m_settings.reset(new QSettings(iniFilePath, QSettings::IniFormat));
 }
 

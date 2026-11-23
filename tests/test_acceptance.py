@@ -410,6 +410,29 @@ class AcceptanceCheck(unittest.TestCase):
         self.assertEqual(config['General']['applicationChanged'], '1')
         self.assertEqual(config['General']['locale'], 'zh_CN')
 
+    @unittest.skipUnless(os.name == 'nt', 'Windows default INI path')
+    def test_default_windows_theme_preserves_legacy_preferences(self):
+        import run_acceptance
+        from unittest.mock import patch
+        self.metadata.update(artifacts={}, checks=[], preconditions={'theme': 'light'})
+        self.save_metadata()
+        local = self.root / 'Local'
+        settings = local / 'GPlatform' / (self.application.stem + '.ini')
+        legacy = settings.parent / 'GPlatform' / settings.name
+        legacy.parent.mkdir(parents=True)
+        original = b'[General]\ndarkMode=1\nlocale=zh_CN\n'
+        legacy.write_bytes(original)
+        tools = Path(__file__).resolve().parents[1] / 'tools/journal'
+        def writer():
+            self.assertIn('darkMode = 0', settings.read_text())
+            self.assertIn('locale = zh_CN', settings.read_text())
+        with patch.dict(os.environ, {'LOCALAPPDATA': str(local)}), patch('builtins.print'):
+            code = run_acceptance.main(['--assets', str(self.assets), '--journal-tools', str(tools),
+                '--application', str(self.application), '--cases', 'job',
+                '--output', str(self.root / 'legacy-theme')], session=SessionFixture(writer))
+        self.assertEqual(code, 0)
+        self.assertEqual(legacy.read_bytes(), original)
+
     def test_failed_replay_does_not_delete_app_settings(self):
         import run_acceptance
         from unittest.mock import patch

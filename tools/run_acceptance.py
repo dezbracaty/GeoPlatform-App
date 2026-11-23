@@ -5,7 +5,9 @@ import configparser
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
+from tempfile import TemporaryDirectory
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, FIRST_COMPLETED, wait
 
@@ -57,7 +59,7 @@ def update_run_summary(summary):
                          'not_verified' if not summary['runComplete'] or 'not_verified' in statuses else 'passed')
 
 
-def prepare_theme(settings, theme):
+def prepare_theme(settings, theme, *, legacy_settings=None):
     """Use the same persisted preference as SettingsHelper before launching the App."""
     if theme is None:
         return
@@ -65,6 +67,15 @@ def prepare_theme(settings, theme):
         raise ValueError('Scenario theme must be light or dark')
     if settings is None:
         raise ValueError('Scenario theme requires --settings-file on this platform')
+    if legacy_settings is not None and not settings.exists() and legacy_settings.is_file():
+        # Initialize the new INI before the first themed launch, as the App would.
+        with TemporaryDirectory(dir=settings.parent) as temporary:
+            migrated = Path(temporary) / settings.name
+            shutil.copyfile(legacy_settings, migrated)
+            try:
+                migrated.rename(settings)  # Windows rename preserves a concurrently created INI.
+            except FileExistsError:
+                pass
     config = configparser.ConfigParser(interpolation=None)
     config.optionxform = str
     config.read(settings, encoding='utf-8')
@@ -172,8 +183,10 @@ def main(argv=None, *, session=None, session_factory=None, progress=None, betwee
         except Exception:
             pass  # run_case records the declaration/preflight failure.
     settings = args.settings_file
+    legacy_settings = None
     if settings is None and os.name == 'nt':
-        settings = Path(os.environ['LOCALAPPDATA']) / 'GPlatform/GPlatform' / (args.application.stem + '.ini')
+        settings = Path(os.environ['LOCALAPPDATA']) / 'GPlatform' / (args.application.stem + '.ini')
+        legacy_settings = settings.parent / 'GPlatform' / settings.name
     elif settings is None and sys.platform == 'darwin':
         settings = Path.home() / 'Library/Application Support/GPlatform/GPlatform' / (args.application.stem + '.ini')
     reviews = ThreadPoolExecutor(max_workers=1, thread_name_prefix='journal-review')
@@ -290,7 +303,7 @@ def main(argv=None, *, session=None, session_factory=None, progress=None, betwee
                         between_cases(refresh_pending)
                         check_cancelled()
                     theme = case_theme(names[index])
-                    prepare_theme(settings, theme)
+                    prepare_theme(settings, theme, legacy_settings=legacy_settings)
                 # Refill immediately within the same shared theme. A pause
                 # request stops refilling, then waits for active peers to drain.
                 pause_pending = (not drained and between_cases is not None and
