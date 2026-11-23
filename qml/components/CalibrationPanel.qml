@@ -118,7 +118,7 @@ Item {
         parent:QtControls.Overlay.overlay
         preferredWidth:600
         preferredHeight:Math.min(parent?parent.height-32:680,
-            root.form.mode===14?700:root.form.mode===15?240:[1,2,3].indexOf(root.form.mode)>=0?(root.form.mode===2?674:558):root.form.mode===5?590:[10,11].indexOf(root.form.mode)>=0?650:root.form.mode===13?320:560)
+            root.form.mode===14?700:root.form.mode===15?360:[1,2,3].indexOf(root.form.mode)>=0?(root.form.mode===2?674:558):root.form.mode===5?590:[10,11].indexOf(root.form.mode)>=0?650:root.form.mode===13?320:560)
         title:Calib.title(root.form.mode)+"校准"
         windowEscapeEnabled:true
         ScrollView {
@@ -129,9 +129,14 @@ Item {
                 width:parent.width
                 spacing:Theme.space12
                 Label {
-                    visible:root.form.mode!==15
                     Layout.fillWidth:true
-                    text:(root.context.printer||SliceSettingsBridge.selectedMachineModelId)+" / "+(root.context.material||SliceSettingsBridge.selectedFilamentPresetName)+" · 材料槽 "+(Number(root.context.slot||0)+1)
+                    text: {
+                        const printer = root.context.printer || SliceSettingsBridge.selectedMachineModelId
+                        if (root.form.mode === 15)
+                            return root.context.baseMaterial ? printer + " · " + Calib.label("Base material") + " " + root.context.baseMaterial : printer
+                        return printer + " / " + (root.context.material || SliceSettingsBridge.selectedFilamentPresetName) +
+                            " · 材料槽 " + (Number(root.context.slot || 0) + 1)
+                    }
                     font:Typography.caption;color:Theme.res.textFillColorSecondary;wrapMode:Text.Wrap
                 }
                 Repeater {
@@ -221,7 +226,7 @@ Item {
                     }
                 }
                 Label {
-                    Layout.fillWidth:true;wrapMode:Text.Wrap
+                    visible:root.form.mode!==15||text.length>0;Layout.fillWidth:true;wrapMode:Text.Wrap
                     text:Calib.guidance(root.form.mode)
                     font:Typography.caption;color:Theme.res.textFillColorSecondary
                 }

@@ -117,7 +117,11 @@ QVariantMap formView(const libslicer::CalibrationParameters& form) {
     const int slot = libslicer::is_fiber_calibration(form.mode) ? values.value("fiber_filament_slot").toInt() :
         form.mode == libslicer::CalibMode::Calib_Flow_Rate ? values.value("flow_filament_slot").toInt() : 0;
     const auto material = slot >= 0 && slot < materials.size() ? materials[slot].toMap() : QVariantMap{};
+    QVariant baseMaterial;
+    if (form.fiber_base_filament_slot && *form.fiber_base_filament_slot < std::size_t(materials.size()))
+        baseMaterial = materials[qsizetype(*form.fiber_base_filament_slot)].toMap().value("presetName");
     view.insert("context", QVariantMap{{"slot", slot}, {"material", material.value("presetName")},
+        {"baseMaterial", baseMaterial},
         {"printer", SliceSettingsBridge::instance()->selectedMachine().value("name")},
         {"flowRatio", values.value("flow_baseline_ratio")}});
     return view;

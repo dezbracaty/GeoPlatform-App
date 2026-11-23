@@ -6,7 +6,8 @@ function label(source) {
     return ({"Fiber landing parameter":"扫描参数","Fiber landing height":"落点高度",
         "Fiber landing length":"落点长度","Fiber landing speed":"落点速度","Fiber extra prefeed":"额外出丝量",
         "Fiber trial spacing":"试线间距",
-        "Base material":"基材","Fiber material":"纤维丝",
+        "Base material":"基材","Fiber material":"纤维丝","Fiber calibration material":"耗材",
+        "Start temperature":"起始温度","End temperature":"结束温度","Temperature step":"步进",
         "Calibration material":"校准材料","Calibration flow baseline":"本轮流量基准",
         "Extruder type":"挤出机类型","Method":"方法","Calibration type":"校准类型",
         "Top surface pattern":"顶面图案","Material temperature range":"材料快捷范围",
@@ -31,12 +32,17 @@ function message(source) {
     const spacingPrefix="Minimum fiber trial spacing: "
     if(source.indexOf(spacingPrefix)===0)
         return "试线中心距至少需要 "+source.slice(spacingPrefix.length)+"，请给凹字和纤维留出间隔。"
-    const prefixes={"Invalid numeric calibration input: ":"请输入有效数值：",
+    const prefixes={"Fiber heater temperature limits: ":"纤维喷头温度范围：",
+        "Invalid numeric calibration input: ":"请输入有效数值：",
         "Unknown calibration choice: ":"请选择有效选项：",
         "Expected comma-separated positive integers: ":"请使用整数与英文逗号填写："}
     for(const prefix in prefixes)
         if(source.indexOf(prefix)===0)return prefixes[prefix]+label(source.slice(prefix.length))
     return ({"Fiber heater waiting is not verified for this machine":"此机型的纤维加热器等待能力尚未验证。",
+        "Select a thermoplastic outer wall material for fiber temperature calibration":"请在当前工艺中选定热塑性外墙耗材作为基材。",
+        "No continuous fiber material is available for calibration":"当前配置没有可校准的连续纤维耗材。",
+        "Fiber temperatures and step must be positive integers":"温度和步进须为正整数。",
+        "Fiber temperature calibration requires descending temperatures and at least two test values":"起始温度须高于结束温度，范围内至少需要两个测试温度。",
         "Select a thermoplastic base material and a continuous fiber material":"请选择热塑性基材和连续纤维材料。",
         "Fiber calibration requires a profile that can switch to fiber without a prime tower":"请使用支持无擦嘴塔切换纤维工具的配置。",
         "Fiber calibration requires a flat build plate":"纤维校准需要平面打印盘。",
