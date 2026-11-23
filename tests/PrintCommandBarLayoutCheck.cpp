@@ -133,6 +133,8 @@ int main(int argc, char** argv) {
         write(module + "/SlicingSettingsContent.qml", R"(
 import QtQuick
 Item { property bool embedded: false; property int workspaceIndex: 0
+ property bool materialsOnly: false; property bool scopedWorkspace: false
+ property int focusedFilamentSlot: -1; property string searchText: ""
  signal closeRequested(); function focusSetting(key) {} }
 )");
         qmldir += "SlicingSettingsContent 1.0 SlicingSettingsContent.qml\n";

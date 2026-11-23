@@ -818,8 +818,9 @@ ContentPage {
         boundsItem: root
         workspaceReady: root.dockReady && StartupState.ready && root.activePageName === "prepare"
         onAddModelRequested: Global.starter.chooseModel({})
-        onDetailedSettingsRequested: function(workspaceIndex) {
-            globalPrintBar.openMachineSettings({workspaceIndex: workspaceIndex})
+        onDetailedSettingsRequested: function(workspaceIndex, slotIndex, restoreFocus) {
+            globalPrintBar.openMachineSettings({workspaceIndex: workspaceIndex, slotIndex: slotIndex,
+                restoreFocus: restoreFocus})
         }
     }
 

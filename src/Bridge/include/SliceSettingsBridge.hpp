@@ -39,6 +39,7 @@ class SliceSettingsBridge final : public bridge::BridgeBase {
     Q_PROPERTY(QVariantList compatibleProcessPresets READ compatibleProcessPresets NOTIFY presetSelectionChanged)
     Q_PROPERTY(QVariantList compatibleFilamentPresets READ compatibleFilamentPresets NOTIFY presetSelectionChanged)
     Q_PROPERTY(QVariantList filamentSlots READ filamentSlots NOTIFY filamentSlotsChanged)
+    Q_PROPERTY(QVariantMap filamentSlotControls READ filamentSlotControls NOTIFY filamentSlotsChanged)
     Q_PROPERTY(QString configurationError READ configurationError NOTIFY configurationErrorChanged)
     Q_PROPERTY(bool machinePreparationPending READ machinePreparationPending NOTIFY machinePreparationChanged)
     QML_ELEMENT
@@ -96,9 +97,16 @@ public:
     Q_INVOKABLE bool setFilamentToolMapping(const QVariantList& tools, bool automatic);
     Q_INVOKABLE bool setFilamentSlotCount(int slotCount);
     Q_INVOKABLE bool addFilamentToTool(int physicalTool);
-    Q_INVOKABLE bool setFilamentColor(int slotIndex, const QColor& color);
+    Q_INVOKABLE bool removeFilamentSlot(int slotIndex);
+    Q_INVOKABLE bool setFilamentColor(int slotIndex, const QColor& color,
+        const QString& expectedRevision = {});
     bool refreshActiveConfig();
 
+    Q_INVOKABLE QVariantMap filamentSlotSettings(int slotIndex) const;
+    Q_INVOKABLE QVariantMap openFilamentSlotEditor(int slotIndex) const;
+    Q_INVOKABLE QString saveFilamentSlotSettings(int slotIndex, const QString& revision,
+        const QVariantMap& changes);
+    Q_INVOKABLE QString configurationRevisionToken() const;
     Q_INVOKABLE QVariantMap getSettingSchema(const QString& key) const;
     Q_INVOKABLE QVariantList parameterModifiers(const QString& modelId) const;
     Q_INVOKABLE QVariantList localProcessSettings(const QString& modelId, const QString& partId) const;
@@ -126,6 +134,7 @@ public:
     QVariantList compatibleProcessPresets() const;
     QVariantList compatibleFilamentPresets() const;
     QVariantList filamentSlots() const;
+    QVariantMap filamentSlotControls() const;
     QString configurationError() const;
     bool machinePreparationPending() const noexcept { return !m_switchReviewTask.isEmpty(); }
 

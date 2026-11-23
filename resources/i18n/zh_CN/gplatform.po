@@ -1815,8 +1815,8 @@ msgstr "支持 .stl, .obj, .3mf 等格式"
 msgid "Supports JPG, PNG, and WebP (up to 4 images)"
 msgstr "支持 JPG, PNG, WebP（最多4张）"
 
-msgid "Switch the printer, filament, process, and build plate here"
-msgstr "可在此切换打印机、耗材、工艺和打印板"
+msgid "Switch the printer, process, and build plate here"
+msgstr "可在此切换打印机、工艺和打印板"
 
 msgid "Sync Views"
 msgstr "同步视图"
@@ -4415,3 +4415,117 @@ msgstr "纤维丝温度校准"
 
 msgid "Fiber calibration has no drawable preview."
 msgstr "纤维校准未生成可显示的预览。"
+
+msgid "View Parameters"
+msgstr "查看参数"
+
+msgid "Remove last filament slot"
+msgstr "删除最后一个可删除的耗材槽"
+
+msgid "View filament %1 parameters"
+msgstr "查看耗材槽 %1 的参数"
+
+msgid "Manage Filaments"
+msgstr "管理耗材"
+
+msgid "Printer Parameters"
+msgstr "打印机参数"
+
+msgid "Process Parameters"
+msgstr "工艺参数"
+
+msgid "Filament Parameters"
+msgstr "耗材参数"
+
+msgid "View Printer Parameters"
+msgstr "查看打印机参数"
+
+msgid "Search process parameters"
+msgstr "搜索工艺参数"
+
+msgid "Search filament parameters"
+msgstr "搜索当前耗材参数"
+
+msgid "Search printer parameters"
+msgstr "搜索打印机参数"
+
+msgid "Remove filament slot %1"
+msgstr "删除耗材槽 %1"
+
+msgid "Could not remove the filament slot"
+msgstr "无法删除耗材槽"
+
+msgid "Slot %1"
+msgstr "%1 号槽"
+
+msgid "Common parameters"
+msgstr "常用参数"
+
+msgid "Fixed slot"
+msgstr "固定 1 槽"
+
+msgid "The configuration has changed. Try removing the slot again."
+msgstr "配置已变化，请重新删除耗材槽。"
+
+msgid "Edit Filament Parameters"
+msgstr "编辑耗材参数"
+
+msgid "Project Filaments"
+msgstr "项目耗材"
+
+msgid "Edit filament %1 parameters"
+msgstr "编辑耗材槽 %1 的参数"
+
+msgid "Expand filament slots"
+msgstr "展开耗材条目"
+
+msgid "Collapse filament slots"
+msgstr "收起耗材条目"
+
+msgid "Value unavailable"
+msgstr "无法取得当前值"
+
+msgid "Shared · Read only"
+msgstr "共用参数 · 只读"
+
+msgid "Project color · Edit using the slot swatch"
+msgstr "项目色 · 可通过槽位色块修改"
+
+msgid "Read only"
+msgstr "只读"
+
+msgid "No explicit slot value"
+msgstr "槽位未设定此值"
+
+msgid "Project slot value"
+msgstr "项目槽位值"
+
+msgid "Changes apply to this project slot."
+msgstr "修改仅应用于当前项目槽位。"
+
+msgid "Correct the invalid filament values before saving."
+msgstr "请修正无效的耗材值后再保存。"
+
+msgid "Invalid value"
+msgstr "无效值"
+
+msgid "The configuration changed. Reopen the filament editor."
+msgstr "配置已变化，请重新打开耗材编辑器。"
+
+msgid "The configuration changed. Reopen the color picker."
+msgstr "配置已变化，请重新打开颜色选择器。"
+
+msgid "The filament changes could not be saved."
+msgstr "无法保存耗材修改。"
+
+msgid "The setting %1 cannot be edited."
+msgstr "无法编辑参数 %1。"
+
+msgid "Settings cannot be changed during the current task."
+msgstr "当前任务执行期间无法修改设置。"
+
+msgid "Enter one valid value for the filament slot"
+msgstr "请为此耗材槽输入一个有效值"
+
+msgid "This filament setting requires an explicit value"
+msgstr "此耗材参数需要明确设定一个值"

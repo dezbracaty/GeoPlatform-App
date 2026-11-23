@@ -329,6 +329,17 @@ SlicingConfigPatchResult SlicingBackend::applyConfigPatchIfRevision(std::uint64_
     });
 }
 
+libslicer::SettingsResult SlicingBackend::applyFilamentPatch(std::size_t slotIndex,
+    std::uint64_t expectedRevision, const std::vector<std::pair<std::string, std::string>>& patch)
+{
+    if (!m_available) return unavailableSettingsResult("libslicer is not initialized");
+    std::unique_lock<std::mutex> admissionLock(m_impl->configurationAdmissionMutex);
+    if (m_impl->activeLongJobs.load(std::memory_order_acquire) != 0) return busySettingsResult();
+    return m_impl->invoke([this, slotIndex, expectedRevision, patch]() {
+        return m_impl->library->apply_active_filament_patch(slotIndex, expectedRevision, patch);
+    });
+}
+
 libslicer::SettingsResult SlicingBackend::setConfigValue(
     std::string_view key, std::string_view value)
 {
@@ -453,8 +464,20 @@ libslicer::ConfigActivationResult SlicingBackend::addFilamentToTool(std::size_t 
     });
 }
 
+libslicer::ConfigurationState SlicingBackend::prepareFilamentRemoval(
+    std::size_t slotIndex, std::uint64_t expectedRevision, std::vector<libslicer::ConfigDiagnostic>& diagnostics)
+{
+    if (!configurationChangesAllowed()) {
+        diagnostics = {{"filament", "The slicing configuration is unavailable or busy"}};
+        return {};
+    }
+    return m_impl->invoke([this, slotIndex, expectedRevision, &diagnostics]() {
+        return m_impl->library->prepare_filament_removal(slotIndex, expectedRevision, diagnostics);
+    });
+}
+
 libslicer::SettingsResult SlicingBackend::setFilamentColor(
-    std::size_t slotIndex, libslicer::Rgba8 color)
+    std::size_t slotIndex, libslicer::Rgba8 color, std::optional<std::uint64_t> expectedRevision)
 {
     if (!m_available) {
         return unavailableSettingsResult("libslicer is not initialized");
@@ -463,7 +486,9 @@ libslicer::SettingsResult SlicingBackend::setFilamentColor(
     if (m_impl->activeLongJobs.load(std::memory_order_acquire) != 0) {
         return busySettingsResult();
     }
-    return m_impl->invoke([this, slotIndex, color]() {
+    return m_impl->invoke([this, slotIndex, color, expectedRevision]() {
+        if (expectedRevision && *expectedRevision != m_impl->library->configuration_revision())
+            return unavailableSettingsResult("The configuration changed. Reopen the color picker.");
         return m_impl->library->set_active_filament_color(slotIndex, color);
     });
 }

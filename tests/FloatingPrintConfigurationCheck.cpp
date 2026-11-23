@@ -100,12 +100,65 @@ void logGeometry(const char* phase, const QQuickWindow& window, const QQuickItem
     std::cout << "Popup geometry: "
               << QJsonDocument(record).toJson(QJsonDocument::Compact).constData() << std::endl;
 }
+QQuickItem* find(QQuickItem* parent, const QString& name) {
+    if (parent->objectName() == name) return parent;
+    for (auto* child : parent->childItems())
+        if (auto* result = find(child, name)) return result;
+    return nullptr;
+}
+void verifySectionHeaders(QQuickItem& panel) {
+    const auto near = [](qreal actual, qreal expected) { return std::abs(actual - expected) <= 0.5; };
+    for (const QString name : {"details.printer", "filaments.remove", "filaments.add",
+                               "filaments.fold", "details.process"}) {
+        auto* action = find(&panel, "print.configuration." + name);
+        require(action && action->isVisible() && action->isEnabled(),
+                qPrintable("Missing section action: " + name));
+        auto* group = action->parentItem();
+        auto* row = group->parentItem();
+        const auto position = action->mapToItem(&panel, QPointF());
+        const auto groupRight = panel.width() - group->mapToItem(&panel, QPointF(group->width(), 0)).x();
+        const auto actionRight = panel.width() - position.x() - action->width();
+        const bool parameter = name.startsWith("details.");
+        const bool trailing = parameter || name == "filaments.fold";
+        QQmlExpression iconName(qmlContext(action), action, "icon.name");
+        const auto glyph = iconName.evaluate().toString();
+        QQuickItem* icon = nullptr;
+        for (auto* item : action->findChildren<QQuickItem*>()) {
+            const auto source = item->property("source").toString();
+            if (!glyph.isEmpty() && source == glyph && item->isVisible()) {
+                icon = item;
+                break;
+            }
+        }
+        require(icon, qPrintable("Missing rendered section action icon: " + name));
+        const auto center = icon->mapToItem(&panel, icon->boundingRect().center());
+        std::cout << "Section action " << name.toStdString()
+                  << " row height=" << row->height() << " row y=" << row->mapToItem(&panel, QPointF()).y()
+                  << " action x=" << position.x() << " action y=" << position.y()
+                  << " width=" << action->width() << " height=" << action->height()
+                  << " right=" << actionRight << " group right=" << groupRight
+                  << " icon=" << icon->width() << "x" << icon->height()
+                  << " center=(" << center.x() << "," << center.y() << ")" << std::endl;
+        require(near(row->height(), 26) && near(action->height(), 26) &&
+                    (parameter || near(action->width(), 26)) && near(groupRight, 17) &&
+                    near(position.y() + action->height() / 2,
+                         row->mapToItem(&panel, row->boundingRect().center()).y()),
+                qPrintable("Misaligned section action: " + name));
+        require(near(icon->width(), 12) && near(icon->height(), 12) &&
+                    near(center.y(), position.y() + action->height() / 2) &&
+                    near(center.x(), position.x() + action->width() - 13),
+                qPrintable("Misaligned section icon: " + name));
+        require(!trailing || near(actionRight, groupRight),
+                qPrintable("Incorrect section action right inset: " + name));
+    }
+}
 void verifyLayout(QQuickWindow& window, QQuickItem& bounds, QQuickItem& panel) {
     const auto settle = [&](const QSizeF& size, const char* phase) {
         bounds.setSize(size);
         QCoreApplication::processEvents();
         logGeometry(phase, window, bounds, panel);
     };
+    verifySectionHeaders(panel);
     // Check initial placement and resize reactions without repairing them via
     // the component's positioning function in the test.
     logGeometry("nominal-layout", window, bounds, panel);
@@ -115,18 +168,24 @@ void verifyLayout(QQuickWindow& window, QQuickItem& bounds, QQuickItem& panel) {
             "Popup is not initially placed on the right with a 16 px margin");
     for (const QSizeF size : {QSizeF(800, 700), QSizeF(320, 700)}) {
         settle(size, "smaller-layout");
+        QTest::qWait(50);
+        verifySectionHeaders(panel);
         require(panel.width() > 0 && panel.width() <= 344 && panel.height() > 42 && panel.height() < 649,
                 "Popup did not adapt to the smaller logical viewport");
         require(panel.x() >= 16 && panel.x()+panel.width() <= bounds.width()-16+1 &&
                 panel.y() >= 0 && panel.y()+panel.height() <= bounds.height()+1,
                 "Popup extends outside the smaller logical viewport");
     }
-}
-QQuickItem* find(QQuickItem* parent, const QString& name) {
-    if (parent->objectName() == name) return parent;
-    for (auto* child : parent->childItems())
-        if (auto* result = find(child, name)) return result;
-    return nullptr;
+    auto* action = find(&panel, "print.configuration.details.printer");
+    auto* row = action->parentItem()->parentItem();
+    const QString longLabel(68, QLatin1Char('W'));
+    row->setProperty("label", longLabel);
+    action->setProperty("text", longLabel);
+    QTest::qWait(50);
+    require(action->width() <= row->width() / 2 + 1 &&
+                action->width() < action->implicitWidth(),
+            "Long parameter label did not yield space to the section title");
+    verifySectionHeaders(panel);
 }
 QList<QQuickItem*> findAll(QQuickItem* parent, const QString& name) {
     QList<QQuickItem*> result;
@@ -262,6 +321,8 @@ int main(int argc, char** argv) {
         window.show(); window.requestActivate(); QTest::qWait(200);
         logGeometry(layoutOnly ? "layout-initial" : "interaction-initial", window, *bounds, *panel);
         if (layoutOnly) {
+            require(settings->setFilamentSlotCount(2), "Cannot create two AD5X slots for layout check");
+            QTest::qWait(200);
             verifyLayout(window, *bounds, *panel);
             std::cout << "Popup nominal and smaller logical viewport layout passed\n";
             return 0;
@@ -464,6 +525,60 @@ int main(int argc, char** argv) {
         require(settings->selectMachine("CFSYS Alpha500 Printer", "0.4"), "Cannot activate actual continuous-fiber machine");
         waitForMachine(settings, "CFSYS Alpha500 Printer");
         require(panel->property("fiberCapable").toBool(), "Fiber machine did not expose its process category");
+        const QString addSlot = QStringLiteral("print.configuration.filaments.add");
+        const QString removeSlot = QStringLiteral("print.configuration.filaments.remove");
+        require(settings->filamentSlots().size() == 2 && !find(panel, removeSlot)->isVisible(),
+                "Alpha500 should start with one required slot per physical tool");
+        click(window, panel, addSlot);
+        click(window, panel, addSlot);
+        require(settings->filamentSlots().size() == 4 && find(panel, removeSlot)->isVisible(),
+                "Sidebar add did not expose the extra material slots");
+        const auto readSlot = [&](int slot, const QString& key) {
+            return settings->filamentSlotSettings(slot).value(key).toMap();
+        };
+        const QString flowKey = QStringLiteral("filament_flow_ratio");
+        const auto initialSlotFlow = readSlot(0, flowKey).value("value").toDouble();
+        const auto fiberFlow = readSlot(1, flowKey).value("value");
+        const auto siblingFlow = readSlot(2, flowKey).value("value");
+        const auto revision = settings->configurationRevisionToken();
+        require(readSlot(0, flowKey).value("editable").toBool() &&
+                    !readSlot(0, "filament_colour").value("editable").toBool() &&
+                    readSlot(0, "filament_fiber_feed_correction").isEmpty() &&
+                    readSlot(1, "filament_fiber_feed_correction").value("available").toBool(),
+                "Slot editor did not distinguish palette fields and process applicability");
+        require(!settings->saveFilamentSlotSettings(0, revision,
+                    {{flowKey, initialSlotFlow + .01}, {"nozzle_temperature", -1.0}}).isEmpty() &&
+                    readSlot(0, flowKey).value("value").toDouble() == initialSlotFlow &&
+                    settings->configurationRevisionToken() == revision,
+                "Rejected material patch changed the configuration");
+        require(settings->saveFilamentSlotSettings(0, revision, {{flowKey, initialSlotFlow + .01}}).isEmpty() &&
+                    std::abs(readSlot(0, flowKey).value("value").toDouble() - initialSlotFlow - .01) < 1e-7 &&
+                    readSlot(1, flowKey).value("value") == fiberFlow &&
+                    readSlot(2, flowKey).value("value") == siblingFlow,
+                "Saving one material did not isolate its value from the other slots");
+        require(!settings->saveFilamentSlotSettings(2, revision, {{flowKey, initialSlotFlow + .02}}).isEmpty() &&
+                    readSlot(2, flowKey).value("value") == siblingFlow,
+                "A stale editor save changed another slot");
+        require(settings->saveFilamentSlotSettings(0, settings->configurationRevisionToken(),
+                    {{flowKey, initialSlotFlow}}).isEmpty(), "Could not restore the slot fixture value");
+        require(settings->setFilamentColor(3, QColor("#419063")), "Cannot color retained slot");
+        {
+            TransactionGuard transaction("Assign retained material");
+            model.object->setDefaultFilamentSlot(4);
+        }
+        require(settings->removeFilamentSlot(2), "Cannot remove the middle base-material slot");
+        const auto afterRemoval = settings->filamentSlots();
+        require(afterRemoval.size() == 3 && afterRemoval[1].toMap().value("physicalToolIndex").toInt() == 1 &&
+                    afterRemoval[2].toMap().value("color").value<QColor>() == QColor("#419063") &&
+                    model.object->getDefaultFilamentSlot() == 3,
+                "Removing a middle slot changed a retained material, its owner, or its model assignment");
+        require(!settings->removeFilamentSlot(1), "Removed the required continuous-fiber slot");
+        click(window, panel, removeSlot);
+        require(settings->filamentSlots().size() == 2 && !find(panel, removeSlot)->isVisible() &&
+                    model.object->getDefaultFilamentSlot() == 1,
+                "Sidebar remove did not restore the minimum or rebind the deleted material");
+        require(settings->filamentSlotSettings(1).contains("filament_max_volumetric_speed"),
+                "The live filament inspector cannot read the selected slot's parameter values");
         const auto fiberBefore = GPlatform::SlicingBackend::instance().configSnapshot();
         verifyCompleteProcessParameters(settings, editor, true);
         require(GPlatform::SlicingBackend::instance().configSnapshot()->values() == fiberBefore->values(),

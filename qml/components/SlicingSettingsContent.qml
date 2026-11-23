@@ -19,6 +19,74 @@ Item {
     // still renders its own title bar by default.
     property bool embedded: false
     property bool compactPanel: false
+    property bool scopedWorkspace: false
+    property int focusedFilamentSlot: -1
+    property var focusedFilament: null
+    readonly property bool inspectFilament: scopedWorkspace && workspaceIndex === 1 && focusedFilamentSlot >= 0
+    property string filamentRevision: ""
+    property var filamentParameters: ({})
+    property var filamentDraft: ({})
+    property var invalidFilamentFields: ({})
+    property string filamentEditError: ""
+
+    function beginFilamentEdit(index) {
+        if (!settingsEditingEnabled || index < 0 || index >= filamentSlots.length)
+            return false
+        const session = SliceSettingsBridge.openFilamentSlotEditor(index)
+        if (!session.revision)
+            return false
+        focusedFilament = filamentSlots[index]
+        filamentRevision = session.revision
+        filamentParameters = session.settings
+        focusedFilamentSlot = index
+        return true
+    }
+    function clearFilamentDraft() {
+        focusedFilamentSlot = -1
+        focusedFilament = null
+        filamentRevision = ""
+        filamentParameters = ({})
+        filamentDraft = ({})
+        invalidFilamentFields = ({})
+        filamentEditError = ""
+    }
+    function filamentDefinition(definition) {
+        if (!inspectFilament)
+            return definition
+        const parameter = filamentParameters[definition.key]
+        return Object.assign({}, definition, {value: parameter?.value,
+            type: parameter?.type, control: parameter?.control})
+    }
+    function stageFilamentSetting(key, value, invalidText) {
+        if (!filamentParameters[key]?.editable) return
+        const invalid = Object.assign({}, invalidFilamentFields)
+        if (invalidText !== undefined)
+            invalid[key] = invalidText
+        else
+            delete invalid[key]
+        invalidFilamentFields = invalid
+        if (invalidText !== undefined) return
+        const draft = Object.assign({}, filamentDraft)
+        if (value === filamentParameters[key].value)
+            delete draft[key]
+        else
+            draft[key] = value
+        filamentDraft = draft
+    }
+    function saveFilamentDraft() {
+        if (Object.keys(invalidFilamentFields).length) {
+            filamentEditError = qsTr("Correct the invalid filament values before saving.")
+            return
+        }
+        filamentEditError = SliceSettingsBridge.saveFilamentSlotSettings(
+            focusedFilamentSlot, filamentRevision, filamentDraft)
+        if (!filamentEditError.length)
+            closeRequested()
+    }
+    function filamentSettingApplies(row) {
+        // The SDK omits fields that do not apply to this material process.
+        return !inspectFilament || filamentParameters[row.key] !== undefined
+    }
     property string localModelId: ""
     property string localPartId: ""
     property bool localMode: false
@@ -58,14 +126,13 @@ Item {
     property string compactCategory: "quality"
     readonly property var compactCatalog: [
         {id:"quality", title:qsTr("Quality"), sections:[
-            {title:qsTr("Layer height"), keys:["layer_height","initial_layer_print_height"]},
+            {title:qsTr("Common parameters"), keys:["layer_height","initial_layer_print_height","wall_loops","sparse_infill_density"]},
             {title:qsTr("Line width"), keys:["line_width","initial_layer_line_width"]},
             {title:qsTr("Seam"), keys:["seam_position"]},
             {title:qsTr("Precision"), keys:["resolution"]}]},
         {id:"strength", title:qsTr("Strength"), sections:[
-            {title:qsTr("Wall layers"), keys:["wall_loops"]},
             {title:qsTr("Top and bottom surfaces"), keys:["top_shell_layers","bottom_shell_layers"]},
-            {title:qsTr("Sparse infill"), keys:["sparse_infill_density","sparse_infill_pattern"]}]},
+            {title:qsTr("Sparse infill"), keys:["sparse_infill_pattern"]}]},
         {id:"speed", title:qsTr("Speed"), sections:[
             {title:qsTr("Printing speed"), keys:["outer_wall_speed","inner_wall_speed","sparse_infill_speed","top_surface_speed"]},
             {title:qsTr("First layer"), keys:["initial_layer_speed"]},
@@ -177,7 +244,7 @@ Item {
     readonly property var toolOrderedSlots: independentDualTools
         ? filamentSlots.slice().sort(function(a, b) { return a.physicalToolIndex - b.physicalToolIndex })
         : filamentSlots
-    readonly property var toolGroups: perToolMaterials
+    readonly property var allToolGroups: perToolMaterials
         ? toolMaterialCapacities.map(function(capacity, physical) {
             return {physical: physical, capacity: capacity,
                     slots: root.filamentSlots.filter(function(slot) { return slot.physicalToolIndex === physical })}
@@ -192,7 +259,7 @@ Item {
         var nozzle = qsTr("Nozzle %1").arg(slot.physicalToolIndex)
         var process = slot.processType || slot.physicalToolRole
         if (root.perToolMaterials)
-            return nozzle + " · " + (process === "continuous_fiber"
+            return "T" + slot.physicalToolIndex + " · " + (process === "continuous_fiber"
                 ? qsTr("Continuous fiber") : qsTr("Base material"))
         if (slot.physicalToolSide === "left")
             nozzle = qsTr("Left nozzle")
@@ -246,6 +313,7 @@ Item {
     readonly property var globalSearchResults: (schemaRevisionToken >= 0 && localeTranslationToken.length >= 0
                                                  && useSchemaDriven && globalSearchMode)
                                               ? SliceSettingsBridge.getGlobalSearchResults(searchText, compactPanel || showAdvancedMode)
+                                                  .filter(row => (!scopedWorkspace || row.tab === currentSchemaTab) && filamentSettingApplies(row))
                                               : []
     readonly property int globalSearchResultCount: globalSearchResults.length
     readonly property string currentSchemaTab: workspaceIndex === 0 ? "process" : (workspaceIndex === 1 ? "filament" : "printer")
@@ -257,6 +325,9 @@ Item {
                                                                                          currentSchemaPageId,
                                                                                          showAdvancedMode,
                                                                                          globalSearchMode ? "" : searchText)
+                                                     .map(section => Object.assign({}, section,
+                                                         {rows: section.rows.filter(filamentSettingApplies)}))
+                                                     .filter(section => section.rows.length > 0)
                                                  : []
 
     onShowAdvancedModeChanged: {
@@ -536,8 +607,27 @@ Item {
             }
         }
 
+        Label {
+            visible: root.scopedWorkspace
+            Layout.fillWidth: true
+            Layout.leftMargin: 12
+            Layout.rightMargin: 12
+            Layout.topMargin: 8
+            font: Typography.bodyStrong
+            text: root.workspaceIndex === 2
+                ? (SliceSettingsBridge.selectedMachine.printerModel || "")
+                : root.workspaceIndex === 1
+                    ? (root.focusedFilament
+                       ? qsTr("Slot %1").arg(root.focusedFilament.number)
+                         + " · T" + root.focusedFilament.physicalToolIndex + " · " + root.focusedFilament.presetName
+                       : qsTr("Filament Configuration"))
+                    : SliceSettingsBridge.selectedProcessPresetName
+            elide: Text.ElideRight
+        }
+
         Rectangle {
             Layout.fillWidth: true
+            visible: !root.scopedWorkspace
             Layout.preferredHeight: 58
             Layout.minimumHeight: 58
             Layout.maximumHeight: 58
@@ -713,6 +803,7 @@ Item {
 
                 TabBar {
                     id: workspaceTabs
+                    visible: !root.scopedWorkspace
                     currentIndex: root.workspaceIndex
                     onCurrentIndexChanged: {
                         root.workspaceIndex = currentIndex
@@ -741,7 +832,9 @@ Item {
                                 : "sliceSettingsSearchField")
                     Layout.fillWidth: true
                     Layout.preferredHeight: PrintWorkspaceStyle.controlHeight
-                    placeholderText: qsTr("Search Parameters")
+                    placeholderText: root.scopedWorkspace
+                        ? [qsTr("Search process parameters"), qsTr("Search filament parameters"), qsTr("Search printer parameters")][root.workspaceIndex]
+                        : qsTr("Search Parameters")
                     text: root.searchText
                     selectByMouse: true
 
@@ -864,7 +957,7 @@ Item {
                     Layout.fillWidth: true
                     Layout.preferredHeight: visible ? Math.min(filamentSlotContent.implicitHeight + 16,
                                                                Math.max(160, root.height * 0.45)) : 0
-                    visible: !root.globalSearchMode && root.workspaceIndex === 1
+                    visible: !root.inspectFilament && !root.globalSearchMode && root.workspaceIndex === 1
                     radius: root.SmoothUI.radius
                     color: PrintWorkspaceStyle.secondarySurface(root.SmoothUI.dark)
 
@@ -883,6 +976,7 @@ Item {
 
                             RowLayout {
                                 Layout.fillWidth: true
+                                visible: !root.focusedFilament
                                 spacing: 8
 
                                 ComboBox {
@@ -959,12 +1053,12 @@ Item {
                                 id: filamentSlotRow
                                 Layout.fillWidth: true
                                 columns: root.perToolMaterials
-                                         ? Math.max(1, Math.min(root.toolGroups.length, Math.floor((filamentSlotContent.width + 8) / 188))) : 1
+                                         ? Math.max(1, Math.min(root.allToolGroups.length, Math.floor((filamentSlotContent.width + 8) / 188))) : 1
                                 columnSpacing: 8
                                 rowSpacing: 10
 
                                 Repeater {
-                                    model: root.toolGroups
+                                    model: root.inspectFilament ? [] : root.allToolGroups
 
                                     delegate: ColumnLayout {
                                         id: physicalToolGroup
@@ -984,7 +1078,7 @@ Item {
                                             Button {
                                                 objectName: root.automationName((root.embedded ? "machineSelectorFilamentAddToToolButton_" : "filamentAddToToolButton_") + physicalToolGroup.modelData.physical)
                                                 text: qsTr("Add Slot")
-                                                visible: physicalToolGroup.modelData.capacity > 1
+                                                visible: physicalToolGroup.modelData.capacity > 1 && !root.focusedFilament
                                                 enabled: root.settingsEditingEnabled && physicalToolGroup.modelData.slots.length < physicalToolGroup.modelData.capacity
                                                 onClicked: SliceSettingsBridge.addFilamentToTool(physicalToolGroup.modelData.physical)
                                             }
@@ -1066,6 +1160,20 @@ Item {
                                                                 ToolTip.visible: hovered
                                                                 ToolTip.text: Accessible.name
                                                             }
+                                                            IconButton {
+                                                                objectName: root.automationName("removeFilamentSlotButton_" + filamentSlotCard.modelData.number)
+                                                                visible: !root.focusedFilament
+                                                                    && SliceSettingsBridge.filamentSlotControls.removableIndices.includes(filamentSlotCard.modelData.index)
+                                                                enabled: root.settingsEditingEnabled
+                                                                Layout.preferredWidth: 28
+                                                                Layout.preferredHeight: 28
+                                                                flat: true
+                                                                icon.name: FluentIcons.graph_Remove
+                                                                Accessible.name: qsTr("Remove filament slot %1").arg(filamentSlotCard.modelData.number)
+                                                                ToolTip.visible: hovered
+                                                                ToolTip.text: Accessible.name
+                                                                onClicked: SliceSettingsBridge.removeFilamentSlot(filamentSlotCard.modelData.index)
+                                                            }
                                                         }
 
                                                         ComboBox {
@@ -1138,7 +1246,8 @@ Item {
 
                                         SchemaSettingInput {
                                             id: pageSettingInput
-                                            definition: modelData
+                                            visible: !root.inspectFilament || !!settingRowDelegate.filamentParameter?.editable
+                                            definition: root.filamentDefinition(modelData)
                                         }
                                     }
                                 }
@@ -1200,19 +1309,23 @@ Item {
 
                 Label {
                     Layout.fillWidth: true
-                    text: SliceSettingsBridge.hasPendingReslice
+                    text: root.inspectFilament
+                          ? (root.filamentEditError || qsTr("Changes apply to this project slot."))
+                          : SliceSettingsBridge.hasPendingReslice
                           ? qsTr("Settings changed; reslicing is required")
                           : qsTr("Current configuration applied")
                     font: Typography.caption
-                    color: SliceSettingsBridge.hasPendingReslice
+                    color: root.inspectFilament && root.filamentEditError
+                           ? root.SmoothUI.theme.res.systemFillColorCritical
+                           : SliceSettingsBridge.hasPendingReslice && !root.inspectFilament
                            ? root.SmoothUI.theme.res.systemFillColorCaution
                            : root.SmoothUI.theme.res.textFillColorSecondary
                     horizontalAlignment: Text.AlignRight
-                    elide: Text.ElideRight
+                    wrapMode: Text.Wrap
                 }
 
                 Button {
-                    visible: SliceSettingsBridge.hasPendingReslice && root.canReslice
+                    visible: !root.inspectFilament && SliceSettingsBridge.hasPendingReslice && root.canReslice
                     text: qsTr("Reslice")
                     Layout.preferredHeight: PrintWorkspaceStyle.controlHeight
                     highlighted: true
@@ -1223,10 +1336,21 @@ Item {
                 }
 
                 Button {
-                    text: qsTr("Done")
+                    objectName: root.inspectFilament ? "filamentSlotEditorCancel" : ""
+                    text: root.inspectFilament ? qsTr("Cancel") : qsTr("Done")
                     Layout.preferredWidth: 76
                     Layout.preferredHeight: PrintWorkspaceStyle.controlHeight
                     onClicked: root.closeRequested()
+                }
+                Button {
+                    objectName: root.inspectFilament ? "filamentSlotEditorSave" : ""
+                    visible: root.inspectFilament
+                    enabled: root.settingsEditingEnabled
+                    text: qsTr("Save")
+                    highlighted: true
+                    Layout.preferredWidth: 76
+                    Layout.preferredHeight: PrintWorkspaceStyle.controlHeight
+                    onClicked: root.saveFilamentDraft()
                 }
             }
         }
@@ -1468,7 +1592,8 @@ Item {
 
                 SchemaSettingInput {
                     id: searchSettingInput
-                    definition: modelData
+                    visible: !root.inspectFilament || !!searchSettingRow.filamentParameter?.editable
+                    definition: root.filamentDefinition(modelData)
                 }
             }
         }
@@ -1525,6 +1650,7 @@ Item {
         readonly property bool modified: root.localMode ? !!(localSetting && localSetting.overridden)
             : SliceSettingsBridge.modifiedSettingKeys.indexOf(paramKey) >= 0
         property string paramKey: ""
+        readonly property var filamentParameter: root.inspectFilament ? root.filamentParameters[paramKey] : null
         property bool autoInit: true
         property bool schemaEnabled: true
         property int configRevision: 0
@@ -1671,7 +1797,7 @@ Item {
         }
 
         function commitToBridge() {
-            if (syncingBridge || !primaryControl || !paramKey) {
+            if (root.inspectFilament || syncingBridge || !primaryControl || !paramKey) {
                 return
             }
 
@@ -1685,7 +1811,7 @@ Item {
         }
 
         function syncFromBridge() {
-            if (!primaryControl || !paramKey) {
+            if (root.inspectFilament || !primaryControl || !paramKey) {
                 return
             }
 
@@ -1707,6 +1833,32 @@ Item {
 
         function connectControlSignal() {
             if (controlConnected || !primaryControl) {
+                return
+            }
+            if (root.inspectFilament) {
+                const control = primaryControl
+                const commitSlot = function() {
+                    if (!syncingBridge)
+                        root.stageFilamentSetting(paramKey, extractControlValue(control))
+                }
+                if (primaryControlKind === "switch")
+                    control.toggled.connect(commitSlot)
+                else if (primaryControlKind === "combo")
+                    control.activated.connect(commitSlot)
+                else if (primaryControlKind === "slider")
+                    control.moved.connect(commitSlot)
+                else if (primaryControlKind === "number") {
+                    control.textEdited.connect(function() {
+                        if (control.acceptableInput)
+                            root.stageFilamentSetting(paramKey, Number.fromLocaleString(Qt.locale("C"), control.text))
+                        else
+                            root.stageFilamentSetting(paramKey, undefined, control.text)
+                    })
+                } else if (primaryControlKind === "multiline")
+                    control.textChanged.connect(commitSlot)
+                else if (primaryControlKind === "text")
+                    control.textEdited.connect(commitSlot)
+                controlConnected = true
                 return
             }
             if (root.localMode) {
@@ -1775,6 +1927,14 @@ Item {
                 primaryControl = resolvedControl
                 primaryControlKind = editorKind || ""
                 controlConnected = false
+            }
+            if (root.inspectFilament && !controlConnected) {
+                const draft = root.filamentDraft[paramKey]
+                if (draft !== undefined)
+                    applyControlValue(primaryControl, draft)
+                const invalid = root.invalidFilamentFields[paramKey]
+                if (invalid !== undefined && primaryControlKind === "number")
+                    primaryControl.text = invalid
             }
             if (paramKey)
                 resolvedControl.objectName = editorObjectNamePrefix + paramKey
@@ -1857,6 +2017,15 @@ Item {
                     font.pixelSize: Theme.captionFontSize
                     elide: Text.ElideRight
                 }
+                Label {
+                    visible: root.inspectFilament
+                    Layout.fillWidth: true
+                    text: root.invalidFilamentFields[paramKey] !== undefined
+                          ? qsTr("Invalid value") : (settingRow.filamentParameter?.status || "")
+                    wrapMode: Text.Wrap
+                    font: Typography.caption
+                    color: root.SmoothUI.theme.res.textFillColorSecondary
+                }
             }
 
             RowLayout {
@@ -1904,8 +2073,19 @@ Item {
                         anchors.fill: parent
                         spacing: 0
 
+                        Label {
+                            visible: root.inspectFilament && !settingRow.filamentParameter?.editable
+                            Layout.fillWidth: true
+                            horizontalAlignment: Text.AlignRight
+                            wrapMode: Text.Wrap
+                            textFormat: Text.PlainText
+                            text: settingRow.filamentParameter?.available
+                                  ? String(settingRow.filamentParameter.value) : "—"
+                            font: Typography.caption
+                        }
                         Item {
-                            visible: !settingRow.multilineControl
+                            visible: !settingRow.multilineControl &&
+                                     (!root.inspectFilament || !!settingRow.filamentParameter?.editable)
                             Layout.fillWidth: true
                         }
                     }
@@ -1970,6 +2150,7 @@ Item {
 
         Loader {
             id: fieldLoader
+            active: !root.inspectFilament || schemaSettingInput.visible
             width: schemaSettingInput.editorKind === "multiline"
                    ? schemaSettingInput.width
                    : (root.compactPanel ? 117 : implicitWidth)
@@ -2161,6 +2342,7 @@ Item {
         }
 
         validator: DoubleValidator {
+            locale: root.inspectFilament ? "C" : Qt.locale().name
             bottom: numberInput.minValue
             top: numberInput.maxValue
             decimals: numberInput.decimals
@@ -2168,6 +2350,7 @@ Item {
 
         onTextEdited: textEditedByUser = true
         onEditingFinished: {
+            if (root.inspectFilament) return
             var parsed = parseFloat(text)
             if (!isNaN(parsed)) {
                 parsed = Math.max(minValue, Math.min(maxValue, parsed))

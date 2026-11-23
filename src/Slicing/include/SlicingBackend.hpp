@@ -60,6 +60,8 @@ public:
         const std::vector<std::pair<std::string, std::string>>& patch = {});
     libslicer::SettingsResult applyConfigPatch(
         const std::vector<std::pair<std::string, std::string>>& patch);
+    libslicer::SettingsResult applyFilamentPatch(std::size_t slotIndex, std::uint64_t expectedRevision,
+        const std::vector<std::pair<std::string, std::string>>& patch);
     SlicingConfigPatchResult applyConfigPatchIfRevision(std::uint64_t expectedRevision,
         const std::vector<std::pair<std::string, std::string>>& patch);
     libslicer::SettingsResult setConfigValue(std::string_view key, std::string_view value);
@@ -71,8 +73,11 @@ public:
         std::size_t slotIndex, std::string_view presetId);
     libslicer::ConfigActivationResult resizeFilamentSlots(std::size_t slotCount);
     libslicer::ConfigActivationResult addFilamentToTool(std::size_t physicalTool);
+    libslicer::ConfigurationState prepareFilamentRemoval(std::size_t slotIndex, std::uint64_t expectedRevision,
+        std::vector<libslicer::ConfigDiagnostic>& diagnostics);
     libslicer::SettingsResult setFilamentColor(
-        std::size_t slotIndex, libslicer::Rgba8 color);
+        std::size_t slotIndex, libslicer::Rgba8 color,
+        std::optional<std::uint64_t> expectedRevision = std::nullopt);
     std::optional<libslicer::ConfigSnapshot> configSnapshot() const;
     std::optional<SlicingProfileSnapshot> activeProfileSnapshot() const;
     std::vector<libslicer::CalibMode> calibrationModes() const;

@@ -47,6 +47,8 @@ Button {
     property string currentBedType: ""
     property string applyError: ""
     property bool detailedSettingsVisible: false
+    property var restoreDetailedFocus: null
+    property bool backToQuickSettings: false
     signal popupOpening()
 
     readonly property bool draftMachineChanged: {
@@ -248,15 +250,11 @@ Button {
         return true
     }
 
-    function openFilamentSettings() {
-        var page = ensureDetailedSettingsPage()
-        if (!page)
-            return false
-        page.workspaceIndex = 1
-        return openDetailedSettings()
-    }
-
     function returnToQuickSettings() {
+        if (!backToQuickSettings) {
+            selectorPopup.close()
+            return
+        }
         detailedSettingsVisible = false
         refreshDraft()
         Qt.callLater(function() {
@@ -585,14 +583,25 @@ Button {
         popupAnchor: root.popupAnchor ? root.popupAnchor : root
         popupVerticalAnchor: root.popupVerticalAnchor
         centerHorizontally: root.detailedSettingsVisible
+        modal: root.detailedSettingsVisible && !!detailedSettingsLoader.item?.inspectFilament
         popupAbove: root.popupAbove
         preferredWidth: root.detailedSettingsVisible
                         ? PrintWorkspaceStyle.slicingSettingsPopoverWidth
                         : PrintWorkspaceStyle.machineSelectorWidth
         preferredHeight: root.detailedSettingsVisible
-                         ? PrintWorkspaceStyle.slicingSettingsPopoverHeight
-                         : PrintWorkspaceStyle.machinePopoverHeight
-        title: root.detailedSettingsVisible ? qsTr("Slicing Parameters") : qsTr("Print Configuration")
+            ? PrintWorkspaceStyle.slicingSettingsPopoverHeight
+            : Math.max(PrintWorkspaceStyle.machinePopoverHeight,
+                  quickForm.implicitHeight + PrintWorkspaceStyle.titleBarHeight + quickFooter.implicitHeight + 36)
+        title: {
+            if (!root.detailedSettingsVisible || !detailedSettingsLoader.item)
+                return qsTr("Print Configuration")
+            const page = detailedSettingsLoader.item
+            if (!page.scopedWorkspace)
+                return qsTr("Slicing Parameters")
+            if (page.inspectFilament)
+                return qsTr("Edit Filament Parameters")
+            return [qsTr("Process Parameters"), qsTr("Filament Parameters"), qsTr("Printer Parameters")][page.workspaceIndex]
+        }
         showBack: root.detailedSettingsVisible
         onBackRequested: root.returnToQuickSettings()
         // The anchor is outside the Popup. CloseOnPressOutside would close on
@@ -609,8 +618,15 @@ Button {
         onClosed: {
             root.applyError = ""
             root.detailedSettingsVisible = false
+            root.backToQuickSettings = false
+            const restore = root.restoreDetailedFocus
+            root.restoreDetailedFocus = null
+            if (detailedSettingsLoader.item)
+                detailedSettingsLoader.item.clearFilamentDraft()
             root.refreshDraft()
             root.forceActiveFocus()
+            if (restore)
+                Qt.callLater(restore)
         }
 
         Behavior on width {
@@ -670,123 +686,204 @@ Button {
                         anchors.fill: parent
                         spacing: 0
 
-                        ColumnLayout {
+                        ScrollView {
+                            id: quickScroll
                             Layout.fillWidth: true
                             Layout.fillHeight: true
-                            Layout.leftMargin: 16
-                            Layout.rightMargin: 16
-                            Layout.topMargin: 14
-                            Layout.bottomMargin: 14
-                            spacing: 12
+                            clip: true
+                            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
-                            GridLayout {
-                                Layout.fillWidth: true
-                                columns: 2
-                                columnSpacing: 12
-                                rowSpacing: 10
+                            ColumnLayout {
+                                id: quickForm
+                                width: quickScroll.availableWidth
+                                spacing: 12
 
-                                Label {
-                                    Layout.preferredWidth: 64
-                                    text: qsTr("Machine")
-                                    font: Typography.body
-                                    color: root.SmoothUI.theme.res.textFillColorSecondary
-                                }
-                                ComboBox {
-                                    id: machineCombo
-                                    objectName: "machineModelCombo"
+                                Item { Layout.preferredHeight: 2 }
+                                GridLayout {
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: PrintWorkspaceStyle.controlHeight
-                                    enabled: root.selectionEnabled && root.machineOptions.length > 0
-                                    model: root.machineOptions
-                                    textRole: "name"
-                                    currentIndex: root.draftMachineIndex
-                                    onActivated: {
-                                        root.applyError = ""
-                                        root.draftMachineIndex = currentIndex
-                                        var machine = root.currentDraftMachine()
-                                        root.draftNozzleIndex = machine !== null && machine.variants
-                                                                && machine.variants.length > 0 ? 0 : -1
-                                        root.applyDraftSelection(false)
+                                    Layout.leftMargin: 16
+                                    Layout.rightMargin: 16
+                                    columns: 2
+                                    columnSpacing: 12
+                                    rowSpacing: 10
+
+                                    Label {
+                                        Layout.preferredWidth: 64
+                                        text: qsTr("Machine")
+                                        font: Typography.body
+                                        color: root.SmoothUI.theme.res.textFillColorSecondary
                                     }
-
-                                    ToolTip {
-                                        visible: parent.hovered && parent.currentText.length > 28
-                                        text: parent.currentText
-                                    }
-                                }
-
-                                Label {
-                                    Layout.preferredWidth: 64
-                                    text: qsTr("Nozzle")
-                                    font: Typography.body
-                                    color: root.SmoothUI.theme.res.textFillColorSecondary
-                                }
-                                ComboBox {
-                                    id: nozzleCombo
-                                    objectName: "machineNozzleCombo"
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: PrintWorkspaceStyle.controlHeight
-                                    enabled: root.selectionEnabled && root.currentDraftMachine() !== null
-                                             && root.currentDraftMachine().variants
-                                             && root.currentDraftMachine().variants.length > 0
-                                    model: root.currentDraftMachine() !== null
-                                           ? root.currentDraftMachine().variants : []
-                                    textRole: "name"
-                                    currentIndex: root.draftNozzleIndex
-                                    onActivated: {
-                                        root.applyError = ""
-                                        root.draftNozzleIndex = currentIndex
-                                        root.applyDraftSelection(false)
-                                    }
-
-                                    ToolTip {
-                                        visible: parent.hovered && parent.currentText.length > 28
-                                        text: parent.currentText
-                                    }
-                                }
-
-                                Label {
-                                    Layout.preferredWidth: 64
-                                    text: qsTr("Build Plate")
-                                    font: Typography.body
-                                    color: root.SmoothUI.theme.res.textFillColorSecondary
-                                }
-
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 8
-
-                                    Rectangle {
-                                        Layout.preferredWidth: PrintWorkspaceStyle.controlHeight
+                                    ComboBox {
+                                        id: machineCombo
+                                        objectName: "machineModelCombo"
+                                        Layout.fillWidth: true
                                         Layout.preferredHeight: PrintWorkspaceStyle.controlHeight
-                                        radius: PrintWorkspaceStyle.controlRadius
-                                        color: PrintWorkspaceStyle.secondarySurface(root.SmoothUI.dark)
+                                        enabled: root.selectionEnabled && root.machineOptions.length > 0
+                                        model: root.machineOptions
+                                        textRole: "name"
+                                        currentIndex: root.draftMachineIndex
+                                        onActivated: {
+                                            root.applyError = ""
+                                            root.draftMachineIndex = currentIndex
+                                            var machine = root.currentDraftMachine()
+                                            root.draftNozzleIndex = machine !== null && machine.variants
+                                                                    && machine.variants.length > 0 ? 0 : -1
+                                            root.applyDraftSelection(false)
+                                        }
 
-                                        Image {
-                                            anchors.fill: parent
-                                            anchors.margins: 3
-                                            source: root.currentDraftPlate() !== null
-                                                    ? root.currentDraftPlate().imageUrl : ""
-                                            fillMode: Image.PreserveAspectFit
-                                            asynchronous: true
-                                            smooth: true
+                                        ToolTip {
+                                            visible: parent.hovered && parent.currentText.length > 28
+                                            text: parent.currentText
                                         }
                                     }
 
+                                    Label {
+                                        Layout.preferredWidth: 64
+                                        text: qsTr("Nozzle")
+                                        font: Typography.body
+                                        color: root.SmoothUI.theme.res.textFillColorSecondary
+                                    }
                                     ComboBox {
-                                        id: bedTypeCombo
-                                        objectName: "machineBuildPlateCombo"
+                                        id: nozzleCombo
+                                        objectName: "machineNozzleCombo"
                                         Layout.fillWidth: true
                                         Layout.preferredHeight: PrintWorkspaceStyle.controlHeight
-                                        enabled: root.selectionEnabled && root.bedTypeDisplayOptions.length > 0
-                                        model: root.bedTypeDisplayOptions
-                                        textRole: "label"
-                                        valueRole: "value"
-                                        currentIndex: root.draftBedTypeIndex
-                                        onActivated: function(index) {
+                                        enabled: root.selectionEnabled && root.currentDraftMachine() !== null
+                                                 && root.currentDraftMachine().variants
+                                                 && root.currentDraftMachine().variants.length > 0
+                                        model: root.currentDraftMachine() !== null
+                                               ? root.currentDraftMachine().variants : []
+                                        textRole: "name"
+                                        currentIndex: root.draftNozzleIndex
+                                        onActivated: {
                                             root.applyError = ""
-                                            root.draftBedTypeIndex = index
+                                            root.draftNozzleIndex = currentIndex
                                             root.applyDraftSelection(false)
+                                        }
+
+                                        ToolTip {
+                                            visible: parent.hovered && parent.currentText.length > 28
+                                            text: parent.currentText
+                                        }
+                                    }
+
+                                    Label {
+                                        Layout.preferredWidth: 64
+                                        text: qsTr("Build Plate")
+                                        font: Typography.body
+                                        color: root.SmoothUI.theme.res.textFillColorSecondary
+                                    }
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 8
+
+                                        Rectangle {
+                                            Layout.preferredWidth: PrintWorkspaceStyle.controlHeight
+                                            Layout.preferredHeight: PrintWorkspaceStyle.controlHeight
+                                            radius: PrintWorkspaceStyle.controlRadius
+                                            color: PrintWorkspaceStyle.secondarySurface(root.SmoothUI.dark)
+
+                                            Image {
+                                                anchors.fill: parent
+                                                anchors.margins: 3
+                                                source: root.currentDraftPlate() !== null
+                                                        ? root.currentDraftPlate().imageUrl : ""
+                                                fillMode: Image.PreserveAspectFit
+                                                asynchronous: true
+                                                smooth: true
+                                            }
+                                        }
+
+                                        ComboBox {
+                                            id: bedTypeCombo
+                                            objectName: "machineBuildPlateCombo"
+                                            Layout.fillWidth: true
+                                            Layout.preferredHeight: PrintWorkspaceStyle.controlHeight
+                                            enabled: root.selectionEnabled && root.bedTypeDisplayOptions.length > 0
+                                            model: root.bedTypeDisplayOptions
+                                            textRole: "label"
+                                            valueRole: "value"
+                                            currentIndex: root.draftBedTypeIndex
+                                            onActivated: function(index) {
+                                                root.applyError = ""
+                                                root.draftBedTypeIndex = index
+                                                root.applyDraftSelection(false)
+                                            }
+
+                                            ToolTip {
+                                                visible: parent.hovered && parent.currentText.length > 28
+                                                text: parent.currentText
+                                            }
+                                        }
+                                    }
+
+                                    Label {
+                                        Layout.preferredWidth: 64
+                                        text: qsTr("Filaments")
+                                        font: Typography.body
+                                        color: root.SmoothUI.theme.res.textFillColorSecondary
+                                    }
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        Layout.minimumWidth: 0
+                                        spacing: 4
+                                        Repeater {
+                                            model: root.filamentSlots
+                                            RowLayout {
+                                                id: quickSlot
+                                                required property var modelData
+                                                objectName: "machineSelectorFilamentSlot_" + modelData.number
+                                                Layout.fillWidth: true
+                                                Layout.minimumWidth: 0
+                                                Layout.preferredHeight: 30
+                                                Accessible.role: Accessible.StaticText
+                                                Accessible.name: slotNumber.text + " · " + slotPresetName.text
+                                                spacing: 6
+                                                Rectangle {
+                                                    Layout.preferredWidth: 8
+                                                    Layout.preferredHeight: 8
+                                                    radius: 2
+                                                    color: quickSlot.modelData.color
+                                                }
+                                                Label {
+                                                    id: slotNumber
+                                                    text: qsTr("Slot %1").arg(quickSlot.modelData.number)
+                                                        + (root.selectedMachine.physicalToolCount > 1
+                                                           ? " · T" + quickSlot.modelData.physicalToolIndex : "")
+                                                    font: Typography.caption
+                                                }
+                                                Label {
+                                                    id: slotPresetName
+                                                    Layout.fillWidth: true
+                                                    Layout.minimumWidth: 0
+                                                    text: quickSlot.modelData.presetName || quickSlot.modelData.presetId || ""
+                                                    font: Typography.caption
+                                                    elide: Text.ElideRight
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Label {
+                                        Layout.preferredWidth: 64
+                                        text: qsTr("Process")
+                                        font: Typography.body
+                                        color: root.SmoothUI.theme.res.textFillColorSecondary
+                                    }
+                                    ComboBox {
+                                        id: processPresetCombo
+                                        objectName: "machineProcessPresetCombo"
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: PrintWorkspaceStyle.controlHeight
+                                        enabled: root.selectionEnabled && root.processOptions.length > 0
+                                        model: root.processOptions
+                                        textRole: "name"
+                                        valueRole: "id"
+                                        currentIndex: root.indexByValue(root.processOptions, "id",
+                                                                        SliceSettingsBridge.selectedProcessPresetId)
+                                        onActivated: function(index) {
+                                            root.selectProcessPresetAfterComboClose(index)
                                         }
 
                                         ToolTip {
@@ -796,121 +893,75 @@ Button {
                                     }
                                 }
 
-                                Label {
-                                    Layout.preferredWidth: 64
-                                    text: qsTr("Filaments")
-                                    font: Typography.body
-                                    color: root.SmoothUI.theme.res.textFillColorSecondary
-                                }
-                                Button {
-                                    objectName: "machineFilamentSettingsButton"
+                                Rectangle {
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: PrintWorkspaceStyle.controlHeight
-                                    enabled: root.selectionEnabled && root.filamentSlots.length > 0
-                                    text: qsTr("%1 slot(s) · %2 · Edit…")
-                                          .arg(root.filamentSlots.length)
-                                          .arg(root.filamentSummary())
-                                    onClicked: root.openFilamentSettings()
+                                    Layout.leftMargin: 16
+                                    Layout.rightMargin: 16
+                                    Layout.preferredHeight: 52
+                                    radius: PrintWorkspaceStyle.controlRadius
+                                    color: root.applyError !== "" || root.unavailableMessage !== ""
+                                           ? root.SmoothUI.theme.res.systemFillColorCriticalBackground
+                                           : PrintWorkspaceStyle.secondarySurface(root.SmoothUI.dark)
 
-                                    ToolTip {
-                                        visible: parent.hovered
-                                        text: qsTr("Edit each filament preset and color")
-                                    }
-                                }
+                                    RowLayout {
+                                        anchors.fill: parent
+                                        anchors.leftMargin: 12
+                                        anchors.rightMargin: 12
+                                        spacing: 8
 
-                                Label {
-                                    Layout.preferredWidth: 64
-                                    text: qsTr("Process")
-                                    font: Typography.body
-                                    color: root.SmoothUI.theme.res.textFillColorSecondary
-                                }
-                                ComboBox {
-                                    id: processPresetCombo
-                                    objectName: "machineProcessPresetCombo"
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: PrintWorkspaceStyle.controlHeight
-                                    enabled: root.selectionEnabled && root.processOptions.length > 0
-                                    model: root.processOptions
-                                    textRole: "name"
-                                    valueRole: "id"
-                                    currentIndex: root.indexByValue(root.processOptions, "id",
-                                                                    SliceSettingsBridge.selectedProcessPresetId)
-                                    onActivated: function(index) {
-                                        root.selectProcessPresetAfterComboClose(index)
-                                    }
-
-                                    ToolTip {
-                                        visible: parent.hovered && parent.currentText.length > 28
-                                        text: parent.currentText
-                                    }
-                                }
-                            }
-
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 52
-                                radius: PrintWorkspaceStyle.controlRadius
-                                color: root.applyError !== "" || root.unavailableMessage !== ""
-                                       ? root.SmoothUI.theme.res.systemFillColorCriticalBackground
-                                       : PrintWorkspaceStyle.secondarySurface(root.SmoothUI.dark)
-
-                                RowLayout {
-                                    anchors.fill: parent
-                                    anchors.leftMargin: 12
-                                    anchors.rightMargin: 12
-                                    spacing: 8
-
-                                    Icon {
-                                        Layout.preferredWidth: 16
-                                        Layout.preferredHeight: 16
-                                        source: root.applyError !== "" || root.unavailableMessage !== ""
-                                                ? FluentIcons.graph_Error : FluentIcons.graph_Info
-                                        color: root.applyError !== "" || root.unavailableMessage !== ""
-                                               ? root.SmoothUI.theme.res.systemFillColorCritical
-                                               : root.SmoothUI.theme.res.textFillColorSecondary
-                                    }
-
-                                    ColumnLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 1
-
-                                        Label {
-                                            Layout.fillWidth: true
-                                            visible: root.hasValidDraft
-                                                     && root.applyError === ""
-                                                     && root.unavailableMessage === ""
-                                            text: {
-                                                var variant = root.currentDraftVariant()
-                                                return variant !== null
-                                                       ? qsTr("Build volume %1 × %2 × %3 mm")
-                                                             .arg(Math.round(variant.printableWidth))
-                                                             .arg(Math.round(variant.printableDepth))
-                                                             .arg(Math.round(variant.printableHeight))
-                                                       : ""
-                                            }
-                                            font: Typography.caption
-                                            color: root.SmoothUI.theme.res.textFillColorSecondary
-                                        }
-
-                                        Label {
-                                            Layout.fillWidth: true
-                                            text: root.applyError !== ""
-                                                  ? root.applyError
-                                                  : (root.unavailableMessage !== ""
-                                                     ? root.unavailableMessage
-                                                     : (root.draftMachineChanged
-                                                        ? qsTr("Applying will reload compatible process and filament presets")
-                                                        : (root.draftBedTypeChanged
-                                                           ? qsTr("Applying will update the current build plate")
-                                                           : qsTr("Switch the printer, filament, process, and build plate here"))))
-                                            elide: Text.ElideRight
-                                            font: Typography.caption
+                                        Icon {
+                                            Layout.preferredWidth: 16
+                                            Layout.preferredHeight: 16
+                                            source: root.applyError !== "" || root.unavailableMessage !== ""
+                                                    ? FluentIcons.graph_Error : FluentIcons.graph_Info
                                             color: root.applyError !== "" || root.unavailableMessage !== ""
                                                    ? root.SmoothUI.theme.res.systemFillColorCritical
-                                                   : root.SmoothUI.theme.res.textFillColorTertiary
+                                                   : root.SmoothUI.theme.res.textFillColorSecondary
+                                        }
+
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 1
+
+                                            Label {
+                                                Layout.fillWidth: true
+                                                visible: root.hasValidDraft
+                                                         && root.applyError === ""
+                                                         && root.unavailableMessage === ""
+                                                text: {
+                                                    var variant = root.currentDraftVariant()
+                                                    return variant !== null
+                                                           ? qsTr("Build volume %1 × %2 × %3 mm")
+                                                                 .arg(Math.round(variant.printableWidth))
+                                                                 .arg(Math.round(variant.printableDepth))
+                                                                 .arg(Math.round(variant.printableHeight))
+                                                           : ""
+                                                }
+                                                font: Typography.caption
+                                                color: root.SmoothUI.theme.res.textFillColorSecondary
+                                            }
+
+                                            Label {
+                                                Layout.fillWidth: true
+                                                text: root.applyError !== ""
+                                                      ? root.applyError
+                                                      : (root.unavailableMessage !== ""
+                                                         ? root.unavailableMessage
+                                                         : (root.draftMachineChanged
+                                                            ? qsTr("Applying will reload compatible process and filament presets")
+                                                            : (root.draftBedTypeChanged
+                                                               ? qsTr("Applying will update the current build plate")
+                                                               : qsTr("Switch the printer, process, and build plate here"))))
+                                                elide: Text.ElideRight
+                                                font: Typography.caption
+                                                color: root.applyError !== "" || root.unavailableMessage !== ""
+                                                       ? root.SmoothUI.theme.res.systemFillColorCritical
+                                                       : root.SmoothUI.theme.res.textFillColorTertiary
+                                            }
                                         }
                                     }
                                 }
+                                Item { Layout.preferredHeight: 2 }
                             }
                         }
 
@@ -921,6 +972,7 @@ Button {
                         }
 
                         RowLayout {
+                            id: quickFooter
                             Layout.fillWidth: true
                             Layout.preferredHeight: 60
                             Layout.leftMargin: 16
@@ -932,9 +984,9 @@ Button {
                             Button {
                                 objectName: "machineSelectorSlicingParametersButton"
                                 implicitHeight: PrintWorkspaceStyle.controlHeight
-                                text: qsTr("Slicing Parameters…")
+                                text: qsTr("View Printer Parameters")
                                 enabled: root.selectionEnabled
-                                onClicked: root.openDetailedSettings()
+                                onClicked: root.openSliceSettings({workspaceIndex: 2})
                             }
 
                             Item { Layout.fillWidth: true }
@@ -1009,10 +1061,24 @@ Button {
 
     function openSliceSettings(params) {
         var page = ensureDetailedSettingsPage()
-        if (!page)
+        if (!page || (selectorPopup.opened && page.inspectFilament))
             return false
-        if (params && params.workspaceIndex !== undefined)
+        root.backToQuickSettings = !params?.restoreFocus && selectorPopup.opened && !root.detailedSettingsVisible
+        root.restoreDetailedFocus = params?.restoreFocus || null
+        page.scopedWorkspace = !!params && params.workspaceIndex !== undefined
+        if (page.scopedWorkspace)
             page.workspaceIndex = Math.max(0, Math.min(2, params.workspaceIndex))
+        page.clearFilamentDraft()
+        const slotIndex = params && params.slotIndex !== undefined ? params.slotIndex : -1
+        page.showParamKeys = !page.scopedWorkspace
+        if (page.workspaceIndex === 1 && slotIndex >= 0) {
+            if (!page.beginFilamentEdit(slotIndex))
+                return false
+            page.showAdvancedMode = true
+            const materialPage = page.filamentPages.findIndex(category => category.id === "filament")
+            page.selectedFilamentPage = Math.max(0, materialPage)
+        }
+        page.searchText = ""
         if (!root.openDetailedSettings())
             return false
         if (params && params.settingKey) {

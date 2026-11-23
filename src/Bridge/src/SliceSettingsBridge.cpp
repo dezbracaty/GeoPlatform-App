@@ -1272,19 +1272,26 @@ bool SliceSettingsBridge::addFilamentToTool(int physicalTool) {
         .addFilamentToTool(static_cast<std::size_t>(physicalTool)), true, true);
 }
 
-bool SliceSettingsBridge::setFilamentColor(int slotIndex, const QColor& color) {
+bool SliceSettingsBridge::setFilamentColor(int slotIndex, const QColor& color,
+    const QString& expectedRevision) {
     if (configurationMutationBlocked("filament color selection") ||
         slotIndex < 0 || !color.isValid()) {
         return false;
     }
 
+    std::optional<std::uint64_t> revision;
+    if (!expectedRevision.isEmpty()) {
+        bool valid = false;
+        revision = expectedRevision.toULongLong(&valid);
+        if (!valid) return false;
+    }
     auto& backend = GPlatform::SlicingBackend::instance();
     const auto result = backend.setFilamentColor(
         static_cast<std::size_t>(slotIndex),
         {static_cast<std::uint8_t>(color.red()),
          static_cast<std::uint8_t>(color.green()),
          static_cast<std::uint8_t>(color.blue()),
-         static_cast<std::uint8_t>(color.alpha())});
+         static_cast<std::uint8_t>(color.alpha())}, revision);
     if (!result) {
         const QString message = result.diagnostics.empty()
             ? tr("Unable to change filament color")
@@ -1355,6 +1362,102 @@ void SliceSettingsBridge::markNeedsReslice() {
     }
     if (changed)
         emit hasPendingResliceChanged();
+}
+
+QVariantMap SliceSettingsBridge::filamentSlotSettings(int slotIndex) const {
+    return openFilamentSlotEditor(slotIndex).value(QStringLiteral("settings")).toMap();
+}
+
+QString SliceSettingsBridge::configurationRevisionToken() const {
+    return QString::number(GPlatform::SlicingBackend::instance().configurationRevision());
+}
+
+QVariantMap SliceSettingsBridge::openFilamentSlotEditor(int slotIndex) const {
+    if (slotIndex < 0 || machinePreparationPending()) return {};
+    const auto snapshot = GPlatform::SlicingBackend::instance().activeProfileSnapshot();
+    if (!snapshot || std::size_t(slotIndex) >= snapshot->selection.filament_preset_ids.size()) return {};
+    const auto rows = libslicer::filament_slot_settings(snapshot->config, std::size_t(slotIndex));
+    QReadLocker locker(&m_lock);
+    QVariantMap result;
+    for (const auto& row : rows) {
+        const auto* item = findItemLocked(row.key);
+        if (!item) continue;
+        auto element = *item;
+        if (element.type == libslicer::SettingType::List)
+            element.type = element.element_type;
+        const bool editable = row.scope == libslicer::FilamentSettingScope::Slot &&
+            item->enabled && !item->read_only;
+        const auto status = [&]() -> QString {
+            if (row.scope == libslicer::FilamentSettingScope::Unavailable)
+                return tr("Value unavailable");
+            if (row.scope == libslicer::FilamentSettingScope::Shared)
+                return tr("Shared · Read only");
+            if (row.key == "filament_colour")
+                return tr("Project color · Edit using the slot swatch");
+            if (!editable)
+                return tr("Read only");
+            if (row.inherited)
+                return tr("No explicit slot value");
+            return tr("Project slot value");
+        };
+        const QVariant value = item->nullable ? QVariant(QString::fromStdString(row.value))
+            : displaySettingValue(element, row.value);
+        result.insert(QString::fromStdString(row.key), QVariantMap{
+            {QStringLiteral("value"), value},
+            {QStringLiteral("status"), status()},
+            {QStringLiteral("available"), row.scope != libslicer::FilamentSettingScope::Unavailable},
+            {QStringLiteral("editable"), editable},
+            {QStringLiteral("type"), item->nullable ? QStringLiteral("string") : typeName(element.type)},
+            {QStringLiteral("control"), item->nullable ? QStringLiteral("text") : controlName(element)}});
+    }
+    return {{QStringLiteral("revision"), QString::number(snapshot->revision)},
+            {QStringLiteral("settings"), result}};
+}
+
+QString SliceSettingsBridge::saveFilamentSlotSettings(int slotIndex, const QString& revision,
+    const QVariantMap& changes) {
+    if (configurationMutationBlocked("filament parameters"))
+        return tr("Settings cannot be changed during the current task.");
+    bool validRevision = false;
+    const auto expected = revision.toULongLong(&validRevision);
+    if (slotIndex < 0 || !validRevision || !expected)
+        return tr("The configuration changed. Reopen the filament editor.");
+
+    std::vector<std::pair<std::string, std::string>> patch;
+    {
+        QReadLocker locker(&m_lock);
+        for (auto it = changes.cbegin(); it != changes.cend(); ++it) {
+            const auto* item = findItemLocked(it.key().toStdString());
+            if (!item || item->group != libslicer::SettingGroup::Filament ||
+                !item->visible || !item->enabled || item->read_only)
+                return tr("The setting %1 cannot be edited.").arg(it.key());
+            auto element = *item;
+            element.type = item->nullable ? libslicer::SettingType::String : item->element_type;
+            patch.emplace_back(item->key, serializeValueLocked(element, it.value()));
+        }
+    }
+    auto& backend = GPlatform::SlicingBackend::instance();
+    const auto result = backend.applyFilamentPatch(std::size_t(slotIndex), expected, patch);
+    if (!result) {
+        QStringList reasons;
+        for (const auto& diagnostic : result.diagnostics) {
+            const auto detail = translatedSettingText(QString::fromStdString(diagnostic.message));
+            const auto key = QString::fromStdString(diagnostic.key);
+            const auto schema = getSettingSchema(key);
+            const auto label = schema.value(QStringLiteral("label")).toString();
+            reasons.push_back(label.isEmpty() ? detail
+                : tr("%1: %2").arg(translatedSettingText(label), detail));
+        }
+        return reasons.isEmpty() ? tr("The filament changes could not be saved.") : reasons.join(QLatin1Char('\n'));
+    }
+    if (!result.changed_items.empty()) {
+        if (const auto active = backend.activeConfigView())
+            publishActiveSlicingConfig(active->revision, active->filament_slots);
+        refreshPresetState();
+        markNeedsReslice();
+        emit settingsChanged();
+    }
+    return {};
 }
 
 QVariantMap SliceSettingsBridge::getSettingSchema(const QString& key) const {
@@ -1711,6 +1814,49 @@ QVariantList SliceSettingsBridge::filamentSlots() const {
     return m_filamentSlots;
 }
 
+QVariantMap SliceSettingsBridge::filamentSlotControls() const {
+    const auto materials = filamentSlots();
+    const auto machine = selectedMachine();
+    const auto capacities = machine.value(QStringLiteral("toolMaterialCapacities")).toList();
+    const bool variable = machine.value(QStringLiteral("variableFilamentSlots")).toBool();
+    const bool canResize = capacities.empty() ? variable
+        : std::any_of(capacities.begin(), capacities.end(), [](const QVariant& capacity) {
+            return capacity.toInt() > 1;
+        });
+    int addTool = -1;
+    bool canAdd = capacities.empty() && variable && !materials.empty() &&
+        materials.size() < machine.value(QStringLiteral("maxFilamentSlots")).toInt();
+    QVariantList removable;
+    if (capacities.empty()) {
+        if (variable && materials.size() > 1)
+            for (qsizetype index = 0; index < materials.size(); ++index)
+                removable.append(static_cast<int>(index));
+    } else {
+        std::vector<int> counts(capacities.size());
+        for (const QVariant& item : materials) {
+            const auto tool = item.toMap().value(QStringLiteral("physicalToolIndex")).toUInt();
+            if (tool < counts.size()) ++counts[tool];
+        }
+        for (qsizetype tool = 0; tool < capacities.size(); ++tool) {
+            if (counts[tool] > 0 && counts[tool] < capacities[tool].toInt()) {
+                addTool = static_cast<int>(tool);
+                canAdd = true;
+                break;
+            }
+        }
+        for (qsizetype index = 0; index < materials.size(); ++index) {
+            const auto tool = materials[index].toMap().value(QStringLiteral("physicalToolIndex")).toUInt();
+            if (tool < counts.size() && counts[tool] > 1)
+                removable.append(static_cast<int>(index));
+        }
+    }
+    return {{QStringLiteral("canResize"), canResize},
+            {QStringLiteral("canAdd"), canAdd},
+            {QStringLiteral("addTool"), addTool},
+            {QStringLiteral("removeIndex"), removable.empty() ? -1 : removable.back().toInt()},
+            {QStringLiteral("removableIndices"), removable}};
+}
+
 QString SliceSettingsBridge::configurationError() const {
     QReadLocker locker(&m_lock);
     return m_configurationError;
@@ -1795,36 +1941,46 @@ void stagePrinterEdit(std::vector<PrinterDocumentEdit>& edits, Value oldValue, V
 }
 
 void stageDocumentFilamentChanges(DocumentManager& document, std::size_t count,
-    std::vector<PrinterDocumentEdit>& edits)
+    std::vector<PrinterDocumentEdit>& edits, int removed = 0, int replacement = 1)
 {
     const auto unavailable = [count](int slot) { return slot > 0 && std::size_t(slot) > count; };
+    const auto shift = [removed](int slot, int onRemoval) {
+        if (!removed || slot <= 0) return slot;
+        return slot == removed ? onRemoval : slot - (slot > removed ? 1 : 0);
+    };
+    const auto stageDefault = [&](const auto& model) {
+        const int before = model->getDefaultFilamentSlot();
+        const int after = unavailable(before) && !removed ? 1 : shift(before, replacement);
+        stagePrinterEdit(edits, before, after, [model](int value) { model->setDefaultFilamentSlot(value); });
+    };
     const auto stageSettings = [&](const auto& model, std::string_view scope) {
         const auto before = model->getProjectSemantics();
-        auto after = libslicer::synchronize_project_model_materials(before, scope, count);
+        auto after = removed ? libslicer::remove_project_filament_references(before, scope, removed - 1)
+            : libslicer::synchronize_project_model_materials(before, scope, count);
         stagePrinterEdit(edits, before, std::move(after),
             [model](const auto& value) { model->setProjectSemantics(value); });
     };
     for (const auto& node : document.getDBInstancesByType(TypeID::SLICING_CONFIG_DB)) {
-        if (const auto config = std::dynamic_pointer_cast<GPlatform::SlicingConfigDB>(node);
-            config && unavailable(config->getDefaultFilamentSlot()))
-            stagePrinterEdit(edits, config->getDefaultFilamentSlot(), 1,
-                [config](int value) { config->setDefaultFilamentSlot(value); });
+        if (const auto config = std::dynamic_pointer_cast<GPlatform::SlicingConfigDB>(node))
+            stageDefault(config);
     }
     for (const auto& node : document.getDBInstancesByType(TypeID::MODEL_OBJECT_DB)) {
         const auto object = std::dynamic_pointer_cast<ModelObjectDB>(node);
         if (!object) continue;
-        if (unavailable(object->getDefaultFilamentSlot()))
-            stagePrinterEdit(edits, object->getDefaultFilamentSlot(), 1,
-                [object](int value) { object->setDefaultFilamentSlot(value); });
+        stageDefault(object);
         stageSettings(object, "object");
     }
     for (const auto& node : document.getDBInstancesByType(TypeID::MODEL_PART_DB)) {
         const auto part = std::dynamic_pointer_cast<ModelPartDB>(node);
         if (!part) continue;
-        if (part->getFilamentBindingMode() == int(ModelFilamentBindingMode::ExplicitSlot) &&
-            unavailable(part->getDefaultFilamentSlot()))
-            stagePrinterEdit(edits, part->getFilamentBindingMode(), int(ModelFilamentBindingMode::InheritObject),
-                [part](int value) { part->setFilamentBindingMode(value); });
+        if (part->getFilamentBindingMode() == int(ModelFilamentBindingMode::ExplicitSlot)) {
+            const int slot = part->getDefaultFilamentSlot();
+            if (removed ? slot == removed : unavailable(slot))
+                stagePrinterEdit(edits, part->getFilamentBindingMode(), int(ModelFilamentBindingMode::InheritObject),
+                    [part](int value) { part->setFilamentBindingMode(value); });
+            else if (removed)
+                stageDefault(part);
+        }
         stageSettings(part, "part");
 
         const auto colors = part->surfaceColors();
@@ -1832,9 +1988,11 @@ void stageDocumentFilamentChanges(DocumentManager& document, std::size_t count,
         ManualSupportOrcaScaffold::TriangleSplittingData paint;
         if (!ModelSurfaceColorCodec::decode(colors->getSurfaceColorData(), &paint))
             throw std::runtime_error("Invalid model paint data");
-        if (std::none_of(paint.leafLabels.begin(), paint.leafLabels.end(), unavailable)) continue;
+        if (std::none_of(paint.leafLabels.begin(), paint.leafLabels.end(),
+            [&](int slot) { return removed ? slot >= removed : unavailable(slot); })) continue;
         for (auto& label : paint.leafLabels)
-            if (unavailable(label)) label = ManualSupportOrcaScaffold::NoLabel;
+            label = removed ? shift(label, ManualSupportOrcaScaffold::NoLabel)
+                : unavailable(label) ? ManualSupportOrcaScaffold::NoLabel : label;
         paint.update_used_states();
         std::string data;
         if (!ModelSurfaceColorCodec::encode(paint, &data))
@@ -1846,6 +2004,83 @@ void stageDocumentFilamentChanges(DocumentManager& document, std::size_t count,
     }
 }
 } // namespace
+
+bool SliceSettingsBridge::removeFilamentSlot(int slotIndex) {
+    if (configurationMutationBlocked("remove material slot") || TransactionManager::instance().isInTransaction())
+        return false;
+    const auto materials = filamentSlots();
+    if (slotIndex < 0 || slotIndex >= materials.size())
+        return false;
+    const auto reject = [&](const QString& reason) {
+        emit settingRejected(QStringLiteral("filament"), reason);
+        return false;
+    };
+    const auto tool = materials[slotIndex].toMap().value(QStringLiteral("physicalToolIndex"));
+    int replacement = 1;
+    for (qsizetype index = 0; index < materials.size(); ++index) {
+        if (index != slotIndex && materials[index].toMap().value(QStringLiteral("physicalToolIndex")) == tool) {
+            replacement = static_cast<int>(index + (index < slotIndex ? 1 : 0));
+            break;
+        }
+    }
+
+    auto& backend = GPlatform::SlicingBackend::instance();
+    const auto revision = backend.configurationRevision();
+    std::vector<libslicer::ConfigDiagnostic> diagnostics;
+    const auto candidate = backend.prepareFilamentRemoval(static_cast<std::size_t>(slotIndex), revision, diagnostics);
+    if (!candidate.valid())
+        return reject(diagnostics.empty() ? tr("Could not remove the filament slot")
+            : QString::fromStdString(diagnostics.front().message));
+    const auto target = candidate.snapshot();
+
+    std::vector<PrinterDocumentEdit> edits;
+    try {
+        if (auto* document = DocumentManager::instance()) {
+            stageDocumentFilamentChanges(*document, materials.size() - 1, edits, slotIndex + 1, replacement);
+            for (const auto& node : document->getDBInstancesByType(TypeID::PRINT_BED_DB)) {
+                const auto bed = std::dynamic_pointer_cast<PrintBedDB>(node);
+                if (!bed || bed->getProjectSemantics().empty()) continue;
+                auto before = bed->getProjectSemantics();
+                auto after = libslicer::remove_project_filament_references(before, "plate", slotIndex);
+                after = libslicer::synchronize_project_plate_materials(after, target);
+                stagePrinterEdit(edits, std::move(before), std::move(after),
+                    [bed](const auto& value) { bed->setProjectSemantics(value); });
+            }
+        }
+    } catch (const std::exception& error) {
+        return reject(QString::fromUtf8(error.what()));
+    }
+
+    auto lease = backend.beginProjectCommit(revision);
+    if (!lease) return reject(tr("The configuration has changed. Try removing the slot again."));
+    const auto installed = lease.install(candidate);
+    if (!installed) {
+        lease.release();
+        return reject(installed.diagnostics.empty() ? tr("Could not remove the filament slot")
+            : QString::fromStdString(installed.diagnostics.front().message));
+    }
+
+    std::size_t applied = 0;
+    try {
+        TransientUpdateGuard transient;
+        while (applied < edits.size()) edits[applied++].apply();
+    } catch (const std::exception& error) {
+        TransientUpdateGuard transient;
+        while (applied > 0) {
+            try { edits[--applied].restore(); }
+            catch (const std::exception& rollbackError) {
+                LOG_ERROR("SliceSettingsBridge: material removal rollback: {}", rollbackError.what());
+            }
+        }
+        lease.install(installed.previous);
+        lease.release();
+        return reject(QString::fromUtf8(error.what()));
+    }
+    auto view = candidate.view();
+    view.revision = installed.revision;
+    lease.release();
+    return replaceConfig(bridgeActivationResult(std::move(view)), true);
+}
 
 bool SliceSettingsBridge::applyPrinterSwitch(PendingPrinterSwitch&& pending)
 {

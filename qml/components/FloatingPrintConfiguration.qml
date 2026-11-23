@@ -13,6 +13,8 @@ PanelSurface {
     Accessible.name: qsTr("Slice Settings")
     property bool shown: true
     property bool collapsed: false
+    property bool filamentsCollapsed: false
+    property string materialError: ""
     property bool positioned: false
     property int page: 0
     property string localModelId: ""
@@ -24,7 +26,6 @@ PanelSurface {
         && localModelId === selectedModelId
     onSelectedModelIdChanged: localModelId = ""
     onPageChanged: if (page === 0) localModelId = ""
-    property int activeSlot: 0
     property Item boundsItem: parent
     property bool workspaceReady: false
     readonly property var machine: SliceSettingsBridge.selectedMachine
@@ -53,9 +54,11 @@ PanelSurface {
         }
         return choices;
     }
-    readonly property var activeFilament: slots.length ? slots[Math.min(activeSlot, slots.length - 1)] : ({})
-    onSlotsChanged: activeSlot = Math.max(0, Math.min(activeSlot, slots.length - 1))
-    signal detailedSettingsRequested(int workspaceIndex)
+    readonly property int sectionActionSize: 26
+    readonly property int sectionActionIconSize: 12
+    readonly property int sectionInset: PrintWorkspaceStyle.space16
+    readonly property var materialControls: SliceSettingsBridge.filamentSlotControls
+    signal detailedSettingsRequested(int workspaceIndex, int slotIndex, var restoreFocus)
     signal addModelRequested
 
     DBPropertyBridge {
@@ -148,13 +151,6 @@ PanelSurface {
                 root.constrainPosition();
         }
     }
-    Connections {
-        target: SliceSettingsBridge
-        function onMachineSelectionChanged() {
-            root.activeSlot = 0;
-        }
-    }
-
     Rectangle {
         id: header
         anchors.left: parent.left
@@ -191,8 +187,7 @@ PanelSurface {
             }
             Label {
                 text: qsTr("Slice Settings")
-                font.pixelSize: 12
-                font.weight: Font.DemiBold
+                font: Typography.subtitle
                 Layout.fillWidth: true
             }
             PrintPopoverHeader.PanelFoldButton {
@@ -223,16 +218,16 @@ PanelSurface {
         spacing: 0
         ColumnLayout {
             Layout.fillWidth: true
-            Layout.leftMargin: 16
-            Layout.rightMargin: 16
+            Layout.leftMargin: root.sectionInset
+            Layout.rightMargin: root.sectionInset
             Layout.topMargin: 10
             Layout.bottomMargin: 9
             spacing: 7
-            SectionLabel {
+            ParameterSectionHeader {
                 label: qsTr("Slicing printer")
                 iconSource: FluentIcons.graph_Print
-                actionText: qsTr("Edit preset")
-                onTriggered: root.detailedSettingsRequested(2)
+                actionName: "print.configuration.details.printer"
+                onTriggered: root.detailedSettingsRequested(2, -1, null)
             }
             ComboBox {
                 id: machineCombo
@@ -284,161 +279,194 @@ PanelSurface {
             id: filamentSection
             objectName: "print.configuration.filaments"
             Accessible.role: Accessible.Pane
-            Accessible.name: qsTr("Filaments")
+            Accessible.name: qsTr("Project Filaments")
             Layout.fillWidth: true
-            Layout.leftMargin: 16
-            Layout.rightMargin: 16
+            Layout.leftMargin: root.sectionInset
+            Layout.rightMargin: root.sectionInset
             Layout.topMargin: 6
             Layout.bottomMargin: 6
             spacing: 4
-            RowLayout {
+            SectionHeader {
+                label: filamentSection.Accessible.name
+                countText: qsTr("%1 slots").arg(root.slots.length)
+                iconSource: FluentIcons.graph_Color
+                actions: [
+                    SectionIconButton {
+                        objectName: "print.configuration.filaments.remove"
+                        visible: root.materialControls.removeIndex >= 0
+                        enabled: root.editingEnabled
+                        icon.name: FluentIcons.graph_Remove
+                        Accessible.name: qsTr("Remove last filament slot")
+                        ToolTip.visible: hovered
+                        ToolTip.text: Accessible.name
+                        onClicked: SliceSettingsBridge.removeFilamentSlot(root.materialControls.removeIndex)
+                    },
+                    SectionIconButton {
+                        objectName: "print.configuration.filaments.add"
+                        visible: root.materialControls.canResize
+                        enabled: root.editingEnabled && root.materialControls.canAdd
+                        icon.name: FluentIcons.graph_Add
+                        Accessible.name: qsTr("Add filament slot")
+                        ToolTip.visible: hovered
+                        ToolTip.text: Accessible.name
+                        onClicked: {
+                            const tool = root.materialControls.addTool;
+                            if (tool >= 0)
+                                SliceSettingsBridge.addFilamentToTool(tool);
+                            else
+                                SliceSettingsBridge.setFilamentSlotCount(root.slots.length + 1);
+                        }
+                    },
+                    SectionIconButton {
+                        id: filamentFold
+                        objectName: "print.configuration.filaments.fold"
+                        icon.name: root.filamentsCollapsed ? FluentIcons.graph_ChevronRightSmall
+                                                           : FluentIcons.graph_ChevronDownSmall
+                        Accessible.name: root.filamentsCollapsed ? qsTr("Expand filament slots") : qsTr("Collapse filament slots")
+                        ToolTip.visible: hovered
+                        ToolTip.text: Accessible.name
+                        onClicked: root.filamentsCollapsed = !root.filamentsCollapsed
+                    }
+                ]
+            }
+            ScrollView {
+                id: materialList
+                visible: !root.filamentsCollapsed
                 Layout.fillWidth: true
-                spacing: 6
-                Icon {
-                    source: FluentIcons.graph_Color
-                    Layout.preferredWidth: 13
-                    Layout.preferredHeight: 13
-                    color: root.secondaryText
-                }
-                Label {
-                    text: qsTr("Filaments")
-                    font.pixelSize: 11
-                    color: root.secondaryText
-                }
-                Flickable {
-                    id: slotStrip
-                    Layout.fillWidth: true
-                    Layout.minimumWidth: 0
-                    Layout.preferredHeight: 24
-                    contentWidth: slotButtons.width
-                    contentHeight: height
-                    clip: true
-                    boundsBehavior: Flickable.StopAtBounds
-                    flickableDirection: Flickable.HorizontalFlick
-                    function revealActiveSlot() {
-                        const button = slotRepeater.itemAt(root.activeSlot);
-                        if (!button) return;
-                        let nextX = contentX;
-                        if (button.x < nextX)
-                            nextX = button.x;
-                        else if (button.x + button.width > nextX + width)
-                            nextX = button.x + button.width - width;
-                        contentX = Math.max(0, Math.min(Math.max(0, contentWidth - width), nextX));
-                    }
-                    onContentWidthChanged: Qt.callLater(revealActiveSlot)
-                    onWidthChanged: Qt.callLater(revealActiveSlot)
-                    Connections {
-                        target: root
-                        function onActiveSlotChanged() { Qt.callLater(slotStrip.revealActiveSlot) }
-                        function onSlotsChanged() { Qt.callLater(slotStrip.revealActiveSlot) }
-                    }
-                    Row {
-                        id: slotButtons
-                        spacing: 4
-                        Repeater {
-                            id: slotRepeater
-                            model: root.slots
-                            Button {
-                                id: slotButton
-                                required property int index
-                                required property var modelData
-                                objectName: "print.configuration.slot." + index
-                                readonly property string slotLabel: {
-                                    if (root.machine.filamentSlotsBoundToPhysicalTools || root.machine.physicalToolCount > 1) {
-                                        // Multiple materials may share a tool. Keep their slot identities distinct.
-                                        const prefix = root.slots.length > root.machine.physicalToolCount
-                                            ? String(modelData.number) + "/" : "";
-                                        return prefix + "T" + modelData.physicalToolIndex;
-                                    }
-                                    return String(modelData.number);
-                                }
-                                width: Math.max(38, implicitContentWidth + 16)
-                                height: 24
-                                padding: 4
-                                font.pixelSize: 10
-                                text: slotLabel
-                                highlighted: root.activeSlot === index
-                                Accessible.name: slotLabel + " · " + modelData.presetName
-                                contentItem: Row {
+                Layout.preferredHeight: Math.min(materialRows.implicitHeight, root.height * 0.23)
+                Layout.minimumHeight: 0
+                clip: true
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                ColumnLayout {
+                    id: materialRows
+                    width: materialList.availableWidth
+                    spacing: 4
+                    Repeater {
+                        id: materialRepeater
+                        model: root.slots.length
+                        RowLayout {
+                            id: materialRow
+                            required property int index
+                            readonly property var modelData: root.slots[index]
+                            property alias editButton: editSlotButton
+                            readonly property string slotLabel: String(modelData.number)
+                                + (root.machine.physicalToolCount > 1 ? " · T" + modelData.physicalToolIndex : "")
+                            Layout.fillWidth: true
+                            spacing: 4
+
+                            ColorPicker {
+                                id: slotColor
+                                property string openingRevision: ""
+                                objectName: "print.configuration.slot." + materialRow.index
+                                Layout.preferredWidth: root.machine.physicalToolCount > 1 ? 65 : 39
+                                Layout.preferredHeight: 30
+                                padding: 3
+                                flat: true
+                                enabled: root.editingEnabled
+                                current: materialRow.modelData.color
+                                titleText: qsTr("Filament %1 Color").arg(materialRow.modelData.number)
+                                Accessible.name: qsTr("Edit filament %1 color").arg(materialRow.slotLabel)
+                                ToolTip.visible: hovered
+                                ToolTip.text: Accessible.name + " · " + String(current).toUpperCase()
+                                contentItem: RowLayout {
                                     spacing: 4
                                     Rectangle {
-                                        width: 8
-                                        height: 8
-                                        anchors.verticalCenter: parent.verticalCenter
+                                        Layout.preferredWidth: 10
+                                        Layout.preferredHeight: 10
                                         radius: 2
-                                        color: slotButton.modelData.color || "#929aa3"
+                                        color: slotColor.current
+                                        border.color: root.lineColor
+                                        border.width: 1
                                     }
                                     Label {
-                                        text: slotButton.text
-                                        font: slotButton.font
-                                        color: root.secondaryText
+                                        text: materialRow.slotLabel
+                                        font.pixelSize: 10
                                     }
                                 }
-                                onClicked: root.activeSlot = index
+                                onClicked: {
+                                    openingRevision = SliceSettingsBridge.configurationRevisionToken()
+                                    root.materialError = ""
+                                }
+                                onAccepted: {
+                                    const accepted = SliceSettingsBridge.setFilamentColor(
+                                        materialRow.index, current, openingRevision)
+                                    if (!accepted)
+                                        root.materialError = SliceSettingsBridge.configurationError || qsTr("Unable to change filament color")
+                                    current = Qt.binding(() => materialRow.modelData.color)
+                                    Qt.callLater(() => { if (slotColor.visible && slotColor.enabled) slotColor.forceActiveFocus() })
+                                }
+                            }
+                            ComboBox {
+                                id: preset
+                                objectName: "print.configuration.filament." + materialRow.modelData.number
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 0
+                                Layout.preferredHeight: 30
+                                font.pixelSize: 11
+                                model: materialRow.modelData.compatiblePresets
+                                textRole: "name"
+                                currentIndex: root.indexOf(model, "id", materialRow.modelData.presetId)
+                                displayText: materialRow.modelData.presetName
+                                enabled: root.editingEnabled && model.length > 0
+                                onActivated: function(index) {
+                                    const slot = materialRow.modelData.index;
+                                    const presetId = model[index].id;
+                                    const revision = SliceSettingsBridge.configurationRevisionToken();
+                                    Qt.callLater(function() {
+                                        if (root.editingEnabled && revision === SliceSettingsBridge.configurationRevisionToken())
+                                            SliceSettingsBridge.selectFilamentPresetForSlot(slot, presetId);
+                                    });
+                                }
+                            }
+                            Button {
+                                id: editSlotButton
+                                objectName: "print.configuration.filament.details." + materialRow.modelData.number
+                                Layout.preferredWidth: 48
+                                Layout.preferredHeight: 28
+                                flat: true
+                                enabled: root.editingEnabled
+                                text: qsTr("Edit")
+                                font.pixelSize: 11
+                                Accessible.name: qsTr("Edit filament %1 parameters").arg(materialRow.slotLabel)
                                 ToolTip.visible: hovered
                                 ToolTip.text: Accessible.name
+                                onClicked: {
+                                    const slot = materialRow.index
+                                    root.detailedSettingsRequested(1, slot, function() {
+                                        const row = materialRepeater.itemAt(slot)
+                                        if (row && row.editButton.visible && row.editButton.enabled)
+                                            row.editButton.forceActiveFocus()
+                                        else if (filamentFold.visible)
+                                            filamentFold.forceActiveFocus()
+                                    })
+                                }
                             }
                         }
                     }
                 }
-                Button {
-                    objectName: "print.configuration.filaments.edit"
-                    text: qsTr("Edit")
-                    icon.name: FluentIcons.graph_Edit
-                    icon.width: 12
-                    icon.height: 12
-                    flat: true
-                    padding: 0
-                    font.pixelSize: 11
-                    enabled: root.editingEnabled
-                    Layout.preferredHeight: 24
-                    onClicked: root.detailedSettingsRequested(1)
-                }
             }
-            ComboBox {
-                objectName: "print.configuration.filament." + (root.activeFilament.number || 0)
+            Label {
+                visible: root.materialError.length > 0
                 Layout.fillWidth: true
-                implicitHeight: 32
-                font.pixelSize: 11
-                leftPadding: 31
-                Rectangle {
-                    x: 9
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 14
-                    height: 14
-                    radius: 4
-                    color: root.activeFilament.color || "#929aa3"
-                }
-                model: root.activeFilament.compatiblePresets || SliceSettingsBridge.compatibleFilamentPresets
-                textRole: "name"
-                enabled: root.editingEnabled && root.slots.length > 0
-                currentIndex: root.indexOf(model, "id", root.activeFilament.presetId)
-                onActivated: function(index) {
-                    const preset = model[index].id, slot = root.activeFilament.index;
-                    const modelId = SliceSettingsBridge.selectedMachineModelId;
-                    const variantId = SliceSettingsBridge.selectedMachineVariantId;
-                    Qt.callLater(function() {
-                        if (root.editingEnabled && modelId === SliceSettingsBridge.selectedMachineModelId && variantId === SliceSettingsBridge.selectedMachineVariantId)
-                            SliceSettingsBridge.selectFilamentPresetForSlot(slot, preset);
-                    });
-                }
+                text: root.materialError
+                wrapMode: Text.Wrap
+                color: root.SmoothUI.theme.res.systemFillColorCritical
+                font: Typography.caption
             }
         }
         Rule {}
         ColumnLayout {
             Layout.fillWidth: true
-            Layout.leftMargin: 16
-            Layout.rightMargin: 16
+            Layout.leftMargin: root.sectionInset
+            Layout.rightMargin: root.sectionInset
             Layout.topMargin: 9
             Layout.bottomMargin: 9
             spacing: 7
-            SectionLabel {
+            ParameterSectionHeader {
                 label: qsTr("Process preset")
                 iconSource: FluentIcons.graph_Equalizer
-                actionText: ""
-                actionIcon: FluentIcons.graph_Save
-                actionEnabled: false
-                actionHint: qsTr("The preset library does not support saving process presets yet")
+                actionName: "print.configuration.details.process"
+                onTriggered: root.detailedSettingsRequested(0, -1, null)
             }
             ComboBox {
                 id: processCombo
@@ -957,53 +985,89 @@ PanelSurface {
         Layout.preferredHeight: 1
         color: root.lineColor
     }
-    component SectionLabel: RowLayout {
+    component SectionHeader: RowLayout {
+        id: sectionHeader
         property string label: ""
+        property string countText: ""
         property string iconSource: ""
-        property string actionText: ""
-        property string actionIcon: FluentIcons.graph_Edit
-        property string actionHint: ""
-        property bool actionEnabled: true
-        signal triggered
+        property alias actions: actionGroup.data
         Layout.fillWidth: true
+        Layout.minimumHeight: root.sectionActionSize
+        Layout.maximumHeight: root.sectionActionSize
         spacing: 6
         Icon {
-            source: iconSource
+            source: sectionHeader.iconSource
             Layout.preferredWidth: 13
             Layout.preferredHeight: 13
             color: root.secondaryText
         }
         Label {
-            text: label
+            text: sectionHeader.label
+            Layout.fillWidth: !slotCount.visible
+            Layout.minimumWidth: 0
+            elide: Text.ElideRight
+            font: Typography.bodyStrong
+        }
+        Label {
+            id: slotCount
+            text: sectionHeader.countText
+            visible: text.length > 0
             Layout.fillWidth: true
-            font.pixelSize: 11
+            font.pixelSize: 10
             color: root.secondaryText
         }
-        Item {
-            Layout.preferredWidth: actionText.length > 0 ? detailButton.implicitWidth : 20
-            Layout.preferredHeight: 20
-            Button {
-                id: detailButton
-                objectName: "print.configuration.details." + label
-                anchors.fill: parent
-                enabled: actionEnabled && root.editingEnabled
-                text: actionText
-                icon.name: actionIcon
-                icon.width: 12
-                icon.height: 12
-                flat: true
-                padding: 0
-                font.pixelSize: 11
-                onClicked: triggered()
-            }
-            HoverHandler {
-                id: disabledHint
-            }
-            ToolTip {
-                visible: actionHint.length > 0 && disabledHint.hovered
-                text: actionHint
-            }
+        RowLayout {
+            id: actionGroup
+            spacing: 6
         }
+    }
+    component ParameterSectionHeader: SectionHeader {
+        id: parameterHeader
+        property string actionName: ""
+        signal triggered
+        actions: Button {
+            id: parameterButton
+            objectName: parameterHeader.actionName
+            text: qsTr("View Parameters")
+            icon.name: FluentIcons.graph_ChevronRightSmall
+            icon.width: root.sectionActionIconSize
+            icon.height: root.sectionActionIconSize
+            flat: true
+            padding: 0
+            horizontalPadding: (root.sectionActionSize - root.sectionActionIconSize) / 2
+            spacing: 6
+            font.pixelSize: 11
+            Layout.preferredHeight: root.sectionActionSize
+            Layout.maximumWidth: (root.width - 2 * (root.sectionInset + 1)) / 2
+            ToolTip.visible: hovered && width < implicitWidth
+            ToolTip.text: text
+            contentItem: RowLayout {
+                spacing: parameterButton.spacing
+                Label {
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    text: parameterButton.text
+                    font: parameterButton.font
+                    color: parameterButton.SmoothUI.textColor
+                    elide: Text.ElideRight
+                }
+                Icon {
+                    Layout.preferredWidth: parameterButton.icon.width
+                    Layout.preferredHeight: parameterButton.icon.height
+                    source: parameterButton.icon.name
+                    color: parameterButton.icon.color
+                }
+            }
+            onClicked: parameterHeader.triggered()
+        }
+    }
+    component SectionIconButton: IconButton {
+        Layout.preferredWidth: root.sectionActionSize
+        Layout.preferredHeight: root.sectionActionSize
+        flat: true
+        padding: 0
+        icon.width: root.sectionActionIconSize
+        icon.height: root.sectionActionIconSize
     }
     component AxisField: Rectangle {
         id: axis
