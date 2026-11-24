@@ -58,18 +58,23 @@ def collect_screenshots(checkpoints, execution, output):
     for checkpoint in checkpoints:
         row = {key: value for key, value in checkpoint.items() if key != 'baselineBytes'}
         destination = output / 'review' / f"checkpoint-{row['index']:04d}"
-        destination.mkdir(parents=True, exist_ok=True)
         standard = 'baselineBytes' in checkpoint
         row.update(executionStatus='not_run', comparisonStatus='not_run', reviewStatus='not_applicable')
-        if 'baselineBytes' in checkpoint:
-            (destination / 'expected.png').write_bytes(checkpoint['baselineBytes'])
-            row['expected'] = (destination / 'expected.png').relative_to(output).as_posix()
-        if row.get('baselineError'):
-            row.update(comparisonStatus='unavailable', message=row['baselineError'])
         step = steps.get(row['index'])
         if step:
-            row['executionStatus'] = step['status']
-            row['automaticStatus'] = step['status']
+            row.update(executionStatus=step['status'], automaticStatus=step['status'])
+        try:
+            destination.mkdir(parents=True, exist_ok=True)
+            if standard:
+                (destination / 'expected.png').write_bytes(checkpoint['baselineBytes'])
+                row['expected'] = (destination / 'expected.png').relative_to(output).as_posix()
+        except OSError as exc:
+            row.update(comparisonStatus='capture_error', message=str(exc))
+            rows.append(row)
+            continue
+        if row.get('baselineError'):
+            row.update(comparisonStatus='unavailable', message=row['baselineError'])
+        if step:
             evidence = step.get('evidence', [])
             compared = len(evidence) >= 2 and (standard or bool(step.get('comparison')))
             actual = evidence[1] if compared and len(evidence) >= 2 else evidence[0] if not compared and evidence else None
@@ -99,7 +104,7 @@ def collect_screenshots(checkpoints, execution, output):
                             shutil.copyfile(diff, destination / 'raw-diff.png')
                             row.update(diff=(destination / 'raw-diff.png').relative_to(output).as_posix(), rawDiff=
                                        (destination / 'raw-diff.png').relative_to(output).as_posix())
-                    elif standard:
+                    elif standard and compared:
                         row.update(reviewStatus='pending')
                         try:
                             comparison = comparison_images(destination / 'expected.png', destination / 'actual.png',
@@ -115,7 +120,8 @@ def collect_screenshots(checkpoints, execution, output):
                         if comparison['comparisonStatus'] == 'unavailable':
                             row['reviewStatus'] = 'not_applicable'
                     else:
-                        row['comparisonStatus'] = step.get('comparison', {}).get('status', 'diagnostic')
+                        row['comparisonStatus'] = step.get('comparison', {}).get(
+                            'status', 'capture_error' if step['status'] == 'failed' else 'diagnostic')
                 except Exception as exc:
                     row.update(comparisonStatus='capture_error', reviewStatus='not_applicable', message=str(exc))
             else:

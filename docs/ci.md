@@ -130,7 +130,11 @@ App runner 的完整宿主统一使用工作区内 `host-source`。宿主和嵌�
 
 `published` 回归的 `sdk` 检出保留 Git 和 LFS 对象，按冻结的 SDK SHA 获取所选平台槽位并执行完整校验。
 
-回归报告保留 `regression-results/<run>-<attempt>/<platform>` 布局。Windows 报告放在 `RUNNER_TEMP` 的父目录下，保持归档路径短，并避开 Runner 在任务结束时清理的临时目录。Mac 使用工作区。成功和失败的任务只上传已经生成的 `source-regression.json` 和 Journal 会话的 `summary.json`，包含版本、各阶段结果、计数和逐场景判定。完整日志、截图和导出文件留在 Runner 本机，上传后保留报告目录。原子 JSON 替换仅对 Windows 短暂读句柄争用进行有界重试，持续占用或其他错误仍使流程失败。
+回归报告保留 `regression-results/<run>-<attempt>/<platform>` 布局。Windows 报告位于 `RUNNER_TEMP` 的父目录，Mac 报告位于工作区。平台通过并写入摘要后，Runner 清理本次截图、差异图、原生切片产物及导出，保留平台与 Journal 摘要。Journal 已完整结束时，最终通过的场景（包括复测恢复项）按原策略清理。
+
+最终失败的场景按初轮和各次复测的逐图判定清理。只保留有失败判定且已生成的实际截图，以及该图在本次尝试中的基线副本、差异图和对应的审核证据（存在时）。业务失败但截图均通过的尝试保留 JSON、业务产物和非截图诊断日志。审核异常能从记录定位到具体截图时按同一规则处理。批次审核异常无法定位时保留错误摘要和批次诊断日志，已记录的截图仍按各自的判定处理。中断、未收齐摘要或仍待审核的批次保留现场。单次尝试缺少执行结果时保留该次证据。清理只使用本轮报告目录下的证据。
+
+工作流上传平台 `source-regression.json` 和 Journal 会话 `summary.json`，包含版本、各阶段结果、计数和逐场景判定。摘要上传失败时仍可从 Runner 本机读取。原子 JSON 替换仅对 Windows 短暂读句柄争用进行有界重试，持续占用或其他错误仍使流程失败。
 
 两仓 runner 若在同一机器，继续共用现有机器锁，不能并发争抢同一缓存/桌面。迁移需核对 App runner 的正式工具链、宿主源码工作路径和兼容缓存；路径不一致不能手改 CMakeCache 或拼库冒充复用。编译不固定为两路并行；未显式配置 CMAKE_BUILD_PARALLEL_LEVEL 时按现有工具调度。
 

@@ -16,6 +16,7 @@ from common import (build_log, repository_url, digest, git, git_env, init_host_s
                     prepare_cached_source, require_sha, run, text_git, write_json)
 from common import freeze_candidate, app_dependency_repository, resolve_ref
 from common import remove_owned_tree
+from regression_reports import compact_regression_report
 from update_sdk import build_sdk_package, source_sdk_package, update_sdk
 import native_regression as native_checks
 
@@ -260,6 +261,9 @@ def regress(source, platform, source_sha, assets_sha, output, *, app_sha, app_re
             build = source / ('build-Release' if platform == 'windows' else 'build-arm64-Release')
             check_ci_tools(ci_root, build, report)
             report['status'] = 'passed'
+    except KeyboardInterrupt:
+        report['interrupted'] = True
+        raise
     except Exception as error:
         report['status'] = 'failed'
         report['error'] = f'{type(error).__name__}: {error}'
@@ -267,6 +271,10 @@ def regress(source, platform, source_sha, assets_sha, output, *, app_sha, app_re
     finally:
         write_json(output / 'source-regression.json', report)
         write_json(output / 'summary.json', report)
+        try:
+            compact_regression_report(output)
+        except (OSError, RuntimeError, ValueError) as error:
+            print(f'Could not finish pruning regression evidence: {error}', file=sys.stderr, flush=True)
     return report
 
 

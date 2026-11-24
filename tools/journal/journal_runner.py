@@ -748,6 +748,7 @@ class JournalRunner:
         result = {"index": index, "kind": entry["kind"],
                   "atMs": entry["atMs"], "status": "passed",
                   "message": "executed", "evidence": []}
+        capture_target = None
         try:
             if entry["kind"].startswith("input.") or entry["kind"] == "action":
                 if entry["kind"] == "action":
@@ -787,6 +788,7 @@ class JournalRunner:
                     if cancel_event is not None and cancel_event.is_set():
                         raise InterruptedError("Replay cancelled by caller")
                     result["inputReadiness"]["dispatchRequestedAt"] = datetime.now().astimezone().isoformat(timespec="microseconds")
+                capture_target = screenshot_path
                 self.client.execute_entry(dispatched)
                 if screenshot_path is not None:
                     if not screenshot_path.is_file() or screenshot_path.stat().st_size == 0:
@@ -863,11 +865,15 @@ class JournalRunner:
                         raise InterruptedError("Replay cancelled by caller")
                     result["uiReadiness"]["captureRequestedAt"] = datetime.now().astimezone().isoformat(timespec="microseconds")
                 capture = self.client.capture_screenshot()
+                capture_target = actual_path
                 actual_path.write_bytes(capture["png"])
                 self.comparisons.submit(output, standard, actual_path, result)
         except Exception as exc:
             result["status"] = "failed"
             result["message"] = str(exc)
+            # A capture can produce evidence before reporting an error.
+            if capture_target is not None and not result["evidence"] and capture_target.is_file():
+                result["evidence"].append(capture_target)
         return result
 
     def run(self, document, output_dir, progress=None, validate=True, cancel_event=None):

@@ -166,6 +166,8 @@ sys.meta_path.insert(0, NoOptionalPackages())
                 summary.write_text(json.dumps({'status':'passed','runComplete':True,'selectionScope':'all',
                     'plannedCases':['one','two'],'completedCaseCount':2,
                     'cases':[{'id':'one','status':'passed'},{'id':'two','status':'passed'}]}))
+                (directory/'one').mkdir()
+                (directory/'one/temporary.gcode').write_bytes(b'generated output')
                 (output/'journal-receipt.json').write_text(json.dumps({'status':'passed','assets_sha':receipt_assets,
                     'expected_cases':['one','two'],'summary_path':str(summary)}))
         def produce(source, platform, package, env, *, log):
@@ -221,6 +223,246 @@ sys.meta_path.insert(0, NoOptionalPackages())
             self.assertEqual(result['sdk']['sdk_sha'],'')
             self.assertIn('package_manifest_sha256',result['sdk'])
             self.assertEqual(result['application_sha256'],controller.digest(root/'consumer-app'))
+            self.assertEqual({file.relative_to(output).as_posix() for file in output.rglob('*') if file.is_file()},
+                             {'source-regression.json', 'summary.json', 'journals/run/session_fixture/summary.json'})
+
+    def test_failed_journal_keeps_non_screenshot_evidence_and_incomplete_runs(self):
+        for complete in (True, False):
+            with self.subTest(complete=complete), tempfile.TemporaryDirectory() as temporary:
+                output = Path(temporary).resolve()
+                run = output/'journals/run/session_fixture'
+                exports = output/'journals/exports/session_fixture'
+                for folder in (run, exports):
+                    for stage in ('', 'serial-recheck', 'serial-recheck-2'):
+                        for case in ('recovered', 'broken'):
+                            path = folder/stage/case/'generated.bin'
+                            path.parent.mkdir(parents=True)
+                            path.write_bytes(b'evidence')
+                native = output/'arm64/orca-gcode/results'
+                native.parent.mkdir(parents=True)
+                native.write_bytes(b'passed native output')
+                controller.write_json(output/'source-regression.json', {'status':'failed',
+                    'phases':[{'name':'arm64/ctest','status':'passed'}]})
+                controller.write_json(run/'summary.json', {'status':'failed', 'stage':'finished',
+                    'runComplete':complete, 'plannedCases':['recovered','broken'],'completedCaseCount':2,
+                    'cases':[{'id':'recovered','status':'passed'},{'id':'broken','status':'failed'}]})
+                controller.compact_regression_report(output)
+                controller.compact_regression_report(output)  # Safe to retry.
+                self.assertTrue((run/'summary.json').is_file())
+                self.assertTrue((output/'source-regression.json').is_file())
+                self.assertEqual(native.exists(), not complete)
+                for folder in (run, exports):
+                    for stage in ('', 'serial-recheck', 'serial-recheck-2'):
+                        self.assertEqual((folder/stage/'recovered/generated.bin').exists(), not complete)
+                        self.assertTrue((folder/stage/'broken/generated.bin').is_file())
+
+    def screenshot_attempt(self, directory, baseline, *, changed=(), capture_error=None, review_error=False):
+        # Exercise the maintained executor and review writer with real images.
+        app = Path(__file__).resolve().parents[2]
+        sys.path[:0] = [str(app / 'tools'), str(app / 'tools/journal')]
+        try:
+            from PIL import Image
+            from journal_runner import finish_result, JournalRunner, load_journal
+            from screenshot_review import collect_screenshots, snapshot_checkpoints
+        finally:
+            del sys.path[:2]
+
+        directory.mkdir(parents=True)
+        (directory / 'screenshots').mkdir()
+        Image.new('RGB', (12, 10), 'white').save(baseline)
+        mismatch = io.BytesIO()
+        Image.new('RGB', (12, 10), 'black').save(mismatch, format='PNG')
+        png = baseline.read_bytes()
+
+        class Client:
+            def capture_screenshot(self):
+                return {'png': mismatch.getvalue() if 1 in changed else png}
+
+            def execute_entry(self, entry):
+                path = Path(entry['payload']['params']['filepath'])
+                if capture_error != 'before':
+                    path.write_bytes(mismatch.getvalue() if 2 in changed else png)
+                if capture_error:
+                    raise RuntimeError('Capture dispatch failed')
+
+        journal = baseline.with_name('Journal.json')
+        controller.write_json(journal, dict(formatVersion=2, entries=[
+            dict(atMs=0, kind='verify.screenshot', payload=dict(baseline=baseline.name)),
+            dict(atMs=0, kind='action', payload=dict(code='screenshot.capture',
+                 params=dict(filepath='captures/customer-view.png'), baseline=baseline.name)),
+        ]))
+        document = load_journal(journal)
+        execution = finish_result(JournalRunner(Client()).run(document, directory))
+        checkpoints = snapshot_checkpoints(dict(document=document, journal=journal), baseline.parent, verify_hashes=False)
+        if review_error:
+            # Fail only this review copy and let the producer report the checkpoint.
+            (directory / 'review/checkpoint-0002/expected.png').mkdir(parents=True)
+        review = collect_screenshots(checkpoints, execution, directory)
+        controller.write_json(directory / 'case_result.json', dict(
+            id=directory.name, status='failed', executionResultPath='execution_result.json', screenshotReview=review))
+        (directory / 'application.log').write_text('app diagnostic', encoding='utf-8')
+        return execution, checkpoints
+
+    def screenshot_files(self, directory):
+        return {path.relative_to(directory).as_posix() for path in directory.rglob('*.png') if path.is_file()}
+
+    def test_failed_journal_keeps_only_each_attempts_failed_screenshots(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            baseline = Path(temporary).resolve() / 'source-standard.png'
+            output = baseline.parent / 'regression-results/123-1/macos'
+            run = output / 'journals/run/session_fixture'
+            attempts = []
+            for stage, failed_index in [('initial', 2), ('serial-recheck', 1), ('serial-recheck-2', None)]:
+                directory = (run if stage == 'initial' else run / stage) / 'broken'
+                execution, checkpoints = self.screenshot_attempt(directory, baseline,
+                    changed=() if failed_index is None else (failed_index,))
+                self.assertEqual([step['status'] for step in execution['results']],
+                                 ['failed' if index == failed_index else 'passed' for index in (1, 2)])
+                attempts.append(dict(stage=stage, status='failed', result=
+                    (directory / 'case_result.json').relative_to(run).as_posix()))
+            business_failure = run / 'serial-recheck-2/broken/case_result.json'
+            controller.write_json(business_failure, dict(json.loads(business_failure.read_text()),
+                error='Export did not pass its business check'))
+            sibling = run.parent / 'session_unrelated/independent.png'
+            sibling.parent.mkdir()
+            sibling.write_bytes(b'other session')
+            other_round = output.parents[1] / '123-2/macos/image.png'
+            other_round.parent.mkdir(parents=True)
+            other_round.write_bytes(b'other platform attempt')
+            user_file = run / 'broken/screenshots/user.png'
+            user_file.write_bytes(b'untracked image')
+            adjacent_file = run / 'user.png'
+            adjacent_file.write_bytes(b'outside the case attempt')
+            redirected = run / 'broken/screenshots/redirected.png'
+            try:
+                redirected.symlink_to(other_round)
+            except (NotImplementedError, OSError):
+                redirected = None  # Symlink creation can require Windows privileges.
+            execution_path = run / 'broken/execution_result.json'
+            execution_report = json.loads(execution_path.read_text())
+            for index, path in enumerate((baseline, '../user.png', redirected), 10):
+                if path is not None:
+                    evidence = path.relative_to(run / 'broken').as_posix() if path == redirected else str(path)
+                    execution_report['results'].append(dict(index=index, kind='verify.screenshot',
+                        status='passed', evidence=[evidence]))
+            controller.write_json(execution_path, execution_report)
+            server_log = output / 'journals/regression.log'
+            server_log.write_text('batch review diagnostics', encoding='utf-8')
+            controller.write_json(output / 'source-regression.json', dict(status='failed'))
+            controller.write_json(run / 'summary.json', dict(status='failed', stage='finished',
+                runComplete=True, plannedCases=['broken'], completedCaseCount=1,
+                cases=[dict(id='broken', status='failed', attempts=attempts, result=attempts[-1]['result'])],
+                screenshotReviewError='Unattributed error while writing batch index',
+                screenshotCheckpoints={'broken': [{k: v for k, v in row.items() if k != 'baselineBytes'}
+                                                   for row in checkpoints]}))
+            original_baseline = baseline.read_bytes()
+            for _ in range(2):
+                controller.compact_regression_report(output)
+            for path in (baseline, sibling, other_round, user_file, adjacent_file, server_log, business_failure):
+                self.assertTrue(path.is_file(), path)
+            self.assertEqual(baseline.read_bytes(), original_baseline)
+            for attempt, index in zip(attempts, (2, 1, None)):
+                directory = (run / attempt['result']).parent
+                expected = set()
+                if index:
+                    stem = f'screenshots/screenshot_{index:03d}'
+                    checkpoint = f'review/checkpoint-{index:04d}'
+                    expected.update({f'{stem}_expected.png', f'{stem}_diff.png',
+                        f'{checkpoint}/expected.png', f'{checkpoint}/actual.png', f'{checkpoint}/raw-diff.png',
+                        f'{stem}_actual.png' if index == 1 else 'captures/customer-view.png'})
+                if index == 2:
+                    expected.add('screenshots/user.png')
+                    if redirected is not None:
+                        self.assertTrue(redirected.is_symlink())
+                        expected.add('screenshots/redirected.png')
+                self.assertEqual(self.screenshot_files(directory), expected)
+                for diagnostic in ('case_result.json', 'execution_result.json', 'review/screenshots.json', 'application.log'):
+                    self.assertTrue((directory / diagnostic).is_file(), diagnostic)
+
+    def test_attributed_review_or_capture_error_retains_only_an_existing_failed_actual(self):
+        for error in ('review', 'batch-index', 'before', 'after'):
+            with self.subTest(error=error), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                output = root / 'report'
+                run = output / 'journals/run/session_fixture'
+                directory = run / 'scene'
+                review_error = error in ('review', 'batch-index')
+                execution, _ = self.screenshot_attempt(directory, root / 'baseline.png',
+                    capture_error=None if review_error else error, review_error=review_error)
+                if review_error:
+                    self.assertEqual(execution['results'][1]['status'], 'passed')
+                    report = json.loads((directory / 'review/screenshots.json').read_text())
+                    self.assertEqual(report['checkpoints'][1]['comparisonStatus'], 'capture_error')
+                    self.assertEqual(report['checkpoints'][0]['comparisonStatus'], 'identical')
+                elif error == 'after':
+                    report = json.loads((directory / 'case_result.json').read_text())
+                    self.assertEqual(report['screenshotReview']['pendingCount'], 0)
+                    self.assertEqual(execution['results'][1]['evidence'], [directory / 'captures/customer-view.png'])
+                else:
+                    self.assertEqual(execution['results'][1]['evidence'], [])
+                controller.write_json(output / 'source-regression.json', dict(status='failed'))
+                summary = dict(status='failed', stage='finished', runComplete=True,
+                    plannedCases=['scene'], completedCaseCount=1, cases=[dict(id='scene', status='failed')])
+                if error == 'batch-index':
+                    from screenshot_review import write_batch_report
+                    write_batch_report(run, summary)
+                    (directory / 'review/screenshots.json').write_text('truncated', encoding='utf-8')
+                    summary['screenshotReviewError'] = 'Could not refresh the batch index'
+                controller.write_json(run / 'summary.json', summary)
+                controller.compact_regression_report(output)
+                expected = {'captures/customer-view.png', 'screenshots/screenshot_002_expected.png'}
+                if review_error:
+                    expected.add('screenshots/screenshot_002_diff.png')
+                elif error == 'after':
+                    expected.update({'review/checkpoint-0002/expected.png', 'review/checkpoint-0002/actual.png'})
+                else:
+                    expected.clear()
+                self.assertEqual(self.screenshot_files(directory), expected)
+
+    def test_unattributed_batch_review_error_keeps_diagnostics_with_formally_passed_cases(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary).resolve()
+            run = output / 'journals/run/session_fixture'
+            passing = run / 'scene/screenshots/passed.png'
+            passing.parent.mkdir(parents=True)
+            passing.write_bytes(b'passing image')
+            log = output / 'journals/regression.log'
+            log.write_text('diagnostic', encoding='utf-8')
+            controller.write_json(output / 'source-regression.json', dict(status='passed'))
+            controller.write_json(run / 'summary.json', dict(status='passed', stage='finished',
+                runComplete=True, plannedCases=['scene'], completedCaseCount=1,
+                cases=[dict(id='scene', status='passed')], screenshotReviewError='Batch index write failure'))
+            controller.compact_regression_report(output)
+            self.assertFalse(passing.exists())
+            self.assertTrue(log.is_file())
+            self.assertEqual(json.loads((run / 'summary.json').read_text())['screenshotReviewError'],
+                             'Batch index write failure')
+
+    def test_interrupted_or_incomplete_summaries_leave_evidence(self):
+        boundaries = (
+            {'stage': 'serial-recheck'}, {'cancelled': True}, {'runComplete': False},
+            {'cases': []}, {'screenshotReviewPendingCount': 1},
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            output = root / 'report'
+            run = output / 'journals/run/session_fixture'
+            directory = run / 'scene'
+            self.screenshot_attempt(directory, root / 'baseline.png')
+            expected = self.screenshot_files(directory)
+            self.assertTrue(expected)
+            complete = dict(status='failed', stage='finished', runComplete=True,
+                plannedCases=['scene'], completedCaseCount=1, cases=[dict(id='scene', status='failed')])
+            controller.write_json(output / 'source-regression.json', dict(status='failed'))
+            for changes in boundaries:
+                with self.subTest(changes=changes):
+                    controller.write_json(run / 'summary.json', dict(complete, **changes))
+                    controller.compact_regression_report(output)
+                    self.assertEqual(self.screenshot_files(directory), expected)
+            controller.write_json(output / 'source-regression.json', dict(status='failed', interrupted=True))
+            controller.write_json(run / 'summary.json', complete)
+            controller.compact_regression_report(output)
+            self.assertEqual(self.screenshot_files(directory), expected)
 
     def test_different_assets_receipt_cannot_pass(self):
         with tempfile.TemporaryDirectory() as temporary:
