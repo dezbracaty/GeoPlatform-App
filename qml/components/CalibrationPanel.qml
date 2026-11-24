@@ -21,7 +21,7 @@ Item {
     property bool resultSubmitted: false
     property bool formContextValid: true
     property bool updatingForm: false
-    property bool fiberForm: form.mode === 14 || form.mode === 15
+    property bool fiberForm: [14,15,16,17].indexOf(form.mode) >= 0
     property int fiberSampleCount: 0
     property bool fiberCanSlice: false
 
@@ -83,7 +83,8 @@ Item {
     }
     function record() {
         showCompletion=false;resultSubmitted=false;resultInput.text="";resultY.text="";resultNotes.text=""
-        formError="";flowSampleChoice.currentIndex=-1
+        formError="";flowSampleChoice.currentIndex=-1;turnSampleChoice.currentIndex=-1
+        applyToProcess.checked=false
         observed.checked=false;enablePA.checked=false;overrideRetraction.checked=false
         resultPopup.open()
     }
@@ -207,7 +208,7 @@ Item {
                                 objectName:"calibrationField_"+fieldRow.definition.key
                                 Layout.preferredWidth:["speeds","accelerations"].indexOf(fieldRow.definition.key)>=0?220:150
                                 horizontalAlignment:Text.AlignRight
-                                placeholderText:fieldRow.definition.key==="trial_spacing"?qsTr("Auto"):""
+                                placeholderText:["trial_spacing","turn_pitch"].indexOf(fieldRow.definition.key)>=0?qsTr("Auto"):""
                                 text:String(root.form[fieldRow.definition.key]===undefined?"":root.form[fieldRow.definition.key])
                                 onTextEdited:root.setValue(fieldRow.definition.key,text)
                                 onActiveFocusChanged:{
@@ -328,16 +329,19 @@ Item {
         property var result:CalibrationBridge.resultContext
         property bool axes:[10,11].indexOf(result.mode)>=0
         property bool flow:result.mode===5
-        property var sample:flowSampleChoice.currentIndex>=0?CalibrationBridge.flowSamples[flowSampleChoice.currentIndex]||{}:({})
+        readonly property bool turn:!!result.appliesToProcess
+        property var sample:turn
+            ? (turnSampleChoice.currentIndex>=0 ? result.turnSamples[turnSampleChoice.currentIndex]||{} : ({}))
+            : (flowSampleChoice.currentIndex>=0 ? CalibrationBridge.flowSamples[flowSampleChoice.currentIndex]||{} : ({}))
         ScrollView {
             anchors.fill:parent;anchors.margins:20;contentWidth:availableWidth;clip:true
             ColumnLayout {
                 width:parent.width;spacing:16
-                Label {Layout.fillWidth:true;wrapMode:Text.Wrap;text:root.showCompletion?(root.resultWasApplied?"当前材料配置已更新，材料预设尚未保存。":[10,11,12].indexOf(resultPopup.result.mode)>=0?"观察结果已保存。设备参数的应用与保存请在设备设置中处理。":"观察结果已保存，未自动修改切片参数。"):"完成试打印后，观察实物并填写结果。";font:Typography.bodyStrong}
+                Label {Layout.fillWidth:true;wrapMode:Text.Wrap;text:root.showCompletion?(root.resultWasApplied?(resultPopup.turn?"当前工艺配置已更新，工艺预设尚未保存。":"当前材料配置已更新，材料预设尚未保存。"):[10,11,12].indexOf(resultPopup.result.mode)>=0?"观察结果已保存。设备参数的应用与保存请在设备设置中处理。":"观察结果已保存，未自动修改切片参数。"):"完成试打印后，观察实物并填写结果。";font:Typography.bodyStrong}
                 ColumnLayout {
                     visible:!root.showCompletion;Layout.fillWidth:true;spacing:12
                     RowLayout {
-                        visible:!resultPopup.flow
+                        visible:!resultPopup.flow&&!resultPopup.turn
                         Label {text:resultPopup.axes?"X 轴结果":resultPopup.result.key==="filament_flow_ratio"?"最终流量比例":"本次结果";Layout.fillWidth:true}
                         TextField {id:resultInput;objectName:"calibrationResultValue";Layout.preferredWidth:220;placeholderText:"根据实物填写"}
                         Label {text:resultPopup.result.unit||""}
@@ -350,6 +354,18 @@ Item {
                             objectName:"calibrationFlowSampleChoice"
                             Layout.preferredWidth:220
                             model:CalibrationBridge.flowSamples
+                            textRole:"label"
+                            currentIndex:-1
+                        }
+                    }
+                    RowLayout {
+                        visible:resultPopup.turn
+                        Label {text:"选中的试线标记";Layout.fillWidth:true}
+                        ComboBox {
+                            id:turnSampleChoice
+                            objectName:"calibrationTurnSampleChoice"
+                            Layout.preferredWidth:220
+                            model:resultPopup.result.turnSamples || []
                             textRole:"label"
                             currentIndex:-1
                         }
@@ -369,12 +385,13 @@ Item {
                     TextArea {id:resultNotes;objectName:"calibrationResultNotes";Layout.fillWidth:true;Layout.preferredHeight:76;placeholderText:"实物表现、选中的标记或速度区间";wrapMode:TextEdit.Wrap}
                     Label {
                         Layout.fillWidth:true;wrapMode:Text.Wrap
-                        text:resultPopup.result.appliesToMaterial?"应用位置：材料槽 "+(Number(resultPopup.result.slot)+1)+" / "+resultPopup.result.material+"\n当前值："+(resultPopup.result.oldValue==="nil"?"继承打印机（"+resultPopup.result.inheritedRetraction+" mm）":resultPopup.result.oldValue):"本次仅记录观察，不自动写入设备或推断切片参数。"
+                        text:resultPopup.turn?Calib.guidance(resultPopup.result.mode):resultPopup.result.appliesToMaterial?"应用位置：材料槽 "+(Number(resultPopup.result.slot)+1)+" / "+resultPopup.result.material+"\n当前值："+(resultPopup.result.oldValue==="nil"?"继承打印机（"+resultPopup.result.inheritedRetraction+" mm）":resultPopup.result.oldValue):"本次仅记录观察，不自动写入设备或推断切片参数。"
                         font:Typography.caption;color:Theme.res.textFillColorSecondary
                     }
                     CheckBox {id:enablePA;objectName:"calibrationResultEnablePA";visible:resultPopup.result.key==="pressure_advance"&&!resultPopup.result.pressureAdvanceEnabled;text:"同时启用当前材料的压力提前"}
                     CheckBox {id:overrideRetraction;objectName:"calibrationResultOverrideRetraction";visible:resultPopup.result.key==="filament_retraction_length";text:"覆盖当前材料继承的回抽长度"}
                     CheckBox {id:observed;objectName:"calibrationResultObserved";text:"已完成试打印，并检查实物"}
+                    CheckBox {id:applyToProcess;objectName:"calibrationApplyToProcess";visible:resultPopup.turn;text:"同时应用到当前工艺"}
                 }
                 Label {visible:root.showCompletion;Layout.fillWidth:true;wrapMode:Text.Wrap;text:CalibrationBridge.recordPath;font:Typography.caption;color:Theme.res.textFillColorSecondary}
                 Label {visible:!CalibrationBridge.configurationValid&&!root.showCompletion;Layout.fillWidth:true;wrapMode:Text.Wrap;text:"配置已改变，请重新校准后采纳结果。";color:Theme.res.systemFillColorCaution}
@@ -388,11 +405,17 @@ Item {
             Button {
                 visible:!root.showCompletion
                 objectName:"calibrationAcceptResult"
-                text:resultPopup.result.appliesToMaterial?"应用到当前材料":"保存观察记录"
-                enabled:observed.checked&&CalibrationBridge.configurationValid&&!TaskStateNotifier.isBusy&&(!resultPopup.flow||!!resultPopup.sample.selectable)
+                text:resultPopup.turn&&applyToProcess.checked?"保存并应用":resultPopup.result.appliesToMaterial?"应用到当前材料":"保存观察记录"
+                enabled:observed.checked&&CalibrationBridge.configurationValid&&!TaskStateNotifier.isBusy&&(!resultPopup.flow||!!resultPopup.sample.selectable)&&(!resultPopup.turn||!!resultPopup.sample.taskId)
                 highlighted:true
-                onClicked:{root.resultSubmitted=true;CalibrationBridge.acceptResult({observed:observed.checked,value:resultInput.text,valueY:resultY.text,notes:resultNotes.text,enablePressureAdvance:enablePA.checked,overrideRetraction:overrideRetraction.checked,
-                    taskId:resultPopup.sample.taskId,plateIndex:resultPopup.sample.plateIndex,objectIndex:resultPopup.sample.objectIndex})}
+                onClicked:{
+                    root.resultSubmitted=true
+                    const observation={observed:observed.checked,value:resultInput.text,valueY:resultY.text,
+                        notes:resultNotes.text,enablePressureAdvance:enablePA.checked,overrideRetraction:overrideRetraction.checked,
+                        taskId:resultPopup.sample.taskId,plateIndex:resultPopup.sample.plateIndex,objectIndex:resultPopup.sample.objectIndex}
+                    if (resultPopup.turn) observation.applyToProcess=applyToProcess.checked
+                    CalibrationBridge.acceptResult(observation)
+                }
             }
             Button {
                 objectName:"calibrationContinueRefinement"

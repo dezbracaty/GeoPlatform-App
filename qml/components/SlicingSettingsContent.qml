@@ -147,7 +147,7 @@ Item {
         {id:"fiber", title:qsTr("Continuous fiber"), sections:[
             {title:qsTr("Reinforced contours"), keys:["generate_reinforced_perimeters","outer_reinforced_perimeters_counts","fiber_width","fiber_contour_layer_interval"]},
             {title:qsTr("Reinforced infill"), keys:["generate_reinforced_infills","reinforced_infill_pattern","reinforced_infill_density","fiber_infill_angle_sequence","fiber_infill_layer_interval"]},
-            {title:qsTr("Turns and spacing"), keys:["fiber_infill_bend_radius"]}]}
+            {title:qsTr("Turns and spacing"), keys:["fiber_infill_bend_radius","fiber_infill_turn_feed_multiplier"]}]}
     ]
     readonly property var compactPages: compactCatalog.filter(function(page) { return page.id !== "fiber" || fiberAvailable })
     readonly property var compactDefinitions: {

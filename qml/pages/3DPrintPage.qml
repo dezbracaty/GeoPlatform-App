@@ -713,7 +713,7 @@ ContentPage {
             Label { text: CalibrationBridge.resultContext.title || ""; font: Typography.bodyStrong; Layout.fillWidth: true; elide: Text.ElideRight }
             RowLayout {
                 Layout.fillWidth: true
-                visible: CalibrationBridge.resultContext.mode !== 14 && CalibrationBridge.resultContext.mode !== 15
+                visible: !CalibrationBridge.resultContext.singlePlate
                 Label { text: "打印盘" }
                 ComboBox {
                     objectName: "calibrationPlateSelector"
@@ -737,7 +737,7 @@ ContentPage {
             }
             Button { objectName: "calibrationEditParameters"; text: "修改参数…"; Layout.fillWidth: true; enabled: !TaskStateNotifier.isBusy; onClicked: { if(root.calibrationPanel)root.calibrationPanel.edit() } }
             Button { visible: CalibrationBridge.busy; text: "取消任务"; Layout.fillWidth: true; enabled: CalibrationBridge.state !== "cancelling"; onClicked: CalibrationBridge.cancel() }
-            Button { objectName: "calibrationRecordResult"; text: "记录校准结果…"; Layout.fillWidth: true; visible: CalibrationBridge.resultContext.mode !== 14 && CalibrationBridge.resultContext.mode !== 15; enabled: !TaskStateNotifier.isBusy && CalibrationBridge.configurationValid; onClicked: { if(root.calibrationPanel)root.calibrationPanel.record() } }
+            Button { objectName: "calibrationRecordResult"; text: "记录校准结果…"; Layout.fillWidth: true; visible: !!CalibrationBridge.resultContext.canRecord; enabled: !TaskStateNotifier.isBusy && CalibrationBridge.configurationValid; onClicked: { if(root.calibrationPanel)root.calibrationPanel.record() } }
             Button { visible: CalibrationBridge.plates.some(function(p) { return !p.ready }); text: "继续未完成盘"; Layout.fillWidth: true; enabled: !TaskStateNotifier.isBusy && CalibrationBridge.configurationValid; onClicked: CalibrationBridge.retry() }
             Button { visible: CalibrationBridge.details.length > 0; text: "查看准备提示"; flat: true; Layout.fillWidth: true; onClicked: { if(root.calibrationPanel)root.calibrationPanel.showDetails() } }
         }

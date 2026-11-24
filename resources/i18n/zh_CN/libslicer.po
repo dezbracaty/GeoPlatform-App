@@ -16761,6 +16761,12 @@ msgstr "纤维轮廓送料比例"
 msgid "Fiber infill feed ratio"
 msgstr "纤维填充送料比例"
 
+msgid "Fiber turn feed multiplier"
+msgstr "纤维转弯供丝倍率"
+
+msgid "Multiply the commanded fiber feed on actively depositing rounded turns in rectilinear fiber infill. 1.0 uses the straight-line feed."
+msgstr "调整直线纤维填充在圆弧折返的主动供丝量。1.0 表示使用直线供丝量。"
+
 msgid "Fiber contour minimum speed"
 msgstr "纤维轮廓最小速度"
 

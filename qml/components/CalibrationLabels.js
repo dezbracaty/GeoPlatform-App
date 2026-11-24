@@ -6,6 +6,8 @@ function label(source) {
     return ({"Fiber landing parameter":"扫描参数","Fiber landing height":"落点高度",
         "Fiber landing length":"落点长度","Fiber landing speed":"落点速度","Fiber extra prefeed":"额外出丝量",
         "Fiber trial spacing":"试线间距",
+        "Fixed bend radius":"固定转弯半径","Parallel-leg center distance":"折返中心距",
+        "Radius group spacing":"组间距",
         "Base material":"基材","Fiber material":"纤维丝","Fiber calibration material":"耗材",
         "Start temperature":"起始温度","End temperature":"结束温度","Temperature step":"步进",
         "Calibration material":"校准材料","Calibration flow baseline":"本轮流量基准",
@@ -47,6 +49,12 @@ function message(source) {
         "Fiber calibration requires a profile that can switch to fiber without a prime tower":"请使用支持无擦嘴塔切换纤维工具的配置。",
         "Fiber calibration requires a flat build plate":"纤维校准需要平面打印盘。",
         "Fiber calibration needs separate base and fiber tools":"请为基材和纤维选择不同的物理喷头。",
+        "Use descending positive radii and at least two test values":"半径须从大到小，起止值和步长均须为正，且至少包含两档。",
+        "Use ascending positive percentages and at least two test values":"供丝倍率须从小到大，起止值和步长均须为正，且至少包含两档。",
+        "Fiber turn radius must be positive":"固定转弯半径须大于零。",
+        "Fiber turn pitch must fit both the bend diameter and fiber width":"折返中心距须至少等于最大测试半径的两倍，并能容纳纤维线宽。",
+        "Fiber radius group spacing must be non-negative":"组间距须大于或等于零。",
+        "Fiber calibration labels must fit entirely on the foundation":"数字标记超出基板，请缩小测试范围或减少档位。",
         "Fiber calibration requires at least two values and a positive step":"步长须大于零，范围内至少需要两个测试值。",
         "Fiber trial spacing must be positive":"试线间距须大于零。",
         "Invalid fiber calibration value":"请输入有效的非负数值。",
@@ -71,8 +79,10 @@ function message(source) {
         "Supported temperature range: 155-500 C":"支持温度范围为 155–500 ℃，已按原版规则处理输入。"})[source] || source
 }
 function title(mode) {
-    return ({1:"压力提前",2:"压力提前",3:"压力提前",5:"流量比例",6:"温度",7:"最大体积流量",8:"VFA",9:"回抽",10:"输入整形 · 频率",11:"输入整形 · 阻尼",12:"转角",13:"公差测试模型",14:"纤维丝落点",15:"纤维丝温度"})[mode] || "校准"
+    return ({1:"压力提前",2:"压力提前",3:"压力提前",5:"流量比例",6:"温度",7:"最大体积流量",8:"VFA",9:"回抽",10:"输入整形 · 频率",11:"输入整形 · 阻尼",12:"转角",13:"公差测试模型",14:"纤维丝落点",15:"纤维丝温度",16:"最小转弯半径",17:"转弯流量"})[mode] || "校准"
 }
 function guidance(mode) {
+    if (mode === 16) return "每根试线只有一个 180° 半圆。组间距按相邻两档纤维线的外缘计算。"
+    if (mode === 17) return "使用已验证的半径。100% 为基准供丝，倍率只在两段圆弧的主动铺丝区生效。"
     return ({1:"观察实物上挤出均匀的线，读取对应 PA 值。",2:"观察不同速度、加速度组合的转角，读取对应 PA 值。批量列表留空时使用原版默认。",3:"观察塔上转角与挤出变化，读取对应高度的 PA 值。",5:"观察实物顶面，选择线条连接均匀、表面平整的样块。",6:"从较高温度向较低温度测试；材料快捷范围只改测试温度，不切换材料预设。",7:"步长为原版每毫米塔高增加的体积流量系数。",8:"记录细纹明显或较平整的速度区间。",9:"观察回抽变化时的拉丝情况。",10:"观察实物 X/Y 方向振纹。设备参数的应用与保存由设备设置处理。",11:"在固定频率下观察阻尼变化。设备参数的应用与保存由设备设置处理。",12:"根据当前固件与 JD 配置显示转角单位和范围。",13:"载入 Orca 原版公差模型，无扫描参数；只记录配合观察。"})[mode] || ""
 }

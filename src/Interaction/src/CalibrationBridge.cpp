@@ -52,6 +52,8 @@ QString title(libslicer::CalibMode mode) {
     case libslicer::CalibMode::Calib_Tolerance_Model: return QStringLiteral("公差测试");
     case libslicer::CalibMode::Calib_Fiber_Landing: return CalibrationBridge::tr("Fiber landing calibration");
     case libslicer::CalibMode::Calib_Fiber_Temperature: return CalibrationBridge::tr("Fiber temperature calibration");
+    case libslicer::CalibMode::Calib_Fiber_Turn_Radius: return QStringLiteral("纤维丝最小转弯半径");
+    case libslicer::CalibMode::Calib_Fiber_Turn_Flow: return QStringLiteral("纤维丝转弯流量");
     default: return QStringLiteral("校准");
     }
 }
@@ -143,6 +145,12 @@ QString resultKey(libslicer::CalibMode mode) {
     case M::Calib_Retraction_tower: return "filament_retraction_length";
     default: return {};
     }
+}
+QString turnProcessKey(libslicer::CalibMode mode) {
+    using M = libslicer::CalibMode;
+    if (mode == M::Calib_Fiber_Turn_Radius) return QStringLiteral("fiber_infill_bend_radius");
+    if (mode == M::Calib_Fiber_Turn_Flow) return QStringLiteral("fiber_infill_turn_feed_multiplier");
+    return {};
 }
 }
 
@@ -494,14 +502,32 @@ void CalibrationBridge::finishWork() {
 }
 QVariantMap CalibrationBridge::resultContext() const {
     if (!m_session) return {};
-    const auto key=resultKey(m_session->request.mode);
+    const auto mode = m_session->request.mode;
+    const auto key=resultKey(mode);
+    const auto processKey = turnProcessKey(mode);
     const auto& config=m_session->profile.config;
     const auto slot = m_session->request.mode == libslicer::CalibMode::Calib_Flow_Rate ? m_session->request.flow_filament_slot : 0;
     QString oldValue = key.isEmpty() ? QString() : first(config, key.toUtf8().constData());
     if (m_session->request.mode == libslicer::CalibMode::Calib_Flow_Rate)
         oldValue = m_parameters.value("flow_baseline_ratio").toString();
-    return {{"title",title(m_session->request.mode)},{"mode",int(m_session->request.mode)},
+    QVariantList turnSamples;
+    if (!processKey.isEmpty() && !m_running && m_session->task && m_selectedPlate >= 0) {
+        const auto& samples = m_session->task->plates().at(std::size_t(m_selectedPlate)).fiber_samples;
+        const libslicer::FiberCalibrationSample* last = nullptr;
+        for (std::size_t i = 0; i < samples.size(); ++i) {
+            const auto& sample = samples[i];
+            if (!sample.process_value || (last && last->value == sample.value)) continue;
+            turnSamples.append(QVariantMap{{"label", QStringLiteral("%1 %2").arg(
+                QString::number(sample.value), QString::fromStdString(sample.unit))},
+                {"taskId",m_session->id},{"plateIndex",m_selectedPlate},{"objectIndex",qulonglong(i)}});
+            last = &sample;
+        }
+    }
+    return {{"title",title(mode)},{"mode",int(mode)},
         {"key",key},{"oldValue",oldValue},
+        {"singlePlate",libslicer::is_fiber_calibration(mode)},
+        {"canRecord",!libslicer::is_fiber_calibration(mode) || !processKey.isEmpty()},
+        {"appliesToProcess",!processKey.isEmpty()},{"turnSamples",turnSamples},
         {"material",m_session->materialName},
         {"canRefine",m_session->canRefine},
         {"appliesToMaterial",!key.isEmpty()},{"slot",qulonglong(slot)},
@@ -524,21 +550,30 @@ bool CalibrationBridge::acceptResult(const QVariantMap& observation) {
     const auto active=GPlatform::SlicingBackend::instance().activeProfileSnapshot();
     if (!active || active->revision!=m_session->profile.revision) { invalidate(); return fail(QStringLiteral("材料或打印配置已经改变，请重新校准。")); }
     const auto key=resultKey(m_session->request.mode);
+    const auto processKey=turnProcessKey(m_session->request.mode);
     const auto input=observation.value("value").toString().trimmed();
     const bool flow = m_session->request.mode == libslicer::CalibMode::Calib_Flow_Rate;
     libslicer::CalibrationFlowResult flowResult;
     const libslicer::FlowCalibrationSample* flowSample = nullptr;
+    const libslicer::FiberCalibrationSample* turnSample = nullptr;
     int sampleIndex = -1;
-    if (flow) {
+    if (flow || !processKey.isEmpty()) {
         bool indexOk = false, plateOk = false;
         sampleIndex = observation.value("objectIndex").toInt(&indexOk);
         const int plateIndex = observation.value("plateIndex").toInt(&plateOk);
         if (observation.value("taskId").toString() != m_session->id || !indexOk || !plateOk ||
             plateIndex != m_selectedPlate || sampleIndex < 0)
             return fail(QStringLiteral("请选择当前打印盘的校准样块。"));
-        flowResult = m_session->task->flow_result(std::size_t(plateIndex), std::size_t(sampleIndex));
-        if (!flowResult) return fail(diagnostics(flowResult.diagnostics));
-        flowSample = &*m_session->task->plates()[plateIndex].objects[sampleIndex].flow_sample;
+        if (flow) {
+            flowResult = m_session->task->flow_result(std::size_t(plateIndex), std::size_t(sampleIndex));
+            if (!flowResult) return fail(diagnostics(flowResult.diagnostics));
+            flowSample = &*m_session->task->plates()[plateIndex].objects[sampleIndex].flow_sample;
+        } else {
+            const auto& samples = m_session->task->plates()[plateIndex].fiber_samples;
+            if (std::size_t(sampleIndex) >= samples.size() || !samples[sampleIndex].process_value)
+                return fail(QStringLiteral("请选择本轮打印盘上的试线标记。"));
+            turnSample = &samples[sampleIndex];
+        }
     } else if (input.isEmpty()) return fail(QStringLiteral("请填写观察结果。"));
     if (m_session->request.mode==libslicer::CalibMode::Calib_Input_shaping_freq ||
         m_session->request.mode==libslicer::CalibMode::Calib_Input_shaping_damp) {
@@ -549,6 +584,8 @@ bool CalibrationBridge::acceptResult(const QVariantMap& observation) {
         }
     }
     std::vector<std::pair<std::string,std::string>> patch = flowResult.config_patch;
+    if (turnSample && observation.value("applyToProcess").toBool())
+        patch.emplace_back(processKey.toStdString(), QString::number(*turnSample->process_value, 'g', 15).toStdString());
     if (!key.isEmpty() && !flow) {
         bool ok=false; const double number=input.toDouble(&ok);
         if (!ok || !std::isfinite(number) || number<0 ||
@@ -572,7 +609,8 @@ bool CalibrationBridge::acceptResult(const QVariantMap& observation) {
     const auto directory=QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)+"/calibration";
     if (!QDir().mkpath(directory)) return fail(QStringLiteral("无法创建校准记录目录。"));
     const auto path=directory+"/"+m_session->id+".json";
-    const auto slot = flow ? m_session->request.flow_filament_slot : 0;
+    const auto slot = turnSample ? m_session->request.fiber->fiber_filament_slot :
+        flow ? m_session->request.flow_filament_slot : 0;
     QJsonObject record{{"version",2},{"task",m_session->id},{"mode",int(m_session->request.mode)},
         {"applicationPid",QCoreApplication::applicationPid()},
         {"plate",m_selectedPlate},{"parameters",QJsonObject::fromVariantMap(m_parameters)},
@@ -586,6 +624,13 @@ bool CalibrationBridge::acceptResult(const QVariantMap& observation) {
         record.insert("baselineFlowRatio", flowSample->baseline_flow_ratio); record.insert("calibratedFlowRatio", flowSample->calibrated_flow_ratio);
         record.insert("logicalExtruder", qint64(flowResult.logical_extruder_index));
         record.insert("physicalTool", qint64(flowResult.physical_tool_index)); record.insert("nozzleDiameterMm", flowResult.nozzle_diameter_mm);
+    }
+    if (turnSample) {
+        record.insert("sampleIndex", sampleIndex);
+        record.insert("sampleValue", turnSample->value);
+        record.insert("sampleUnit", QString::fromStdString(turnSample->unit));
+        record.insert("processKey", processKey);
+        record.insert("processValue", *turnSample->process_value);
     }
     const auto write=[&](){QSaveFile f(path);f.setDirectWriteFallback(false);if(!f.open(QIODevice::WriteOnly))return false;const auto data=QJsonDocument(record).toJson();return f.write(data)==data.size() && f.commit();};
     if(!write()) return fail(QStringLiteral("校准观察记录保存失败，未修改配置。"));
