@@ -38,16 +38,17 @@ class WindowsRegressionChecks(unittest.TestCase):
             json.dumps(dict(formatVersion=2, entries=[])), encoding='utf-8')
         (scene / 'metadata.json').write_text(json.dumps(dict(baselineReview=dict(
             platform='Windows amd64', status='approved'))), encoding='utf-8')
-        self.summary = dict(status='passed', runComplete=True, selectionScope='all',
+        self.summary = dict(status='passed', runComplete=True, selectionScope='all', parallelism=1,
                             plannedCases=['scene'], completedCaseCount=1, cases=[dict(id='scene', status='passed')])
         self.window = dict(devicePixelRatio=1, logicalSize=[1382, 954])
         self.size = (1382, 954)
         self.exit = 0
 
-    def execute(self, source, executable, output, env):
+    def execute(self, source, executable, output, env, *, parallelism):
         self.assertEqual(source, self.source)
         self.assertEqual(executable, self.app)
         self.assertNotIn('QT_QPA_PLATFORM', env)
+        self.assertEqual(parallelism, 1)
         run = self.output / 'run'
         case = run / 'scene'
         case.mkdir(parents=True)
@@ -76,6 +77,11 @@ class WindowsRegressionChecks(unittest.TestCase):
 
     def test_incomplete_run_cannot_pass_the_ci_gate(self):
         self.summary['runComplete'] = False
+        with self.assertRaisesRegex(RuntimeError, 'did not pass'):
+            self.run_regression()
+
+    def test_parallel_run_cannot_pass_the_serial_ci_gate(self):
+        self.summary['parallelism'] = 3
         with self.assertRaisesRegex(RuntimeError, 'did not pass'):
             self.run_regression()
 
