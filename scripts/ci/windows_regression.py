@@ -66,9 +66,11 @@ def regression(source, executable, output, env, test_assets_sha):
     native = dict(env)
     native.pop('QT_QPA_PLATFORM', None)
     native['PYTHONIOENCODING'] = 'utf-8'
-    # The existing Server owns scheduling, display policy and serial rechecks.
-    summary, directory = server_regression(source, executable, output, native)
+    # One Windows renderer at a time avoids competing for the interactive
+    # desktop and starving an owned process while its presentation shuts down.
+    summary, directory = server_regression(source, executable, output, native, parallelism=1)
     if (summary.get('status') != 'passed' or not summary.get('runComplete')
+            or summary.get('parallelism') != 1
             or summary.get('selectionScope') != 'all' or summary.get('candidateCollection') or summary.get('cleanupError')):
         raise RuntimeError('Windows regression did not pass the complete Server task')
     names = [scene.parent.name for scene in scenes]

@@ -53,7 +53,7 @@ def prepare_assets(source, selected_sha=None):
     return selected_sha
 
 
-def server_regression(source, executable, output, env, *, timeout=14400):
+def server_regression(source, executable, output, env, *, timeout=14400, parallelism=None):
     """Own a normal Server process, submit one all-ID task, retain both attempt stages."""
     output = Path(output)
     tools = Path(source) / 'tools/journal'
@@ -74,6 +74,8 @@ def server_regression(source, executable, output, env, *, timeout=14400):
                '--application', executable, '--app-root', source, '--assets', Path(source) / 'tests/TestAssets',
                '--output-root', output / 'run', '--exports', output / 'exports',
                '--port', '0', '--listen', '127.0.0.1', '--token', code, '--no-browser']
+    if parallelism is not None:
+        command.extend(['--parallelism', str(parallelism)])
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),
                                         urllib.request.ProxyHandler({}))
     base = None

@@ -65,6 +65,8 @@ source 模式禁止填写 SDK refs，按本轮 Root/App 候选生产 SDK 文件�
 
 完整执行：冻结版本 → 准备本平台 TestAssets → 宿主原生 CTest/原生切片检查 → 生成或获取 SDK → 构建 SDK 消费 App → 必需 SDK 检查及实际部署/资源检查 → 启动 Journal Web Server → 使用该 Server 的 /api/run 创建全量任务 → 严格验收 → 最多两轮串行复查，第二轮只复查仍失败项 → 汇总。
 
+Windows 正式回归的 Journal Server 每次运行一个场景，避免同一交互桌面上的多个渲染器在应用退出时争抢资源。计划仍覆盖全部活动场景，保留原有应用退出预算及串行复查。
+
 两平台的 SDK 生产和消费构建将编译明细写入 Runner 本机日志，Actions 记录阶段起止并在失败时显示日志尾部。Journal 在阶段或状态变化时输出汇总，同一阶段每 60 秒输出一次进度。场景及步骤明细保存在 Runner 本机，附件在任务结束时一次上传回归总报告和 Journal 摘要。上传失败在该步骤留痕，平台验收仍按实际回归结果判定。
 
 宿主回归显式开启 `GPLATFORM_BUILD_ORCA_NATIVE_PROBES`，按正式 preset 构建 `--target all` 后从同一构建目录执行一次 CTest。CTest 执行支撑重叠、微填充及 `original48`、`extended26`。切片探针和运行库链接同一份 Orca 核心，C++ 比较器按编译目标选择基线。清单和 JUnit 必须证明四项各执行一次并通过。逐例 G-code 差异保留在平台报告的 `orca-gcode/` 目录。普通 preset 和 SDK 生产不启用探针目标。

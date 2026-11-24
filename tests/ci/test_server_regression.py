@@ -25,6 +25,7 @@ p=argparse.ArgumentParser()
 for name in ('application','app-root','assets','output-root','exports','listen','token'):
     p.add_argument('--'+name)
 p.add_argument('--port',type=int);p.add_argument('--no-browser',action='store_true')
+p.add_argument('--parallelism',type=int)
 a=p.parse_args()
 root=Path(a.output_root);mode=Path(a.app_root,'mode').read_text();root.mkdir()
 class Workbench:
@@ -36,6 +37,7 @@ class Workbench:
         summary={'status':'passed','runComplete':True,'selectionScope':'all',
                  'plannedCases':data['cases'],'completedCaseCount':2,
                  'cases':[{'id':x,'status':'passed'} for x in data['cases']]}
+        if a.parallelism is not None:summary['parallelism']=a.parallelism
         if mode=='candidate':summary['candidateCollection']=True
         if mode=='partial':summary['cases'].pop()
         if mode=='cleanup':summary['cleanupError']='still alive'
@@ -78,9 +80,10 @@ class ServerRegressionTests(unittest.TestCase):
             (path/'Journal.json').write_text('{}')
         self.output=self.root/'evidence';self.output.mkdir()
 
-    def run_fixture(self,mode,timeout=10):
+    def run_fixture(self,mode,timeout=10,parallelism=None):
         (self.source/'mode').write_text(mode)
-        return server_regression(self.source,self.root/'unused-app',self.output,dict(os.environ),timeout=timeout)
+        return server_regression(self.source,self.root/'unused-app',self.output,dict(os.environ),
+                                 timeout=timeout,parallelism=parallelism)
 
     def test_login_all_inventory_waits_for_terminal_task_and_closes_owned_server(self):
         summary,directory=self.run_fixture('passed')
@@ -89,6 +92,11 @@ class ServerRegressionTests(unittest.TestCase):
         state=json.loads((self.output/'server-state.json').read_text())
         self.assertGreaterEqual(state['reads'],2)
         self.assertTrue((self.output/'run/closed').is_file())
+
+    def test_forward_explicit_serial_parallelism_to_owned_server(self):
+        summary, _ = self.run_fixture('passed', parallelism=1)
+        self.assertEqual(summary['parallelism'], 1)
+        self.assertEqual(summary['completedCaseCount'], 2)
 
     def test_progress_prints_stage_changes_and_terminal_counts_without_each_case(self):
         log = io.StringIO()
