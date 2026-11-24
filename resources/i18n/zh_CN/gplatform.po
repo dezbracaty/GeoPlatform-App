@@ -4529,3 +4529,138 @@ msgstr "请为此耗材槽输入一个有效值"
 
 msgid "This filament setting requires an explicit value"
 msgstr "此耗材参数需要明确设定一个值"
+
+msgid "Alt+I to open or collapse"
+msgstr "Alt+I 打开或收起"
+
+msgid "Clear conversation?"
+msgstr "清空对话？"
+
+msgid "This removes the current chat history."
+msgstr "这会清除当前聊天记录。"
+
+msgid "Keep"
+msgstr "保留"
+
+msgid "How can I help?"
+msgstr "有什么可以帮你？"
+
+msgid "Ask about your model, review slicing settings, or request an action."
+msgstr "询问当前模型、查看切片参数，或请 AI 执行操作。"
+
+msgid "Review current slicing settings"
+msgstr "查看当前切片配置"
+
+msgid "Find and import a model"
+msgstr "查找并导入模型"
+
+msgid "What should I check before slicing?"
+msgstr "切片前需要检查哪些项目？"
+
+msgid "Generating reply…"
+msgstr "正在生成回复…"
+
+msgid "Preparing reply…"
+msgstr "正在准备回复…"
+
+msgid "Stopped"
+msgstr "已停止"
+
+msgid "Stopped."
+msgstr "已停止。"
+
+msgid "Retry stopped request"
+msgstr "重试已停止的请求"
+
+msgid "↓ Back to latest"
+msgstr "↓ 回到最新"
+
+msgid "Ask about models, slicing settings, or request an action…"
+msgstr "问问当前模型、切片参数，或请 AI 执行操作…"
+
+msgid "Sign in to write a message"
+msgstr "登录后可输入消息"
+
+msgid "Enter to send · Shift+Enter for a new line"
+msgstr "Enter 发送 · Shift+Enter 换行"
+
+msgid "Sign in to start chatting"
+msgstr "登录后开始聊天"
+
+msgid "Connect your account to ask about slicing settings or perform actions in the workspace."
+msgstr "连接账号后，可以询问切片设置或在工作区执行操作。"
+
+msgid "Request failed"
+msgstr "请求失败"
+
+msgid "No error details were provided."
+msgstr "未提供错误详情。"
+
+msgid "This turn's operations"
+msgstr "本轮操作"
+
+msgid "Some operations failed"
+msgstr "部分操作失败"
+
+msgid "Waiting for tool results…"
+msgstr "等待工具返回…"
+
+msgid "Tool results received"
+msgstr "已收到工具结果"
+
+msgid "Tool result received"
+msgstr "已收到工具结果"
+
+msgid "Action details"
+msgstr "动作详情"
+
+msgid "Unassigned operation"
+msgstr "未归属的操作"
+
+msgid "No tool result"
+msgstr "未收到工具结果"
+
+msgid "Review available operations"
+msgstr "查看可用操作"
+
+msgid "Review operation instructions"
+msgstr "查看操作说明"
+
+msgid "Review instructions: %1"
+msgstr "查看操作说明：%1"
+
+msgid "Run workspace operation"
+msgstr "执行工作区操作"
+
+msgid "Query workspace data"
+msgstr "查询工作区数据"
+
+msgid "Update workspace data"
+msgstr "更新工作区数据"
+
+msgid "Operation result"
+msgstr "操作结果"
+
+msgid "Use workspace tool"
+msgstr "使用工作区工具"
+
+msgid "Waiting for result"
+msgstr "等待结果"
+
+msgid "No result received"
+msgstr "未收到结果"
+
+msgid "%1 completed"
+msgstr "%1 项已完成"
+
+msgid "%1 / %2 completed"
+msgstr "%1 / %2 已完成"
+
+msgid "Hide operation details"
+msgstr "收起操作详情"
+
+msgid "Show operation details"
+msgstr "查看操作详情"
+
+msgid "Waiting for operation results…"
+msgstr "正在等待操作结果…"

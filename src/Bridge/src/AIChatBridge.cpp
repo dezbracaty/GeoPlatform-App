@@ -1,4 +1,5 @@
 #include "AIChatBridge.hpp"
+#include "AIChatTextLayout.hpp"
 #include "BridgeRegistration.hpp"
 #include "AI/AgentBackendCatalog.hpp"
 #include "Foundation/Log.h"
@@ -256,6 +257,8 @@ std::shared_ptr<trans::TransDB> extractNestedTransDb(const std::any& value) {
     }
     return {};
 }
+
+REGISTER_BRIDGE_QML_TYPE(AIChatTextLayout, "AIChatTextLayout")
 
 REGISTER_BRIDGE_QML_SINGLETON_CUSTOM(
     AIChatBridge, "AIChatBridge", &AIChatBridge::create)
@@ -1003,14 +1006,15 @@ AIChatBridge::AIChatBridge(QObject* parent)
                     QJsonDocument::fromVariant(finalOutcome).toJson(QJsonDocument::Compact));
                 const bool success = finalOutcome.value("success").toBool();
                 upsertToolTraceMessage(callId,
+                                       pending.value("turnId").toString(),
                                        functionName,
                                        success ? "success" : "failed",
                                        {},
                                        resultText.left(5000),
-                                       finalOutcome.value("error").toString());
+                                       finalOutcome.value("error").toString(),
+                                       finalOutcome);
                 submitToolResult(callId, finalOutcome);
             });
-    appendMessage("assistant", "AI Assistant ready. You can start chatting now.");
 }
 
 AIChatBridge* AIChatBridge::instance() {
@@ -1062,7 +1066,6 @@ void AIChatBridge::clearMessages() {
     m_activeTurnId.clear();
     m_latestRetryableTurnId.clear();
     m_latestCompletedTurnId.clear();
-    appendMessage("assistant", "Chat history cleared.");
     emit messagesChanged();
 }
 
@@ -1079,6 +1082,7 @@ void AIChatBridge::sendMessage(const QString& text) {
 
     const QString turnId = beginTurn(trimmed);
     appendMessage("user", trimmed, QVariantMap{{"turnId", turnId}, {"turnStatus", "running"}});
+    appendMessage("assistant", {}, QVariantMap{{"turnId", turnId}, {"turnStatus", "running"}});
     m_lastActionExecution.clear();
 
     if (!m_agentBackend) {
@@ -1184,32 +1188,96 @@ bool AIChatBridge::retryTurn(const QString& turnId) {
         }
     }
 
-    targetTurn.insert("status", "retried");
-    targetTurn.insert("retryable", false);
-    m_turnLedger.insert(targetId, targetTurn);
-    if (m_latestRetryableTurnId == targetId) {
-        m_latestRetryableTurnId.clear();
-    }
-
-    appendMessage("assistant",
-                  QString("Retry: rolled back %1 undo step(s), resending previous request.")
-                      .arg(undoneCount),
-                  QVariantMap{{"retriedFromTurnId", targetId},
-                              {"rollbackUndone", undoneCount},
-                              {"rollbackMode", "transaction_ids"},
-                              {"turnTransactionCount", static_cast<qulonglong>(turnTxIds.size())}});
-
     const QString userText = targetTurn.value("userText").toString().trimmed();
     if (userText.isEmpty()) {
         appendMessage("assistant", "Retry failed: original user message is empty.");
         return false;
     }
 
-    sendMessage(userText);
-    if (!m_activeTurnId.isEmpty() && m_turnLedger.contains(m_activeTurnId)) {
-        QVariantMap newTurn = m_turnLedger.value(m_activeTurnId);
+    int userIndex = -1;
+    int assistantIndex = -1;
+    int latestUserIndex = -1;
+    for (int i = 0; i < m_messages.size(); ++i) {
+        const auto message = m_messages.at(i).toMap();
+        const auto role = message.value("role").toString();
+        if (role == "user")
+            latestUserIndex = i;
+        if (message.value("turnId").toString() == targetId) {
+            if (role == "user")
+                userIndex = i;
+            else if (role == "assistant")
+                assistantIndex = i;
+        }
+    }
+    bool hasToolTrace = false;
+    for (int i = userIndex + 1; userIndex >= 0 && i < m_messages.size(); ++i) {
+        if (m_messages.at(i).toMap().value("role").toString() == "tool_trace") {
+            hasToolTrace = true;
+            break;
+        }
+    }
+    // Only replace the latest failed, side-effect-free exchange. Historical and
+    // tool/action turns retain the existing checked rollback/resend path above.
+    const bool replaceLatest = targetId == m_latestCompletedTurnId
+        && targetTurn.value("status").toString().startsWith("failed")
+        && turnTxIds.empty() && targetTurn.value("actionExecution").toMap().isEmpty()
+        && !hasToolTrace && userIndex >= 0 && userIndex == latestUserIndex
+        && assistantIndex > userIndex;
+
+    targetTurn.insert("status", "retried");
+    targetTurn.insert("retryable", false);
+    m_turnLedger.insert(targetId, targetTurn);
+    if (m_latestRetryableTurnId == targetId)
+        m_latestRetryableTurnId.clear();
+    for (auto& value : m_messages) {
+        auto message = value.toMap();
+        if (message.value("turnId").toString() == targetId) {
+            message.insert("retryable", false);
+            message.insert("turnStatus", "retried");
+            value = message;
+        }
+    }
+
+    QString newTurnId;
+    if (replaceLatest) {
+        newTurnId = beginTurn(userText);
+        auto user = m_messages.at(userIndex).toMap();
+        user.insert("turnId", newTurnId);
+        user.insert("turnStatus", "running");
+        user.insert("retriedFromTurnId", targetId);
+        m_messages[userIndex] = user;
+        m_messages[assistantIndex] = QVariantMap{
+            {"role", "assistant"}, {"text", QString()},
+            {"time", QDateTime::currentDateTime().toString("HH:mm:ss")},
+            {"turnId", newTurnId}, {"turnStatus", "running"},
+            {"retryable", false}, {"retriedFromTurnId", targetId}};
+        auto newTurn = m_turnLedger.value(newTurnId);
         newTurn.insert("retriedFromTurnId", targetId);
-        m_turnLedger.insert(m_activeTurnId, newTurn);
+        m_turnLedger.insert(newTurnId, newTurn);
+        targetTurn.insert("retriedAsTurnId", newTurnId);
+        m_turnLedger.insert(targetId, targetTurn);
+        m_lastActionExecution.clear();
+        emit messagesChanged();
+        setStreaming(true);
+        requestModelReply();
+    } else {
+        emit messagesChanged();
+        appendMessage("assistant",
+                      QString("Retry: rolled back %1 undo step(s), resending previous request.")
+                          .arg(undoneCount),
+                      QVariantMap{{"retriedFromTurnId", targetId},
+                                  {"rollbackUndone", undoneCount},
+                                  {"rollbackMode", "transaction_ids"},
+                                  {"turnTransactionCount", static_cast<qulonglong>(turnTxIds.size())}});
+        sendMessage(userText);
+        newTurnId = m_activeTurnId.isEmpty() ? m_latestCompletedTurnId : m_activeTurnId;
+        if (newTurnId != targetId && m_turnLedger.contains(newTurnId)) {
+            auto newTurn = m_turnLedger.value(newTurnId);
+            newTurn.insert("retriedFromTurnId", targetId);
+            m_turnLedger.insert(newTurnId, newTurn);
+            targetTurn.insert("retriedAsTurnId", newTurnId);
+            m_turnLedger.insert(targetId, targetTurn);
+        }
     }
 
     return true;
@@ -1229,7 +1297,14 @@ bool AIChatBridge::cancelStreamingRequest(const QString& reason) {
     m_pendingAgentInvocations.clear();
     setStreaming(false);
     if (!m_activeTurnId.isEmpty()) {
-        finalizeActiveTurn("failed_protocol", "request canceled", m_lastActionExecution);
+        QString partialText;
+        for (const auto& value : m_messages) {
+            const auto message = value.toMap();
+            if (message.value("role") == "assistant" && message.value("turnId") == m_activeTurnId)
+                partialText = message.value("text").toString();
+        }
+        const auto extra = finalizeActiveTurn("failed_protocol", "request canceled", m_lastActionExecution);
+        appendMessage("assistant", partialText.isEmpty() ? tr("Stopped.") : partialText, extra);
     }
 
     if (!reason.trimmed().isEmpty()) {
@@ -1247,16 +1322,30 @@ void AIChatBridge::appendMessage(const QString& role,
     message.insert("role", role);
     message.insert("text", text);
     message.insert("time", QDateTime::currentDateTime().toString("HH:mm:ss"));
+    // Keep one assistant response per turn, from waiting through streaming to completion.
+    const QString turnId = extra.value("turnId").toString();
+    if (role == "assistant" && !turnId.isEmpty()) {
+        for (int i = 0; i < m_messages.size(); ++i) {
+            const auto previous = m_messages.at(i).toMap();
+            if (previous.value("role") == role && previous.value("turnId") == turnId) {
+                m_messages[i] = message;
+                emit messagesChanged();
+                return;
+            }
+        }
+    }
     m_messages.push_back(message);
     emit messagesChanged();
 }
 
 void AIChatBridge::upsertToolTraceMessage(const QString& traceId,
+                                          const QString& turnId,
                                           const QString& toolName,
                                           const QString& status,
                                           const QString& arguments,
                                           const QString& resultPayload,
-                                          const QString& errorMessage) {
+                                          const QString& errorMessage,
+                                          const QVariantMap& outcome) {
     const bool running = status == "running";
     const bool failed = status == "failed";
     const QString statusText = running ? "running" : (failed ? "failed" : "success");
@@ -1264,15 +1353,29 @@ void AIChatBridge::upsertToolTraceMessage(const QString& traceId,
                                     ? QString("Tool %1 is running").arg(toolName)
                                     : QString("Tool %1 finished: %2").arg(toolName, statusText);
 
+    // Keep the native receipt and descriptor label before the diagnostic JSON
+    // display cap. Pending/nested completion must never depend on parsing a
+    // potentially truncated string, and the full receipt stays on its own step.
+    QVariantMap presentation;
+    if (!outcome.isEmpty() && (toolName == "action_invoke" || toolName == "db_patch"))
+        presentation.insert("receipt", outcome);
+    if (toolName == "action_describe") {
+        presentation.insert("actionCode", outcome.value("actionCode"));
+        const QString title = outcome.value("descriptor").toMap().value("title").toString();
+        if (!title.isEmpty()) presentation.insert("actionTitle", title);
+    }
+
     for (int i = m_messages.size() - 1; i >= 0; --i) {
         QVariantMap message = m_messages.at(i).toMap();
         if (message.value("role").toString() != "tool_trace") {
             continue;
         }
-        if (message.value("traceId").toString() != traceId) {
+        if (message.value("traceId").toString() != traceId || message.value("turnId").toString() != turnId) {
             continue;
         }
 
+        for (auto it = presentation.cbegin(); it != presentation.cend(); ++it)
+            message.insert(it.key(), it.value());
         message.insert("text", summaryText);
         message.insert("toolName", toolName);
         message.insert("traceId", traceId);
@@ -1294,8 +1397,9 @@ void AIChatBridge::upsertToolTraceMessage(const QString& traceId,
         return;
     }
 
-    QVariantMap extra;
+    QVariantMap extra = presentation;
     extra.insert("traceId", traceId);
+    extra.insert("turnId", turnId);
     extra.insert("toolName", toolName);
     extra.insert("status", status);
     extra.insert("arguments", arguments);
@@ -1398,6 +1502,17 @@ void AIChatBridge::onAgentTextDelta(const GPlatform::AI::AgentTextDelta& delta) 
     if (!m_agentTurnInFlight || turnId != m_activeTurnId) {
         LOG_WARN("[AI Agent] ignored text delta for inactive turnId={}",
                  turnId.toStdString());
+        return;
+    }
+    for (int i = 0; i < m_messages.size(); ++i) {
+        auto message = m_messages.at(i).toMap();
+        if (message.value("role") == "assistant" && message.value("turnId") == turnId) {
+            message.insert("text", message.value("text").toString()
+                           + QString::fromUtf8(delta.text.data(), static_cast<qsizetype>(delta.text.size())));
+            m_messages[i] = message;
+            emit messagesChanged();
+            break;
+        }
     }
 }
 
@@ -1422,6 +1537,7 @@ void AIChatBridge::onAgentToolCall(const GPlatform::AI::AgentToolCall& call) {
     }
 
     upsertToolTraceMessage(callId,
+                           turnId,
                            functionName,
                            "running",
                            argumentsText.left(3000),
@@ -1461,11 +1577,13 @@ void AIChatBridge::onAgentToolCall(const GPlatform::AI::AgentToolCall& call) {
     const QString resultText = QString::fromUtf8(
         QJsonDocument::fromVariant(toolResult).toJson(QJsonDocument::Compact));
     upsertToolTraceMessage(callId,
+                           turnId,
                            functionName,
                            toolResult.value("success").toBool() ? "success" : "failed",
                            {},
                            resultText.left(5000),
-                           toolResult.value("error").toString());
+                           toolResult.value("error").toString(),
+                           toolResult);
     submitToolResult(callId, toolResult);
 }
 
@@ -1502,6 +1620,9 @@ void AIChatBridge::onAgentTurnFinished(const GPlatform::AI::AgentTurnResult& res
         }
     }
 
+    if (status.startsWith("failed") && finalError.isEmpty())
+        finalError = tr("No error details were provided.");
+
     const QVariantMap turnExtra =
         finalizeActiveTurn(status, finalError, m_agentLatestActionExecution);
     for (auto it = turnExtra.constBegin(); it != turnExtra.constEnd(); ++it) {
@@ -1510,12 +1631,9 @@ void AIChatBridge::onAgentTurnFinished(const GPlatform::AI::AgentTurnResult& res
 
     const QString text = QString::fromUtf8(
         result.text.data(), static_cast<qsizetype>(result.text.size())).trimmed();
-    const QString finalText = result.success
-                                  ? (text.isEmpty() ? QStringLiteral("Done.") : text)
-                                  : QStringLiteral("AI request failed: %1")
-                                        .arg(finalError.isEmpty()
-                                                 ? QStringLiteral("unknown Agent error")
-                                                 : finalError);
+    // Errors are projected separately as turnError; keep any generated reply text.
+    const QString finalText = text.isEmpty() && status == "success"
+                                  ? QStringLiteral("Done.") : text;
     appendMessage("assistant", finalText, extra);
     m_agentActionTrace.clear();
     m_agentLatestActionExecution.clear();

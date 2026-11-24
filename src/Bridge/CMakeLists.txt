@@ -33,6 +33,7 @@ set(BRIDGE_HEADERS
     include/GCodeLineModel.hpp
     include/AIAccountBridge.hpp
     include/AIChatBridge.hpp
+    include/AIChatTextLayout.hpp
     include/LocalModelLibraryBridge.hpp
     include/BridgeBase.hpp
     include/ObservableBridgeBase.hpp

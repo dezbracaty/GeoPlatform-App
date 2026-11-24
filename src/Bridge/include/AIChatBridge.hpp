@@ -77,11 +77,13 @@ private:
                        const QString& text,
                        const QVariantMap& extra = QVariantMap{});
     void upsertToolTraceMessage(const QString& traceId,
+                                const QString& turnId,
                                 const QString& toolName,
                                 const QString& status,
                                 const QString& arguments,
                                 const QString& resultPayload,
-                                const QString& errorMessage);
+                                const QString& errorMessage,
+                                const QVariantMap& outcome = {});
     void setStreaming(bool streaming);
     void requestModelReply();
     QVariantMap loadAiRuntimeConfigFile() const;
