@@ -321,7 +321,7 @@ sys.meta_path.insert(0, NoOptionalPackages())
                 attempts.append(dict(stage=stage, status='failed', result=
                     (directory / 'case_result.json').relative_to(run).as_posix()))
             business_failure = run / 'serial-recheck-2/broken/case_result.json'
-            controller.write_json(business_failure, dict(json.loads(business_failure.read_text()),
+            controller.write_json(business_failure, dict(json.loads(business_failure.read_text(encoding='utf-8')),
                 error='Export did not pass its business check'))
             sibling = run.parent / 'session_unrelated/independent.png'
             sibling.parent.mkdir()
@@ -339,7 +339,7 @@ sys.meta_path.insert(0, NoOptionalPackages())
             except (NotImplementedError, OSError):
                 redirected = None  # Symlink creation can require Windows privileges.
             execution_path = run / 'broken/execution_result.json'
-            execution_report = json.loads(execution_path.read_text())
+            execution_report = json.loads(execution_path.read_text(encoding='utf-8'))
             for index, path in enumerate((baseline, '../user.png', redirected), 10):
                 if path is not None:
                     evidence = path.relative_to(run / 'broken').as_posix() if path == redirected else str(path)
@@ -391,11 +391,11 @@ sys.meta_path.insert(0, NoOptionalPackages())
                     capture_error=None if review_error else error, review_error=review_error)
                 if review_error:
                     self.assertEqual(execution['results'][1]['status'], 'passed')
-                    report = json.loads((directory / 'review/screenshots.json').read_text())
+                    report = json.loads((directory / 'review/screenshots.json').read_text(encoding='utf-8'))
                     self.assertEqual(report['checkpoints'][1]['comparisonStatus'], 'capture_error')
                     self.assertEqual(report['checkpoints'][0]['comparisonStatus'], 'identical')
                 elif error == 'after':
-                    report = json.loads((directory / 'case_result.json').read_text())
+                    report = json.loads((directory / 'case_result.json').read_text(encoding='utf-8'))
                     self.assertEqual(report['screenshotReview']['pendingCount'], 0)
                     self.assertEqual(execution['results'][1]['evidence'], [directory / 'captures/customer-view.png'])
                 else:
@@ -435,7 +435,7 @@ sys.meta_path.insert(0, NoOptionalPackages())
             controller.compact_regression_report(output)
             self.assertFalse(passing.exists())
             self.assertTrue(log.is_file())
-            self.assertEqual(json.loads((run / 'summary.json').read_text())['screenshotReviewError'],
+            self.assertEqual(json.loads((run / 'summary.json').read_text(encoding='utf-8'))['screenshotReviewError'],
                              'Batch index write failure')
 
     def test_interrupted_or_incomplete_summaries_leave_evidence(self):
