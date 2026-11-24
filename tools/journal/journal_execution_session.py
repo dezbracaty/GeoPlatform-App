@@ -134,12 +134,56 @@ def _windows_priority_class(process, value=None):
     return value
 
 
+def _request_windows_window_close(process):
+    """Ask the owned application's single visible main window to quiesce."""
+    import ctypes
+    from ctypes import wintypes
+
+    user = ctypes.WinDLL("user32", use_last_error=True)
+    callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    user.EnumWindows.argtypes = [callback_type, wintypes.LPARAM]
+    user.EnumWindows.restype = wintypes.BOOL
+    user.IsWindowVisible.argtypes = [wintypes.HWND]
+    user.IsWindowVisible.restype = wintypes.BOOL
+    user.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+    user.GetWindow.restype = wintypes.HWND
+    user.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user.GetWindowThreadProcessId.restype = wintypes.DWORD
+    user.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    user.PostMessageW.restype = wintypes.BOOL
+    windows = []
+
+    @callback_type
+    def collect(window, _):
+        owner = wintypes.DWORD()
+        user.GetWindowThreadProcessId(window, ctypes.byref(owner))
+        if owner.value == process.pid and user.IsWindowVisible(window) and not user.GetWindow(window, 4):  # GW_OWNER
+            windows.append(window)
+        return True
+
+    if process.poll() is not None:
+        return False
+    if not user.EnumWindows(collect, 0):
+        raise ctypes.WinError(ctypes.get_last_error())
+    if len(windows) != 1 or process.poll() is not None:
+        return False
+    owner = wintypes.DWORD()
+    user.GetWindowThreadProcessId(windows[0], ctypes.byref(owner))
+    if owner.value != process.pid:
+        return False
+    if not user.PostMessageW(windows[0], 0x0010, 0, 0):  # WM_CLOSE
+        raise ctypes.WinError(ctypes.get_last_error())
+    return True
+
+
 def _terminate_owned_application(process, result):
     # A BelowNormal launcher passes its class to children. Under parallel load,
     # low-priority Ready threads can delay even TerminateProcess completion.
     # Normalize only this exiting child, without changing replay scheduling.
     original = None
-    if sys.platform == "win32":
+    deadline = None
+    is_windows = sys.platform == "win32"
+    if is_windows:
         evidence = result.setdefault("applicationTerminationPriority", {})
         try:
             current = _windows_priority_class(process)
@@ -153,8 +197,26 @@ def _terminate_owned_application(process, result):
             # its strict five-second exit check still run and retain failures.
             evidence["error"] = str(exc)
     try:
+        if is_windows:
+            window_cleanup = result.setdefault("applicationWindowCleanup", {})
+            started = time.monotonic()
+            try:
+                window_cleanup["closeRequested"] = _request_windows_window_close(process)
+            except OSError as exc:
+                window_cleanup["error"] = str(exc)
+            if window_cleanup.get("closeRequested"):
+                # Hiding the Qt window allows pending presentation to settle before
+                # TerminateProcess. Both waits share the existing five-second limit.
+                deadline = started + 5
+                try:
+                    process.wait(timeout=max(0, started + 2.5 - time.monotonic()))
+                except subprocess.TimeoutExpired:
+                    window_cleanup["exitedAfterClose"] = False
+                else:
+                    window_cleanup["exitedAfterClose"] = True
+                    return
         process.terminate()
-        process.wait(timeout=5)
+        process.wait(timeout=5 if deadline is None else max(0, deadline - time.monotonic()))
     finally:
         if original is not None and process.poll() is None:
             try:

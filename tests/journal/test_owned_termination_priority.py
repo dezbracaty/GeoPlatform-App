@@ -13,6 +13,11 @@ from test_python_client import RunnerClient, write_journal
 
 
 class OwnedTerminationCheck(unittest.TestCase):
+    def setUp(self):
+        window_close = patch.object(sessions, '_request_windows_window_close', return_value=False)
+        self.window_close = window_close.start()
+        self.addCleanup(window_close.stop)
+
     def process(self):
         process = Mock(pid=123, returncode=None)
         process.poll.return_value = None
@@ -66,6 +71,43 @@ class OwnedTerminationCheck(unittest.TestCase):
                 process.wait.assert_called_once_with(timeout=5)
                 self.assertIn('error', result['applicationTerminationPriority'])
 
+    def test_window_exit_needs_no_force_termination(self):
+        process, result = self.process(), {}
+        self.window_close.return_value = True
+        with patch.object(sessions.sys, 'platform', 'win32'), \
+                patch.object(sessions.time, 'monotonic', side_effect=[100, 100.25]), \
+                patch.object(sessions, '_windows_priority_class', return_value=0x20):
+            sessions._terminate_owned_application(process, result)
+        self.window_close.assert_called_once_with(process)
+        process.wait.assert_called_once_with(timeout=2.25)
+        process.terminate.assert_not_called()
+        self.assertEqual(result['applicationWindowCleanup'], {'closeRequested': True, 'exitedAfterClose': True})
+
+    def test_window_and_force_waits_share_the_five_second_deadline(self):
+        process, result = self.process(), {}
+        self.window_close.return_value = True
+        forced_timeout = subprocess.TimeoutExpired('owned', 2.5)
+        process.wait.side_effect = [subprocess.TimeoutExpired('owned', 2.25), forced_timeout]
+        with patch.object(sessions.sys, 'platform', 'win32'), \
+                patch.object(sessions.time, 'monotonic', side_effect=[100, 100.25, 102.5]), \
+                patch.object(sessions, '_windows_priority_class', return_value=0x4000):
+            with self.assertRaises(subprocess.TimeoutExpired) as raised:
+                sessions._terminate_owned_application(process, result)
+        self.assertIs(raised.exception, forced_timeout)
+        self.assertEqual([call.kwargs['timeout'] for call in process.wait.call_args_list], [2.25, 2.5])
+        self.assertEqual(result['applicationWindowCleanup'], {'closeRequested': True, 'exitedAfterClose': False})
+        process.terminate.assert_called_once()
+
+    def test_window_request_failure_keeps_forced_exit_check(self):
+        process, result = self.process(), {}
+        self.window_close.side_effect = OSError('window unavailable')
+        with patch.object(sessions.sys, 'platform', 'win32'), \
+                patch.object(sessions, '_windows_priority_class', return_value=0x20):
+            sessions._terminate_owned_application(process, result)
+        process.terminate.assert_called_once()
+        process.wait.assert_called_once_with(timeout=5)
+        self.assertEqual(result['applicationWindowCleanup'], {'error': 'window unavailable'})
+
     def test_restore_error_is_retained_without_hiding_timeout(self):
         process, result = Mock(), {}
         process.poll.return_value = None
@@ -80,6 +122,7 @@ class OwnedTerminationCheck(unittest.TestCase):
     def test_session_final_exit_code_timeout_and_instance_boundaries(self):
         for mode in ('owned', 'keep', 'attach', 'mac', 'timeout', 'native-window'):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                self.window_close.reset_mock()
                 root, process = Path(temporary), self.process()
                 client = RunnerClient(root)
                 client.connect, client.disconnect = Mock(), Mock()
@@ -98,7 +141,9 @@ class OwnedTerminationCheck(unittest.TestCase):
                         application=None if mode == 'attach' else sys.executable,
                         port=9999 if mode == 'attach' else 0, keep_app=mode == 'keep', output_dir=root/'output',
                         native_window=mode == 'native-window', validate=mode != 'native-window')
-                if mode in ('keep', 'attach', 'mac'): priority.assert_not_called()
+                if mode in ('keep', 'attach', 'mac'):
+                    priority.assert_not_called()
+                    self.window_close.assert_not_called()
                 if mode in ('keep', 'attach'): process.terminate.assert_not_called()
                 elif mode == 'timeout':
                     self.assertFalse(result['success'])
