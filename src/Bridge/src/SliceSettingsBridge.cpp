@@ -993,26 +993,36 @@ QVariantMap SliceSettingsBridge::savePreset(const QString& type, int filamentSlo
 void SliceSettingsBridge::resolvePrinterSwitch(const QString& action, const QString& saveName) {
     if (!m_printerSwitch || machinePreparationPending() || m_stopping) return;
     using Action = libslicer::PrinterSwitchAction;
+    auto& backend = GPlatform::SlicingBackend::instance();
     auto& pending = *m_printerSwitch;
     const auto& preset = pending.review.presets.at(pending.decisions.size());
+    const auto stayOnSource = [&] {
+        const bool publishSavedSelection = pending.dependentPresetSaved;
+        m_printerSwitch.reset();
+        if (publishSavedSelection)
+            persistSelection(backend.configurationRevision());
+        emit machineSelectionChanged();
+    };
     Action decision = Action::Cancel;
     if (action == QStringLiteral("save")) {
-        auto& backend = GPlatform::SlicingBackend::instance();
+        // Orca saves dependent presets in the bundle during review. It exports
+        // the selection of the printer the user ends up on.
+        const bool dependent = preset.type != libslicer::PrinterSwitchPreset::Printer;
         auto saved = backend.savePrinterSwitchPreset(pending.review.revision, preset.type, saveName.toStdString(), false, preset.name);
         if (!saved) {
             const auto message = saved.diagnostics.empty() ? tr("Could not save preset")
                 : QString::fromStdString(saved.diagnostics.front().message);
-            m_printerSwitch.reset();
+            stayOnSource();
             emit settingRejected(QStringLiteral("printer"), message);
-            emit machineSelectionChanged();
             return;
         }
         pending.presetSaved = true;
-        replaceConfig(bridgeActivationResult(std::move(saved.view)), true);
+        pending.dependentPresetSaved |= dependent;
+        replaceConfig(bridgeActivationResult(std::move(saved.view)), true, false, !dependent);
         pending.review = backend.reviewPrinterSwitch(pending.target, true);
         if (!pending.review.diagnostics.empty()) {
             const auto message = QString::fromStdString(pending.review.diagnostics.front().message);
-            m_printerSwitch.reset();
+            stayOnSource();
             emit settingRejected(QStringLiteral("printer"), tr("Preset saved. Printer switch failed. %1").arg(message));
             return;
         }
@@ -1022,8 +1032,7 @@ void SliceSettingsBridge::resolvePrinterSwitch(const QString& action, const QStr
         if (action == QStringLiteral("transfer")) decision = Action::Transfer;
         else if (action == QStringLiteral("discard")) decision = Action::Discard;
         if (decision == Action::Cancel && preset.cancel_switch) {
-            m_printerSwitch.reset();
-            emit machineSelectionChanged();
+            stayOnSource();
             return;
         }
         pending.decisions.push_back({preset.type, decision});
@@ -1963,6 +1972,8 @@ bool SliceSettingsBridge::applyPrinterSwitch(PendingPrinterSwitch&& pending)
     auto candidate = backend.preparePrinterSwitch(pending.target, pending.review.revision,
         pending.decisions, pending.projectOverrides);
     const auto reject = [&](const QString& message) {
+        if (pending.dependentPresetSaved)
+            persistSelection(backend.configurationRevision());
         emit settingRejected(QStringLiteral("printer"),
             pending.presetSaved ? tr("Preset saved. Printer switch failed. %1").arg(message) : message);
         emit machineSelectionChanged();
@@ -2041,7 +2052,7 @@ bool SliceSettingsBridge::applyPrinterSwitch(PendingPrinterSwitch&& pending)
     installCommittedConfiguration(std::move(prepared), false);
     lease.release();
     libslicer::SelectionSaveOptions saveOptions;
-    if (current && machine && !machine->project_local) {
+    if (current && machine && !machine->project_local && !pending.dependentPresetSaved) {
         saveOptions.previous = installed.previous;
         saveOptions.remember_previous_palette = rememberSourceColors;
     }
@@ -2051,7 +2062,7 @@ bool SliceSettingsBridge::applyPrinterSwitch(PendingPrinterSwitch&& pending)
 }
 
 bool SliceSettingsBridge::replaceConfig(GPlatform::SlicingConfigActivationResult&& result,
-                                       bool markPending, bool synchronizePlateMaterials) {
+                                       bool markPending, bool synchronizePlateMaterials, bool rememberSelection) {
     if (!result) {
         const auto message = result.diagnostics.empty() ? std::string("unknown preset selection error")
             : result.diagnostics.front().key + ": " + result.diagnostics.front().message;
@@ -2111,7 +2122,7 @@ bool SliceSettingsBridge::replaceConfig(GPlatform::SlicingConfigActivationResult
     }
     publishActiveSlicingConfig(prepared.view.revision, prepared.view.filament_slots);
     const auto revision = prepared.view.revision;
-    const bool remember = markPending && !prepared.projectLocal;
+    const bool remember = markPending && rememberSelection && !prepared.projectLocal;
     installCommittedConfiguration(std::move(prepared));
     if (remember) persistSelection(revision);
     if (!markPending) { QWriteLocker locker(&m_lock); m_hasPendingReslice = false; }

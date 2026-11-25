@@ -183,13 +183,14 @@ private:
     void setConfigurationError(const QString& message);
     void persistSelection(std::uint64_t revision, libslicer::SelectionSaveOptions options = {});
     bool replaceConfig(GPlatform::SlicingConfigActivationResult&& result, bool markPending,
-                       bool synchronizePlateMaterials = false);
+                       bool synchronizePlateMaterials = false, bool rememberSelection = true);
     struct PendingPrinterSwitch {
         libslicer::ConfigSelection target;
         libslicer::PrinterSwitchReview review;
         std::vector<libslicer::PrinterSwitchDecision> decisions;
         std::vector<std::pair<std::string, std::string>> projectOverrides;
         bool presetSaved{false};
+        bool dependentPresetSaved{false};
         // Complete GUI projection retained only while review occupies the
         // worker, so synchronous popup-close refreshes cannot wait behind IO.
         QVariantList printerCatalog;

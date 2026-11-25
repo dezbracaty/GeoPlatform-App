@@ -726,6 +726,68 @@ void checkPrinterSwitchSaveAndCancel() {
             "The switch did not finish after the remaining decision");
 }
 
+void checkPrinterSwitchProcessSelectionMemory(SliceSettingsBridge& bridge) {
+    const QString standard = QStringLiteral("0.20mm Standard @P3");
+    const QString switchSave = QStringLiteral("Acceptance P3 switch save");
+    const QString directSave = QStringLiteral("Acceptance P3 direct save");
+    const QString alpha = QStringLiteral("CFSYS Alpha500 Printer");
+    const auto rememberedProcess = [] {
+        return readSlicerSelectionTestFile().value("printers").toObject().value("P3").toObject()
+            .value("0.4").toObject().value("P3 0.4 nozzle").toObject().value("process").toString();
+    };
+    require(selectMachineAndWait(bridge, "P3", "0.4") && bridge.selectProcessPreset(standard),
+            "Cannot select the standard P3 process");
+    bridge.setSetting("initial_layer_line_width", QStringLiteral("165%"));
+    QStringList prompts;
+    const auto connection = QObject::connect(&bridge, &SliceSettingsBridge::printerSwitchDecisionRequested, &bridge,
+        [&](const QVariantMap& preset) { prompts.push_back(preset.value("name").toString()); });
+    const auto disconnect = qScopeGuard([&] { QObject::disconnect(connection); });
+    require(bridge.selectMachine(alpha, "0.4") && waitForMachinePreparation(bridge) && prompts == QStringList{standard},
+            "Switching to Alpha500 did not ask about the edited P3 process");
+    bridge.resolvePrinterSwitch("save", switchSave);
+    require(bridge.selectedMachineModelId() == alpha && rememberedProcess() == standard,
+            "Saving in the switch dialog overwrote the source printer's remembered process");
+    require(selectMachineAndWait(bridge, "P3", "0.4") && bridge.selectedProcessPresetId() == standard &&
+                bridge.getSetting("initial_layer_line_width").toString() == "0.45",
+            "Returning to P3 did not restore the standard process and its original width");
+    require(bridge.selectProcessPreset(switchSave) && bridge.getSetting("initial_layer_line_width").toString() == "165%",
+            "The new process did not retain the width saved from the switch dialog");
+
+    bridge.setSetting("initial_layer_line_width", QStringLiteral("170%"));
+    require(bridge.savePreset("process", -1, bridge.configurationRevisionToken(), true, directSave,
+                false, false).value("valid").toBool(),
+            "Cannot explicitly save a new process on P3");
+    require(selectMachineAndWait(bridge, alpha, "0.4") && selectMachineAndWait(bridge, "P3", "0.4") &&
+                prompts == QStringList{standard} && rememberedProcess() == directSave &&
+                bridge.selectedProcessPresetId() == directSave &&
+                bridge.getSetting("initial_layer_line_width").toString() == "170%",
+            "Clean switching did not remember the process saved explicitly on P3");
+
+    require(bridge.selectProcessPreset(standard), "Cannot restore the standard P3 process");
+    bridge.setSetting("initial_layer_line_width", QStringLiteral("160%"));
+    const int materialSlot = 1;
+    const QString flowKey = QStringLiteral("filament_flow_ratio");
+    const auto filamentFlow = [&] {
+        return bridge.filamentSlotSettings(materialSlot).value(flowKey).toMap().value("value").toDouble();
+    };
+    const auto flow = filamentFlow();
+    require(flow > 0 && bridge.saveFilamentSlotSettings(materialSlot, bridge.configurationRevisionToken(),
+                {{flowKey, flow + .01}}).isEmpty(), "Cannot edit the source filament for the cancellation check");
+    prompts.clear();
+    require(bridge.selectMachine(alpha, "0.4") && waitForMachinePreparation(bridge) && prompts == QStringList{standard},
+            "The process was not the first printer-switch decision");
+    const QString savedBeforeCancel = QStringLiteral("Acceptance P3 process saved before cancellation");
+    bridge.resolvePrinterSwitch("save", savedBeforeCancel);
+    require(prompts.size() == 2 && rememberedProcess() == standard,
+            "The source process was remembered before the remaining filament decision");
+    bridge.resolvePrinterSwitch("cancel");
+    require(bridge.selectedMachineModelId() == "P3", "Cancelling the filament decision did not stay on P3");
+    require(bridge.selectedProcessPresetId() == savedBeforeCancel && rememberedProcess() == savedBeforeCancel &&
+                bridge.getSetting("initial_layer_line_width").toString() == "160%",
+            "Cancelling did not retain the saved process as the active and remembered P3 selection");
+    require(std::abs(filamentFlow() - flow - .01) < 1e-7, "Cancelling discarded the unsaved source filament edit");
+}
+
 const auto projectCollisionName = QStringLiteral("0.20mm Standard @MyKlipper(111.3mf)");
 
 QString projectCollisionFile(const QString& configDirectory) {
@@ -1154,6 +1216,7 @@ int main(int argc,char** argv) {
                 "Explicit geometry intent on project.open replaced the document");
         importAndWait("complete-project.3mf", "project");
         checkPrinterSwitchSaveAndCancel();
+        checkPrinterSwitchProcessSelectionMemory(*configuration);
         checkProjectPresetSaveAndReselect(*configuration);
         checkP3PaletteSources();
         checkConfigurationNotifications();
