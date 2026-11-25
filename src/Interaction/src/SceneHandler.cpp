@@ -768,8 +768,8 @@ bool SceneHandler::createDefaultLights() {
     }
 
 
-    // OrcaSlicer gouraud_light.vs:
-    // LIGHT_TOP_DIR=(-0.457, 0.457, 0.762), diffuse=0.48, specular=0.075
+    // The shared overhead key stays neutral and points more steeply down
+    // so the print studio reads as lit from above in both renderers.
     auto keyLight = trans::TransDB::create<LightDB>();
     if (!keyLight) {
         LOG_ERROR("SceneHandler::createDefaultLights - Failed to create key light");
@@ -778,8 +778,8 @@ bool SceneHandler::createDefaultLights() {
     keyLight->setName("Orca Top Light");
     keyLight->setLightTypeEnum(LightType::SCENE_LIGHT);
     keyLight->setColor(Vector3(1.0f, 1.0f, 1.0f));
-    keyLight->setIntensity(0.78f);
-    keyLight->setPosition(Vector3(-120.0f, 120.0f, 200.0f));
+    keyLight->setIntensity(1.10f);
+    keyLight->setPosition(Vector3(-68.0f, 68.0f, 245.0f));
     keyLight->setFocalPoint(Vector3(0.0f, 0.0f, 0.0f)); // 指向原点
     keyLight->setEnabled(true);
 

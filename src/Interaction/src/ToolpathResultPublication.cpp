@@ -59,7 +59,10 @@ ToolpathPublicationResult publishToolpathResult(std::shared_ptr<SliceOutputRecor
                 preview->setSourceModelName(output->name.toStdString());
                 preview->setSourceScope(output->sourceScope);
                 preview->setSourceModelDBId(output->sourceModelId);
-                preview->setPreviewData(std::move(data));
+                if (prepared.inspection)
+                    preview->setPreviewData(std::move(data), std::move(*prepared.inspection));
+                else
+                    preview->setPreviewData(std::move(data));
                 const auto bed = document->getDB<PrintBedDB>(output->printBedId);
                 if (!bed) throw std::runtime_error("The preview print bed is unavailable");
                 // Toolpath coordinates stay plate-local, including exported G-code.

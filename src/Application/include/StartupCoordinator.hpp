@@ -5,6 +5,7 @@
 #include <QElapsedTimer>
 #include <QTimer>
 #include <QSize>
+#include <QRect>
 #include <functional>
 #include <QFuture>
 #include <SlicingBackend.hpp>
@@ -25,6 +26,11 @@ class StartupCoordinator final : public QObject {
     Q_PROPERTY(bool sceneReady READ sceneReady NOTIFY changed)
     Q_PROPERTY(bool replayMode READ replayMode CONSTANT)
     Q_PROPERTY(bool backgroundReplay READ backgroundReplay CONSTANT)
+    Q_PROPERTY(bool loadingDark READ loadingDark CONSTANT)
+    Q_PROPERTY(bool mainWindowAttached READ mainWindowAttached NOTIFY changed)
+    Q_PROPERTY(bool mainLoadingPresented READ mainLoadingPresented NOTIFY changed)
+    Q_PROPERTY(QRect splashWorkArea READ splashWorkArea NOTIFY splashWorkAreaChanged)
+    Q_PROPERTY(QRect splashGeometry READ splashGeometry NOTIFY splashGeometryChanged)
     Q_PROPERTY(qint64 elapsedMs READ elapsedMs NOTIFY changed)
 public:
     explicit StartupCoordinator(bool replayMode, QObject* parent = nullptr);
@@ -37,6 +43,11 @@ public:
     bool sceneReady() const { return m_sceneReady; }
     bool replayMode() const { return m_replayMode; }
     bool backgroundReplay() const;
+    bool loadingDark() const { return m_loadingDark; }
+    bool mainWindowAttached() const { return !m_main.isNull(); }
+    bool mainLoadingPresented() const { return m_mainLoadingPresented; }
+    QRect splashWorkArea() const;
+    QRect splashGeometry() const;
     qint64 elapsedMs() const { return m_clock.elapsed(); }
     bool stopped() const { return m_stage == "Failed" || m_stage == "ShuttingDown"; }
     void setStage(const QString& stage, const QString& text);
@@ -51,18 +62,23 @@ public:
     void activateMainWindow();
     Q_INVOKABLE void attachMainWindow(QObject* window);
     Q_INVOKABLE void attachWorkspace(QObject* renderer);
+    Q_INVOKABLE void mainLoadingFramePresented();
     Q_INVOKABLE void requestExit();
     Q_INVOKABLE void requestRestart();
     Q_INVOKABLE void showLogs();
 signals:
     void changed();
+    void splashWorkAreaChanged();
+    void splashGeometryChanged();
     void bootstrapPresented();
     void startupReady();
     void restartRequested();
 private slots:
     void checkFrame();
 private:
+    void watchSplashScreen(QScreen* screen);
     void initializeScene();
+    void enablePrepareRenderer();
     void tick();
 #ifdef Q_OS_WIN
     void watchMainScreen(QScreen* screen);
@@ -75,8 +91,11 @@ private:
     QString m_error;
     bool m_sceneReady{false};
     bool m_replayMode{false};
+    bool m_loadingDark{false};
     bool m_bootPresented{false};
     bool m_sceneScheduled{false};
+    bool m_sceneInitialized{false};
+    bool m_mainLoadingPresented{false};
     bool m_presetsScheduled{false};
     quint64 m_epoch{1};
     qulonglong m_viewId{0};
@@ -86,6 +105,7 @@ private:
     QElapsedTimer m_clock;
     QTimer m_timer;
     QPointer<QQuickWindow> m_splash;
+    QMetaObject::Connection m_splashWorkAreaConnection;
     QPointer<QQuickWindow> m_main;
     QPointer<QQuickItem> m_renderer;
 };

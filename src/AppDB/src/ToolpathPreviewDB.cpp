@@ -219,6 +219,11 @@ void ToolpathPreviewDB::initializeSubActorProperties() {
 }
 
 void ToolpathPreviewDB::setPreviewData(ToolpathPreviewData&& data) {
+    auto inspection = prepareInspectionGeometry(data);
+    setPreviewData(std::move(data), std::move(inspection));
+}
+
+void ToolpathPreviewDB::setPreviewData(ToolpathPreviewData&& data, PreparedInspectionGeometry&& inspection) {
     PreviewNotificationSuppressGuard suppressNotifications(m_suppressPreviewNotifications);
 
     // Replacing preview data ends this DB object's ownership of the previous
@@ -251,7 +256,8 @@ void ToolpathPreviewDB::setPreviewData(ToolpathPreviewData&& data) {
     setInspectedElementIndex(-1);
 
     m_gcodeSource = std::move(data.gcodeSource);
-    publishInspectionGeometry();
+    m_inspectionElements = std::move(inspection.elements);
+    installSnapGeometry(std::move(inspection.snapshot));
     setPreviewArtifactPath(data.artifactPath);
     setPrintGCodePath(data.printGCodePath);
     setPrintGCode3mfPath(data.printGCode3mfPath);
@@ -561,32 +567,34 @@ bool ToolpathPreviewDB::replaceRelations(
     return true;
 }
 
-void ToolpathPreviewDB::publishInspectionGeometry() {
+ToolpathPreviewDB::PreparedInspectionGeometry ToolpathPreviewDB::prepareInspectionGeometry(
+    const ToolpathPreviewData& data) {
+    PreparedInspectionGeometry inspection;
     SnapGeometry geometry;
-    m_inspectionElements.clear();
-    geometry.features.reserve(m_segments.size() + m_options.size());
+    const auto& segments = data.segments;
+    geometry.features.reserve(segments.size() + data.options.size());
     const auto add = [&](SnapFeature feature, InspectionElement element) {
         feature.id = geometry.features.size() + 1;
         geometry.features.push_back(feature);
-        m_inspectionElements.push_back(element);
+        inspection.elements.push_back(element);
     };
     // One command is one logical path, even when the parser inserts speed
     // transitions or arc subdivisions. Keep members individually filterable.
     const auto connected = [](Vector3 a, Vector3 b) {
         return std::abs(a.x-b.x) < 1e-5f && std::abs(a.y-b.y) < 1e-5f && std::abs(a.z-b.z) < 1e-5f;
     };
-    for (std::size_t begin = 0; begin < m_segments.size();) {
+    for (std::size_t begin = 0; begin < segments.size();) {
         std::size_t end = begin + 1;
-        const auto& first = m_segments[begin];
-        while (end < m_segments.size() && first.sourceCommandId != 0 &&
-               m_segments[end].sourceCommandId == first.sourceCommandId &&
-               m_segments[end].layerId == first.layerId &&
-               connected(m_segments[end-1].endMm, m_segments[end].startMm))
+        const auto& first = segments[begin];
+        while (end < segments.size() && first.sourceCommandId != 0 &&
+               segments[end].sourceCommandId == first.sourceCommandId &&
+               segments[end].layerId == first.layerId &&
+               connected(segments[end-1].endMm, segments[end].startMm))
             ++end;
         const auto groupBegin = std::uint32_t(geometry.features.size());
         const auto groupCount = std::uint32_t(end - begin + 2);
         for (auto i = begin; i < end; ++i) {
-            const auto& segment = m_segments[i];
+            const auto& segment = segments[i];
             SnapFeature feature{0, SnapFeatureKind::Segment, segment.startMm, segment.endMm};
             feature.radiusMm = std::max(0.0f, segment.widthMm)*.5f;
             feature.groupBegin = groupBegin;
@@ -596,20 +604,20 @@ void ToolpathPreviewDB::publishInspectionGeometry() {
         for (bool last : {false, true}) {
             const auto index = last ? end - 1 : begin;
             SnapFeature endpoint{0, SnapFeatureKind::Point,
-                                 last ? m_segments[index].endMm : first.startMm};
+                                 last ? segments[index].endMm : first.startMm};
             endpoint.groupBegin = groupBegin;
             endpoint.groupCount = groupCount;
             add(endpoint, {InspectionElement::Kind::Endpoint, index, last ? 1u : 0u, first.sourceCommandId});
         }
         begin = end;
     }
-    for (std::size_t i=0;i<m_options.size();++i) {
-        const auto& event=m_options[i];
+    for (std::size_t i=0;i<data.options.size();++i) {
+        const auto& event=data.options[i];
         SnapFeature f{0,SnapFeatureKind::Point,event.positionMm}; f.radiusMm=.5f;
         add(f,{InspectionElement::Kind::Event,i,0,event.sourceCommandId});
     }
-    for (std::size_t i=0;i<m_fiberFillDiagnostics.size();++i) {
-        const auto& path=m_fiberFillDiagnostics[i];
+    for (std::size_t i=0;i<data.fiberFillDiagnostics.size();++i) {
+        const auto& path=data.fiberFillDiagnostics[i];
         const auto begin = std::uint32_t(geometry.features.size());
         std::size_t count = path.points.empty() ? 0 : path.points.size()-1;
         for (const auto& loop : path.boundaries) if (!loop.empty()) count += loop.size()-1;
@@ -625,10 +633,11 @@ void ToolpathPreviewDB::publishInspectionGeometry() {
         add_edges(path.points);
         for (const auto& loop : path.boundaries) add_edges(loop);
     }
-    if (!publishSnapGeometry(std::move(geometry))) {
-        m_inspectionElements.clear();
-        publishSnapGeometry({});
+    if (auto snapshot = prepareSnapGeometry(std::move(geometry))) {
+        inspection.snapshot = std::move(*snapshot);
+        return inspection;
     }
+    return {};
 }
 
 std::uint32_t ToolpathPreviewDB::sourceLineForPosition(int layerIndex, int step, bool layerStart) const {

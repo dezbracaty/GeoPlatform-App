@@ -118,7 +118,8 @@ void SkyboxDB::applyPrintStudioPreset() {
     setHdrTexturePath(pillars);
     setLightingTexturePath(pillars);
     setBackgroundTexturePath(printStudio);
-    setLightingIntensity(30000.0f);
+    // A lower environment fill reduces warm reflected light from below.
+    setLightingIntensity(27000.0f);
     setVisible(true);
     setUseImageBasedLighting(true);
 
