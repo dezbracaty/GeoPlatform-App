@@ -3591,6 +3591,42 @@ msgstr "取消上传"
 msgid "Cancelled"
 msgstr "已取消"
 
+msgid "Rendering"
+msgstr "渲染"
+
+msgid "Anti-aliasing"
+msgstr "抗锯齿"
+
+msgid "Anti-aliasing type"
+msgstr "抗锯齿类型"
+
+msgid "MSAA sample count"
+msgstr "MSAA 倍数"
+
+msgid "Smooths edges in the Prepare and Preview viewports. The sample count applies to MSAA."
+msgstr "平滑准备和预览视口中的边缘。倍数仅用于 MSAA。"
+
+msgid "Last rendered mode — Prepare: %1 · Preview: %2"
+msgstr "最近绘制模式 — 准备：%1 · 预览：%2"
+
+msgid "Waiting for viewport"
+msgstr "等待视口绘制"
+
+msgid "FXAA (depth peeling is enabled)"
+msgstr "FXAA（已启用深度剥离）"
+
+msgid "FXAA (requested MSAA sample count is unavailable)"
+msgstr "FXAA（所选 MSAA 倍数不可用）"
+
+msgid "FXAA (MSAA framebuffer or resolve is unavailable)"
+msgstr "FXAA（MSAA 帧缓冲区或解析不可用）"
+
+msgid "MSAA %1×"
+msgstr "MSAA %1×"
+
+msgid "Off"
+msgstr "关闭"
+
 msgid "Desktop notifications"
 msgstr "桌面通知"
 

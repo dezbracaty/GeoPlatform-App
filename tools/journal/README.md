@@ -87,6 +87,10 @@ HTML 的内部证据链接也使用相对路径，并进行 URL 编码；整个�
 未传参数时保留原有行为。通用执行器不决定平台的 DPR 策略，Windows 场景测试的
 具体变量由 App `tools/run_acceptance.py` 维护，网页场景测试复用同一入口。
 
+macOS 上由正式执行器启动的回放实例将渲染设置保存到应用数据目录下的 `JournalRender.plist`。
+验证设置持久化时，可在 `environment_overrides` 中为连续几次启动指定相同的独立
+`HOME` 和 `CFFIXED_USER_HOME`，并设置 `QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM=1` 进行后台回放。
+
 录制检查点保存系统原生 DPR 的原始 PNG，例如 DPR 2 的整窗图为 **2764×1908** 像素。
 不在每份新录制 metadata 重复保存窗口/DPR。旧 metadata 中的 DPR/imageSize 作为基线说明接受，
 逻辑窗口尺寸仍须符合公共约定；不按旧 DPR 强制缩放、补偿或重启应用。
