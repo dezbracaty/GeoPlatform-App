@@ -1,19 +1,14 @@
 """Build a fixed full host and run App's maintained platform Journal regression."""
 from __future__ import annotations
 import argparse
-import hashlib
-from importlib.metadata import distributions
 import json
 from collections import Counter
 import os
 from pathlib import Path
-import platform as runtime_platform
-import shutil
 import sys
-import tempfile
 
 from common import (app_dependency_repository, build_log, digest, freeze_candidate, freeze_published_sdk,
-                    git, git_env, init_host_submodules, init_source_submodules, machine_lock, materialize_sdk,
+                    git_env, init_host_submodules, init_source_submodules, machine_lock, materialize_sdk,
                     prepare_cached_source, require_sha, resolve_ref, run, selected_platforms, text_git, write_json)
 from regression_reports import compact_regression_report
 import native_regression as native_checks
@@ -98,57 +93,6 @@ Path(payload['receipt']).write_text(json.dumps(result), encoding='utf-8')
 '''
 
 
-def ci_tools_key(ci_root):
-    # These are tests of the checked-out workflow implementation. Its asset
-    # gitlink is neither initialized nor used by the local test fixtures.
-    entries = git(ci_root, 'ls-tree', '-rz', 'HEAD').split(b'\0')
-    source = b'\0'.join(entry for entry in entries
-                        if not entry.endswith(b'\ttests/TestAssets') or not entry.startswith(b'160000 '))
-    tools = {}
-    for name in ('bash', 'cmake', 'ctest', 'git', 'git-lfs', 'ninja', 'node', 'pwsh'):
-        path = shutil.which(name)
-        if path:
-            path = Path(path).resolve()
-            info = path.stat()
-            tools[name] = [str(path), info.st_size, info.st_mtime_ns]
-    environment = {name: os.environ.get(name) for name in ('Qt6_DIR', 'QT6_DIR', 'VSCMD_VER',
-                   'VCToolsVersion', 'WindowsSDKVersion', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM',
-                   'GIT_CONFIG_NOSYSTEM')}
-    runtime = dict(os=runtime_platform.platform(), python=[sys.executable, sys.version],
-                   packages=sorted((p.metadata.get('Name', ''), p.version) for p in distributions()),
-                   tools=tools, environment=environment)
-    return hashlib.sha256(source + b'\0' + json.dumps(runtime, sort_keys=True).encode()).hexdigest()
-
-
-def check_ci_tools(ci_root, build, report):
-    """Run changed tool contracts after Journal; retain only a successful receipt."""
-    cache = build / 'ci-tools-passed.json'
-    if cache.is_symlink() or cache.is_junction() or cache.exists() and not cache.is_file():
-        raise RuntimeError('CI tools receipt must be a real file')
-    if text_git(ci_root, 'status', '--porcelain', '--untracked-files=no', '--ignore-submodules=all'):
-        raise RuntimeError('CI implementation checkout has local source changes')
-    key = ci_tools_key(ci_root)
-    try:
-        receipt = json.loads(cache.read_text(encoding='utf-8'))
-    except (FileNotFoundError, ValueError):
-        receipt = {}
-    if (isinstance(receipt, dict) and receipt.get('key') == key and receipt.get('status') == 'passed'
-            and isinstance(receipt.get('control_sha'), str) and len(receipt['control_sha']) == 40):
-        report['ci_tools'] = dict(receipt, reused=True)
-        print(f"Reused passed CI tools checks from {receipt['control_sha']}", flush=True)
-        return
-    receipt = dict(key=key, status='failed', control_sha=report['control_sha'])
-    report['ci_tools'] = dict(receipt, reused=False)
-    run([sys.executable, '-m', 'unittest', 'discover', '-s', ci_root / 'tests/ci', '-v'],
-        cwd=ci_root, env=dict(os.environ))
-    receipt['status'] = 'passed'
-    with tempfile.TemporaryDirectory(prefix='.ci-tools-', dir=build) as directory:
-        staged = Path(directory) / cache.name
-        write_json(staged, receipt)
-        staged.replace(cache)
-    report['ci_tools'] = dict(receipt, reused=False)
-
-
 def regress(source, platform, source_sha, assets_sha, output, *, app, app_sha, app_repository,
             sdk_root, sdk_sha, sdk_repository, assets_ref=None):
     source, app, output = Path(source).resolve(), Path(app).resolve(), Path(output).resolve()
@@ -160,9 +104,8 @@ def regress(source, platform, source_sha, assets_sha, output, *, app, app_sha, a
                   assets_ref=assets_ref or ASSET_BRANCHES[platform], assets_sha=assets_sha,
                   sdk_source='published', sdk_repository=sdk_repository, phases=[], output=str(output))
     try:
-        # Automatic screenshot verification requires Pillow. Optional review
-        # hints and schema tooling must not block the formal Journal gate.
-        run([sys.executable, '-c', 'import PIL, yaml'], env=dict(os.environ))
+        # Automatic screenshot verification requires Pillow.
+        run([sys.executable, '-c', 'import PIL'], env=dict(os.environ))
         with machine_lock():
             prepare_cached_source(source, source_sha, platform, host=True)
             init_host_submodules(source, host_platform=platform)
@@ -219,8 +162,6 @@ def regress(source, platform, source_sha, assets_sha, output, *, app, app_sha, a
                 initial_counts=dict(Counter((c.get('attempts') or [c])[0].get('status') for c in summary['cases'])),
                 final_counts=dict(Counter(c.get('status') for c in summary['cases'])),
                 serial_recheck_cases=sum(len(c.get('attempts', [])) > 1 for c in summary['cases']))
-            build = app / ('build-Release' if platform == 'windows' else 'build-arm64-Release')
-            check_ci_tools(ci_root, build, report)
             report['status'] = 'passed'
     except KeyboardInterrupt:
         report['interrupted'] = True

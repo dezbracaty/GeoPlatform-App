@@ -129,10 +129,11 @@ class Workflows(unittest.TestCase):
         for retired in ('publish_release:', 'GPLATFORM_RELEASE_TOKEN', 'publish_release.py'):
             self.assertNotIn(retired, workflow)
 
-    def test_mr_has_only_a_fixed_app_head_reusable_entry_and_no_publication(self):
+    def test_mr_checks_the_fixed_app_head_in_independent_jobs(self):
         flow = load(ROOT / '.github/workflows/pr-checks.yml')
         self.assertEqual(set(flow['on']), {'pull_request'})
-        self.assertEqual(set(flow['jobs']), {'regression'})
+        self.assertEqual(flow['permissions'], {'contents': 'read'})
+        self.assertEqual(set(flow['jobs']), {'ci_scripts', 'regression'})
         job = flow['jobs']['regression']
         self.assertEqual(job['uses'], './.github/workflows/run-regression.yml')
         self.assertEqual(job['with']['app_ref'], '${{ github.event.pull_request.head.sha }}')
@@ -145,6 +146,21 @@ class Workflows(unittest.TestCase):
         self.assertNotIn('GPLATFORM_PUBLISH_TOKEN', job['secrets'])
         self.assertEqual(job['concurrency']['cancel-in-progress'], 'true')
         self.assertFalse((ROOT / 'scripts/ci/dispatch_app_build.py').exists())
+
+        checks = flow['jobs']['ci_scripts']
+        self.assertEqual(checks['if'], job['if'])
+        for forbidden in ('needs', 'permissions', 'secrets'):
+            self.assertNotIn(forbidden, checks)
+        self.assertNotEqual(checks['concurrency']['group'], job['concurrency']['group'])
+        self.assertEqual(checks['runs-on'], '${{ matrix.os }}')
+        self.assertEqual(checks['strategy']['matrix']['os'], ['windows-latest', 'macos-latest'])
+        checkouts = [step['with'] for step in checks['steps']
+                     if step.get('uses', '').startswith('actions/checkout@')]
+        self.assertEqual(checkouts, [{'ref': job['with']['app_ref'], 'persist-credentials': 'false',
+                                      'submodules': 'false', 'lfs': 'false'}])
+        commands = {step['name']: step['run'] for step in checks['steps'] if 'run' in step}
+        self.assertEqual(commands['Run Python CI script tests'], 'python -m unittest discover -s tests/ci -v')
+        self.assertEqual(commands['Run runner queue tests'], 'node --test tests/ci/test_ci_runner_queue.cjs')
 
     def test_public_entries_have_only_the_documented_parameters(self):
         expected={
@@ -230,7 +246,8 @@ class Workflows(unittest.TestCase):
     def test_runtime_is_preinstalled_and_upload_failure_preserves_owned_packages(self):
         for root in (ROOT,APP):
             for path in (root/'.github/workflows').glob('*.yml'):
-                text=path.read_text()
+                text = (yaml.dump(load(path)['jobs']['regression'])
+                        if path.name == 'pr-checks.yml' else path.read_text())
                 for forbidden in ('actions/setup-python@','PSExecutionPolicyPreference','GITHUB_PATH','runtime_windows','runtime_macos'):
                     self.assertNotIn(forbidden,text)
         for job_type, job in zip(('sdk', 'installer'), self.platform_jobs(), strict=True):
