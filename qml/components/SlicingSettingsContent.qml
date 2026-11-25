@@ -23,6 +23,15 @@ Item {
     property int focusedFilamentSlot: -1
     property var focusedFilament: null
     readonly property bool inspectFilament: scopedWorkspace && workspaceIndex === 1 && focusedFilamentSlot >= 0
+    readonly property var focusedFilamentModifiedKeys: inspectFilament
+        ? (filamentSlots[focusedFilamentSlot]?.modifiedSettingKeys || []) : []
+    readonly property bool anyFilamentModified: filamentSlots.some(slot => slot.presetModified)
+    readonly property bool currentPresetModified: currentSchemaTab === "printer"
+        ? SliceSettingsBridge.printerPresetModified
+        : currentSchemaTab === "filament"
+            ? (inspectFilament ? focusedFilamentModifiedKeys.length > 0 || Object.keys(filamentDraft).length > 0
+                               : anyFilamentModified)
+            : SliceSettingsBridge.modifiedSettingKeys.length > 0
     property string filamentRevision: ""
     property var filamentParameters: ({})
     property var filamentDraft: ({})
@@ -608,20 +617,21 @@ Item {
         }
 
         Label {
+            objectName: root.automationName("scopedPresetHeading")
             visible: root.scopedWorkspace
             Layout.fillWidth: true
             Layout.leftMargin: 12
             Layout.rightMargin: 12
             Layout.topMargin: 8
             font: Typography.bodyStrong
-            text: root.workspaceIndex === 2
+            text: (root.currentPresetModified ? "* " : "") + (root.workspaceIndex === 2
                 ? (SliceSettingsBridge.selectedMachine.printerModel || "")
                 : root.workspaceIndex === 1
                     ? (root.focusedFilament
                        ? qsTr("Slot %1").arg(root.focusedFilament.number)
                          + " · T" + root.focusedFilament.physicalToolIndex + " · " + root.focusedFilament.presetName
                        : qsTr("Filament Configuration"))
-                    : SliceSettingsBridge.selectedProcessPresetName
+                    : SliceSettingsBridge.selectedProcessPresetName)
             elide: Text.ElideRight
         }
 
@@ -810,17 +820,17 @@ Item {
                     }
 
                     TabButton {
-                        text: qsTr("Process")
+                        text: (SliceSettingsBridge.modifiedSettingKeys.length > 0 ? "* " : "") + qsTr("Process")
                         implicitHeight: PrintWorkspaceStyle.controlHeight
                         font: Typography.bodyStrong
                     }
                     TabButton {
-                        text: qsTr("Filament")
+                        text: (root.anyFilamentModified ? "* " : "") + qsTr("Filament")
                         implicitHeight: PrintWorkspaceStyle.controlHeight
                         font: Typography.bodyStrong
                     }
                     TabButton {
-                        text: qsTr("Printers")
+                        text: (SliceSettingsBridge.printerPresetModified ? "* " : "") + qsTr("Printers")
                         implicitHeight: PrintWorkspaceStyle.controlHeight
                         font: Typography.bodyStrong
                     }
@@ -1140,7 +1150,11 @@ Item {
                                                             Label {
                                                                 Layout.fillWidth: true
                                                                 Layout.minimumWidth: 0
-                                                                text: (!root.perToolMaterials && SliceSettingsBridge.selectedMachine.physicalToolCount > 1 ? root.physicalToolLabel(filamentSlotCard.modelData) + " · " : "") + qsTr("Slot %1 · %2").arg(filamentSlotCard.modelData.number).arg(filamentSlotCard.modelData.materialType || qsTr("Unknown"))
+                                                                text: (filamentSlotCard.modelData.presetModified ? "* " : "")
+                                                                    + (!root.perToolMaterials && SliceSettingsBridge.selectedMachine.physicalToolCount > 1
+                                                                       ? root.physicalToolLabel(filamentSlotCard.modelData) + " · " : "")
+                                                                    + qsTr("Slot %1 · %2").arg(filamentSlotCard.modelData.number)
+                                                                        .arg(filamentSlotCard.modelData.materialType || qsTr("Unknown"))
                                                                 font: Typography.bodyStrong
                                                                 color: root.SmoothUI.theme.res.textFillColorPrimary
                                                                 elide: Text.ElideRight
@@ -1584,6 +1598,7 @@ Item {
                 editorObjectNamePrefix: root.automationName("sliceSettingSearchEditor_")
                 title: root.localizedSchemaText(modelData.label, modelData.key || "")
                 paramKey: modelData.key || ""
+                presetTab: modelData.tab || root.currentSchemaTab
                 autoInit: modelData.autoInit === undefined ? true : !!modelData.autoInit
                 schemaEnabled: modelData.enabled === undefined ? true : !!modelData.enabled
                 configRevision: root.schemaRevisionToken
@@ -1647,8 +1662,12 @@ Item {
 
         property string title: ""
         property var localSetting: null
+        property string presetTab: root.currentSchemaTab
         readonly property bool modified: root.localMode ? !!(localSetting && localSetting.overridden)
-            : SliceSettingsBridge.modifiedSettingKeys.indexOf(paramKey) >= 0
+            : presetTab === "printer" ? SliceSettingsBridge.modifiedPrinterSettingKeys.includes(paramKey)
+            : presetTab === "filament" ? root.inspectFilament
+                && (root.focusedFilamentModifiedKeys.includes(paramKey) || root.filamentDraft[paramKey] !== undefined)
+            : SliceSettingsBridge.modifiedSettingKeys.includes(paramKey)
         property string paramKey: ""
         readonly property var filamentParameter: root.inspectFilament ? root.filamentParameters[paramKey] : null
         property bool autoInit: true
@@ -2004,7 +2023,8 @@ Item {
                 Label {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    text: root.compactPanel && settingRow.modified ? "• " + title : title
+                    objectName: settingRow.editorObjectNamePrefix + settingRow.paramKey + ".label"
+                    text: settingRow.modified ? "• " + title : title
                     color: root.compactPanel ? root.SmoothUI.theme.res.textFillColorSecondary : root.SmoothUI.theme.res.textFillColorPrimary
                     font: root.compactPanel ? root.compactCaptionFont : Typography.caption
                     elide: Text.ElideRight

@@ -306,6 +306,97 @@ ContentPage {
     }
 
     ContentDialog {
+        id: presetSaveDialog
+        objectName: "presetSaveDialog"
+        width: Math.min(460, root.width - 24)
+        title: duplicate ? qsTr("Duplicate preset") : qsTr("Save user preset")
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape
+        property string domain: ""
+        property int filamentSlot: -1
+        property string revision: ""
+        property string error: ""
+        property bool canSaveCurrent: false
+        property bool duplicate: false
+        readonly property var nameStatus: visible
+            ? SliceSettingsBridge.savePreset(domain, filamentSlot, revision, true, newPresetName.text, true, false)
+            : ({})
+
+        function showFor(domain, slot, sourceName, duplicate) {
+            presetSaveDialog.domain = domain
+            presetSaveDialog.duplicate = duplicate
+            filamentSlot = slot
+            revision = SliceSettingsBridge.configurationRevisionToken()
+            canSaveCurrent = !duplicate && SliceSettingsBridge.savePreset(domain, slot, revision, false, "", true, false).valid
+            newPresetName.text = sourceName + " - " + qsTr("Copy")
+            overwritePreset.checked = false
+            error = ""
+            open()
+        }
+        function submit(saveAs) {
+            const result = SliceSettingsBridge.savePreset(domain, filamentSlot, revision,
+                saveAs, newPresetName.text, false, saveAs && overwritePreset.checked)
+            if (result.valid)
+                close()
+            else
+                error = result.message
+        }
+        onOpened: {
+            newPresetName.forceActiveFocus()
+            newPresetName.selectAll()
+        }
+        ColumnLayout {
+            width: presetSaveDialog.availableWidth
+            TextField {
+                id: newPresetName
+                objectName: "presetSaveDialog.name"
+                Layout.fillWidth: true
+                placeholderText: qsTr("Preset name")
+                onTextEdited: {
+                    overwritePreset.checked = false
+                    presetSaveDialog.error = ""
+                }
+                onAccepted: if (savePresetCopy.enabled) presetSaveDialog.submit(true)
+            }
+            Label {
+                Layout.fillWidth: true
+                visible: text.length > 0
+                wrapMode: Text.Wrap
+                textFormat: Text.PlainText
+                text: presetSaveDialog.error || presetSaveDialog.nameStatus.message
+                    || presetSaveDialog.nameStatus.overwriteWarning || ""
+            }
+            CheckBox {
+                id: overwritePreset
+                objectName: "presetSaveDialog.overwrite"
+                visible: !!presetSaveDialog.nameStatus.overwriteWarning
+                text: qsTr("Overwrite existing user preset")
+            }
+        }
+        footer: DialogButtonBox {
+            Button {
+                text: qsTr("Cancel")
+                onClicked: presetSaveDialog.close()
+            }
+            Button {
+                objectName: "presetSaveDialog.saveCurrent"
+                visible: presetSaveDialog.canSaveCurrent
+                text: qsTr("Save")
+                onClicked: presetSaveDialog.submit(false)
+            }
+            Button {
+                id: savePresetCopy
+                objectName: "presetSaveDialog.saveAs"
+                text: qsTr("Save as New Preset")
+                enabled: presetSaveDialog.nameStatus.valid === true
+                    && (!overwritePreset.visible || overwritePreset.checked)
+                onClicked: presetSaveDialog.submit(true)
+            }
+        }
+    }
+
+    ContentDialog {
         id: sendConfirmation
         objectName: "printerSendConfirmation"
         title: qsTr("Send to Printer")
@@ -818,6 +909,8 @@ ContentPage {
         boundsItem: root
         workspaceReady: root.dockReady && StartupState.ready && root.activePageName === "prepare"
         onAddModelRequested: Global.starter.chooseModel({})
+        onPresetSaveRequested: (domain, slot, sourceName, duplicate) =>
+            presetSaveDialog.showFor(domain, slot, sourceName, duplicate)
         onDetailedSettingsRequested: function(workspaceIndex, slotIndex, restoreFocus) {
             globalPrintBar.openMachineSettings({workspaceIndex: workspaceIndex, slotIndex: slotIndex,
                 restoreFocus: restoreFocus})

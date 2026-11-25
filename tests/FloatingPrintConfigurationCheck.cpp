@@ -193,7 +193,7 @@ QList<QQuickItem*> findAll(QQuickItem* parent, const QString& name) {
     for (auto* child : parent->childItems()) result.append(findAll(child, name));
     return result;
 }
-void click(QQuickWindow& window, QQuickItem* root, const QString& name) {
+void click(QQuickWindow& window, QQuickItem* root, const QString& name, Qt::MouseButton button = Qt::LeftButton) {
     // Finish pending layout before resolving coordinates. A native window may
     // be occluded on a shared desktop, so frameSwapped is not a layout barrier.
     const auto polish = [](auto&& self, QQuickItem* item) -> void {
@@ -206,7 +206,7 @@ void click(QQuickWindow& window, QQuickItem* root, const QString& name) {
     auto* target = find(root, name);
     require(target && target->isVisible() && target->isEnabled() && target->width() > 0 && target->height() > 0,
             qPrintable("Unavailable control: " + name));
-    QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier,
+    QTest::mouseClick(&window, button, Qt::NoModifier,
         target->mapToScene(QPointF(target->width()/2, target->height()/2)).toPoint());
     QCoreApplication::processEvents();
 }
@@ -261,6 +261,7 @@ int main(int argc, char** argv) {
     QQuickStyle::setStyle("SmoothUI");
     QGuiApplication app(argc, argv);
     const bool layoutOnly = app.arguments().contains("--layout");
+    const bool presetMarkers = app.arguments().contains("--preset-markers");
     app.setOrganizationName("GPlatformTests");
     app.setApplicationName("FloatingPrintConfigurationCheck");
     SettingsHelper::getInstance()->init(argv);
@@ -283,7 +284,7 @@ int main(int argc, char** argv) {
             return 0;
         }
 #ifdef GPLATFORM_TEST_RENDER_HOST_COMPONENTS
-        if (!layoutOnly && !app.arguments().contains("--setting-rejection"))
+        if (!layoutOnly && !presetMarkers && !app.arguments().contains("--setting-rejection"))
             verifyCaptureDispatchesDueAlignment();
 #endif
         auto* settings = SliceSettingsBridge::instance();
@@ -325,6 +326,149 @@ int main(int argc, char** argv) {
             QTest::qWait(200);
             verifyLayout(window, *bounds, *panel);
             std::cout << "Popup nominal and smaller logical viewport layout passed\n";
+            return 0;
+        }
+        if (presetMarkers) {
+            const auto marked = [](QQuickItem* rootItem, const QString& name, const char* property, const QString& marker) {
+                auto* item = find(rootItem, name);
+                require(item, qPrintable("Cannot find preset marker: " + name));
+                return item->property(property).toString().startsWith(marker);
+            };
+            const auto titleMarked = [&](const QString& name) {
+                return marked(panel, "print.configuration." + name + "Heading.label", "text", "* ");
+            };
+            const auto layerMarked = [&] {
+                return marked(panel, "print.configuration.editor.layer_height.label", "text", QStringLiteral("\u2022 "));
+            };
+            const auto saveAvailable = [&](const QString& name) {
+                auto* button = find(panel, "print.configuration.save" + name);
+                require(button, qPrintable("Cannot find save button: " + name));
+                require(button->isVisible() == button->isEnabled(), qPrintable("Incorrect save button state: " + name));
+                return button->isVisible();
+            };
+            require(!titleMarked("process") && !layerMarked() && !saveAvailable("ProcessPreset"),
+                    "Untouched process is marked or shows a save button");
+            require(!titleMarked("printer") && !saveAvailable("PrinterPreset") && !titleMarked("filament")
+                        && !saveAvailable("FilamentPreset.1"), "Untouched machine or material has a preset marker");
+            QSignalSpy presetRequests(panel, SIGNAL(presetSaveRequested(QString,int,QString,bool)));
+            require(presetRequests.isValid(), "Missing preset request signal");
+            click(window, panel, "print.configuration.process", Qt::RightButton);
+            require(QTest::qWaitFor([&] {
+                auto* action = find(window.contentItem(), "print.configuration.duplicatePreset");
+                return action && action->isVisible();
+            }, 2000), "Clean preset has no Copy action in its menu");
+            click(window, window.contentItem(), "print.configuration.duplicatePreset");
+            require(presetRequests.size() == 1 && presetRequests.front().at(3).toBool(),
+                    "Copy should launch the duplicate operation");
+            edit(window, panel, "print.configuration.editor.layer_height", "0.24");
+            require(QTest::qWaitFor([&] { return titleMarked("process") && layerMarked() && saveAvailable("ProcessPreset"); }, 2000),
+                    "Process edit did not mark the section and the field");
+            require(!titleMarked("printer") && !titleMarked("filament"),
+                qPrintable(QString("Process edit marked another preset: printer [%1], filament [%2]")
+                    .arg(settings->modifiedPrinterSettingKeys().join(','),
+                         settings->filamentSlots().value(0).toMap().value("modifiedSettingKeys").toStringList().join(','))));
+            settings->markCurrentAsSliced();
+            require(titleMarked("process") && layerMarked(), "Slicing cleared an unsaved preset marker");
+            require(settings->savePreset("process", -1, settings->configurationRevisionToken(),
+                        true, "Marker Test Process", false).value("valid").toBool(),
+                    "Cannot save the edited process preset");
+            require(QTest::qWaitFor([&] { return !titleMarked("process") && !layerMarked() && !saveAvailable("ProcessPreset"); }, 2000),
+                    "Saving did not clear the process markers");
+
+            const auto gcode = settings->getSetting("machine_start_gcode").toString();
+            settings->setSetting("machine_start_gcode", gcode + "\n; preset marker test");
+            require(titleMarked("printer") && saveAvailable("PrinterPreset") && settings->modifiedPrinterSettingKeys().contains("machine_start_gcode")
+                        && !titleMarked("process") && !titleMarked("filament"), "Printer edit marked the wrong preset");
+            QQmlComponent editorComponent(&engine,
+                QUrl::fromLocalFile(QStringLiteral(POPUP_QML_ROOT "/components/SlicingSettingsContent.qml")));
+            require(editorComponent.isReady(), qPrintable(editorComponent.errorString()));
+            std::unique_ptr<QObject> editorObject(editorComponent.create());
+            auto* editor = qobject_cast<QQuickItem*>(editorObject.get());
+            require(editor, qPrintable(editorComponent.errorString()));
+            editor->setParentItem(window.contentItem());
+            editor->setSize(QSizeF(950, 730));
+            editor->setProperty("embedded", true);
+            editor->setProperty("scopedWorkspace", true);
+            editor->setProperty("showAdvancedMode", true);
+            editor->setProperty("workspaceIndex", 2);
+            editor->setProperty("searchText", "machine_start_gcode");
+            const auto fieldMarked = [&](const QString& key) {
+                return marked(editor, "sliceSettingSearchEditor_" + key + ".label", "text", QStringLiteral("\u2022 "));
+            };
+            require(QTest::qWaitFor([&] { return find(editor, "sliceSettingSearchEditor_machine_start_gcode.label"); }, 2000),
+                    "Cannot find the printer field");
+            require(fieldMarked("machine_start_gcode") && marked(editor, "scopedPresetHeading", "text", "* "),
+                    "Printer setting editor is missing the field or preset marker");
+            settings->restoreCurrentPreset("printer");
+            require(!titleMarked("printer") && !fieldMarked("machine_start_gcode") && !saveAvailable("PrinterPreset"),
+                    "Restoring did not clear printer markers");
+
+            require(settings->setFilamentSlotCount(2), "Cannot open the two-slot fixture");
+            const auto session = settings->openFilamentSlotEditor(1);
+            const auto revision = session.value("revision").toString();
+            const QString filamentKey = QStringLiteral("filament_max_volumetric_speed");
+            const auto original = session.value("settings").toMap().value(filamentKey).toMap().value("value").toDouble();
+            require(!revision.isEmpty() && original > 0, "Missing editable filament setting");
+            const auto issue = settings->saveFilamentSlotSettings(1, revision, {{filamentKey, original + 1}});
+            require(issue.isEmpty(), qPrintable(issue));
+            const auto slotMarked = [&](int slot) {
+                return marked(panel, "print.configuration.filament." + QString::number(slot), "displayText", "* ");
+            };
+            require(QTest::qWaitFor([&] { return titleMarked("filament") && slotMarked(2) && !slotMarked(1)
+                    && saveAvailable("FilamentPreset.2") && !saveAvailable("FilamentPreset.1"); }, 2000),
+                    "Filament edit did not mark only its own slot");
+            editor->setProperty("workspaceIndex", 1);
+            require(QMetaObject::invokeMethod(editor, "beginFilamentEdit", Q_ARG(QVariant, QVariant(1))),
+                    "Cannot initialize the material editor");
+            editor->setProperty("searchText", filamentKey);
+            require(QTest::qWaitFor([&] { return find(editor, "sliceSettingSearchEditor_" + filamentKey + ".label"); }, 2000),
+                    "Cannot find the filament field");
+            require(fieldMarked(filamentKey) && marked(editor, "scopedPresetHeading", "text", "* "),
+                    "Filament setting editor is missing the field or preset marker");
+            require(settings->savePreset("filament", 1, settings->configurationRevisionToken(),
+                        true, "Marker Test Filament", false).value("valid").toBool(),
+                    "Cannot save the edited filament preset");
+            require(QTest::qWaitFor([&] { return !titleMarked("filament") && !slotMarked(2) && !saveAvailable("FilamentPreset.2"); }, 2000),
+                    "Saving did not clear the filament markers");
+
+            QQmlComponent machineComponent(&engine,
+                QUrl::fromLocalFile(QStringLiteral(POPUP_QML_ROOT "/components/MachineSelectionBar.qml")));
+            require(machineComponent.isReady(), qPrintable(machineComponent.errorString()));
+            std::unique_ptr<QObject> machineObject(machineComponent.create());
+            auto* selector = qobject_cast<QQuickItem*>(machineObject.get());
+            require(selector, qPrintable(machineComponent.errorString()));
+            selector->setParentItem(window.contentItem());
+            selector->setPosition(QPointF(12, 12));
+            selector->setSize(QSizeF(300, 64));
+            const auto visibleNozzleCombo = [&] {
+                auto* combo = find(window.contentItem(), "machineNozzleCombo");
+                return combo && combo->isVisible() ? combo : nullptr;
+            };
+            click(window, selector, "machineSelectorButton");
+            require(QTest::qWaitFor([&] { return visibleNozzleCombo() != nullptr; }, 2000),
+                    "Cannot open the quick nozzle selector");
+            const auto nozzleCount = visibleNozzleCombo()->property("count").toInt();
+            const auto nozzleName = visibleNozzleCombo()->property("currentText").toString();
+            require(nozzleCount > 0 && !nozzleName.isEmpty(), "No nozzle is selected before saving a printer copy");
+            require(QMetaObject::invokeMethod(selector, "closePopup"), "Cannot close the quick machine selector");
+            require(QTest::qWaitFor([&] { return visibleNozzleCombo() == nullptr; }, 2000),
+                    "The quick machine selector did not close");
+
+            const QString printerCopy = QStringLiteral("Marker Test Printer Copy");
+            require(settings->savePreset("printer", -1, settings->configurationRevisionToken(),
+                        true, printerCopy, false).value("valid").toBool(), "Cannot copy the printer preset");
+            auto* printerChooser = find(panel, "print.configuration.machine");
+            require(printerChooser && printerChooser->property("displayText").toString() == printerCopy,
+                    "The copy is not selected in the printer preset chooser");
+            click(window, selector, "machineSelectorButton");
+            require(QTest::qWaitFor([&] { return visibleNozzleCombo() != nullptr; }, 2000),
+                    "Cannot reopen the quick nozzle selector after copying the printer preset");
+            require(visibleNozzleCombo()->property("count").toInt() == nozzleCount,
+                    "A printer preset copy added a physical nozzle choice");
+            require(visibleNozzleCombo()->property("currentText").toString() == nozzleName &&
+                        !selector->property("draftMachineChanged").toBool(),
+                    "The active printer preset copy changed the selected physical nozzle");
+            std::cout << "Preset heading and field markers passed\n";
             return 0;
         }
         QObject::connect(settings, &SliceSettingsBridge::printerSwitchDecisionRequested, &window,

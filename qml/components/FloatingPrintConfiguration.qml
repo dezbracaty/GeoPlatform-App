@@ -59,6 +59,7 @@ PanelSurface {
     readonly property int sectionInset: PrintWorkspaceStyle.space16
     readonly property var materialControls: SliceSettingsBridge.filamentSlotControls
     signal detailedSettingsRequested(int workspaceIndex, int slotIndex, var restoreFocus)
+    signal presetSaveRequested(string domain, int filamentSlot, string sourceName, bool duplicate)
     signal addModelRequested
 
     DBPropertyBridge {
@@ -70,6 +71,21 @@ PanelSurface {
         selectedColor: Qt.rgba(ModelPropertyBridge.diffuseColor.x, ModelPropertyBridge.diffuseColor.y, ModelPropertyBridge.diffuseColor.z, 1)
         onAccepted: if (root.editingEnabled && SelectionBridge.selectionCount === 1)
             ModelPropertyBridge.diffuseColor = Qt.vector3d(selectedColor.r, selectedColor.g, selectedColor.b)
+    }
+    Menu {
+        id: presetContextMenu
+        property string presetDomain: ""
+        property int filamentSlot: -1
+        property string presetId: ""
+
+        MenuItem {
+            objectName: "print.configuration.duplicatePreset"
+            text: qsTr("Duplicate preset")
+            icon.name: FluentIcons.graph_Copy
+            enabled: root.editingEnabled
+            onTriggered: root.presetSaveRequested(presetContextMenu.presetDomain,
+                presetContextMenu.filamentSlot, presetContextMenu.presetId, true)
+        }
     }
     width: Math.min(344, boundsItem ? Math.max(0, boundsItem.width - 32) : 344)
     height: collapsed ? 42 : Math.max(42, Math.min(649, boundsItem ? boundsItem.height * 0.726 : 649,
@@ -224,14 +240,21 @@ PanelSurface {
             Layout.bottomMargin: 9
             spacing: 7
             ParameterSectionHeader {
+                objectName: "print.configuration.printerHeading"
                 label: qsTr("Slicing printer")
+                modified: SliceSettingsBridge.printerPresetModified
                 iconSource: FluentIcons.graph_Print
                 actionName: "print.configuration.details.printer"
+                saveActionName: "print.configuration.savePrinterPreset"
+                presetDomain: "printer"
+                presetId: root.machine.printerPresetId || ""
                 onTriggered: root.detailedSettingsRequested(2, -1, null)
             }
-            ComboBox {
+            PresetSelector {
                 id: machineCombo
                 objectName: "print.configuration.machine"
+                presetDomain: "printer"
+                presetId: root.machine.printerPresetId || ""
                 Layout.fillWidth: true
                 implicitHeight: 37
                 font.pixelSize: 12
@@ -287,7 +310,9 @@ PanelSurface {
             Layout.bottomMargin: 6
             spacing: 4
             SectionHeader {
+                objectName: "print.configuration.filamentHeading"
                 label: filamentSection.Accessible.name
+                modified: root.slots.some(slot => slot.presetModified)
                 countText: qsTr("%1 slots").arg(root.slots.length)
                 iconSource: FluentIcons.graph_Color
                 actions: [
@@ -396,9 +421,12 @@ PanelSurface {
                                     Qt.callLater(() => { if (slotColor.visible && slotColor.enabled) slotColor.forceActiveFocus() })
                                 }
                             }
-                            ComboBox {
+                            PresetSelector {
                                 id: preset
                                 objectName: "print.configuration.filament." + materialRow.modelData.number
+                                presetDomain: "filament"
+                                filamentSlot: materialRow.modelData.index
+                                presetId: materialRow.modelData.presetId
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
                                 Layout.preferredHeight: 30
@@ -406,7 +434,8 @@ PanelSurface {
                                 model: materialRow.modelData.compatiblePresets
                                 textRole: "name"
                                 currentIndex: root.indexOf(model, "id", materialRow.modelData.presetId)
-                                displayText: materialRow.modelData.presetName
+                                displayText: (materialRow.modelData.presetModified ? "* " : "")
+                                    + materialRow.modelData.presetName
                                 enabled: root.editingEnabled && model.length > 0
                                 onActivated: function(index) {
                                     const slot = materialRow.modelData.index;
@@ -441,6 +470,13 @@ PanelSurface {
                                     })
                                 }
                             }
+                            PresetSaveButton {
+                                objectName: "print.configuration.saveFilamentPreset." + materialRow.modelData.number
+                                visible: materialRow.modelData.presetModified
+                                enabled: visible && root.editingEnabled && !!materialRow.modelData.presetId
+                                onClicked: root.presetSaveRequested("filament", materialRow.modelData.index,
+                                    materialRow.modelData.presetId, false)
+                            }
                         }
                     }
                 }
@@ -463,14 +499,21 @@ PanelSurface {
             Layout.bottomMargin: 9
             spacing: 7
             ParameterSectionHeader {
+                objectName: "print.configuration.processHeading"
                 label: qsTr("Process preset")
+                modified: SliceSettingsBridge.modifiedSettingKeys.length > 0
                 iconSource: FluentIcons.graph_Equalizer
                 actionName: "print.configuration.details.process"
+                saveActionName: "print.configuration.saveProcessPreset"
+                presetDomain: "process"
+                presetId: SliceSettingsBridge.selectedProcessPresetId
                 onTriggered: root.detailedSettingsRequested(0, -1, null)
             }
-            ComboBox {
+            PresetSelector {
                 id: processCombo
                 objectName: "print.configuration.process"
+                presetDomain: "process"
+                presetId: SliceSettingsBridge.selectedProcessPresetId
                 Layout.fillWidth: true
                 implicitHeight: 35
                 font.pixelSize: 11
@@ -990,6 +1033,7 @@ PanelSurface {
         property string label: ""
         property string countText: ""
         property string iconSource: ""
+        property bool modified: false
         property alias actions: actionGroup.data
         Layout.fillWidth: true
         Layout.minimumHeight: root.sectionActionSize
@@ -1002,7 +1046,8 @@ PanelSurface {
             color: root.secondaryText
         }
         Label {
-            text: sectionHeader.label
+            objectName: sectionHeader.objectName ? sectionHeader.objectName + ".label" : ""
+            text: (sectionHeader.modified ? "* " : "") + sectionHeader.label
             Layout.fillWidth: !slotCount.visible
             Layout.minimumWidth: 0
             elide: Text.ElideRight
@@ -1024,42 +1069,53 @@ PanelSurface {
     component ParameterSectionHeader: SectionHeader {
         id: parameterHeader
         property string actionName: ""
+        property string saveActionName: ""
+        property string presetDomain: ""
+        property string presetId: ""
         signal triggered
-        actions: Button {
-            id: parameterButton
-            objectName: parameterHeader.actionName
-            text: qsTr("View Parameters")
-            icon.name: FluentIcons.graph_ChevronRightSmall
-            icon.width: root.sectionActionIconSize
-            icon.height: root.sectionActionIconSize
-            flat: true
-            padding: 0
-            horizontalPadding: (root.sectionActionSize - root.sectionActionIconSize) / 2
-            spacing: 6
-            font.pixelSize: 11
-            Layout.preferredHeight: root.sectionActionSize
-            Layout.maximumWidth: (root.width - 2 * (root.sectionInset + 1)) / 2
-            ToolTip.visible: hovered && width < implicitWidth
-            ToolTip.text: text
-            contentItem: RowLayout {
-                spacing: parameterButton.spacing
-                Label {
-                    Layout.fillWidth: true
-                    Layout.minimumWidth: 0
-                    text: parameterButton.text
-                    font: parameterButton.font
-                    color: parameterButton.SmoothUI.textColor
-                    elide: Text.ElideRight
+        actions: [
+            PresetSaveButton {
+                objectName: parameterHeader.saveActionName
+                visible: parameterHeader.modified
+                enabled: visible && root.editingEnabled && parameterHeader.presetId.length > 0
+                onClicked: root.presetSaveRequested(parameterHeader.presetDomain, -1, parameterHeader.presetId, false)
+            },
+            Button {
+                id: parameterButton
+                objectName: parameterHeader.actionName
+                text: qsTr("View Parameters")
+                icon.name: FluentIcons.graph_ChevronRightSmall
+                icon.width: root.sectionActionIconSize
+                icon.height: root.sectionActionIconSize
+                flat: true
+                padding: 0
+                horizontalPadding: (root.sectionActionSize - root.sectionActionIconSize) / 2
+                spacing: 6
+                font.pixelSize: 11
+                Layout.preferredHeight: root.sectionActionSize
+                Layout.maximumWidth: (root.width - 2 * (root.sectionInset + 1)) / 2
+                ToolTip.visible: hovered && width < implicitWidth
+                ToolTip.text: text
+                contentItem: RowLayout {
+                    spacing: parameterButton.spacing
+                    Label {
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        text: parameterButton.text
+                        font: parameterButton.font
+                        color: parameterButton.SmoothUI.textColor
+                        elide: Text.ElideRight
+                    }
+                    Icon {
+                        Layout.preferredWidth: parameterButton.icon.width
+                        Layout.preferredHeight: parameterButton.icon.height
+                        source: parameterButton.icon.name
+                        color: parameterButton.icon.color
+                    }
                 }
-                Icon {
-                    Layout.preferredWidth: parameterButton.icon.width
-                    Layout.preferredHeight: parameterButton.icon.height
-                    source: parameterButton.icon.name
-                    color: parameterButton.icon.color
-                }
+                onClicked: parameterHeader.triggered()
             }
-            onClicked: parameterHeader.triggered()
-        }
+        ]
     }
     component SectionIconButton: IconButton {
         Layout.preferredWidth: root.sectionActionSize
@@ -1068,6 +1124,36 @@ PanelSurface {
         padding: 0
         icon.width: root.sectionActionIconSize
         icon.height: root.sectionActionIconSize
+    }
+    component PresetSaveButton: SectionIconButton {
+        icon.name: FluentIcons.graph_Save
+        Accessible.name: qsTr("Save preset")
+        ToolTip.visible: hovered
+        ToolTip.text: Accessible.name
+    }
+    component PresetSelector: ComboBox {
+        id: presetSelector
+        property string presetDomain: ""
+        property string presetId: ""
+        property int filamentSlot: -1
+
+        function openPresetMenu() {
+            if (!enabled || !presetId.length)
+                return false
+            presetContextMenu.presetDomain = presetDomain
+            presetContextMenu.filamentSlot = filamentSlot
+            presetContextMenu.presetId = presetId
+            presetContextMenu.popup(presetSelector, 0, presetSelector.height)
+            return true
+        }
+        TapHandler {
+            acceptedButtons: Qt.RightButton
+            onTapped: presetSelector.openPresetMenu()
+        }
+        Keys.onPressed: event => {
+            if (event.key === Qt.Key_Menu || (event.key === Qt.Key_F10 && event.modifiers === Qt.ShiftModifier))
+                event.accepted = presetSelector.openPresetMenu()
+        }
     }
     component AxisField: Rectangle {
         id: axis

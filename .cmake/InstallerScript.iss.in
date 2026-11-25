@@ -93,8 +93,9 @@ var
   DefaultSettingsTasks: String;
 
 const
-  UserSettingsDir = '%LOCALAPPDATA%\{#MyAppName}\{#MyAppName}';
+  UserSettingsDir = '%LOCALAPPDATA%\{#MyAppName}';
   UserSettingsFile = UserSettingsDir + '\{#MyAppName}.ini';
+  UserSlicingSelection = UserSettingsDir + '\slicing\selection.conf';
 
 function RunUserSettingsCommand(const Command, WorkingDir: String;
   var ExitCode: Integer): Boolean;
@@ -111,8 +112,9 @@ var
   RequestedTasks: String;
 begin
   if not RunUserSettingsCommand(
-    '(if not defined LOCALAPPDATA exit /b 2) & if exist "' +
-    UserSettingsFile + '" (exit /b 0) else (exit /b 1)',
+    '(if not defined LOCALAPPDATA exit /b 2) & (if exist "' +
+    UserSettingsFile + '" exit /b 0) & if exist "' +
+    UserSlicingSelection + '" (exit /b 0) else (exit /b 1)',
     ExpandConstant('{sys}'), ExitCode) then
     RaiseException(Format('无法检查安装用户的配置文件（错误 %d）。', [ExitCode]));
   if (ExitCode <> 0) and (ExitCode <> 1) then
@@ -160,7 +162,9 @@ begin
     '") & (if not exist "' + UserSettingsDir +
     '" exit /b 3) & copy /B /Y "GPlatform.defaults.ini" "' +
     UserSettingsFile + '" >nul && "%SystemRoot%\System32\fc.exe" /B ' +
-    '"GPlatform.defaults.ini" "' + UserSettingsFile + '" >nul',
+    '"GPlatform.defaults.ini" "' + UserSettingsFile +
+    '" >nul && (if exist "' + UserSlicingSelection + '\NUL" exit /b 4) && (if exist "' + UserSlicingSelection + '" del /Q "' +
+    UserSlicingSelection + '") && (if exist "' + UserSlicingSelection + '" exit /b 4)',
     ExpandConstant('{app}'), ExitCode) then
     RaiseException(Format('无法重置安装用户的配置文件（错误 %d）。', [ExitCode]));
   if ExitCode <> 0 then

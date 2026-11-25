@@ -51,13 +51,17 @@ Button {
     property bool backToQuickSettings: false
     signal popupOpening()
 
+    readonly property var draftNozzleOptions: {
+        var machine = currentDraftMachine()
+        return machine && machine.variants
+            ? machine.variants.filter(function(variant) { return !variant.userPreset }) : []
+    }
     readonly property bool draftMachineChanged: {
         var machine = currentDraftMachine()
         var variant = currentDraftVariant()
         return machine !== null && variant !== null
                 && (machine.id !== SliceSettingsBridge.selectedMachineModelId
-                    || variant.id !== SliceSettingsBridge.selectedMachineVariantId
-                    || variant.printerPresetId !== root.selectedMachine.printerPresetId)
+                    || variant.id !== SliceSettingsBridge.selectedMachineVariantId)
     }
     readonly property bool draftBedTypeChanged: {
         var plate = currentDraftPlate()
@@ -136,11 +140,9 @@ Button {
     }
 
     function currentDraftVariant() {
-        var machine = currentDraftMachine()
-        if (machine === null || !machine.variants
-                || draftNozzleIndex < 0 || draftNozzleIndex >= machine.variants.length)
+        if (draftNozzleIndex < 0 || draftNozzleIndex >= draftNozzleOptions.length)
             return null
-        return machine.variants[draftNozzleIndex]
+        return draftNozzleOptions[draftNozzleIndex]
     }
 
     function currentDraftPlate() {
@@ -169,11 +171,7 @@ Button {
     function refreshDraft() {
         machineOptions = SliceSettingsBridge.machineModels()
         draftMachineIndex = indexByValue(machineOptions, "id", SliceSettingsBridge.selectedMachineModelId)
-        var machine = currentDraftMachine()
-        draftNozzleIndex = machine !== null
-                           ? indexByValue(machine.variants || [], "printerPresetId",
-                                          root.selectedMachine.printerPresetId)
-                           : -1
+        draftNozzleIndex = indexByValue(draftNozzleOptions, "id", SliceSettingsBridge.selectedMachineVariantId)
         var activeBedType = SliceSettingsBridge.getSetting("curr_bed_type")
         currentBedType = activeBedType === undefined || activeBedType === null
                          ? "" : String(activeBedType)
@@ -598,9 +596,9 @@ Button {
             const page = detailedSettingsLoader.item
             if (!page.scopedWorkspace)
                 return qsTr("Slicing Parameters")
-            if (page.inspectFilament)
-                return qsTr("Edit Filament Parameters")
-            return [qsTr("Process Parameters"), qsTr("Filament Parameters"), qsTr("Printer Parameters")][page.workspaceIndex]
+            const title = page.inspectFilament ? qsTr("Edit Filament Parameters")
+                : [qsTr("Process Parameters"), qsTr("Filament Parameters"), qsTr("Printer Parameters")][page.workspaceIndex]
+            return (page.currentPresetModified ? "* " : "") + title
         }
         showBack: root.detailedSettingsVisible
         onBackRequested: root.returnToQuickSettings()
@@ -724,10 +722,10 @@ Button {
                                         currentIndex: root.draftMachineIndex
                                         onActivated: {
                                             root.applyError = ""
+                                            if (currentIndex === root.draftMachineIndex)
+                                                return
                                             root.draftMachineIndex = currentIndex
-                                            var machine = root.currentDraftMachine()
-                                            root.draftNozzleIndex = machine !== null && machine.variants
-                                                                    && machine.variants.length > 0 ? 0 : -1
+                                            root.draftNozzleIndex = root.draftNozzleOptions.length > 0 ? 0 : -1
                                             root.applyDraftSelection(false)
                                         }
 
@@ -748,11 +746,8 @@ Button {
                                         objectName: "machineNozzleCombo"
                                         Layout.fillWidth: true
                                         Layout.preferredHeight: PrintWorkspaceStyle.controlHeight
-                                        enabled: root.selectionEnabled && root.currentDraftMachine() !== null
-                                                 && root.currentDraftMachine().variants
-                                                 && root.currentDraftMachine().variants.length > 0
-                                        model: root.currentDraftMachine() !== null
-                                               ? root.currentDraftMachine().variants : []
+                                        enabled: root.selectionEnabled && root.draftNozzleOptions.length > 0
+                                        model: root.draftNozzleOptions
                                         textRole: "name"
                                         currentIndex: root.draftNozzleIndex
                                         onActivated: {

@@ -22,7 +22,6 @@
 #include <QLocale>
 #include <QPointer>
 #include <QRegularExpression>
-#include <QSettings>
 #include <QUrl>
 #include <QtConcurrent/QtConcurrentRun>
 #include <QThread>
@@ -33,119 +32,6 @@
 #include <utility>
 
 namespace {
-    constexpr auto kMachineModelSetting = "slicing/selection/machineModelId";
-    constexpr auto kMachineVariantSetting = "slicing/selection/machineVariantId";
-    constexpr auto kPrinterPresetSetting = "slicing/selection/printerPresetId";
-    constexpr auto kProcessPresetSetting = "slicing/selection/processPresetId";
-    constexpr auto kFilamentPresetsSetting = "slicing/selection/filamentPresetIds";
-    constexpr auto kFilamentToolsSetting = "slicing/selection/filamentPhysicalTools";
-
-    bool selectionPersistenceEnabled() {
-        return qEnvironmentVariableIntValue("GPLATFORM_JOURNAL_SESSION") == 0;
-    }
-
-    void readPresetSelection(QSettings& settings, libslicer::ConfigSelection& selection) {
-        selection.process_preset_id = settings.value(kProcessPresetSetting).toString().toStdString();
-        for (const auto& filament : settings.value(kFilamentPresetsSetting).toStringList())
-            selection.filament_preset_ids.push_back(filament.toStdString());
-        for (const auto& tool : settings.value(kFilamentToolsSetting).toList())
-            selection.filament_physical_tools.push_back(tool.toUInt());
-    }
-
-    libslicer::ConfigSelection restoredSelection() {
-        libslicer::ConfigSelection selection;
-        if (!selectionPersistenceEnabled()) return selection;
-        QSettings settings;
-        selection.machine_model_id = settings.value(kMachineModelSetting).toString().toStdString();
-        selection.machine_variant_id = settings.value(kMachineVariantSetting).toString().toStdString();
-        selection.printer_preset_id = settings.value(kPrinterPresetSetting).toString().toStdString();
-        readPresetSelection(settings, selection);
-        return selection;
-    }
-
-    QString printerPresetGroup(const std::string& preset) {
-        return QStringLiteral("slicing/printerPresets/") +
-            QString::fromLatin1(QUrl::toPercentEncoding(QString::fromStdString(preset)));
-    }
-
-    // Orca PresetBundle::export_selections stores these with the printer preset.
-    constexpr const char* printerSelectionKeys[] = {
-        "curr_bed_type", "filament_colour", "filament_multi_colour", "filament_colour_type",
-        "flush_volumes_matrix", "flush_volumes_vector", "flush_multiplier"};
-
-    std::vector<std::pair<std::string, std::string>> rememberedPrinterSettings(QSettings& settings) {
-        std::vector<std::pair<std::string, std::string>> patch;
-        for (const char* key : printerSelectionKeys) {
-            const auto value = settings.value(QString::fromLatin1(key));
-            if (value.isValid()) patch.emplace_back(key, value.toString().toStdString());
-        }
-        return patch;
-    }
-
-    std::vector<std::pair<std::string, std::string>> rememberedPrinterSettings(
-        const libslicer::ConfigSelection& selection) {
-        const bool systemP3 = selection.machine_model_id == "P3" && selection.machine_variant_id == "0.4" &&
-            (selection.printer_preset_id.empty() || selection.printer_preset_id == "P3 0.4 nozzle");
-        if (!systemP3 && selection.printer_preset_id.empty()) return {};
-        QSettings settings;
-        settings.beginGroup(printerPresetGroup(systemP3 ? "P3 0.4 nozzle" : selection.printer_preset_id));
-        auto patch = rememberedPrinterSettings(settings);
-        if (!systemP3 || settings.contains("filament_colour"))
-            return patch;
-
-        settings.endGroup();
-        settings.beginGroup(QStringLiteral("slicing/printers/P3/0.4"));
-        const auto tools = settings.value(kFilamentToolsSetting).toList();
-        const auto palette = settings.value(QStringLiteral("filament_colour")).toString();
-        const auto colors = palette.split(QLatin1Char(';'));
-        static const QRegularExpression rgb(QStringLiteral("^#[0-9A-Fa-f]{6}$"));
-        if (tools.size() != 6 || colors.size() != 6)
-            return patch;
-        for (qsizetype slot = 0; slot < tools.size(); ++slot) {
-            bool ok = false;
-            if (tools[slot].toUInt(&ok) != unsigned(slot) || !ok || !rgb.match(colors[slot]).hasMatch())
-                return patch;
-        }
-        patch.emplace_back("filament_colour", palette.toStdString());
-        return patch;
-    }
-
-    void persistSelection(const libslicer::ResolvedSelection& selection, bool active = true,
-                          std::optional<libslicer::ConfigSnapshot> config = {},
-                          bool rememberColors = true) {
-        if (!selectionPersistenceEnabled()) return;
-
-        QStringList filaments;
-        for (const auto& filament : selection.filament_preset_ids)
-            filaments.push_back(QString::fromStdString(filament));
-        QVariantList tools;
-        for (unsigned tool : selection.filament_physical_tools) tools.push_back(tool);
-
-        QSettings settings;
-        const auto writePresets = [&] {
-            settings.setValue(kProcessPresetSetting, QString::fromStdString(selection.process_preset_id));
-            settings.setValue(kFilamentPresetsSetting, filaments);
-            settings.setValue(kFilamentToolsSetting, tools);
-        };
-        if (active) {
-            settings.setValue(kMachineModelSetting, QString::fromStdString(selection.machine_model_id));
-            settings.setValue(kMachineVariantSetting, QString::fromStdString(selection.machine_variant_id));
-            settings.setValue(kPrinterPresetSetting, QString::fromStdString(selection.printer_preset_id));
-            writePresets();
-        }
-        settings.beginGroup(printerPresetGroup(selection.printer_preset_id));
-        writePresets();
-        if (!config) config = GPlatform::SlicingBackend::instance().configSnapshot();
-        if (config) {
-            for (const char* key : printerSelectionKeys) {
-                if (!rememberColors && std::string_view(key).rfind("filament_", 0) == 0)
-                    continue;
-                if (const auto value = config->value(key))
-                    settings.setValue(QString::fromLatin1(key), QString::fromStdString(*value));
-            }
-        }
-    }
-
     QVariantList toolCapacityVariant(const libslicer::MachineVariantOption& variant) {
         QVariantList result;
         for (int capacity : variant.toolhead_filament_capacity) result.push_back(capacity);
@@ -300,6 +186,14 @@ namespace {
     GPlatform::SlicingConfigActivationResult bridgeActivationResult(
         libslicer::ActiveConfigView&& view) {
         return {view.valid(), std::move(view), {}};
+    }
+
+    QStringList settingKeys(const std::vector<std::string>& keys) {
+        QStringList result;
+        result.reserve(static_cast<qsizetype>(keys.size()));
+        for (const auto& key : keys)
+            result.push_back(QString::fromStdString(key));
+        return result;
     }
 
     std::vector<GPlatform::SlicingConfigDB::Filament> convertDocumentFilaments(
@@ -465,9 +359,9 @@ SliceSettingsBridge::PreparedConfiguration SliceSettingsBridge::prepareConfigura
         prepared.itemIndex.emplace(item.key, index);
 
     }
-    for (const auto& key : prepared.view.modified_process_keys)
-        prepared.modifiedProcessKeys.push_back(QString::fromStdString(key));
-    prepared.filamentSlots = filamentSlotItems(prepared.view.filament_slots, prepared.view.settings);
+    prepared.modifiedProcessKeys = settingKeys(prepared.view.modified_process_keys);
+    prepared.modifiedPrinterKeys = settingKeys(prepared.view.modified_printer_keys);
+    prepared.filamentSlots = filamentSlotItems(prepared.view);
     auto schema = prepareSchema(prepared.view.settings);
     prepared.schemaSettings = std::move(schema.settings);
     prepared.schemaPages = std::move(schema.pages);
@@ -505,7 +399,7 @@ void SliceSettingsBridge::installCommittedConfiguration(
     m_compatibleFilaments.swap(prepared.view.compatible_filaments);
     m_items.swap(prepared.view.settings);
     m_modifiedProcessKeys.swap(prepared.modifiedProcessKeys);
-    m_printerPresetModified = prepared.view.printer_preset_modified;
+    m_modifiedPrinterKeys.swap(prepared.modifiedPrinterKeys);
     m_itemIndex.swap(prepared.itemIndex);
     m_schemaSettings.swap(prepared.schemaSettings);
     m_schemaPages.swap(prepared.schemaPages);
@@ -529,83 +423,39 @@ void SliceSettingsBridge::publishCommittedConfiguration(bool machineChanged) {
 namespace {
 std::optional<GPlatform::SlicingConfigActivationResult> startupConfiguration;
 
-GPlatform::SlicingConfigActivationResult loadStartupConfiguration(libslicer::ConfigSelection selection) {
+GPlatform::SlicingConfigActivationResult loadStartupConfiguration() {
+    GPlatform::SlicingConfigActivationResult result;
     QElapsedTimer timer;
     timer.start();
-    const bool profile = qEnvironmentVariableIntValue("GP_STARTUP_PROFILE") == 1;
-    qint64 previousUs = 0;
-    const auto profilePhase = [&](const char* phase) {
-        if (!profile) return;
-        const auto nowUs = timer.nsecsElapsed() / 1000;
-        LOG_INFO("[STARTUP DETAIL] function=loadStartupConfiguration phase={} detail=none durationUs={} totalUs={}",
-                 phase, nowUs - previousUs, nowUs);
-        previousUs = timer.nsecsElapsed() / 1000;
-    };
     auto& backend = GPlatform::SlicingBackend::instance();
-    LOG_INFO("[STARTUP PRESETS] backend initialized elapsedMs={}", timer.elapsed());
-    profilePhase("SlicingBackend-instance");
     if (!backend.available()) {
-        GPlatform::SlicingConfigActivationResult result;
-        result.diagnostics.push_back({"initialization", "slicing backend is unavailable"});
+        result.diagnostics.push_back({"initialization", "Slicing backend is unavailable"});
         return result;
     }
+    libslicer::ConfigSelection fallback;
+    fallback.machine_model_id = "Flashforge AD5X";
+    fallback.machine_variant_id = "0.4";
+    const auto revision = backend.configurationRevision();
+    auto prepared = backend.prepareStartupConfiguration(fallback);
+    result.diagnostics = std::move(prepared.diagnostics);
+    if (!prepared) return result;
+    for (const auto& diagnostic : result.diagnostics)
+        LOG_WARN("SliceSettingsBridge: {}: {}", diagnostic.key, diagnostic.message);
 
-    if (selection.machine_model_id.empty() || selection.machine_variant_id.empty()) {
-        selection = {};
-        selection.machine_model_id = "Flashforge AD5X";
-        selection.machine_variant_id = "0.4";
-    }
-    const auto restore = [&backend, &profilePhase](libslicer::ConfigSelection requested) {
-        GPlatform::SlicingConfigActivationResult result;
-        if (requested.printer_preset_id.empty()) {
-            const auto presets = backend.printerPresets(requested.machine_model_id, requested.machine_variant_id);
-            if (!presets.empty()) requested.printer_preset_id = presets.front().id;
-        }
-        const auto settings = selectionPersistenceEnabled()
-            ? rememberedPrinterSettings(requested)
-            : std::vector<std::pair<std::string, std::string>>{};
-        const auto revision = backend.configurationRevision();
-        profilePhase("read-saved-selection-and-printer-settings");
-        auto prepared = backend.preparePrinterSwitch(requested, revision, {}, settings);
-        profilePhase("preparePrinterSwitch");
-        if (!prepared) {
-            result.diagnostics = std::move(prepared.diagnostics);
-            return result;
-        }
-        auto lease = backend.beginProjectCommit(revision);
-        if (!lease) {
-            result.diagnostics.push_back({"selection", "The configuration changed during startup"});
-            return result;
-        }
-        auto installed = lease.install(prepared.configuration);
-        profilePhase("beginProjectCommit-and-install");
-        if (!installed) {
-            result.diagnostics = std::move(installed.diagnostics);
-            return result;
-        }
-        result.view = prepared.configuration.view();
-        result.view.revision = installed.revision;
-        result.success = true;
-        profilePhase("publish-config-view");
+    auto lease = backend.beginProjectCommit(revision);
+    if (!lease) {
+        result.diagnostics.push_back({"selection", "The configuration changed during startup"});
         return result;
-    };
-    auto result = restore(selection);
-    if (!result && !selection.printer_preset_id.empty()) {
-        selection.printer_preset_id.clear();
-        selection.process_preset_id.clear();
-        selection.filament_preset_ids.clear();
-        selection.filament_physical_tools.clear();
-        result = restore(selection);
     }
-    if (!result && (selection.machine_model_id != "Flashforge AD5X" || selection.machine_variant_id != "0.4")) {
-        LOG_WARN("SliceSettingsBridge: saved machine '{} / {}' is unavailable; using fallback machine",
-                 selection.machine_model_id, selection.machine_variant_id);
-        selection = {};
-        selection.machine_model_id = "Flashforge AD5X";
-        selection.machine_variant_id = "0.4";
-        result = restore(selection);
+    const auto installed = lease.install(prepared.configuration);
+    if (!installed) {
+        result.diagnostics.insert(result.diagnostics.end(), installed.diagnostics.begin(), installed.diagnostics.end());
+        return result;
     }
-    LOG_INFO("[STARTUP PRESETS] configuration restored totalMs={} success={}", timer.elapsed(), result.success);
+    result.view = prepared.configuration.view();
+    result.view.revision = installed.revision;
+    result.success = true;
+    LOG_INFO("[STARTUP PRESETS] configuration restored totalMs={}", timer.elapsed());
     return result;
 }
 
@@ -613,10 +463,9 @@ GPlatform::SlicingConfigActivationResult loadStartupConfiguration(libslicer::Con
 
 QFuture<GPlatform::SlicingConfigActivationResult> SliceSettingsBridge::prepareStartupConfiguration() {
     Q_ASSERT(QThread::currentThread() == QCoreApplication::instance()->thread());
-    const auto selection = restoredSelection();
     // Prime the cached Qt path before entering the startup worker.
     QCoreApplication::applicationDirPath();
-    return QtConcurrent::run([selection] { return loadStartupConfiguration(selection); });
+    return QtConcurrent::run([] { return loadStartupConfiguration(); });
 }
 
 void SliceSettingsBridge::supplyStartupConfiguration(GPlatform::SlicingConfigActivationResult result) {
@@ -628,7 +477,7 @@ SliceSettingsBridge::SliceSettingsBridge(QObject* parent)
     : bridge::BridgeBase(parent) {
     connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit,
             this, &SliceSettingsBridge::stopMachinePreparation);
-    auto result = startupConfiguration ? std::move(*startupConfiguration) : loadStartupConfiguration(restoredSelection());
+    auto result = startupConfiguration ? std::move(*startupConfiguration) : loadStartupConfiguration();
     startupConfiguration.reset();
     if (!replaceConfig(std::move(result), false))
         LOG_ERROR("SliceSettingsBridge: failed to restore or select fallback machine");
@@ -711,9 +560,14 @@ QStringList SliceSettingsBridge::modifiedSettingKeys() const {
     return m_modifiedProcessKeys;
 }
 
+QStringList SliceSettingsBridge::modifiedPrinterSettingKeys() const {
+    QReadLocker locker(&m_lock);
+    return m_modifiedPrinterKeys;
+}
+
 bool SliceSettingsBridge::printerPresetModified() const {
     QReadLocker locker(&m_lock);
-    return m_printerPresetModified;
+    return !m_modifiedPrinterKeys.isEmpty();
 }
 
 void SliceSettingsBridge::refreshPresetState() {
@@ -726,15 +580,13 @@ void SliceSettingsBridge::refreshPresetState() {
     {
         QWriteLocker locker(&m_lock);
         schemaChanged = applyChangedItemsLocked(active->settings);
-        m_modifiedProcessKeys.clear();
-        for (const auto& key : active->modified_process_keys)
-            m_modifiedProcessKeys.push_back(QString::fromStdString(key));
-        m_printerPresetModified = active->printer_preset_modified;
+        m_modifiedProcessKeys = settingKeys(active->modified_process_keys);
+        m_modifiedPrinterKeys = settingKeys(active->modified_printer_keys);
         selectionChanged = m_selection.filament_preset_ids != active->selection.filament_preset_ids;
         m_selection = active->selection;
         m_compatibleProcesses = active->compatible_processes;
         m_compatibleFilaments = active->compatible_filaments;
-        auto projectedSlots = filamentSlotItems(active->filament_slots, m_items);
+        auto projectedSlots = filamentSlotItems(*active);
         slotsChanged = projectedSlots != m_filamentSlots;
         m_filamentSlots.swap(projectedSlots);
     }
@@ -848,12 +700,8 @@ void SliceSettingsBridge::setSetting(const QString& key, const QVariant& value) 
         emit settingRejected(key, settingLabel + QStringLiteral(": ") + rejection);
         return;
     }
-    if (valueChanged && key == QStringLiteral("curr_bed_type")) {
-        auto& backend = GPlatform::SlicingBackend::instance();
-        const auto machine = backend.activeProjectMachine();
-        if (const auto active = backend.activeConfigView(); machine && !machine->project_local && active)
-            persistSelection(active->selection, true, {}, !m_projectPalette);
-    }
+    if (valueChanged)
+        persistSelection(GPlatform::SlicingBackend::instance().configurationRevision());
     if (valueChanged)
         emit settingChanged(key, canonicalDisplay);
     if (valueChanged) {
@@ -1022,13 +870,7 @@ bool SliceSettingsBridge::selectMachine(const QString& modelId, const QString& v
         setSetting(QStringLiteral("curr_bed_type"), bedType);
         return getSetting(QStringLiteral("curr_bed_type")).toString() == bedType;
     }
-    if (selectionPersistenceEnabled() && !selection.printer_preset_id.empty()) {
-        QSettings settings;
-        settings.beginGroup(printerPresetGroup(selection.printer_preset_id));
-        readPresetSelection(settings, selection);
-        pending.remembered = rememberedPrinterSettings(selection);
-    }
-    if (!bedType.isEmpty()) pending.remembered.emplace_back("curr_bed_type", bedType.toStdString());
+    if (!bedType.isEmpty()) pending.projectOverrides.emplace_back("curr_bed_type", bedType.toStdString());
     const auto revision = backend.configurationRevision();
     pending.printerCatalog = machineModels();
     m_printerSwitch = std::move(pending);
@@ -1116,6 +958,36 @@ QVariantMap SliceSettingsBridge::printerSwitchPresetNameStatus(const QString& na
         return {{"valid", false}, {"message", tr(status.diagnostics.front().message.c_str())}};
     return {{"valid", true}, {"message", status.overwrite_warning.empty()
         ? QString{} : tr(status.overwrite_warning.c_str())}};
+}
+
+QVariantMap SliceSettingsBridge::savePreset(const QString& type, int filamentSlot, const QString& revision,
+    bool saveAs, const QString& name, bool validateOnly, bool overwriteConfirmed)
+{
+    if (configurationMutationBlocked("preset save") || m_printerSwitch || TransactionManager::instance().isInTransaction())
+        return {{"valid", false}, {"message", tr("Settings cannot be changed during the current task.")}};
+    using Preset = libslicer::PrinterSwitchPreset;
+    Preset domain;
+    if (type == QStringLiteral("printer")) domain = Preset::Printer;
+    else if (type == QStringLiteral("process")) domain = Preset::Process;
+    else if (type == QStringLiteral("filament")) domain = Preset::Filament;
+    else return {{"valid", false}, {"message", tr("Unknown preset type")}};
+
+    bool validRevision = false;
+    const auto expected = revision.toULongLong(&validRevision);
+    if (!validRevision || !expected)
+        return {{"valid", false}, {"message", tr("The configuration changed before saving the preset")}};
+    const auto mode = saveAs ? libslicer::PresetSaveMode::SaveAs : libslicer::PresetSaveMode::Current;
+    const auto slot = filamentSlot >= 0 ? std::optional<std::size_t>(filamentSlot) : std::nullopt;
+    auto result = GPlatform::SlicingBackend::instance().savePreset(expected, domain, mode, name.toStdString(),
+        slot, validateOnly, overwriteConfirmed);
+    if (!result.diagnostics.empty())
+        return {{"valid", false}, {"message", tr(result.diagnostics.front().message.c_str())}};
+    if (validateOnly)
+        return {{"valid", true}, {"overwriteWarning", result.overwrite_warning.empty()
+            ? QString{} : tr(result.overwrite_warning.c_str())}};
+    if (!replaceConfig(bridgeActivationResult(std::move(result.view)), true))
+        return {{"valid", false}, {"message", tr("Could not save preset")}};
+    return {{"valid", true}};
 }
 
 void SliceSettingsBridge::resolvePrinterSwitch(const QString& action, const QString& saveName) {
@@ -1312,12 +1184,12 @@ bool SliceSettingsBridge::setFilamentColor(int slotIndex, const QColor& color,
     {
         QWriteLocker locker(&m_lock);
         schemaChanged = applyChangedItemsLocked(result.changed_items);
-        m_filamentSlots = filamentSlotItems(active->filament_slots, m_items);
+        m_filamentSlots = filamentSlotItems(*active);
         setPendingLocked(&pendingChanged);
     }
     publishActiveSlicingConfig(active->revision, active->filament_slots);
     if (const auto machine = backend.activeProjectMachine(); machine && !machine->project_local)
-        persistSelection(active->selection, true, {}, !m_projectPalette);
+        persistSelection(active->revision);
     setConfigurationError({});
     emit filamentSlotsChanged();
     emit settingsChanged();
@@ -1876,25 +1748,24 @@ QVariantList SliceSettingsBridge::presetOptions(
     return result;
 }
 
-QVariantList SliceSettingsBridge::filamentSlotItems(
-    const std::vector<libslicer::FilamentSlotInfo>& filamentSlots,
-    const std::vector<libslicer::SettingItem>& settings) {
-    // Read the material process from the existing settings contract instead of
-    // extending the binary SDK's FilamentSlotInfo layout.
+QVariantList SliceSettingsBridge::filamentSlotItems(const libslicer::ActiveConfigView& view) {
+    const auto& settings = view.settings;
     const auto process = std::find_if(settings.begin(), settings.end(), [](const auto& item) {
         return item.key == "filament_process_type";
     });
     const auto processTypes = process == settings.end() ? QStringList{}
         : QString::fromStdString(process->value).split(';');
     QVariantList result;
-    result.reserve(static_cast<qsizetype>(filamentSlots.size()));
-    for (const auto& slot : filamentSlots) {
+    result.reserve(static_cast<qsizetype>(view.filament_slots.size()));
+    for (const auto& slot : view.filament_slots) {
         result.push_back(QVariantMap{
             {QStringLiteral("index"), static_cast<qulonglong>(slot.index)},
             {QStringLiteral("number"), static_cast<qulonglong>(slot.index + 1)},
             {QStringLiteral("presetId"), QString::fromStdString(slot.preset_id)},
             {QStringLiteral("presetName"), QString::fromStdString(slot.preset_name)},
             {QStringLiteral("presetModified"), slot.preset_modified},
+            {QStringLiteral("modifiedSettingKeys"), slot.index < view.modified_filament_keys.size()
+                ? settingKeys(view.modified_filament_keys[slot.index]) : QStringList{}},
             {QStringLiteral("compatiblePresets"), presetOptions(slot.compatible_presets)},
             {QStringLiteral("vendor"), QString::fromStdString(slot.vendor)},
             {QStringLiteral("materialType"), QString::fromStdString(slot.material_type)},
@@ -2090,7 +1961,7 @@ bool SliceSettingsBridge::applyPrinterSwitch(PendingPrinterSwitch&& pending)
     const auto current = backend.activeConfigView();
     const auto machine = backend.activeProjectMachine();
     auto candidate = backend.preparePrinterSwitch(pending.target, pending.review.revision,
-        pending.decisions, pending.remembered);
+        pending.decisions, pending.projectOverrides);
     const auto reject = [&](const QString& message) {
         emit settingRejected(QStringLiteral("printer"),
             pending.presetSaved ? tr("Preset saved. Printer switch failed. %1").arg(message) : message);
@@ -2165,15 +2036,16 @@ bool SliceSettingsBridge::applyPrinterSwitch(PendingPrinterSwitch&& pending)
         return reject(QString::fromUtf8(error.what()));
     }
 
-    const auto targetSelection = prepared.view.selection;
-    const bool projectLocal = prepared.projectLocal;
     const bool rememberSourceColors = !m_projectPalette;
     prepared.view.revision = installed.revision;
     installCommittedConfiguration(std::move(prepared), false);
     lease.release();
-    if (current && machine && !machine->project_local)
-        persistSelection(current->selection, false, installed.previous.snapshot(), rememberSourceColors);
-    if (!projectLocal) persistSelection(targetSelection, true, target);
+    libslicer::SelectionSaveOptions saveOptions;
+    if (current && machine && !machine->project_local) {
+        saveOptions.previous = installed.previous;
+        saveOptions.remember_previous_palette = rememberSourceColors;
+    }
+    persistSelection(installed.revision, std::move(saveOptions));
     publishCommittedConfiguration();
     return true;
 }
@@ -2238,11 +2110,22 @@ bool SliceSettingsBridge::replaceConfig(GPlatform::SlicingConfigActivationResult
         }
     }
     publishActiveSlicingConfig(prepared.view.revision, prepared.view.filament_slots);
-    if (!prepared.projectLocal) persistSelection(prepared.view.selection, true, {}, !m_projectPalette);
+    const auto revision = prepared.view.revision;
+    const bool remember = markPending && !prepared.projectLocal;
     installCommittedConfiguration(std::move(prepared));
+    if (remember) persistSelection(revision);
     if (!markPending) { QWriteLocker locker(&m_lock); m_hasPendingReslice = false; }
     publishCommittedConfiguration(machineChanged);
     return true;
+}
+
+void SliceSettingsBridge::persistSelection(std::uint64_t revision, libslicer::SelectionSaveOptions options) {
+    options.remember_current_palette = !m_projectPalette;
+    const auto saved = GPlatform::SlicingBackend::instance().saveUserSelection(revision, options);
+    if (saved) return;
+    for (const auto& diagnostic : saved.diagnostics)
+        LOG_WARN("SliceSettingsBridge: {}: {}", diagnostic.key, diagnostic.message);
+    emit selectionSaveFailed(tr("The current selection is active but could not be saved for next time."));
 }
 
 void SliceSettingsBridge::setConfigurationError(const QString& message) {

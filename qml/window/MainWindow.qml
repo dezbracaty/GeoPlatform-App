@@ -193,6 +193,9 @@ FramelessWindow {
         function onSettingRejected(key, message) {
             NotificationManager.showWarning(qsTr("Setting not applied"), message)
         }
+        function onSelectionSaveFailed(message) {
+            NotificationManager.showWarning(qsTr("Slicing selection"), message)
+        }
     }
 
     // Connect to NotificationManager signals
