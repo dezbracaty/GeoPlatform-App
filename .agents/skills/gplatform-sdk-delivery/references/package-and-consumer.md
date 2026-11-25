@@ -1,6 +1,6 @@
 # SDK 包、来源与消费检查
 
-平台四个工作流均在App，唯一完整规范见APP_ROOT/docs/ci.md；Root原平台文档仅作索引。SDK固定macos/windows发布，正式消费使用冻结的平台SDK_ROOT；SDK地址由选定App的cmake/sdk-repository.json声明；本地与CI均显式选择SDK_ROOT，不保留SDK gitlink回退。
+平台四个工作流均在App，唯一完整规范见APP_ROOT/docs/ci.md；Root原平台文档仅作索引。本机使用成功 Build SDK 工件和当前 gh 身份发布到选定目标分支，正式消费使用冻结 SDK checkout 的 SDK_ROOT；SDK地址由选定App的cmake/sdk-repository.json声明；本地与CI均显式选择SDK_ROOT，不保留SDK gitlink回退。
 
 路径显式区分 App 与完整宿主。只有 App 时可检查候选 SDK 和消费端；生产/导出需要相应宿主源码和已有构建产物。
 

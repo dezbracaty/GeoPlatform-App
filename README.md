@@ -33,7 +33,7 @@ git clone --branch windows https://github.com/dezbracaty/GeoPlatform-SDK.git ../
 git -C ../GeoPlatform-SDK lfs pull
 ```
 
-SDK 固定发布分支为 `windows` 和 `macos`；上例 Windows 选择 windows，Mac 改用 macos。正式候选应先检出所选平台的完整 SDK SHA，再执行 LFS pull；不要在同一轮构建中重新解析前进中的分支。
+上例 Windows 使用默认 SDK 分支 `windows`，Mac 默认使用 `macos`。平台 CI 还支持显式 ref 和 App 同名 SDK 分支。正式候选应先检出所选平台的完整 SDK SHA，再执行 LFS pull；不要在同一轮构建中重新解析前进中的分支。
 SDK checkout 内按 `<架构>/<构建类型>/` 分槽，文件包则按 `SDK/<架构>/<构建类型>/` 分槽。App 不再维护 SDK gitlink，也不自动回退旧 SDK。所有本地与 CI 配置均必须显式提供 `GPLATFORM_SDK_ROOT`；该路径指向 checkout 根或导出包的 SDK 目录。
 SDK 格式 3 提供内部库与 UI 二进制/同源 QML 资源；SmoothUI、SmoothUIDock 及其 KD 依赖不需要私有源码 checkout。平台 CI 和参数见 [docs/ci.md](docs/ci.md)。缺少新 SDK 地址声明或不满足现有构建/SDK/Server 契约的历史 App 不使用旧入口兼容。
 Git App 根据真实 Git 受管文件及 HEAD 校验 SDK 绑定的内容摘要，无需导出清单；没有 Git 元数据的文件包必须提供 `ThirdParty/source-inputs.json` 并通过同一摘要校验。
@@ -168,7 +168,7 @@ cmake --preset release -DGPLATFORM_SDK_ROOT=../GeoPlatform-SDK
 cmake --build --preset release
 ```
 
-Orca 使用 App 记录的子模块指针。SDK 独立选择固定平台分支的准确提交，不使用旧 SDK 子模块指针；缺失时检查显式 SDK_ROOT、架构及构建类型。提示 LFS 指针时在所选 SDK checkout 执行 `git lfs pull`。
+Orca 使用 App 记录的子模块指针。SDK 独立选择准确提交，不使用旧 SDK 子模块指针；缺失时检查显式 SDK_ROOT、架构及构建类型。提示 LFS 指针时在所选 SDK checkout 执行 `git lfs pull`。
 
 ## 可选扩展检查
 

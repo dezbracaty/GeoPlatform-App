@@ -6,13 +6,16 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
+from zipfile import ZipFile
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts/ci"))
 import common
 from common import digest, git, git_env, text_git
-from update_sdk import update_sdk
+from update_sdk import (SLOTS, download_artifact, gh_git_env, prepare_targets, publish_run, publish_slots,
+                        successful_build_artifacts, validate_package)
 import hashlib
 import importlib.util
 from fs_fixture import directory_link
@@ -141,14 +144,150 @@ class Updates(unittest.TestCase):
                  if p.is_file() and p.name != "sdk-manifest.json"}
         self.write(slot, "sdk-manifest.json", json.dumps(value))
 
+    def export_fixture(self, platform):
+        package = self.root / f'export-{platform}'
+        if package.exists():
+            shutil.rmtree(package)
+        for slot in SLOTS[platform]:
+            shutil.copytree(self.packages / 'SDK' / slot, package / 'SDK' / slot, symlinks=True)
+        manifest = {p.relative_to(package).as_posix(): digest(p) for p in package.rglob('*') if p.is_file()}
+        self.write(package, 'package-manifest.json', json.dumps(manifest))
+        return package
+
     def sdk_update(self, platform="windows", base=None):
-        return update_sdk(self.source, self.source_sha, platform, self.packages,
-                          self.declared_sdk_url, base or self.initial_sdk, app_sha=self.app_sha, publish=True)
+        package = self.export_fixture(platform)
+        receipt = validate_package(self.source, self.source_sha, platform, package,
+                                   self.declared_sdk_url, app_sha=self.app_sha)
+        slots = {name: package / 'SDK' / name for name in receipt['selected_slots']}
+        return publish_slots(self.declared_sdk_url, platform, base or self.initial_sdk, '',
+                             slots, self.source_sha, self.app_sha)
+
+    def upload_fixture(self, platform, artifact_id):
+        package = self.export_fixture(platform)
+        receipt = validate_package(self.source, self.source_sha, platform, package,
+                                   self.declared_sdk_url, app_sha=self.app_sha)
+        self.write(package, 'source-receipt.json', json.dumps(receipt))
+        zipped = self.root / f'{artifact_id}.zip'
+        with ZipFile(zipped, 'w') as archive:
+            for file in package.rglob('*'):
+                if file.is_file():
+                    archive.write(file, file.relative_to(package).as_posix())
+        return dict(id=artifact_id, name=f'sdk-{platform}-123-2', expired=False, digest='sha256:' + digest(zipped))
+
+    def run_info(self):
+        return dict(id=123, run_attempt=2, event='workflow_dispatch', path='.github/workflows/build-sdk.yml',
+                    status='completed', conclusion='success', head_sha=self.app_sha,
+                    repository=dict(full_name='fixture/App', id=17))
+
+    def publish_inputs(self):
+        return SimpleNamespace(source_dir=self.source, source_sha=self.source_sha, app_sha=self.app_sha,
+                               platform='all', app_branch='feature/shared', windows_sdk_target='', macos_sdk_target='',
+                               app_repository='fixture/App', run=123, attempt=2)
+
+    def run_responses(self, artifacts):
+        steps = [dict(name=name, conclusion='success')
+                 for name in ('Build and export selected SDK', 'Upload SDK delivery evidence')]
+        jobs = [dict(name=f'sdk-build-{platform}', run_id=123, run_attempt=2,
+                     status='completed', conclusion='success', steps=steps)
+                for platform in ('windows', 'macos')]
+        base = 'repos/fixture/App/actions/runs/123'
+        return {base + '/attempts/2': self.run_info(), base + '/attempts/2/jobs?per_page=100': {'jobs': jobs},
+                base + '/artifacts?per_page=100': {'artifacts': artifacts}}
+
+    def test_prepare_freezes_one_new_target_and_publishes_both_platforms_once(self):
+        plan, = prepare_targets(self.declared_sdk_url, 'feature/shared', 'all')
+        self.assertEqual(plan, dict(branch='feature/shared', platforms=['windows', 'macos'],
+                                    base='', seed=self.initial_sdk))
+        args = self.publish_inputs()
+        windows = self.upload_fixture('windows', 11)
+        responses = self.run_responses([windows])
+        with patch('update_sdk.gh_json', side_effect=lambda path, env: responses[path]):
+            with self.assertRaisesRegex(RuntimeError, 'one available artifact'):
+                publish_run(args, {})
+        self.assertEqual(common.read_remote_head(self.sdk_url, 'feature/shared', allow_missing=True), '')
+
+        macos = self.upload_fixture('macos', 22)
+        responses = self.run_responses([windows, macos])
+        run = subprocess.run
+
+        def download(argv, **kwargs):
+            if argv[0] != 'gh':
+                return run(argv, **kwargs)
+            artifact_id = argv[-1].split('/')[-2]
+            kwargs['stdout'].write((self.root / f'{artifact_id}.zip').read_bytes())
+
+        # Local publishing can validate frozen commits even while CI files are edited.
+        (self.source / '.gitmodules').write_text('local host edit')
+        (self.source / 'App/cmake/source_inputs.py').write_text('local app edit')
+        result = {}
+        with (patch('update_sdk.gh_json', side_effect=lambda path, env: responses[path]),
+              patch('update_sdk.subprocess.run', side_effect=download),
+              patch('update_sdk.push_exact_commit', wraps=common.push_exact_commit) as push):
+            publish_run(args, result)
+        push.assert_called_once()
+        sha = common.read_remote_head(self.sdk_url, 'feature/shared')
+        delivery = result['branches']['feature/shared']
+        self.assertEqual(delivery['sdk_sha'], sha)
+        self.assertEqual(delivery['updated_slots'], ['AMD64/Release', 'arm64/Release', 'x86_64/Release'])
+        self.assertEqual(text_git(self.sdk_url, 'rev-list', '--count', f'{self.initial_sdk}..{sha}'), '1')
+        for slot in delivery['updated_slots']:
+            self.assertTrue(git(self.sdk_url, 'show', f'{sha}:{slot}/lib/test.a').startswith(b'version https://git-lfs.'))
+
+    def test_prepare_requires_targets_only_for_selected_platforms_and_preserves_expected_head(self):
+        with self.assertRaisesRegex(ValueError, 'macos_sdk_target'):
+            prepare_targets(self.declared_sdk_url, self.app_sha, 'all', windows_sdk_target='windows')
+        plan, = prepare_targets(self.declared_sdk_url, self.app_sha, 'windows',
+                                windows_sdk_target='windows', macos_sdk_target='unused')
+        self.assertEqual(plan, dict(branch='windows', platforms=['windows'], base=self.initial_sdk, seed=''))
+
+    def test_first_publication_refuses_concurrent_creation(self):
+        plan, = prepare_targets(self.declared_sdk_url, 'feature/race', 'macos')
+        git(self.sdk_url, 'update-ref', 'refs/heads/feature/race', self.initial_sdk)
+        slots = {name: self.packages / 'SDK' / name for name in SLOTS['macos']}
+        with self.assertRaisesRegex(RuntimeError, 'expected base changed'):
+            publish_slots(self.declared_sdk_url, plan['branch'], plan['base'], plan['seed'], slots,
+                          self.source_sha, self.app_sha)
+        self.assertEqual(common.read_remote_head(self.sdk_url, 'feature/race'), self.initial_sdk)
+
+    def test_run_metadata_blocks_incomplete_wrong_attempt_and_failed_build(self):
+        info = self.run_info()
+        for changed in (dict(status='in_progress', conclusion=None), dict(run_attempt=1),
+                        dict(path='.github/workflows/run-regression.yml')):
+            with patch('update_sdk.gh_json', return_value=dict(info, **changed)) as request:
+                with self.assertRaises(RuntimeError):
+                    successful_build_artifacts('fixture/App', 123, 2, ['windows'], {})
+                request.assert_called_once()
+        responses = self.run_responses([])
+        responses['repos/fixture/App/actions/runs/123/attempts/2/jobs?per_page=100']['jobs'][0]['steps'] = [
+            dict(name='Build and export selected SDK', conclusion='failure')]
+        with patch('update_sdk.gh_json', side_effect=lambda path, env: responses[path]):
+            with self.assertRaisesRegex(RuntimeError, 'build/upload did not succeed'):
+                successful_build_artifacts('fixture/App', 123, 2, ['windows'], {})
+
+    def test_local_git_uses_gh_helper_without_token_or_trace_environment(self):
+        with patch.dict(os.environ, GH_TOKEN='fixture', GITHUB_TOKEN='fixture', GIT_TRACE_CURL='1'):
+            env = gh_git_env()
+        self.assertNotIn('GH_TOKEN', env)
+        self.assertNotIn('GITHUB_TOKEN', env)
+        self.assertNotIn('GIT_TRACE_CURL', env)
+        index = int(env['GIT_CONFIG_COUNT']) - 1
+        self.assertEqual(env[f'GIT_CONFIG_KEY_{index}'], 'credential.https://github.com.helper')
+        self.assertEqual(env[f'GIT_CONFIG_VALUE_{index}'], '!gh auth git-credential')
+
+    def test_download_rejects_wrong_digest_before_extracting(self):
+        artifact = dict(self.upload_fixture('windows', 11), digest='sha256:' + '0' * 64)
+        package = self.root / 'download'
+        with patch('update_sdk.subprocess.run',
+                   side_effect=lambda args, **kw: kw['stdout'].write((self.root / '11.zip').read_bytes())):
+            with self.assertRaisesRegex(RuntimeError, 'artifact digest differs'):
+                download_artifact('fixture/App', artifact, package, {})
+        self.assertFalse((package / 'SDK').exists())
 
     def test_clone_retries_fetch_without_recreating_checkout(self):
         original = subprocess.run
         failures = []
         checkout = self.root / "retry-clone"
+        expected = text_git(self.app, "rev-parse", "HEAD")
 
         def interrupted(args, **kwargs):
             if "fetch" in args and len(failures) < 2:
@@ -159,10 +298,10 @@ class Updates(unittest.TestCase):
 
         with patch.object(common.subprocess, "run", side_effect=interrupted):
             with patch.object(common.time, "sleep") as sleep:
-                sha = common.clone_branch(self.app_url, "feature/gplatform-ui", checkout, env=git_env())
+                sha = common.checkout_sdk_base(self.app_url, expected, checkout, env=git_env())
         self.assertEqual(len(failures), 2)
         self.assertEqual(sleep.call_count, 2)
-        self.assertEqual(sha, text_git(self.app, "rev-parse", "HEAD"))
+        self.assertEqual(sha, expected)
         self.assertEqual((checkout / "removed.txt").read_text(), "obsolete")
 
     def test_windows_changes_one_slot_lfs_and_repeat_is_noop(self):
@@ -176,7 +315,7 @@ class Updates(unittest.TestCase):
         pointer = git(self.sdk_url, "show", f"{sha}:AMD64/Release/lib/test.a")
         self.assertTrue(pointer.startswith(b"version https://git-lfs.github.com/spec/v1"))
         checkout = self.root / "consumer"
-        common.clone_branch(self.sdk_url, "windows", checkout, env=git_env())
+        common.checkout_sdk_base(self.sdk_url, sha, checkout, env=git_env())
         git(checkout, "lfs", "install", "--local", env=git_env())
         git(checkout, "lfs", "pull", "--include", "AMD64/Release/**", "--exclude", "", env=git_env())
         self.assertEqual((checkout / "AMD64/Release/lib/test.a").read_bytes(), b"binary payload AMD64")
@@ -222,7 +361,7 @@ class Updates(unittest.TestCase):
         pointer = git(self.sdk_url, "show", f'{result["sdk_sha"]}:AMD64/Release/objects/compiler.obj')
         self.assertTrue(pointer.startswith(b"version https://git-lfs.github.com/spec/v1\n"))
         checkout = self.root / "object-consumer"
-        common.clone_branch(self.sdk_url, "windows", checkout, env=git_env())
+        common.checkout_sdk_base(self.sdk_url, result["sdk_sha"], checkout, env=git_env())
         git(checkout, "lfs", "install", "--local", env=git_env())
         git(checkout, "lfs", "pull", "--include", "AMD64/Release/**", "--exclude", "", env=git_env())
         self.assertEqual((checkout / "AMD64/Release/objects/compiler.obj").read_bytes(), payload)
@@ -240,8 +379,8 @@ class Updates(unittest.TestCase):
         other = self.root / 'wrong-sdk.git'
         common.run(['git', 'clone', '--bare', self.sdk_url, other], capture=True)
         with self.assertRaisesRegex(RuntimeError, 'target URL differs'):
-            update_sdk(self.source, self.source_sha, 'windows', self.packages,
-                       str(other), self.initial_sdk, app_sha=self.app_sha, publish=True)
+            validate_package(self.source, self.source_sha, 'windows', self.export_fixture('windows'),
+                       str(other), app_sha=self.app_sha)
         self.assertEqual(common.read_remote_head(str(other), 'windows'), self.initial_sdk)
 
     def test_cross_batch_insertion_is_rejected(self):
@@ -257,10 +396,10 @@ class Updates(unittest.TestCase):
     def test_artifacts_default_never_reads_clones_or_pushes_the_sdk_target(self):
         before = text_git(self.app_url, 'for-each-ref', '--format=%(refname) %(objectname)')
         with patch('update_sdk.read_remote_head', side_effect=AssertionError('no target read')), \
-             patch('update_sdk.clone_branch', side_effect=AssertionError('no target clone')), \
+             patch('update_sdk.checkout_sdk_base', side_effect=AssertionError('no target clone')), \
              patch('update_sdk.push_exact_commit', side_effect=AssertionError('no push')):
-            value = update_sdk(self.source, self.source_sha, 'windows', self.packages,
-                               self.declared_sdk_url, self.initial_sdk, app_sha=self.app_sha)
+            value = validate_package(self.source, self.source_sha, 'windows', self.export_fixture('windows'),
+                               self.declared_sdk_url, app_sha=self.app_sha)
         self.assertFalse(value['published'])
         self.assertEqual(text_git(self.app_url, 'for-each-ref', '--format=%(refname) %(objectname)'), before)
         self.assertEqual(common.read_remote_head(self.sdk_url, 'windows'), self.initial_sdk)
@@ -275,7 +414,7 @@ class Updates(unittest.TestCase):
         wrong_pin = text_git(sdk, 'rev-parse', 'HEAD')
         self.write(sdk, 'cache.txt', 'dirty unused SDK')
         git(sdk, 'remote', 'set-url', 'origin', str(self.root / 'unavailable-sdk'))
-        value = update_sdk(self.source, self.source_sha, 'windows', self.packages,
+        value = validate_package(self.source, self.source_sha, 'windows', self.export_fixture('windows'),
                            self.declared_sdk_url, app_sha=self.app_sha)
         self.assertFalse(value['published'])
         self.assertEqual(text_git(sdk, 'rev-parse', 'HEAD'), wrong_pin)
@@ -307,18 +446,18 @@ class Updates(unittest.TestCase):
         metadata = json.loads((slot / 'sdk-build.json').read_text())
         metadata['APP_SOURCE_STATE']['HEAD'] = selected
         self.write(slot, 'sdk-build.json', json.dumps(metadata)); self.manifest(slot)
-        result = update_sdk(self.source, self.source_sha, 'windows', self.packages,
+        result = validate_package(self.source, self.source_sha, 'windows', self.export_fixture('windows'),
                             self.declared_sdk_url, app_sha=selected)
         self.assertEqual(result['app_sha'], selected)
         self.assertEqual(result['declared_app_sha'], declared)
         self.assertEqual(text_git(self.source, 'rev-parse', 'HEAD'), self.source_sha)
         self.assertEqual(text_git(self.source, 'rev-parse', self.source_sha + ':App'), declared)
         with self.assertRaisesRegex(RuntimeError, 'fixed App candidate'):
-            update_sdk(self.source, self.source_sha, 'windows', self.packages,
+            validate_package(self.source, self.source_sha, 'windows', self.export_fixture('windows'),
                        self.declared_sdk_url, app_sha=declared)
         self.write(app, 'selected-app.txt', 'dirty mutation')
         with self.assertRaisesRegex(RuntimeError, 'tracked changes'):
-            update_sdk(self.source, self.source_sha, 'windows', self.packages,
+            validate_package(self.source, self.source_sha, 'windows', self.export_fixture('windows'),
                        self.declared_sdk_url, app_sha=selected)
 
     def test_sdk3_contract_app_provenance_and_managed_content_are_required(self):
@@ -412,13 +551,13 @@ class Updates(unittest.TestCase):
     def test_symlink_ancestor_rejected_without_deleting_external_files(self):
         outside = self.root / 'outside'
         sentinel = self.write(outside, 'Release/sentinel.txt', 'preserve')
-        original = common.clone_branch
-        def redirected(url, branch, checkout, **kwargs):
-            base = original(url, branch, checkout, **kwargs)
+        original = common.checkout_sdk_base
+        def redirected(url, ref, checkout, **kwargs):
+            base = original(url, ref, checkout, **kwargs)
             shutil.rmtree(checkout / 'AMD64')
             directory_link(checkout / 'AMD64', outside)
             return base
-        with patch('update_sdk.clone_branch', side_effect=redirected):
+        with patch('update_sdk.checkout_sdk_base', side_effect=redirected):
             with self.assertRaisesRegex(RuntimeError, 'ancestor'):
                 self.sdk_update()
         self.assertEqual(sentinel.read_text(), 'preserve')

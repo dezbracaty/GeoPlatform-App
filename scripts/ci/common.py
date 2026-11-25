@@ -132,18 +132,55 @@ def sdk_repository(api, repository, app_sha):
     return parse_sdk_repository(content)
 
 
-def freeze_source_candidate(api, app_repository, app_ref, host_repository, host_ref):
+def freeze_candidate(api, app_repository, app_ref, host_repository, host_ref):
     """Freeze independent App/host commits; never replace the selected App by a host pin."""
     app_sha = resolve_ref(api, app_repository, app_ref)
     source_sha = resolve_ref(api, host_repository, host_ref)
     declared = source_app_sha(api, host_repository, source_sha, app_repository)
     return dict(app_sha=app_sha, source_sha=source_sha, declared_app_sha=declared,
-                host_repository=host_repository, app_repository=app_repository)
+                host_repository=host_repository, app_repository=app_repository,
+                sdk_repository=sdk_repository(api, app_repository, app_sha))
 
 
-def freeze_candidate(api, app_repository, app_ref, host_repository, host_ref):
-    result = freeze_source_candidate(api, app_repository, app_ref, host_repository, host_ref)
-    result['sdk_repository'] = sdk_repository(api, app_repository, result['app_sha'])
+def selected_platforms(platform):
+    if platform not in ('windows', 'macos', 'all'):
+        raise ValueError('Unknown SDK platform')
+    return ('windows', 'macos') if platform == 'all' else (platform,)
+
+
+def app_branch_name(app_ref):
+    return '' if SHA.fullmatch(app_ref) else app_ref
+
+
+def freeze_published_sdk(api, repository, app_ref, *, platform, app_branch='',
+                         windows_sdk_ref='', macos_sdk_ref=''):
+    """Freeze each selected SDK once. Only an absent App-named branch permits fallback."""
+    url = repository_url(repository)
+    env = git_env()
+    refs = {'windows': windows_sdk_ref, 'macos': macos_sdk_ref}
+    branch = app_branch_name(app_ref) or app_branch
+    resolved = {}
+
+    def lookup(ref, exact=False):
+        key = (ref, exact)
+        if key not in resolved:
+            resolved[key] = (resolve_ref(api, repository, ref) if exact
+                             else read_remote_head(url, ref, env=env, allow_missing=True))
+        return resolved[key]
+
+    result = {}
+    for name in selected_platforms(platform):
+        ref = refs[name]
+        if ref:
+            sha = lookup(ref, exact=bool(SHA.fullmatch(ref)))
+        else:
+            sha = lookup(branch) if branch else ''
+            if not sha:
+                ref = name
+                sha = lookup(ref)
+        if not sha:
+            raise RuntimeError(f'SDK branch does not exist for {name}: {ref}')
+        result[name + '_sdk_sha'] = sha
     return result
 
 
@@ -161,7 +198,7 @@ def repository_url(value):
 
 def branch_ref(value):
     if value.startswith("-") or value.startswith("refs/") or not value:
-        raise ValueError("Expected an existing branch name")
+        raise ValueError("Expected a branch name")
     run(["git", "check-ref-format", f"refs/heads/{value}"], capture=True)
     return f"refs/heads/{value}"
 
@@ -222,7 +259,7 @@ def git_env(secret="GPLATFORM_SOURCE_TOKEN"):
     # Never fall back to the developer's persistent credential store.
     settings = [("credential.helper", ""), ("core.autocrlf", "false"),
                 ("core.eol", "lf"), ("lfs.transfer.maxretries", "3")]
-    token = os.environ.get(secret)
+    token = os.environ.get(secret) if secret else None
     if token:
         header = base64.b64encode(f"x-access-token:{token}".encode()).decode()
         if os.environ.get("GITHUB_ACTIONS") == "true":
@@ -237,25 +274,34 @@ def git_env(secret="GPLATFORM_SOURCE_TOKEN"):
     return env
 
 
-def read_remote_head(url, branch, *, env=None):
-    ref = branch_ref(branch)
-    entries = run(["git", "ls-remote", "--exit-code", url, ref], env=env, capture=True, attempts=3).decode().splitlines()
-    if len(entries) != 1 or entries[0].split()[1] != ref:
+def read_remote_head(url, branch, *, env=None, allow_missing=False):
+    ref = "HEAD" if branch is None else branch_ref(branch)
+    lines = run(["git", "ls-remote", url, ref], env=env, capture=True, attempts=3).decode().splitlines()
+    entries = [line.split("\t") for line in lines]
+    if any(len(entry) != 2 for entry in entries):
+        raise RuntimeError("Invalid remote ref response")
+    exact = [sha for sha, name in entries if name == ref]
+    if not exact and allow_missing:
+        return ""
+    if len(exact) != 1:
         raise RuntimeError("Target branch is missing or ambiguous")
-    return require_sha(entries[0].split()[0])
+    return require_sha(exact[0])
 
 
 
 
-def clone_branch(url, branch, path, *, env=None):
-    ref = branch_ref(branch)
-    # A failed clone can leave a destination behind. Initialize once and retry
+def checkout_sdk_base(url, sha, path, *, env=None):
+    require_sha(sha)
+    # A failed fetch can leave objects behind. Initialize once and retry
     # only fetch, preserving received objects without deleting any directory.
     path = Path(path)
     path.mkdir()
     git(path, "init", env=env)
     git(path, "remote", "add", "origin", url, env=env)
-    git(path, "fetch", "--no-tags", "origin", ref, env=env, attempts=3)
+    # An exact-SHA fetch does not normally create a ref. LFS needs a local
+    # ref to enumerate uploads, and the frozen base is already on origin.
+    refspec = f"{sha}:refs/remotes/origin/sdk-base"
+    git(path, "fetch", "--depth=1", "--no-tags", "origin", refspec, env=env, attempts=3)
     git(path, "checkout", "--detach", "FETCH_HEAD", env=env)
     return text_git(path, "rev-parse", "HEAD")
 
@@ -419,12 +465,16 @@ def _init_pinned_submodules(source, env, *, require_app=False, producer=False,
 
 def init_source_submodules(source):
     """Initialize App source inputs; binary SDK selection is always explicit."""
-    _init_pinned_submodules(source, git_env(), require_app=True)
+    env = git_env()
+    _init_pinned_submodules(source, env, require_app=True)
+    git(source, 'lfs', 'install', '--local', env=env)
+    git(source, 'lfs', 'pull', env=env)
 
 
-def init_host_submodules(source, app_sha, app_repository, *, host_platform=None):
-    """Initialize a host's pinned forks and the independently frozen App candidate."""
-    require_sha(app_sha); repository_url(app_repository)
+def init_host_submodules(source, app_sha=None, app_repository=None, *, host_platform=None):
+    """Use the host's pins, with an optional independent App override for SDK production."""
+    if app_sha is not None:
+        require_sha(app_sha); repository_url(app_repository)
     _init_pinned_submodules(source, git_env(), producer=True,
                             app_sha=app_sha, app_repository=app_repository, host_platform=host_platform)
 
@@ -544,14 +594,14 @@ def commit_tree(repo, tree, base, message, *, env=None):
                     data=(message + "\n").encode(), env=env)
 
 
-def push_exact_commit(repo, url, branch, base, commit, *, env=None, lfs=False):
+def push_exact_commit(repo, url, branch, base, commit, *, env=None, lfs=False, seed=None):
     ref = branch_ref(branch)
-    if read_remote_head(url, branch, env=env) != base:
+    if read_remote_head(url, branch, env=env, allow_missing=True) != base:
         raise RuntimeError("Target branch changed; start a new update")
     if commit == base:
         return
     parents = text_git(repo, "rev-list", "--parents", "-n", "1", require_sha(commit)).split()
-    if parents != [commit, base]:
+    if parents != [commit, base or require_sha(seed)]:
         raise RuntimeError("Only a direct fast-forward child of the expected base may be pushed")
     if lfs:
         run(["git", "-C", repo, "lfs", "push", "origin", commit], env=env, attempts=3)
@@ -561,7 +611,7 @@ def push_exact_commit(repo, url, branch, base, commit, *, env=None, lfs=False):
             # parent check above forbids all history-replacing updates.
             git(repo, "push", f"--force-with-lease={ref}:{base}", "origin", f"{commit}:{ref}", env=env)
         except RuntimeError:
-            current = read_remote_head(url, branch, env=env)
+            current = read_remote_head(url, branch, env=env, allow_missing=True)
             if current == commit:
                 return
             if current != base:

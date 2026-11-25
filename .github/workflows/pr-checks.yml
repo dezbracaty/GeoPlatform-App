@@ -19,9 +19,9 @@ jobs:
     uses: ./.github/workflows/run-regression.yml
     with:
       app_ref: ${{ github.event.pull_request.head.sha }}
+      app_branch: ${{ github.event.pull_request.head.ref }}
       host_ref: ${{ vars.GPLATFORM_HOST_REF || 'feature/gplatform-ui' }}
       platform: all
-      sdk_source: source
       macos_test_assets_ref: macmini
       windows_test_assets_ref: windows
     secrets:

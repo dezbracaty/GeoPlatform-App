@@ -16,17 +16,12 @@ on:
         type: choice
         options: [all, windows, macos]
         default: all
-      sdk_source:
-        description: Build SDK from candidate source or consume a published SDK
-        type: choice
-        options: [source, published]
-        default: source
       macos_sdk_ref:
-        description: Published SDK branch or full SHA; empty selects macos; forbidden in source mode
+        description: Published macOS SDK branch or complete SHA (optional)
         type: string
         default: ''
       windows_sdk_ref:
-        description: Published SDK branch or full SHA; empty selects windows; forbidden in source mode
+        description: Published Windows SDK branch or complete SHA (optional)
         type: string
         default: ''
       macos_test_assets_ref:
@@ -40,9 +35,9 @@ on:
   workflow_call:
     inputs:
       app_ref: {type: string, required: true}
+      app_branch: {type: string, default: ''}
       host_ref: {type: string, default: feature/gplatform-ui}
       platform: {type: string, default: all}
-      sdk_source: {type: string, default: source}
       macos_sdk_ref: {type: string, default: ''}
       windows_sdk_ref: {type: string, default: ''}
       macos_test_assets_ref: {type: string, default: macmini}
@@ -94,10 +89,10 @@ jobs:
         env:
           GPLATFORM_SOURCE_TOKEN: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
           APP_REF: ${{ inputs.app_ref }}
+          APP_BRANCH: ${{ inputs.app_branch }}
           HOST_REF: ${{ inputs.host_ref }}
           HOST_REPOSITORY: ${{ vars.GPLATFORM_HOST_REPOSITORY || 'dezbracaty/GPlatform' }}
           PLATFORM: ${{ inputs.platform }}
-          SDK_SOURCE: ${{ inputs.sdk_source }}
           MACOS_SDK_REF: ${{ inputs.macos_sdk_ref }}
           WINDOWS_SDK_REF: ${{ inputs.windows_sdk_ref }}
           MACOS_TEST_ASSETS_REF: ${{ inputs.macos_test_assets_ref }}
@@ -109,7 +104,7 @@ jobs:
           from source_regression import prepare
           result = prepare(API(os.environ['GPLATFORM_SOURCE_TOKEN']), os.environ['GITHUB_REPOSITORY'],
               os.environ['APP_REF'], os.environ['HOST_REPOSITORY'], os.environ['HOST_REF'],
-              **{key:os.environ[key.upper()] for key in ('platform','sdk_source','macos_sdk_ref','windows_sdk_ref',
+              **{key:os.environ[key.upper()] for key in ('platform','app_branch','macos_sdk_ref','windows_sdk_ref',
                  'macos_test_assets_ref','windows_test_assets_ref')})
           write_outputs(result)
       - id: runners
@@ -145,7 +140,7 @@ jobs:
     runs-on: ${{ matrix.labels }}
     timeout-minutes: 360
     env:
-      GIT_CONFIG_COUNT: ${{ matrix.platform == 'windows' && '13' || '2' }}
+      GIT_CONFIG_COUNT: ${{ matrix.platform == 'windows' && '15' || '2' }}
       GIT_CONFIG_KEY_0: core.autocrlf
       GIT_CONFIG_VALUE_0: 'false'
       GIT_CONFIG_KEY_1: core.eol
@@ -174,6 +169,10 @@ jobs:
       GIT_CONFIG_VALUE_11: ${{ github.workspace }}/host-source/ThirdParty/SmoothUIDock/KDDockWidgets
       GIT_CONFIG_KEY_12: safe.directory
       GIT_CONFIG_VALUE_12: ${{ github.workspace }}/host-source/ThirdParty/SmoothUIDock/KDDockWidgets/tests/reference-images
+      GIT_CONFIG_KEY_13: safe.directory
+      GIT_CONFIG_VALUE_13: ${{ github.workspace }}/source
+      GIT_CONFIG_KEY_14: safe.directory
+      GIT_CONFIG_VALUE_14: ${{ github.workspace }}/source/ThirdParty/OrcaSlicer
       GIT_HTTP_LOW_SPEED_LIMIT: '1024'
       GIT_HTTP_LOW_SPEED_TIME: '60'
       PYTHONDONTWRITEBYTECODE: '1'
@@ -212,7 +211,15 @@ jobs:
           persist-credentials: false
           submodules: false
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        if: inputs.sdk_source == 'published'
+        timeout-minutes: 20
+        with:
+          ref: ${{ needs.prepare.outputs.app_sha }}
+          path: source
+          clean: false
+          token: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
+          persist-credentials: false
+          submodules: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         timeout-minutes: 20
         with:
           repository: ${{ needs.prepare.outputs.sdk_repository }}
@@ -228,7 +235,6 @@ jobs:
           SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
           APP_SHA: ${{ needs.prepare.outputs.app_sha }}
           PLATFORM: ${{ matrix.platform }}
-          SDK_SOURCE: ${{ inputs.sdk_source }}
           SDK_SHA: ${{ matrix.platform == 'windows' && needs.prepare.outputs.windows_sdk_sha || needs.prepare.outputs.macos_sdk_sha }}
           SDK_REPOSITORY: ${{ needs.prepare.outputs.sdk_repository }}
           ASSETS_REF: ${{ matrix.platform == 'windows' && inputs.windows_test_assets_ref || inputs.macos_test_assets_ref }}
@@ -236,14 +242,13 @@ jobs:
           REPORT_DIRECTORY: ${{ steps.report_path.outputs.directory }}
         run: |
           import os, subprocess, sys
-          command = [sys.executable, 'control/scripts/ci/source_regression.py', '--source-dir', 'host-source',
+          subprocess.run([sys.executable, 'control/scripts/ci/source_regression.py', '--source-dir', 'host-source',
+              '--app-dir', 'source',
               '--source-sha', os.environ['SOURCE_SHA'], '--app-sha', os.environ['APP_SHA'],
               '--app-repository', os.environ['GITHUB_REPOSITORY'], '--assets-sha', os.environ['ASSETS_SHA'], '--assets-ref', os.environ['ASSETS_REF'],
               '--platform', os.environ['PLATFORM'], '--output', os.environ['REPORT_DIRECTORY'],
-              '--sdk-source', os.environ['SDK_SOURCE'], '--sdk-repository', os.environ['SDK_REPOSITORY']]
-          if os.environ['SDK_SOURCE'] == 'published':
-              command += ['--sdk-root', 'sdk', '--sdk-sha', os.environ['SDK_SHA']]
-          subprocess.run(command, check=True)
+              '--sdk-root', 'sdk', '--sdk-sha', os.environ['SDK_SHA'],
+              '--sdk-repository', os.environ['SDK_REPOSITORY']], check=True)
       - name: Upload regression summaries
         if: always() && steps.report_path.outcome == 'success'
         continue-on-error: true

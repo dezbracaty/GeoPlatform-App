@@ -1,4 +1,4 @@
-"""Package an App against an SDK produced from the same frozen host and App."""
+"""Package an independent App against the selected published SDK."""
 from __future__ import annotations
 import argparse
 import importlib.util
@@ -12,10 +12,9 @@ from pathlib import Path
 import shutil
 import sys
 
-from common import (build_log, digest, git_env, init_host_submodules, machine_lock,
-                    prepare_cached_source, remove_owned_tree, require_sha, run,
+from common import (digest, git_env, init_source_submodules, machine_lock, materialize_sdk,
+                    prepare_cached_source, require_sha, run,
                     runner_report_path, text_git, write_json, write_outputs)
-from update_sdk import build_sdk_package, source_sdk_package
 
 
 def cache_value(build, key):
@@ -39,7 +38,7 @@ def source_contract(source):
     return module
 
 
-def validate_sdk(source, slots, sdk_root, *, producer_root_sha=None, producer_app_sha=None):
+def validate_sdk(source, slots, sdk_root):
     sdk_root = Path(sdk_root)
     contract = source_contract(source)
     result = {}
@@ -53,12 +52,11 @@ def validate_sdk(source, slots, sdk_root, *, producer_root_sha=None, producer_ap
         contract.verify_sdk_package(root, metadata)
         if any(metadata.get('SOURCE_MODIFIED', {}).values()):
             raise RuntimeError('SDK contains modified producer sources')
-        for key, expected in [('SOURCE_STATE', producer_root_sha), ('APP_SOURCE_STATE', producer_app_sha)]:
+        for key in ('SOURCE_STATE', 'APP_SOURCE_STATE'):
             state = metadata.get(key, {})
             if (not re.fullmatch('[0-9a-f]{40}', state.get('HEAD', '')) or state.get('DIRTY') is not False
-                    or state.get('MERGE_HEAD') or state.get('DIFF_SHA256') != hashlib.sha256(b'').hexdigest()
-                    or expected is not None and state.get('HEAD') != expected):
-                raise RuntimeError(f'SDK {key} differs from its frozen clean producer')
+                    or state.get('MERGE_HEAD') or state.get('DIFF_SHA256') != hashlib.sha256(b'').hexdigest()):
+                raise RuntimeError(f'SDK {key} does not identify a clean producer')
         result[slot] = metadata
     first = next(iter(result.values()))
     for metadata in result.values():
@@ -86,12 +84,12 @@ def windows_entry(source, targets, cmake_args, env):
     run(['pwsh', '-NoProfile', '-Command', command], cwd=source, env=step_env)
 
 
-def build_consumer(source, platform, sdk_root, env, *, producer_root_sha=None, producer_app_sha=None):
+def build_consumer(source, platform, sdk_root, env, receipt):
     """Build/check one explicit SDK consumer. Checkout ownership and locking belong to the caller."""
     source, sdk_root = Path(source).resolve(), Path(sdk_root).resolve()
     slots = ['AMD64/Release'] if platform == 'windows' else ['arm64/Release', 'x86_64/Release']
-    metadata = validate_sdk(source, slots, sdk_root, producer_root_sha=producer_root_sha,
-                            producer_app_sha=producer_app_sha)
+    metadata = validate_sdk(source, slots, sdk_root)
+    receipt.update(sdk_root=str(sdk_root), metadata=metadata)
     validate_source_inputs(source, metadata)
     arguments = ['-DGPLATFORM_BUILD_SDK_CHECKS=ON', '-DGPLATFORM_SDK_ROOT=' + str(sdk_root)]
     qt = env.get('Qt6_DIR') or env.get('QT6_DIR')
@@ -121,7 +119,7 @@ def build_consumer(source, platform, sdk_root, env, *, producer_root_sha=None, p
             raise RuntimeError('CMake consumed a different SDK_ROOT')
         run(['ctest', '--test-dir', build_dir, '-R', '^SDKConsumerExtensionCheck$',
              '--no-tests=error', '--output-on-failure'], cwd=source, env=runtime_env(build_dir, env))
-    return dict(executable=str(executable), sdk_root=str(sdk_root), metadata=metadata)
+    receipt['executable'] = str(executable)
 
 
 def smoke_application(source, executable, output, env):
@@ -211,37 +209,37 @@ def inspect_installer(source, platform, package, output, env):
         write_json(output / 'installer-checks.json', result)
 
 
-def build(host, platform, source_sha, app_sha, app_repository):
-    host = host.resolve()
-    source = host / "App"
-    require_sha(source_sha)
+def build(source, platform, app_sha, sdk_root, sdk_sha):
+    source = source.resolve()
     require_sha(app_sha)
+    require_sha(sdk_sha)
     output = runner_report_path(dict(os.environ, PLATFORM=platform), "installer-results")
     output.mkdir(parents=True, exist_ok=False)
     package_dir = output / "package"
     report_path = output / "build-result.json"
-    report = dict(status="failed", platform=platform, source_sha=source_sha, app_sha=app_sha, sdk_source="source",
+    report = dict(status="failed", platform=platform, app_sha=app_sha, sdk_source="published",
                   run_id=os.environ.get("GITHUB_RUN_ID"), run_attempt=os.environ.get("GITHUB_RUN_ATTEMPT"),
                   installation_tested=False)
     try:
         report["control_sha"] = text_git(Path(__file__).resolve().parents[2], "rev-parse", "HEAD")
         env = git_env()
         with machine_lock():
-            prepare_cached_source(host, source_sha, platform, host=True)
-            init_host_submodules(host, app_sha, app_repository, host_platform=platform)
+            prepare_cached_source(source, app_sha, platform, consumer=True)
+            init_source_submodules(source)
             if text_git(source, "rev-parse", "HEAD") != app_sha:
                 raise RuntimeError("App source SHA changed")
-            report["declared_app_sha"] = text_git(host, "rev-parse", source_sha + ":App")
-            sdk_package = source_sdk_package()
-            with build_log(output, "sdk-build") as log:
-                build_sdk_package(host, platform, sdk_package, env, log=log)
-            report["sdk_package_manifest_sha256"] = digest(sdk_package / "package-manifest.json")
-            actual_sdk = sdk_package / "SDK"
-            consumer = build_consumer(source, platform, actual_sdk, env,
-                                      producer_root_sha=source_sha, producer_app_sha=app_sha)
-            report.update(sdk_root=str(actual_sdk), sdk_consumer_check="passed",
-                          sdk_producers={slot: {key: data.get(key) for key in ("SOURCE_STATE", "APP_SOURCE_STATE")}
-                                         for slot, data in consumer["metadata"].items()})
+            actual_sdk = materialize_sdk(sdk_root, sdk_sha, platform)
+            report.update(sdk_root=str(actual_sdk), sdk_sha=text_git(actual_sdk, "rev-parse", "HEAD"))
+            consumer = {}
+            try:
+                build_consumer(source, platform, actual_sdk, env, consumer)
+            finally:
+                if "metadata" in consumer:
+                    report["sdk_producers"] = {
+                        slot: {key: data[key] for key in ("SOURCE_STATE", "APP_SOURCE_STATE")}
+                        for slot, data in consumer["metadata"].items()
+                    }
+            report["sdk_consumer_check"] = "passed"
             package_dir.mkdir()
             if platform == "windows":
                 cmake_args = ["-DGPLATFORM_BUILD_SDK_CHECKS=ON", "-DGPLATFORM_SDK_ROOT=" + str(actual_sdk)]
@@ -277,7 +275,6 @@ def build(host, platform, source_sha, app_sha, app_repository):
             checksum = checks["package_sha256"]
             checksum_path = package.with_suffix(package.suffix + ".sha256")
             checksum_path.write_text(f"{checksum}  {package.name}\n", encoding="utf-8")
-            remove_owned_tree(sdk_package, sdk_package.parent)
         check_summary = {key: checks[key] for key in ("status", "payload_check", "startup", "not_tested",
                                                       "installer_script_sha256") if key in checks}
         if "distribution" in checks:
@@ -299,11 +296,11 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--source-dir", type=Path, required=True)
     p.add_argument("--platform", choices=("windows", "macos"), required=True)
-    p.add_argument("--source-sha", required=True)
     p.add_argument("--app-sha", required=True)
-    p.add_argument("--app-repository", required=True)
+    p.add_argument("--sdk-root", type=Path, required=True)
+    p.add_argument("--sdk-sha", required=True)
     a = p.parse_args()
-    build(a.source_dir, a.platform, a.source_sha, a.app_sha, a.app_repository)
+    build(a.source_dir, a.platform, a.app_sha, a.sdk_root, a.sdk_sha)
 
 
 if __name__ == "__main__":

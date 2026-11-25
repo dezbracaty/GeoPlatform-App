@@ -3,29 +3,42 @@ from __future__ import annotations
 import argparse
 import json
 import hashlib
-import importlib.util
 import os
 import sys
 from pathlib import Path
 import shutil
+import subprocess
 import tempfile
 import re
+from types import ModuleType
+from zipfile import ZipFile
 
-from common import (clone_branch, commit_tree, digest, git, git_env, push_exact_commit,
-                    read_remote_head, repository_url, require_sha, SDK_DECLARATION, parse_sdk_repository,
-                    text_git, write_outputs, run)
+from common import (app_branch_name, branch_ref, checkout_sdk_base, commit_tree, digest, git, git_env,
+                    parse_sdk_repository, push_exact_commit, read_remote_head, repository_url, require_sha,
+                    run, SDK_DECLARATION, selected_platforms, text_git, write_outputs)
 
 SLOTS = {"windows": ("AMD64/Release",), "macos": ("arm64/Release", "x86_64/Release")}
 
 
-def source_sdk_package():
-    """Reuse the runner's source SDK path across consumer builds."""
-    runner_temp = os.environ.get('RUNNER_TEMP')
-    if not runner_temp:
-        return Path(tempfile.mkdtemp(prefix='sdk-package-')).resolve()
-    package = Path(runner_temp).resolve() / 'regression-sdk'
-    package.mkdir()
-    return package
+def prepare_targets(url, app_ref, platform, *, windows_sdk_target='', macos_sdk_target='', env=None):
+    """Freeze one expected head per target and a seed commit for new branches."""
+    overrides = {'windows': windows_sdk_target, 'macos': macos_sdk_target}
+    targets = {}
+    for name in selected_platforms(platform):
+        branch = overrides[name] or app_branch_name(app_ref)
+        if not branch:
+            raise ValueError(f'{name}_sdk_target is required to publish from an App SHA')
+        branch_ref(branch)
+        targets.setdefault(branch, []).append(name)
+
+    plans = []
+    seed = None
+    for branch, platforms in targets.items():
+        base = read_remote_head(url, branch, env=env, allow_missing=True)
+        if not base and seed is None:
+            seed = read_remote_head(url, None, env=env)
+        plans.append(dict(branch=branch, platforms=platforms, base=base, seed='' if base else seed))
+    return plans
 
 
 def build_sdk_package(source, platform, package, env, *, log=None):
@@ -79,6 +92,12 @@ def validate_slot(slot, source_sha, contract):
             or metadata.get("CMAKE_SYSTEM_NAME") != expected_system
             or metadata.get("CMAKE_BUILD_TYPE") != "Release"):
         raise RuntimeError("SDK platform, architecture or configuration differs")
+    validate_slot_manifest(slot)
+    contract.verify_sdk_package(slot, metadata)
+    return metadata
+
+
+def validate_slot_manifest(slot):
     manifest = json.loads((slot / "sdk-manifest.json").read_text())
     if not isinstance(manifest, dict) or not manifest:
         raise RuntimeError("SDK manifest is empty")
@@ -96,8 +115,22 @@ def validate_slot(slot, source_sha, contract):
             raise RuntimeError("Unsafe SDK manifest path")
         if digest(slot / rel) != expected:
             raise RuntimeError(f"SDK payload hash differs: {name}")
-    contract.verify_sdk_package(slot, metadata)
-    return metadata
+
+
+def validate_package_manifest(package, slots):
+    manifest_path = package / 'package-manifest.json'
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    expected = {}
+    for slot in slots:
+        prefix = f'SDK/{slot}/'
+        slot_manifest = package / prefix / 'sdk-manifest.json'
+        expected[prefix + 'sdk-manifest.json'] = digest(slot_manifest)
+        expected.update({prefix + name: sha
+                         for name, sha in json.loads(slot_manifest.read_text(encoding='utf-8')).items()})
+    actual = {path.relative_to(package).as_posix() for path in (package / 'SDK').rglob('*') if path.is_file()}
+    if manifest != expected or actual != set(expected):
+        raise RuntimeError('Complete SDK package differs from its package manifest or selected slots')
+    return digest(manifest_path)
 
 
 def safe_destination(checkout, name):
@@ -118,34 +151,30 @@ def pinned(repo, sha, path):
     return entry[2]
 
 
-def source_contract(source, source_sha, app_sha):
+def source_contract(source, source_sha, app_sha, *, require_clean):
     if text_git(source, 'rev-parse', 'HEAD') != source_sha:
         raise RuntimeError('Source checkout differs from requested SHA')
-    if text_git(source, 'status', '--porcelain', '--untracked-files=no', '--ignore-submodules=all'):
+    if require_clean and text_git(source, 'status', '--porcelain', '--untracked-files=no', '--ignore-submodules=all'):
         raise RuntimeError('SDK source checkout has tracked changes')
     app = Path(source) / 'App'
     require_sha(app_sha)
     pinned(source, source_sha, 'App')
     if text_git(app, 'rev-parse', 'HEAD') != app_sha:
         raise RuntimeError('App checkout differs from the fixed App candidate')
-    if text_git(app, 'status', '--porcelain', '--untracked-files=no', '--ignore-submodules=all'):
+    if require_clean and text_git(app, 'status', '--porcelain', '--untracked-files=no', '--ignore-submodules=all'):
         raise RuntimeError('SDK App source checkout has tracked changes')
-    spec = importlib.util.spec_from_file_location('selected_source_inputs', app / 'cmake/source_inputs.py')
-    module = importlib.util.module_from_spec(spec)
-    bytecode = sys.dont_write_bytecode
-    try:
-        sys.dont_write_bytecode = True
-        spec.loader.exec_module(module)
-    finally:
-        sys.dont_write_bytecode = bytecode
-    return app_sha, module
+    path = 'cmake/source_inputs.py'
+    module = ModuleType('selected_source_inputs')
+    module.__file__ = str(app / path)
+    exec(compile(git(app, 'show', f'{app_sha}:{path}'), module.__file__, 'exec'), module.__dict__)
+    return module
 
 
 def validate_source(source, sha, app_sha, metadata, contract):
     empty = hashlib.sha256(b'').hexdigest()
     app_state = metadata.get('APP_SOURCE_STATE', {})
     if (app_state.get('HEAD') != app_sha or app_state.get('DIRTY') is not False
-            or app_state.get('DIFF_SHA256') != empty
+            or app_state.get('MERGE_HEAD') or app_state.get('DIFF_SHA256') != empty
             or metadata.get('SOURCE_STATE', {}).get('DIFF_SHA256') != empty):
         raise RuntimeError('SDK provenance differs from the fixed clean Root/App source')
     source = Path(source)
@@ -163,18 +192,18 @@ def validate_source(source, sha, app_sha, metadata, contract):
     contract.verify(source / 'App/ThirdParty', None, metadata['SOURCE_INPUTS'], roots=roots)
 
 
-def update_sdk(source, source_sha, platform, packages, url, expected_base=None, *, app_sha, publish=False):
+def validate_package(source, source_sha, platform, package, url, *, app_sha, require_clean=True):
     require_sha(source_sha)
-    app_sha, contract = source_contract(source, source_sha, app_sha)
+    contract = source_contract(source, source_sha, app_sha, require_clean=require_clean)
     app = Path(source) / 'App'
     declared = parse_sdk_repository(text_git(app, 'show', f'{app_sha}:{SDK_DECLARATION}'))
     if repository_url(declared) != url:
         raise RuntimeError("SDK target URL differs from the pinned source declaration")
     slots = SLOTS[platform]
-    branch = platform
+    package = Path(package)
     metadata_by_slot = {}
     for name in slots:
-        metadata = validate_slot(Path(packages) / "SDK" / name, source_sha, contract)
+        metadata = validate_slot(package / "SDK" / name, source_sha, contract)
         validate_source(source, source_sha, app_sha, metadata, contract)
         metadata_by_slot[name] = metadata
     first = next(iter(metadata_by_slot.values()))
@@ -183,27 +212,141 @@ def update_sdk(source, source_sha, platform, packages, url, expected_base=None, 
                     'SOURCE_REVISIONS', 'DEPENDENCIES', 'UI_BINARY_PACKAGE_VERSION', 'CONSUMER_SOURCE_FORKS'):
             if metadata.get(key) != first.get(key):
                 raise RuntimeError(f'SDK architecture slots have different {key}')
-    receipt = dict(source_sha=source_sha, app_sha=app_sha, declared_app_sha=pinned(source, source_sha, 'App'), platform=platform,
-                   selected_slots=list(slots), published=False,
-                   slot_manifests={name: digest(Path(packages) / 'SDK' / name / 'sdk-manifest.json') for name in slots})
-    if not publish:
-        return dict(receipt, sdk_sha='', updated_slots=[], changed=False)
-    env = git_env("GPLATFORM_PUBLISH_TOKEN")
-    base = expected_base or read_remote_head(url, branch, env=env)
-    require_sha(base)
-    if read_remote_head(url, branch, env=env) != base:
+    return dict(source_sha=source_sha, app_sha=app_sha, declared_app_sha=pinned(source, source_sha, 'App'),
+                platform=platform, selected_slots=list(slots), published=False, sdk_sha='', updated_slots=[], changed=False,
+                package_manifest_sha256=validate_package_manifest(package, slots),
+                slot_manifests={name: digest(package / 'SDK' / name / 'sdk-manifest.json') for name in slots})
+
+
+def gh_git_env():
+    env = git_env(secret=None)
+    for name in tuple(env):
+        if name.startswith('GIT_TRACE') or name in ('GH_TOKEN', 'GITHUB_TOKEN', 'GH_DEBUG', 'DEBUG',
+                                                    'GIT_CURL_VERBOSE', 'GIT_CONFIG_PARAMETERS'):
+            env.pop(name)
+    offset = int(env['GIT_CONFIG_COUNT'])
+    env.update({'GH_HOST': 'github.com', 'GH_PROMPT_DISABLED': '1',
+                'GIT_CONFIG_COUNT': str(offset + 1),
+                f'GIT_CONFIG_KEY_{offset}': 'credential.https://github.com.helper',
+                f'GIT_CONFIG_VALUE_{offset}': '!gh auth git-credential'})
+    return env
+
+
+def gh_json(path, env):
+    return json.loads(run(['gh', 'api', '--hostname', 'github.com', path], env=env, capture=True, attempts=3))
+
+
+def successful_build_artifacts(repo, run_id, attempt, platforms, env):
+    base = f'repos/{repo}/actions/runs/{run_id}'
+    info = gh_json(f'{base}/attempts/{attempt}', env)
+    if (info.get('id') != run_id or info.get('run_attempt') != attempt
+            or info.get('path') != '.github/workflows/build-sdk.yml' or info.get('event') != 'workflow_dispatch'
+            or info['repository']['full_name'].casefold() != repo.casefold()):
+        raise RuntimeError('Requested run/attempt is not the selected repository Build SDK')
+    if (info.get('status'), info.get('conclusion')) != ('completed', 'success'):
+        raise RuntimeError(f"Build SDK {run_id}/{attempt}: {info.get('status')} ({info.get('conclusion')})")
+    return info, successful_platform_artifacts(repo, run_id, attempt, platforms, env)
+
+
+def successful_platform_artifacts(repo, run_id, attempt, platforms, env):
+    base = f'repos/{repo}/actions/runs/{run_id}'
+    jobs = gh_json(f'{base}/attempts/{attempt}/jobs?per_page=100', env)['jobs']
+    artifacts = gh_json(f'{base}/artifacts?per_page=100', env)['artifacts']
+    selected = {}
+    for platform in platforms:
+        name = f'sdk-{platform}-{run_id}-{attempt}'
+        matching_jobs = [job for job in jobs if job['name'] == f'sdk-build-{platform}']
+        if len(matching_jobs) != 1:
+            raise RuntimeError(f'Expected one Build SDK job for {platform}')
+        job = matching_jobs[0]
+        steps = {step['name']: step['conclusion'] for step in job['steps']}
+        if (job['run_id'] != run_id or job['run_attempt'] != attempt
+                or (job['status'], job['conclusion']) != ('completed', 'success')
+                or steps.get('Build and export selected SDK') != 'success'
+                or steps.get('Upload SDK delivery evidence') != 'success'):
+            raise RuntimeError(f'Build SDK build/upload did not succeed for {platform}')
+        matches = [item for item in artifacts if item['name'] == name]
+        if len(matches) != 1 or matches[0]['expired']:
+            raise RuntimeError(f'Expected one available artifact: {name}')
+        artifact = matches[0]
+        if not re.fullmatch(r'sha256:[0-9a-f]{64}', artifact.get('digest') or ''):
+            raise RuntimeError(f'Artifact has no GitHub SHA256 digest: {name}')
+        selected[platform] = artifact
+    return selected
+
+
+def download_artifact(repo, artifact, package, env):
+    package.mkdir()
+    path = package / 'download.zip'
+    endpoint = f"repos/{repo}/actions/artifacts/{artifact['id']}/zip"
+    with path.open('wb') as stream:
+        subprocess.run(['gh', 'api', '--hostname', 'github.com', endpoint], env=env, stdout=stream,
+                       stderr=subprocess.DEVNULL, check=True)
+    if 'sha256:' + digest(path) != artifact['digest']:
+        raise RuntimeError(f"GitHub artifact digest differs: {artifact['name']}")
+    with ZipFile(path) as archive:
+        archive.extractall(package)
+    path.unlink()
+    if {entry.name for entry in package.iterdir()} != {'SDK', 'package-manifest.json', 'source-receipt.json'}:
+        raise RuntimeError(f"Artifact does not contain the complete SDK and receipts: {artifact['name']}")
+
+
+def verify_downloaded_package(source, source_sha, app_sha, platform, package, url):
+    receipt = json.loads((package / 'source-receipt.json').read_text(encoding='utf-8'))
+    expected = validate_package(source, source_sha, platform, package, url, app_sha=app_sha, require_clean=False)
+    if any(receipt.get(key) != value for key, value in expected.items()):
+        raise RuntimeError(f'Downloaded {platform} SDK receipt does not match the verified package')
+    return receipt
+
+
+def publish_run(args, result):
+    source = args.source_dir.resolve()
+    source_sha, app_sha = require_sha(args.source_sha), require_sha(args.app_sha)
+    repo = args.app_repository
+    repository_url(repo)
+    platforms = selected_platforms(args.platform)
+    env = gh_git_env()
+    info, artifacts = successful_build_artifacts(repo, args.run, args.attempt, platforms, env)
+    result.update(app_repository=repo, app_repository_id=info['repository']['id'],
+                  workflow_sha=info['head_sha'], artifacts={}, branches={})
+    declared = parse_sdk_repository(text_git(source / 'App', 'show', f'{app_sha}:{SDK_DECLARATION}'))
+    url = repository_url(declared)
+    result['sdk_repository'] = declared
+    plans = prepare_targets(url, args.app_branch, args.platform, windows_sdk_target=args.windows_sdk_target,
+                            macos_sdk_target=args.macos_sdk_target, env=env)
+    with tempfile.TemporaryDirectory(prefix='sdk-downloads-') as directory:
+        downloads = Path(directory)
+        for platform, artifact in artifacts.items():
+            package = downloads / platform
+            download_artifact(repo, artifact, package, env)
+            receipt = verify_downloaded_package(source, source_sha, app_sha, platform, package, url)
+            result['artifacts'][platform] = dict(id=artifact['id'], name=artifact['name'],
+                                                 digest=artifact['digest'], receipt=receipt)
+        for plan in plans:
+            slots = {slot: downloads / platform / 'SDK' / slot
+                     for platform in plan['platforms'] for slot in SLOTS[platform]}
+            result['branches'][plan['branch']] = publish_slots(url, plan['branch'], plan['base'], plan['seed'],
+                                                              slots, source_sha, app_sha, env=env)
+
+
+def publish_slots(url, branch, base, seed, slots, source_sha, app_sha, *, env=None):
+    """Commit all collected slots in one guarded target-branch update."""
+    if env is None:
+        env = git_env(secret=None)
+    parent = require_sha(base or seed)
+    if read_remote_head(url, branch, env=env, allow_missing=True) != base:
         raise RuntimeError("SDK expected base changed")
     with tempfile.TemporaryDirectory(prefix="ci-sdk-") as temporary:
         checkout = Path(temporary) / "sdk"
-        if clone_branch(url, branch, checkout, env=env) != base:
+        if checkout_sdk_base(url, parent, checkout, env=env) != parent:
             raise RuntimeError("SDK changed while preparing checkout")
         git(checkout, "lfs", "install", "--local", env=env)
         destinations = {name: safe_destination(checkout, name) for name in slots}
-        for name in slots:
+        for name, slot in slots.items():
             destination = destinations[name]
             if destination.exists():
                 shutil.rmtree(destination)
-            shutil.copytree(Path(packages) / "SDK" / name, destination, symlinks=True)
+            shutil.copytree(slot, destination, symlinks=True)
         git(checkout, "add", "-A", "--", *slots, env=env)
         changed = git(checkout, "diff", "--cached", "--name-only", "-z").decode().split("\0")
         if any(p and not any(p.startswith(slot + "/") for slot in slots) for p in changed):
@@ -224,29 +367,39 @@ def update_sdk(source, source_sha, platform, packages, url, expected_base=None, 
                     or int(match[2]) != payload.stat().st_size):
                 raise RuntimeError(f"SDK staged LFS pointer differs from payload: {path}")
         tree = text_git(checkout, "write-tree")
-        old_tree = text_git(checkout, "rev-parse", f"{base}^{{tree}}")
-        commit = base if tree == old_tree else commit_tree(
-            checkout, tree, base, f"Update {platform} SDK from Root {source_sha} App {app_sha}", env=env)
-        push_exact_commit(checkout, url, branch, base, commit, env=env, lfs=commit != base)
-    return dict(receipt, sdk_sha=commit, published=True,
-                updated_slots=list(slots), changed=commit != base, expected_base_sha=base)
+        old_tree = text_git(checkout, "rev-parse", f"{parent}^{{tree}}")
+        commit = base if base and tree == old_tree else commit_tree(
+            checkout, tree, parent, f"Update SDK from Root {source_sha} App {app_sha}", env=env)
+        push_exact_commit(checkout, url, branch, base, commit, env=env, lfs=tree != old_tree, seed=seed)
+    return dict(target=branch, sdk_sha=commit, published=True, updated_slots=list(slots),
+                changed=commit != base, expected_base_sha=base, seed_sha=seed)
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__)
+    p = argparse.ArgumentParser(description='Publish complete SDK artifacts from one successful Build SDK run attempt.')
     p.add_argument("--source-dir", type=Path, required=True)
     p.add_argument("--source-sha", required=True)
     p.add_argument("--app-sha", required=True)
-    p.add_argument("--platform", choices=SLOTS, required=True)
-    p.add_argument("--package-root", type=Path, required=True)
-    p.add_argument("--sdk-repository", required=True)
-    p.add_argument("--expected-base-sha")
-    p.add_argument("--publish", action="store_true", help="Explicitly publish selected slots; default only validates artifacts")
+    p.add_argument("--app-repository", default="dezbracaty/GeoPlatform-App")
+    p.add_argument("--run", type=int, required=True)
+    p.add_argument("--attempt", type=int, required=True)
+    p.add_argument("--platform", choices=("windows", "macos", "all"), required=True)
+    p.add_argument("--app-branch", default="", help="Default SDK target for the selected platforms")
+    p.add_argument("--windows-sdk-target", default="")
+    p.add_argument("--macos-sdk-target", default="")
     p.add_argument("--result", type=Path, required=True)
     a = p.parse_args()
-    result = update_sdk(a.source_dir, a.source_sha, a.platform, a.package_root,
-                        repository_url(a.sdk_repository), a.expected_base_sha, app_sha=a.app_sha, publish=a.publish)
-    write_outputs(result, a.result)
+    if a.run < 1 or a.attempt < 1:
+        p.error('Run and attempt must be positive')
+    result = dict(status='failed', run_id=a.run, attempt=a.attempt, source_sha=a.source_sha, app_sha=a.app_sha)
+    try:
+        publish_run(a, result)
+        result['status'] = 'passed'
+    except Exception as error:
+        result['error'] = str(error)
+        raise
+    finally:
+        write_outputs(result, a.result)
 
 
 if __name__ == "__main__":

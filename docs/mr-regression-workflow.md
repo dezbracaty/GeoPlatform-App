@@ -4,6 +4,6 @@
 
 App MR 自动回归入口、独立的 SDK 生产和发布、手动回归以及安装包流程由 [App 平台 CI](ci.md) 维护。App MR 固定 App head，宿主版本独立解析并固定。宿主候选需要单独验收时，从 App 的 Run Regression 指定准确的 `host_ref` 和 `app_ref`。
 
-平台回归分别固定 TestAssets 的 `macmini`、`windows`。功能分支的测试夹具随候选提交保留。平台 SDK 发布使用 `macos`、`windows`，不自动更新源码候选的引用。提交源码候选无需预先发布 SDK。
+平台回归分别固定 TestAssets 的 `macmini`、`windows`。功能分支的测试夹具随候选提交保留。MR 将源分支名传给回归用于 SDK 选择。SDK 发布使用选定目标分支，独立于源码候选引用。
 
 确认回归结果对应当前候选 SHA、覆盖所有要求的场景，并核对审查与分支保护。提交、推送、发起 PR、合并和发布分别按已授权范围执行。完整宿主的交付要求见 `docs/Development/Task_Execution_Workflow.md`。

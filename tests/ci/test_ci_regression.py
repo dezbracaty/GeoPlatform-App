@@ -13,92 +13,6 @@ from native_regression import build_environment, command, phase, wait_windows_tr
 
 
 class RegressionTests(unittest.TestCase):
-    def test_source_sdk_scratch_lifetime_and_metadata_survive_each_boundary(self):
-        import contextlib
-        import source_regression as driver
-        for failure in (None, 'producer', 'consumer', 'cancel', 'journal', 'cleanup'):
-            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary, contextlib.ExitStack() as stack:
-                root = Path(temporary).resolve()
-                scratch = root / 'short'
-                scratch.mkdir()
-                output = root / 'deep/report'
-                metadata = {'package-manifest.json': b'{"package":"original bytes"}',
-                    'SDK/AMD64/Release/sdk-build.json': b'{"source":"original bytes"}',
-                    'SDK/AMD64/Release/sdk-manifest.json': b'{"payload":"original bytes"}'}
-                created = []
-                def produce(source, platform, package, env, *, log):
-                    self.assertEqual(package.parent, scratch)
-                    self.assertFalse(package.is_relative_to(output))
-                    created.append(package)
-                    if failure == 'producer':
-                        raise RuntimeError('producer failure')
-                    for name, value in metadata.items():
-                        path = package / name
-                        path.parent.mkdir(parents=True, exist_ok=True)
-                        path.write_bytes(value)
-                def execute(args, **kwargs):
-                    if '-c' not in args:
-                        return
-                    if args[2] not in (driver.APP_CONSUMER, driver.APP_REGRESSION):
-                        return
-                    payload = json.loads(args[3])
-                    self.assertTrue(created[0].is_dir())
-                    if args[2] == driver.APP_CONSUMER:
-                        self.assertEqual(Path(payload['sdk_root']), created[0] / 'SDK')
-                        if failure == 'consumer':
-                            raise RuntimeError('consumer failure')
-                        if failure == 'cancel':
-                            raise KeyboardInterrupt('cancel failure')
-                        executable = root / 'App.exe'
-                        executable.write_bytes(b'fixture; never executed')
-                        receipt = {'executable': str(executable)}
-                    else:
-                        if failure == 'journal':
-                            raise RuntimeError('journal failure')
-                        summary = output / 'journals/run/task/summary.json'
-                        summary.parent.mkdir(parents=True)
-                        summary.write_text(json.dumps(dict(status='passed', runComplete=True,
-                            selectionScope='all', plannedCases=['one'], completedCaseCount=1,
-                            cases=[dict(id='one', status='passed')])) )
-                        receipt = dict(status='passed', assets_sha='c'*40,
-                            expected_cases=['one'], summary_path=str(summary))
-                    Path(payload['receipt']).write_text(json.dumps(receipt))
-                stack.enter_context(patch.dict(os.environ, RUNNER_TEMP=str(scratch)))
-                stack.enter_context(patch.object(driver, 'run', side_effect=execute))
-                stack.enter_context(patch.object(driver, 'machine_lock', return_value=contextlib.nullcontext()))
-                stack.enter_context(patch.object(driver, 'prepare_cached_source'))
-                stack.enter_context(patch.object(driver, 'init_host_submodules'))
-                stack.enter_context(patch.object(driver, 'text_git', return_value='b'*40))
-                stack.enter_context(patch.object(driver.native_checks, 'build_environment', return_value={}))
-                stack.enter_context(patch.object(driver.native_checks, 'architecture', return_value={'returncode': 0}))
-                stack.enter_context(patch.object(driver, 'build_sdk_package', side_effect=produce))
-                stack.enter_context(patch.object(driver, 'update_sdk', return_value={'selected_slots': ['AMD64/Release']}))
-                check_tools = stack.enter_context(patch.object(driver, 'check_ci_tools'))
-                if failure == 'cleanup':
-                    stack.enter_context(patch.object(driver, 'remove_owned_tree', side_effect=RuntimeError('cleanup failure')))
-                if failure:
-                    with self.assertRaisesRegex(KeyboardInterrupt if failure == 'cancel' else RuntimeError, failure + ' failure'):
-                        driver.regress(root, 'windows', 'a'*40, 'c'*40, output, app_sha='b'*40,
-                            app_repository='org/App', sdk_repository='org/SDK')
-                else:
-                    driver.regress(root, 'windows', 'a'*40, 'c'*40, output, app_sha='b'*40,
-                        app_repository='org/App', sdk_repository='org/SDK')
-                if failure:
-                    check_tools.assert_not_called()
-                else:
-                    check_tools.assert_called_once()
-                report = json.loads((output / 'source-regression.json').read_text())
-                self.assertEqual(report['sdk_package']['path'], str(created[0]))
-                self.assertEqual(report['status'], 'failed' if failure else 'passed')
-                self.assertEqual(created[0].exists(), bool(failure))
-                self.assertEqual(report['sdk_package']['retained'], bool(failure))
-                if failure == 'cleanup':
-                    self.assertIn('cleanup failure', report['cleanupError'])
-                if failure != 'producer':
-                    for name, value in metadata.items():
-                        self.assertEqual((output / 'sdk-package' / name).read_bytes(), value)
-                        self.assertEqual(report['sdk_package']['metadata'][name], driver.digest(output / 'sdk-package' / name))
-
     def test_published_sdk_never_creates_or_cleans_source_scratch(self):
         import contextlib
         import source_regression as driver
@@ -119,12 +33,13 @@ class RegressionTests(unittest.TestCase):
             stack.enter_context(patch.object(driver.native_checks, 'build_environment', return_value={}))
             stack.enter_context(patch.object(driver.native_checks, 'architecture', return_value={'returncode': 0}))
             allocate = stack.enter_context(patch.object(driver.tempfile, 'mkdtemp'))
-            cleanup = stack.enter_context(patch.object(driver, 'remove_owned_tree'))
+            stack.enter_context(patch.object(driver, 'init_source_submodules'))
+            materialize = stack.enter_context(patch.object(driver, 'materialize_sdk', return_value=sdk))
             with self.assertRaisesRegex(RuntimeError, 'consumer failure'):
                 driver.regress(root, 'windows', 'a'*40, 'c'*40, root / 'report', app_sha='b'*40,
-                    app_repository='org/App', sdk_source='published', sdk_root=sdk, sdk_sha='d'*40)
+                    app=root / 'source', app_repository='org/App', sdk_root=sdk, sdk_sha='d'*40, sdk_repository='org/SDK')
             allocate.assert_not_called()
-            cleanup.assert_not_called()
+            materialize.assert_called_once_with(sdk, 'd'*40, 'windows')
             self.assertEqual((sdk / 'sentinel').read_bytes(), b'keep')
 
     def test_native_ctest_uses_the_same_python_as_driver_admission(self):
@@ -153,30 +68,6 @@ class RegressionTests(unittest.TestCase):
             self.assertIn('-DPython3_EXECUTABLE=' + sys.executable, arguments)
             self.assertIn('-DJOURNALSYSTEM_BUILD_TESTS=ON', arguments)
             self.assertIn('-DGPLATFORM_BUILD_ORCA_NATIVE_PROBES=ON', arguments)
-
-    def test_platform_assets_are_restored_to_source_pin_before_sdk_production(self):
-        import contextlib
-        import source_regression as driver
-        with tempfile.TemporaryDirectory() as temporary, contextlib.ExitStack() as stack:
-            source = Path(temporary).resolve()
-            selections = []
-            def execute(args, **kwargs):
-                if '-c' in args and args[2] == driver.APP_NATIVE_ASSETS:
-                    selections.append(args[4])
-            def produce(*args, log):
-                self.assertEqual(selections, ['c' * 40, ''])
-                raise RuntimeError('SDK boundary reached after restoring source fixtures')
-            stack.enter_context(patch.dict(os.environ, RUNNER_TEMP=str(source)))
-            stack.enter_context(patch.object(driver, 'run', side_effect=execute))
-            stack.enter_context(patch.object(driver, 'machine_lock', return_value=contextlib.nullcontext()))
-            stack.enter_context(patch.object(driver, 'prepare_cached_source'))
-            stack.enter_context(patch.object(driver, 'init_host_submodules'))
-            stack.enter_context(patch.object(driver, 'text_git', return_value='b' * 40))
-            stack.enter_context(patch.object(driver.native_checks, 'build_environment', return_value={}))
-            stack.enter_context(patch.object(driver.native_checks, 'architecture', return_value={'returncode': 0}))
-            stack.enter_context(patch.object(driver, 'build_sdk_package', side_effect=produce))
-            with self.assertRaisesRegex(RuntimeError, 'SDK boundary reached'):
-                driver.regress(source, 'macos', 'a' * 40, 'c' * 40, source / 'report', app_sha='b'*40, app_repository='org/App')
 
     def test_native_regression_uses_one_ctest_after_build(self):
         import native_regression as regression
@@ -236,7 +127,7 @@ class RegressionTests(unittest.TestCase):
                         seen.append('assets')
                         self.assertEqual(args[3], str(root / 'App'))
                         self.assertEqual(args[4], 'c' * 40)
-                        self.assertIn('prepare_assets(app, sys.argv[2] or None)', args[2])
+                        self.assertIn('prepare_assets(app, sys.argv[2])', args[2])
                         if missing:
                             raise RuntimeError('fixture checkout failed')
                 def native(*args, **kwargs):
@@ -246,12 +137,17 @@ class RegressionTests(unittest.TestCase):
                     stack.enter_context(patch.object(driver, 'run', side_effect=execute))
                     stack.enter_context(patch.object(driver, 'machine_lock', return_value=contextlib.nullcontext()))
                     stack.enter_context(patch.object(driver, 'prepare_cached_source'))
-                    stack.enter_context(patch.object(driver, 'init_host_submodules'))
+                    host_submodules = stack.enter_context(patch.object(driver, 'init_host_submodules'))
+                    app_submodules = stack.enter_context(patch.object(driver, 'init_source_submodules'))
+                    stack.enter_context(patch.object(driver, 'materialize_sdk', return_value=root / 'sdk'))
                     stack.enter_context(patch.object(driver, 'text_git', return_value='b' * 40))
                     stack.enter_context(patch.object(driver.native_checks, 'build_environment', return_value={}))
                     build = stack.enter_context(patch.object(driver.native_checks, 'architecture', side_effect=native))
                     with self.assertRaisesRegex(RuntimeError, 'fixture checkout failed' if missing else 'reached configure'):
-                        driver.regress(root, 'macos', 'a' * 40, 'c' * 40, root / 'report', app_sha='b'*40, app_repository='org/App')
+                        driver.regress(root, 'macos', 'a' * 40, 'c' * 40, root / 'report', app=root / 'source', app_sha='b'*40, app_repository='org/App',
+                                       sdk_root=root / 'sdk', sdk_sha='d'*40, sdk_repository='org/SDK')
+                    host_submodules.assert_called_once_with(root, host_platform='macos')
+                    app_submodules.assert_called_once_with(root / 'source')
                     self.assertEqual(build.call_count, 0 if missing else 1)
                 report = json.loads((root / 'report/source-regression.json').read_text())
                 self.assertEqual(report['status'], 'failed')
@@ -274,29 +170,22 @@ class RegressionTests(unittest.TestCase):
         code=next(s['run'] for s in flow['jobs']['regression']['steps'] if s.get('name')=='SDK consumer and complete platform regression')
         workspace = Path('fixture-workspace').resolve()
         report_directory = (workspace / 'regression-results/123-1/macos').as_posix()
-        for mode in ['source','published']:
-            env=dict(GITHUB_WORKSPACE=str(workspace), REPORT_DIRECTORY=report_directory,
-                     GITHUB_RUN_ID='123',GITHUB_RUN_ATTEMPT='1',PLATFORM='macos',SOURCE_SHA='a'*40,
-                     APP_SHA='d'*40,GITHUB_REPOSITORY='org/App',ASSETS_SHA='b'*40,ASSETS_REF='macmini',SDK_SOURCE=mode,SDK_SHA='c'*40,SDK_REPOSITORY='org/SDK')
-            with self.subTest(mode=mode),patch.dict(os.environ,env),patch('subprocess.run') as spawn:
-                exec(compile(code,'actual-workflow-step','exec'),{})
-                spawn.assert_called_once()
-                args=spawn.call_args.args[0]
-                self.assertEqual(args[1],'control/scripts/ci/source_regression.py')
-                self.assertEqual(args[args.index('--source-sha')+1],'a'*40)
-                self.assertEqual(args[args.index('--source-dir')+1],'host-source')
-                self.assertEqual(args[args.index('--app-sha')+1],'d'*40)
-                self.assertEqual(args[args.index('--app-repository')+1],'org/App')
-                self.assertEqual(args[args.index('--assets-sha')+1],'b'*40)
-                self.assertEqual(args[args.index('--output')+1], report_directory)
-                self.assertEqual(args[args.index('--sdk-source')+1],mode)
-                if mode == 'published':
-                    self.assertEqual(args[args.index('--sdk-root') + 1], 'sdk')
-                    self.assertEqual(args[args.index('--sdk-sha') + 1], 'c' * 40)
-                else:
-                    self.assertNotIn('--sdk-root', args)
-                    self.assertNotIn('--sdk-sha', args)
-                self.assertEqual(spawn.call_args.kwargs,{'check':True})
+        env = dict(GITHUB_WORKSPACE=str(workspace), REPORT_DIRECTORY=report_directory,
+                   GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1', PLATFORM='macos', SOURCE_SHA='a'*40,
+                   APP_SHA='d'*40, GITHUB_REPOSITORY='org/App', ASSETS_SHA='b'*40, ASSETS_REF='macmini',
+                   SDK_SHA='c'*40, SDK_REPOSITORY='org/SDK')
+        with patch.dict(os.environ, env), patch('subprocess.run') as spawn:
+            exec(compile(code,'actual-workflow-step','exec'), {})
+            spawn.assert_called_once()
+            args = spawn.call_args.args[0]
+            self.assertEqual(args[1], 'control/scripts/ci/source_regression.py')
+            self.assertEqual(dict(zip(args[2::2], args[3::2])), {
+                '--source-sha': 'a'*40, '--source-dir': 'host-source', '--app-dir': 'source',
+                '--app-sha': 'd'*40, '--app-repository': 'org/App', '--assets-sha': 'b'*40,
+                '--assets-ref': 'macmini', '--platform': 'macos', '--output': report_directory,
+                '--sdk-root': 'sdk', '--sdk-sha': 'c'*40, '--sdk-repository': 'org/SDK',
+            })
+            self.assertEqual(spawn.call_args.kwargs, {'check': True})
         with patch.dict(os.environ,env),patch('subprocess.run',side_effect=subprocess.CalledProcessError(7,[])):
             with self.assertRaises(subprocess.CalledProcessError):exec(compile(code,'actual-workflow-step','exec'),{})
 

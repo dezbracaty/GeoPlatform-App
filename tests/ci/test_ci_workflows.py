@@ -36,7 +36,7 @@ def sdk_invocations(qt_dir, platform):
 
 
 def expression(value, needs, platform="all", attempt="1", steps=None, mode="artifacts"):
-    condition = value.replace("&&", " and ").replace("||", " or ").replace("!cancelled()", "not cancelled()")
+    condition = ' '.join(value.split()).replace("&&", " and ").replace("||", " or ").replace("!cancelled()", "not cancelled()")
     implicit = not any(f + "(" in value for f in ("cancelled", "always", "success", "failure"))
     if implicit and any(item.result != "success" for item in needs.values()):
         return False
@@ -78,7 +78,7 @@ class Workflows(unittest.TestCase):
                     env = dict(os.environ, GITHUB_WORKSPACE=str(workspace), RUNNER_TEMP=str(runner),
                         GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='2', PLATFORM=platform,
                         SOURCE_SHA='a' * 40, APP_SHA='b' * 40, GITHUB_REPOSITORY='owner/App',
-                        ASSETS_SHA='c' * 40, ASSETS_REF=platform, SDK_SOURCE='source', SDK_REPOSITORY='owner/SDK',
+                        ASSETS_SHA='c' * 40, ASSETS_REF=platform, SDK_SHA='d' * 40, SDK_REPOSITORY='owner/SDK',
                         GITHUB_OUTPUT=str(github_output))
                     with patch.dict(os.environ, env):
                         exec(compile(prepare['run'], '<workflow-report-path>', 'exec'), {})
@@ -138,7 +138,7 @@ class Workflows(unittest.TestCase):
         self.assertEqual(job['with']['app_ref'], '${{ github.event.pull_request.head.sha }}')
         self.assertEqual(job['with']['host_ref'], "${{ vars.GPLATFORM_HOST_REF || 'feature/gplatform-ui' }}")
         self.assertEqual(job['with']['platform'], 'all')
-        self.assertEqual(job['with']['sdk_source'], 'source')
+        self.assertEqual(job['with']['app_branch'], '${{ github.event.pull_request.head.ref }}')
         self.assertIn('!github.event.pull_request.draft', job['if'])
         self.assertIn('github.event.pull_request.head.repo.full_name == github.repository', job['if'])
         self.assertNotIn('branches', flow['on']['pull_request'])
@@ -148,9 +148,9 @@ class Workflows(unittest.TestCase):
 
     def test_public_entries_have_only_the_documented_parameters(self):
         expected={
-          ROOT/'.github/workflows/build-sdk.yml':{'app_ref','host_ref','platform','mode'},
-          ROOT/'.github/workflows/run-regression.yml':{'app_ref','host_ref','platform','sdk_source','macos_sdk_ref','windows_sdk_ref','macos_test_assets_ref','windows_test_assets_ref'},
-          APP/'.github/workflows/build-installer.yml':{'app_ref','host_ref','platform'}}
+          ROOT/'.github/workflows/build-sdk.yml':{'app_ref','host_ref','platform'},
+          ROOT/'.github/workflows/run-regression.yml':{'app_ref','host_ref','platform','macos_sdk_ref','windows_sdk_ref','macos_test_assets_ref','windows_test_assets_ref'},
+          APP/'.github/workflows/build-installer.yml':{'app_ref','platform','windows_sdk_ref','macos_sdk_ref'}}
         for path,keys in expected.items():
             self.assertEqual(set(load(path)['on']['workflow_dispatch']['inputs']),keys)
 
@@ -175,18 +175,19 @@ class Workflows(unittest.TestCase):
                     self.assertEqual(set(parameter['options']), {part.strip() for part in declared_type.split('/')})
             if 'workflow_call' in workflow['on']:
                 reusable = workflow['on']['workflow_call']['inputs']
-                self.assertEqual(set(reusable), set(parameters))
+                self.assertEqual(set(reusable), set(parameters) | {'app_branch'})
+                self.assertEqual(reusable['app_branch']['default'], '')
                 self.assertEqual(reusable['app_ref']['required'], 'true')
                 for name in set(parameters) - {'app_ref'}:
                     self.assertEqual(reusable[name].get('default', ''), parameters[name].get('default', ''))
 
     def test_source_is_retained_and_sdk_prepare_receives_fixed_sha(self):
-        for job in self.platform_jobs():
+        for job, path in zip(self.platform_jobs(), ('host-source', 'source'), strict=True):
             source = next(step for step in job['steps'] if step.get('with', {}).get('path') in ('source', 'host-source'))
-            self.assertEqual(source['with']['path'], 'host-source')
+            self.assertEqual(source['with']['path'], path)
             self.assertEqual(source['with']['clean'], 'false')
             self.assertEqual(source['with']['persist-credentials'], 'false')
-        job = load(ROOT / '.github/workflows/build-sdk.yml')['jobs']['build_publish']
+        job = load(ROOT / '.github/workflows/build-sdk.yml')['jobs']['build']
         step = next(step for step in job['steps'] if step.get('name') == 'Build and export selected SDK')
         self.assertEqual(step['env']['SOURCE_SHA'], '${{ needs.prepare.outputs.source_sha }}')
 
@@ -223,7 +224,7 @@ class Workflows(unittest.TestCase):
                                  ['cmake', '--build', '--preset', preset, '--target', 'gplatform_sdk_artifacts'])
 
     def platform_jobs(self):
-        return [load(ROOT / '.github/workflows/build-sdk.yml')['jobs']['build_publish'],
+        return [load(ROOT / '.github/workflows/build-sdk.yml')['jobs']['build'],
                 load(APP / '.github/workflows/build-installer.yml')['jobs']['build']]
 
     def test_runtime_is_preinstalled_and_upload_failure_preserves_owned_packages(self):
@@ -246,23 +247,30 @@ class Workflows(unittest.TestCase):
                                      outcome == 'success' and
                                      (not needs_package_success or package == 'success'))
 
-    def test_sdk_delivery_uploads_package_only_in_artifacts_mode(self):
-        job = load(APP / '.github/workflows/build-sdk.yml')['jobs']['build_publish']
+    def test_sdk_uploads_complete_package_and_receipts(self):
+        job = load(APP / '.github/workflows/build-sdk.yml')['jobs']['build']
         upload = next(step for step in job['steps'] if step.get('id') == 'artifacts')
         self.assertEqual(upload['with']['path'].splitlines(), [
-            "${{ inputs.mode == 'artifacts' && format('{0}/SDK', env.SDK_PACKAGE_ROOT) || '' }}",
+            '${{ env.SDK_PACKAGE_ROOT }}/SDK',
             '${{ env.SDK_PACKAGE_ROOT }}/source-receipt.json',
             '${{ env.SDK_PACKAGE_ROOT }}/package-manifest.json',
         ])
+        self.assertEqual(upload['with']['include-hidden-files'], 'true')
 
-    def test_only_published_regression_checks_out_the_sdk_repository(self):
+    def test_installer_and_regression_checkout_only_the_frozen_sdk(self):
         regression = load(APP / '.github/workflows/run-regression.yml')['jobs']['regression']
+        sdk_producer, installer = self.platform_jobs()
         sdk_ref = "${{ matrix.platform == 'windows' && needs.prepare.outputs.windows_sdk_sha || needs.prepare.outputs.macos_sdk_sha }}"
-        sdk_checkout, = [step for step in regression['steps'] if step.get('with', {}).get('path') == 'sdk']
-        self.assertEqual(sdk_checkout['with']['ref'], sdk_ref)
-        self.assertEqual(sdk_checkout['with']['lfs'], 'false')
-        self.assertEqual(sdk_checkout['with']['persist-credentials'], 'false')
-        self.assertEqual(sdk_checkout['if'], "inputs.sdk_source == 'published'")
+        for job in (installer, regression):
+            sdk_checkout, = [step for step in job['steps'] if step.get('with', {}).get('path') == 'sdk']
+            self.assertEqual(sdk_checkout['with']['ref'], sdk_ref)
+            self.assertEqual(sdk_checkout['with']['lfs'], 'false')
+            self.assertEqual(sdk_checkout['with']['persist-credentials'], 'false')
+            self.assertNotIn('if', sdk_checkout)
+            for step in job['steps']:
+                self.assertNotIn('build_sdk_package', step.get('run', ''))
+                self.assertNotIn('GPLATFORM_PUBLISH_TOKEN', step.get('env', {}))
+        self.assertFalse(any(step.get('with', {}).get('path') == 'sdk' for step in sdk_producer['steps']))
         for job in (*self.platform_jobs(), regression):
             with tempfile.TemporaryDirectory() as directory:
                 workspace = Path(directory)
@@ -349,7 +357,7 @@ class Workflows(unittest.TestCase):
                     self.assertTrue(source.exists())
 
     def test_platform_checkout_ignores_system_crlf_and_preserves_git_attributes(self):
-        cases = [(ROOT / '.github/workflows/build-sdk.yml', 'build_publish'),
+        cases = [(ROOT / '.github/workflows/build-sdk.yml', 'build'),
                  (APP / '.github/workflows/build-installer.yml', 'build')]
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
@@ -401,7 +409,7 @@ class Workflows(unittest.TestCase):
                             self.assertEqual(int(step['timeout-minutes']), expected)
 
     def test_windows_ownership_exceptions_are_exact_job_scoped_gitlinks(self):
-        job = load(ROOT / '.github/workflows/build-sdk.yml')['jobs']['build_publish']
+        job = load(ROOT / '.github/workflows/build-sdk.yml')['jobs']['build']
         expected = {
             'App', 'App/ThirdParty/OrcaSlicer', 'ThirdParty/QmlDock', 'ThirdParty/SmoothUI',
             'ThirdParty/SmoothUI/SmoothUIDock', 'ThirdParty/SmoothUI/SmoothUIDock/KDDockWidgets',
@@ -438,15 +446,18 @@ class Workflows(unittest.TestCase):
             self.assertFalse((workspace / '.gitconfig').exists())
 
     def test_regression_reuses_the_same_exact_owned_git_trust_scope(self):
-        sdk = load(ROOT / '.github/workflows/build-sdk.yml')['jobs']['build_publish']['env']
+        sdk = load(ROOT / '.github/workflows/build-sdk.yml')['jobs']['build']['env']
         regression = load(ROOT / '.github/workflows/run-regression.yml')
         job = next(job for job in regression['jobs'].values()
                    if 'matrix.platform' in job.get('env', {}).get('GIT_CONFIG_COUNT', ''))
         env = job['env']
-        self.assertEqual(env['GIT_CONFIG_COUNT'], "${{ matrix.platform == 'windows' && '13' || '2' }}")
+        self.assertEqual(env['GIT_CONFIG_COUNT'], "${{ matrix.platform == 'windows' && '15' || '2' }}")
         for index in range(13):
             self.assertEqual(env['GIT_CONFIG_KEY_' + str(index)], sdk['GIT_CONFIG_KEY_' + str(index)])
             self.assertEqual(env['GIT_CONFIG_VALUE_' + str(index)], sdk['GIT_CONFIG_VALUE_' + str(index)])
+        for index, path in enumerate(('source', 'source/ThirdParty/OrcaSlicer'), 13):
+            self.assertEqual(env['GIT_CONFIG_KEY_' + str(index)], 'safe.directory')
+            self.assertEqual(env['GIT_CONFIG_VALUE_' + str(index)], '${{ github.workspace }}/' + path)
         self.assertEqual(job['timeout-minutes'], '360')
 
     def test_exact_four_app_workflows_and_no_hidden_legacy_entry(self):
@@ -468,32 +479,24 @@ class Workflows(unittest.TestCase):
             self.assertNotIn('run-build-app.yml', path.read_text())
             self.assertNotIn('dezbracaty/GPlatform/.github/workflows/', path.read_text())
 
-    def test_sdk_artifacts_are_default_and_publishing_requires_an_explicit_mode(self):
-        flow = load(ROOT / '.github/workflows/build-sdk.yml')
-        self.assertEqual(flow['on']['workflow_dispatch']['inputs']['mode']['default'], 'artifacts')
-        self.assertNotIn('workflow_call',flow['on'])
-        self.assertEqual(flow['jobs']['build_publish']['concurrency']['group'],'sdk-${{ matrix.platform }}')
-        self.assertEqual(flow['jobs']['build_publish']['strategy']['fail-fast'],'false')
-        base = next(step for step in flow['jobs']['prepare']['steps'] if step.get('id') == 'base')
-        self.assertFalse(expression(base['if'], {}, mode='artifacts'))
-        self.assertTrue(expression(base['if'], {}, mode='publish'))
-        job = flow['jobs']['build_publish']
-        publish = next(step for step in job['steps'] if step.get('id') == 'publish')
-        self.assertIn("publish=os.environ['MODE'] == 'publish'", publish['run'])
-        self.assertEqual(publish['env']['MODE'], '${{ inputs.mode }}')
-        self.assertEqual(publish['env']['GPLATFORM_PUBLISH_TOKEN'],
-                         "${{ inputs.mode == 'publish' && secrets.GPLATFORM_PUBLISH_TOKEN || '' }}")
-        self.assertEqual(publish['env']['APP_SHA'], '${{ needs.prepare.outputs.app_sha }}')
-        self.assertEqual(publish['env']['SDK_REPOSITORY'], '${{ needs.prepare.outputs.sdk_repository }}')
-        upload = next(step for step in job['steps'] if step.get('uses', '').startswith('actions/upload-artifact@'))
-        self.assertIn('/SDK', upload['with']['path'])
-        self.assertNotIn('/App', upload['with']['path'])
-        self.assertNotIn('.bundle', upload['with']['path'])
-        self.assertNotIn('app_branch', flow['on']['workflow_dispatch']['inputs'])
+    def test_sdk_workflow_has_no_publishing_or_write_credentials(self):
+        path = ROOT / '.github/workflows/build-sdk.yml'
+        flow = load(path)
+        self.assertEqual(set(flow['jobs']), {'prepare', 'build', 'queue_guard', 'result'})
+        self.assertEqual(set(flow['on']['workflow_dispatch']['inputs']), {'app_ref', 'host_ref', 'platform'})
+        self.assertNotIn('workflow_call', flow['on'])
+        self.assertNotIn('GPLATFORM_PUBLISH_TOKEN', path.read_text())
+        self.assertNotIn('windows_sdk_target', path.read_text())
+        self.assertNotIn('macos_sdk_target', path.read_text())
+        job = flow['jobs']['build']
+        self.assertEqual(job['concurrency']['group'], 'sdk-${{ matrix.platform }}')
+        self.assertEqual(job['strategy']['fail-fast'], 'false')
+        self.assertEqual(flow['permissions'], {'contents': 'read'})
+        self.assertEqual(flow['jobs']['queue_guard']['permissions'], {'contents': 'read', 'actions': 'write'})
         self.assertFalse((ROOT / 'scripts/ci/update_app.py').exists())
 
     def test_partial_rerun_is_rejected_before_platform_or_guard_scheduling(self):
-        flows = [(ROOT / ".github/workflows/build-sdk.yml", ("build_publish","queue_guard")),
+        flows = [(ROOT / ".github/workflows/build-sdk.yml", ("build","queue_guard")),
                  (APP / ".github/workflows/build-installer.yml", ("build","queue_guard"))]
         for path, jobs in flows:
             flow = load(path)
@@ -507,7 +510,7 @@ class Workflows(unittest.TestCase):
         flow = load(ROOT / ".github/workflows/build-sdk.yml")
         command = flow["jobs"]["result"]["steps"][0]["run"]
         code = "\n".join(command.splitlines()[1:-1])
-        needs = {name:{"result":"success", "outputs":{}} for name in ("prepare","build_publish","queue_guard")}
+        needs = {name:{"result":"success", "outputs":{}} for name in ("prepare","build","queue_guard")}
         needs["prepare"]["outputs"]["attempt"] = "1"
         result = subprocess.run([os.sys.executable, "-c", code], capture_output=True,
                                 env=dict(os.environ, RESULTS=json.dumps(needs), CURRENT_ATTEMPT="2"))

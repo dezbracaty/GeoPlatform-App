@@ -1,5 +1,5 @@
 name: Build Installer
-run-name: 'Installer | ${{ inputs.platform }} | app=${{ inputs.app_ref }} | host=${{ inputs.host_ref }}'
+run-name: 'Installer | ${{ inputs.platform }} | app=${{ inputs.app_ref }}'
 on:
   workflow_dispatch:
     inputs:
@@ -7,15 +7,19 @@ on:
         description: App branch or complete SHA to build
         type: string
         default: feature/gplatform-ui
-      host_ref:
-        description: Full-host branch or complete SHA
-        type: string
-        default: feature/gplatform-ui
       platform:
         description: Platforms to package
         type: choice
         options: [windows, macos, all]
         default: windows
+      windows_sdk_ref:
+        description: Published Windows SDK branch or complete SHA (optional)
+        type: string
+        default: ''
+      macos_sdk_ref:
+        description: Published macOS SDK branch or complete SHA (optional)
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -25,8 +29,9 @@ jobs:
     timeout-minutes: 10
     outputs:
       app_sha: ${{ steps.source.outputs.app_sha }}
-      source_sha: ${{ steps.source.outputs.source_sha }}
-      host_repository: ${{ steps.source.outputs.host_repository }}
+      sdk_repository: ${{ steps.source.outputs.sdk_repository }}
+      windows_sdk_sha: ${{ steps.source.outputs.windows_sdk_sha }}
+      macos_sdk_sha: ${{ steps.source.outputs.macos_sdk_sha }}
       matrix: ${{ steps.runners.outputs.matrix }}
       expected_jobs: ${{ steps.runners.outputs.expected_jobs }}
       guard_labels: ${{ steps.runners.outputs.labels }}
@@ -54,15 +59,20 @@ jobs:
         env:
           GPLATFORM_SOURCE_TOKEN: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
           APP_REF: ${{ inputs.app_ref }}
-          HOST_REF: ${{ inputs.host_ref }}
-          HOST_REPOSITORY: ${{ vars.GPLATFORM_HOST_REPOSITORY || 'dezbracaty/GPlatform' }}
+          PLATFORM: ${{ inputs.platform }}
+          WINDOWS_SDK_REF: ${{ inputs.windows_sdk_ref }}
+          MACOS_SDK_REF: ${{ inputs.macos_sdk_ref }}
         run: |
           import os, sys
           sys.path.insert(0, 'control/scripts/ci')
-          from common import API, freeze_source_candidate, write_outputs
-          value = freeze_source_candidate(API(os.environ['GPLATFORM_SOURCE_TOKEN']), os.environ['GITHUB_REPOSITORY'],
-                                          os.environ['APP_REF'], os.environ['HOST_REPOSITORY'], os.environ['HOST_REF'])
-          write_outputs(value)
+          from common import API, freeze_published_sdk, resolve_ref, sdk_repository, write_outputs
+          api = API(os.environ['GPLATFORM_SOURCE_TOKEN'])
+          app, ref = os.environ['GITHUB_REPOSITORY'], os.environ['APP_REF']
+          app_sha = resolve_ref(api, app, ref)
+          sdk = sdk_repository(api, app, app_sha)
+          write_outputs(dict(app_sha=app_sha, sdk_repository=sdk, **freeze_published_sdk(
+              api, sdk, ref, platform=os.environ['PLATFORM'], windows_sdk_ref=os.environ['WINDOWS_SDK_REF'],
+              macos_sdk_ref=os.environ['MACOS_SDK_REF'])))
       - id: runners
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
         env:
@@ -97,7 +107,7 @@ jobs:
     timeout-minutes: 220
     env:
       # Apply before checkout, including on Windows with system autocrlf=true.
-      GIT_CONFIG_COUNT: ${{ matrix.platform == 'windows' && '3' || '2' }}
+      GIT_CONFIG_COUNT: ${{ matrix.platform == 'windows' && '5' || '2' }}
       GIT_CONFIG_KEY_0: core.autocrlf
       GIT_CONFIG_VALUE_0: 'false'
       GIT_CONFIG_KEY_1: core.eol
@@ -105,6 +115,10 @@ jobs:
       # Git for Windows supports this backend; macOS keeps its native backend.
       GIT_CONFIG_KEY_2: http.sslBackend
       GIT_CONFIG_VALUE_2: openssl
+      GIT_CONFIG_KEY_3: safe.directory
+      GIT_CONFIG_VALUE_3: ${{ github.workspace }}/source
+      GIT_CONFIG_KEY_4: safe.directory
+      GIT_CONFIG_VALUE_4: ${{ github.workspace }}/source/ThirdParty/OrcaSlicer
       GIT_HTTP_LOW_SPEED_LIMIT: '1024'
       GIT_HTTP_LOW_SPEED_TIME: '60'
     steps:
@@ -125,32 +139,40 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         timeout-minutes: 20
         with:
-          repository: ${{ needs.prepare.outputs.host_repository }}
-          ref: ${{ needs.prepare.outputs.source_sha }}
-          path: host-source
+          ref: ${{ needs.prepare.outputs.app_sha }}
+          path: source
           # Keep Git objects and preset builds; reset source explicitly before building.
           clean: false
           token: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
           persist-credentials: false
           submodules: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        timeout-minutes: 20
+        with:
+          repository: ${{ needs.prepare.outputs.sdk_repository }}
+          ref: ${{ matrix.platform == 'windows' && needs.prepare.outputs.windows_sdk_sha || needs.prepare.outputs.macos_sdk_sha }}
+          path: sdk
+          token: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
+          persist-credentials: false
+          lfs: false
       - name: Check App CI contracts
         shell: python
         run: |
           import subprocess, sys
           subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'control/tests/ci'], check=True)
-      - name: Build source SDK and package App
+      - name: Build and package App with the selected SDK
         id: package
         shell: python
         env:
           GPLATFORM_SOURCE_TOKEN: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
           APP_SHA: ${{ needs.prepare.outputs.app_sha }}
-          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          SDK_SHA: ${{ matrix.platform == 'windows' && needs.prepare.outputs.windows_sdk_sha || needs.prepare.outputs.macos_sdk_sha }}
           PLATFORM: ${{ matrix.platform }}
         run: |
           import os, subprocess, sys
-          subprocess.run([sys.executable, 'control/scripts/ci/build.py', '--source-dir', 'host-source',
-              '--platform', os.environ['PLATFORM'], '--source-sha', os.environ['SOURCE_SHA'],
-              '--app-sha', os.environ['APP_SHA'], '--app-repository', os.environ['GITHUB_REPOSITORY']], check=True)
+          subprocess.run([sys.executable, 'control/scripts/ci/build.py', '--source-dir', 'source',
+              '--platform', os.environ['PLATFORM'], '--sdk-root', 'sdk', '--sdk-sha', os.environ['SDK_SHA'],
+              '--app-sha', os.environ['APP_SHA']], check=True)
       - name: Upload installer results
         id: artifacts
         if: always() && steps.package.outputs.report != ''
