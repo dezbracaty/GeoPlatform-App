@@ -11,7 +11,7 @@
 | Build SDK | `.github/workflows/build-sdk.yml` | 手动 | 生产、校验和上传完整平台 SDK 工件 |
 | Run Regression | `.github/workflows/run-regression.yml` | 手动、workflow_call | 完整宿主原生检查、SDK 消费检查、Server 全量回归 |
 | Build Installer | `.github/workflows/build-installer.yml` | 手动 | 检查、构建、部署、打包、必要启动验证和上传 |
-| MR Checks | `.github/workflows/pr-checks.yml` | App MR 自动触发 | 固定 MR head，使用已发布 SDK 执行双平台完整回归 |
+| MR Checks | `.github/workflows/pr-checks.yml` | App MR 自动触发 | 固定 MR head，并行执行双平台产品回归和 CI 脚本测试 |
 
 回归摘要、SDK 附件和安装包附件在 App 仓库 Actions 查看。GPlatform 保留完整宿主源码、标准 presets、原生测试、SDK 导出入口；SDK/TestAssets 仓库保留平台产物和测试数据。
 
@@ -111,7 +111,9 @@ App MR 创建、重新打开、提交更新、转为可审核、变更目标分�
 
 没有手动参数。固定当前 MR head 为 App SHA，宿主从仓库变量 GPLATFORM_HOST_REF 解析，空值默认 feature/gplatform-ui；测试资产默认 macmini/windows。使用 platform=all，直接调用同仓库 run-regression.yml 的 workflow_call。通过其 `app_branch` 参数传入实际 MR 源分支名，用于同名 SDK 选择，App checkout 仍使用完整 head SHA。工作流实现使用审核过的固定版本，被测源码使用准确 MR head，两种身份都报告。
 
-新提交只取消本 MR 的旧候选，不影响其他任务；取消负责收尾本任务 owned 进程。两平台所有必需检查完整通过才报告通过。合并保护应绑定 App MR Checks 的当前候选汇总，未核实服务端设置不能声称门禁已生效。
+独立的 `CI scripts` job 使用同一 PR 触发条件和准确 head SHA，在 GitHub 托管 Windows runner 运行完整 Python `tests/ci` 和 Node 队列测试，在托管 macOS runner 补跑 Universal、POSIX 和原生构建分支相关用例。脚本测试与产品回归并行，各自报告结果。手动 Run Regression 与 PR 产品回归均在现有 SDK 检查、原生 CTest 和 Journal 验收后报告产品结果。
+
+新提交只取消本 MR 的旧候选，不影响其他任务；取消负责收尾本任务 owned 进程。两平台所有必需产品检查完整通过才报告产品回归通过。合并保护应绑定 App MR Checks 的当前候选汇总，未核实服务端设置不能声称门禁已生效。
 
 本四入口方案不保留 Root 自动 MR 入口：Root MR 不自动触发全量；Root 源码变化通过 App Run Regression 的 host_ref 显式验收，不把 App MR 检查冒称覆盖其他 Root MR。
 
@@ -136,7 +138,7 @@ App 仓库使用 GPLATFORM_HOST_REPOSITORY 指定完整宿主（默认 dezbracat
 
 App runner 标签使用 GPLATFORM_WINDOWS_RUNNER_LABELS/GPLATFORM_MACOS_RUNNER_LABELS。Actions 使用源码依赖只读凭据 GPLATFORM_SOURCE_TOKEN 和队列检查凭据 GPLATFORM_WORKFLOW_TOKEN。SDK 发布使用本机现有 gh 身份。
 
-CI 工具测试依赖在 runner 准备阶段用同一 Python 安装 `tests/ci/requirements.txt`，截图验证沿用 Pillow 依赖。回归在 Journal 全量通过后再检查 CI 工具合同，工具检查失败仍阻止最终通过。runner 只复用测试输入和本机工具环境一致的通过记录，记录包含源检查提交，工具输入变化或无通过记录时重新执行。仅改变 TestAssets gitlink 不改变工具测试输入。
+PR 脚本测试用 Python 3.12 安装 `tests/ci/requirements.txt` 和 `tools/requirements.txt`。该 job 使用只读仓库权限，只检出 App 本身，且 checkout 不持久化凭据。产品回归 runner 继续预装 Journal 现有依赖，包括截图验证所需的 Pillow。
 
 App runner 在 `host-source` 检出完整宿主，在 `source` 检出独立 App，并保留经校验的标准 preset 构建目录。独立 App 按标准 preset 增量构建。
 

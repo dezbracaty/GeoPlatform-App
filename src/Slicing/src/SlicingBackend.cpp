@@ -1,9 +1,10 @@
 #include "SlicingBackend.hpp"
+#include "../../AppConfigPaths.hpp"
 
 #include "Foundation/Log.h"
 
 #include <QCoreApplication>
-#include <QStandardPaths>
+#include <QTemporaryDir>
 
 #include <algorithm>
 #include <atomic>
@@ -87,6 +88,7 @@ public:
     }
 
     std::unique_ptr<libslicer::Library> library;
+    std::unique_ptr<QTemporaryDir> isolatedPresets;
     std::atomic_bool shutdownRequested{false};
     std::atomic_uint activeLongJobs{0};
     std::atomic_bool projectCommitActive{false};
@@ -161,15 +163,25 @@ SlicingBackend::SlicingBackend()
     : m_impl(std::make_unique<Impl>())
 {
     std::vector<libslicer::ConfigDiagnostic> diagnostics;
-    const auto presetDirectory = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
-        QStringLiteral("/slicer-presets");
-    m_available = m_impl->invoke([this, &diagnostics, presetDirectory]() {
-        libslicer::LibraryOptions options;
-        options.user_preset_directory = presetDirectory.toStdString();
+    libslicer::LibraryOptions options;
+    const auto overrideDirectory = qEnvironmentVariable("GPLATFORM_SLICER_CONFIG_DIR");
+    if (!overrideDirectory.isEmpty()) {
+        options.config_directory = overrideDirectory.toStdString();
+    } else if (qEnvironmentVariableIntValue("GPLATFORM_JOURNAL_SESSION") != 0 ||
+               QCoreApplication::applicationName() != QStringLiteral("GPlatform")) {
+        m_impl->isolatedPresets = std::make_unique<QTemporaryDir>();
+        if (m_impl->isolatedPresets->isValid())
+            options.user_preset_directory = m_impl->isolatedPresets->path().toStdString();
+        else
+            LOG_WARN("SlicingBackend: could not create an isolated user preset directory");
+    } else if (const auto directory = GPlatform::userConfigDirectory(); !directory.isEmpty()) {
+        options.config_directory = QDir(directory).filePath(QStringLiteral("slicing")).toStdString();
+    }
 #ifdef _WIN32
-        options.resource_directory =
-            (QCoreApplication::applicationDirPath() + "/resources/libslicer").toStdString();
+    options.resource_directory =
+        (QCoreApplication::applicationDirPath() + "/resources/libslicer").toStdString();
 #endif
+    m_available = m_impl->invoke([this, &diagnostics, options = std::move(options)] {
         m_impl->library = libslicer::Library::open(options, libslicer::PresetLoadingMode::OnDemand, &diagnostics);
         if (!m_impl->library) {
             return false;
@@ -253,10 +265,25 @@ libslicer::PrinterSwitchSaveResult SlicingBackend::savePrinterSwitchPreset(
     });
 }
 
+libslicer::PrinterSwitchSaveResult SlicingBackend::savePreset(std::uint64_t revision,
+    libslicer::PrinterSwitchPreset type, libslicer::PresetSaveMode mode, const std::string& name,
+    std::optional<std::size_t> filamentSlot, bool validateOnly, bool overwriteConfirmed)
+{
+    std::unique_lock<std::mutex> admissionLock(m_impl->configurationAdmissionMutex);
+    if (!configurationChangesAllowed()) {
+        libslicer::PrinterSwitchSaveResult result;
+        result.diagnostics = busySettingsResult().diagnostics;
+        return result;
+    }
+    return m_impl->invoke([this, revision, type, mode, name, filamentSlot, validateOnly, overwriteConfirmed] {
+        return m_impl->library->save_preset(revision, type, mode, name, filamentSlot, validateOnly, overwriteConfirmed);
+    });
+}
+
 libslicer::PrinterSwitchResult SlicingBackend::preparePrinterSwitch(
     const libslicer::ConfigSelection& selection, std::uint64_t revision,
     const std::vector<libslicer::PrinterSwitchDecision>& decisions,
-    const std::vector<std::pair<std::string, std::string>>& remembered)
+    const std::vector<std::pair<std::string, std::string>>& projectOverrides)
 {
     std::unique_lock<std::mutex> admissionLock(m_impl->configurationAdmissionMutex);
     if (!configurationChangesAllowed()) {
@@ -264,8 +291,30 @@ libslicer::PrinterSwitchResult SlicingBackend::preparePrinterSwitch(
         result.diagnostics = busySettingsResult().diagnostics;
         return result;
     }
-    return m_impl->invoke([this, selection, revision, decisions, remembered] {
-        return m_impl->library->prepare_printer_switch(selection, revision, decisions, remembered);
+    return m_impl->invoke([this, selection, revision, decisions, projectOverrides] {
+        return m_impl->library->prepare_printer_switch(selection, revision, decisions, projectOverrides);
+    });
+}
+
+libslicer::PrinterSwitchResult SlicingBackend::prepareStartupConfiguration(const libslicer::ConfigSelection& fallback)
+{
+    std::unique_lock<std::mutex> admissionLock(m_impl->configurationAdmissionMutex);
+    if (!configurationChangesAllowed())
+        return {{}, busySettingsResult().diagnostics};
+    return m_impl->invoke([this, fallback] {
+        return m_impl->library->prepare_startup_configuration(fallback);
+    });
+}
+
+libslicer::SelectionSaveResult SlicingBackend::saveUserSelection(
+    std::uint64_t revision, const libslicer::SelectionSaveOptions& options)
+{
+    if (!m_available)
+        return {false, {{"initialization", "Slicing backend is unavailable"}}};
+    return m_impl->invoke([this, revision, options] {
+        if (m_impl->library->configuration_revision() != revision)
+            return libslicer::SelectionSaveResult{false, {{"revision", "Slicing selection changed before saving"}}};
+        return m_impl->library->save_user_selection(m_impl->library->capture_configuration(), options);
     });
 }
 

@@ -32,7 +32,7 @@ class RegressionTests(unittest.TestCase):
             stack.enter_context(patch.object(driver, 'text_git', return_value='b'*40))
             stack.enter_context(patch.object(driver.native_checks, 'build_environment', return_value={}))
             stack.enter_context(patch.object(driver.native_checks, 'architecture', return_value={'returncode': 0}))
-            allocate = stack.enter_context(patch.object(driver.tempfile, 'mkdtemp'))
+            allocate = stack.enter_context(patch.object(tempfile, 'mkdtemp'))
             stack.enter_context(patch.object(driver, 'init_source_submodules'))
             materialize = stack.enter_context(patch.object(driver, 'materialize_sdk', return_value=sdk))
             with self.assertRaisesRegex(RuntimeError, 'consumer failure'):

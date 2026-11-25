@@ -129,12 +129,12 @@ class SourceMRRegression(unittest.TestCase):
             build.assert_not_called()
             self.assertEqual(json.loads((output/'source-regression.json').read_text())['status'],'failed')
 
-    def test_optional_review_dependencies_do_not_block_regression_admission(self):
+    def test_review_and_ci_script_dependencies_do_not_block_regression_admission(self):
         blocker = '''
 import importlib.abc, sys
 class NoOptionalPackages(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname.split('.')[0] in ('numpy', 'jsonschema'):
+        if fullname.split('.')[0] in ('numpy', 'jsonschema', 'yaml'):
             raise ModuleNotFoundError(fullname)
 sys.meta_path.insert(0, NoOptionalPackages())
 '''
@@ -188,19 +188,15 @@ sys.meta_path.insert(0, NoOptionalPackages())
             stack.enter_context(patch.object(controller,'init_host_submodules'))
             stack.enter_context(patch.object(controller,'init_source_submodules'))
             stack.enter_context(patch.object(controller,'text_git',side_effect=['b'*40,'c'*40,'e'*40,'f'*40]))
-            stack.enter_context(patch.object(controller,'run',side_effect=run))
+            commands = stack.enter_context(patch.object(controller,'run',side_effect=run))
             stack.enter_context(patch.object(controller.native_checks,'build_environment',return_value={}))
             native=stack.enter_context(patch.object(controller.native_checks,'architecture',return_value={'returncode':0}))
             materialize = stack.enter_context(patch.object(controller, 'materialize_sdk', return_value=root / 'sdk'))
-            def check_after_journal(ci_root, build, report):
-                self.assertTrue((output/'journal-receipt.json').exists())
-                self.assertEqual(report['final_counts'], {'passed': 2})
-            checks=stack.enter_context(patch.object(controller, 'check_ci_tools', side_effect=check_after_journal))
             result = controller.regress(root, 'macos', 'a'*40, 'd'*40, output, app=root / 'source',
                                         app_sha='b'*40, app_repository='org/App', sdk_repository='org/SDK',
                                         sdk_root=root / 'sdk', sdk_sha='f'*40)
             materialize.assert_called_once_with(root / 'sdk', 'f'*40, 'macos')
-            checks.assert_called_once()
+            self.assertEqual(commands.call_args.args[0][1:3], ['-c', controller.APP_REGRESSION])
             self.assertEqual([c.args[1] for c in native.call_args_list],['arm64','x86_64'])
             self.assertTrue(all(not c.kwargs for c in native.call_args_list))
             return result
@@ -221,6 +217,7 @@ sys.meta_path.insert(0, NoOptionalPackages())
             result=self.pipeline(root,output)
             self.assertEqual(result['status'],'passed')
             self.assertEqual(result['case_count'],2)
+            self.assertEqual(result['final_counts'], {'passed': 2})
             self.assertEqual(result['sdk']['sdk_sha'], 'f'*40)
             self.assertEqual(result['declared_app_sha'], 'c'*40)
             self.assertEqual(result['app_sha'], 'b'*40)
@@ -482,32 +479,5 @@ sys.meta_path.insert(0, NoOptionalPackages())
                                    app_sha='b'*40, app_repository='org/App', sdk_root=root/'sdk',
                                    sdk_repository='org/SDK', sdk_sha='windows')
             build.assert_not_called()
-
-    def test_ci_tools_receipt_requires_matching_inputs_and_success(self):
-        with tempfile.TemporaryDirectory() as directory:
-            build = Path(directory)
-            report = {'control_sha': 'a' * 40}
-            receipt = build / 'ci-tools-passed.json'
-            with patch.object(controller, 'text_git', return_value=''), \
-                 patch.object(controller, 'ci_tools_key', return_value='first') as key, \
-                 patch.object(controller, 'run') as checks:
-                controller.check_ci_tools(build, build, report)
-                self.assertFalse(report['ci_tools']['reused'])
-                controller.check_ci_tools(build, build, report)
-                self.assertTrue(report['ci_tools']['reused'])
-                checks.assert_called_once()
-
-                key.return_value = 'changed'
-                checks.side_effect = RuntimeError('tool suite failed')
-                with self.assertRaisesRegex(RuntimeError, 'tool suite failed'):
-                    controller.check_ci_tools(build, build, report)
-                self.assertEqual(report['ci_tools']['status'], 'failed')
-                self.assertEqual(json.loads(receipt.read_text())['key'], 'first')
-
-                checks.side_effect = None
-                controller.check_ci_tools(build, build, report)
-                self.assertFalse(report['ci_tools']['reused'])
-                self.assertEqual(json.loads(receipt.read_text())['key'], 'changed')
-
 
 if __name__ == '__main__': unittest.main()

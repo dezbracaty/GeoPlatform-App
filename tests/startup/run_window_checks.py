@@ -192,7 +192,8 @@ def port():
         sock.bind(('127.0.0.1',0))
         return str(sock.getsockname()[1])
 
-settings = Path(os.environ['LOCALAPPDATA']) / 'GPlatform/GPlatform' / (args.application.stem+'.ini')
+config_root = Path(os.environ.get('GPLATFORM_CONFIG_ROOT') or Path(os.environ['LOCALAPPDATA']) / 'GPlatform')
+settings = config_root / (args.application.stem+'.ini')
 backup = settings.read_bytes() if settings.exists() else None
 try:
     if args.locale:

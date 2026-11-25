@@ -125,15 +125,16 @@ if(TARGET gplatform_libslicer_install)
 endif()
 add_test(NAME FloatingPrintConfigurationCheck COMMAND FloatingPrintConfigurationCheck)
 add_test(NAME FloatingPrintConfigurationLayoutCheck COMMAND FloatingPrintConfigurationCheck --layout)
+add_test(NAME SlicingPresetMarkersCheck COMMAND FloatingPrintConfigurationCheck --preset-markers)
 add_test(NAME SlicingSettingRejectionCheck COMMAND FloatingPrintConfigurationCheck --setting-rejection)
 add_test(NAME SlicingProgressPresentationCheck COMMAND FloatingPrintConfigurationCheck --slice-progress)
 set_tests_properties(SlicingProgressPresentationCheck PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software" TIMEOUT 30)
-set_tests_properties(FloatingPrintConfigurationCheck FloatingPrintConfigurationLayoutCheck SlicingSettingRejectionCheck PROPERTIES
+set_tests_properties(FloatingPrintConfigurationCheck FloatingPrintConfigurationLayoutCheck SlicingSettingRejectionCheck SlicingPresetMarkersCheck PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software" TIMEOUT 45)
 if(WIN32)
     # Exercise real window input routing and native font metrics on Windows.
-    set_tests_properties(FloatingPrintConfigurationCheck SlicingSettingRejectionCheck PROPERTIES
+    set_tests_properties(FloatingPrintConfigurationCheck SlicingSettingRejectionCheck SlicingPresetMarkersCheck PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=windows;QT_QUICK_BACKEND=software")
 endif()
 
@@ -154,7 +155,7 @@ set_tests_properties(PrintCommandBarLayoutCheck PROPERTIES
 
 if(WIN32)
     set_tests_properties(FloatingPrintConfigurationCheck FloatingPrintConfigurationLayoutCheck
-        PrintCommandBarLayoutCheck SlicingSettingRejectionCheck PROPERTIES
+        PrintCommandBarLayoutCheck SlicingSettingRejectionCheck SlicingPresetMarkersCheck PROPERTIES
         ENVIRONMENT_MODIFICATION
         "PATH=path_list_prepend:$<TARGET_FILE_DIR:GPlatform>;PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
     if(GPLATFORM_ENABLE_LIBSLICER)

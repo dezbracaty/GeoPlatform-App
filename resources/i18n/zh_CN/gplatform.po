@@ -4254,6 +4254,33 @@ msgstr "无法恢复模型的材料归属。"
 msgid "Save user preset"
 msgstr "保存用户预设"
 
+msgid "Save preset"
+msgstr "保存预设"
+
+msgid "Duplicate preset"
+msgstr "复制预设"
+
+msgid "Save as New Preset"
+msgstr "另存为新预设"
+
+msgid "Overwrite existing user preset"
+msgstr "覆盖已有的用户预设"
+
+msgid "Choose a different name for the new preset"
+msgstr "请为新预设输入不同的名称"
+
+msgid "Only a user preset can be saved in place"
+msgstr "只有用户预设可以直接保存"
+
+msgid "Confirm overwriting the existing user preset"
+msgstr "请确认覆盖已有的用户预设"
+
+msgid "The configuration changed before saving the preset"
+msgstr "当前配置已变化，请重新打开保存窗口"
+
+msgid "System profile files are read-only"
+msgstr "系统预设文件为只读"
+
 msgid "Transfer or discard changes"
 msgstr "转移或丢弃改动"
 

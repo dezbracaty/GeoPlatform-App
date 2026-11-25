@@ -52,9 +52,15 @@ public:
     libslicer::PrinterSwitchReview reviewPrinterSwitch(const libslicer::ConfigSelection&, bool afterSave = false);
     libslicer::PrinterSwitchSaveResult savePrinterSwitchPreset(
         std::uint64_t revision, libslicer::PrinterSwitchPreset, const std::string& name, bool validateOnly = false, const std::string& sourcePresetId = {});
+    libslicer::PrinterSwitchSaveResult savePreset(std::uint64_t revision, libslicer::PrinterSwitchPreset type,
+        libslicer::PresetSaveMode mode, const std::string& name, std::optional<std::size_t> filamentSlot,
+        bool validateOnly, bool overwriteConfirmed);
     libslicer::PrinterSwitchResult preparePrinterSwitch(const libslicer::ConfigSelection&,
         std::uint64_t revision, const std::vector<libslicer::PrinterSwitchDecision>&,
-        const std::vector<std::pair<std::string, std::string>>& remembered);
+        const std::vector<std::pair<std::string, std::string>>& projectOverrides);
+    libslicer::PrinterSwitchResult prepareStartupConfiguration(const libslicer::ConfigSelection& fallback);
+    libslicer::SelectionSaveResult saveUserSelection(
+        std::uint64_t revision, const libslicer::SelectionSaveOptions& options = {});
     SlicingConfigActivationResult activateConfig(
         const libslicer::ConfigSelection& selection,
         const std::vector<std::pair<std::string, std::string>>& patch = {});

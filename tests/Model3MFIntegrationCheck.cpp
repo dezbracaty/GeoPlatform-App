@@ -45,7 +45,7 @@
 #include <QScopeGuard>
 #include <QSet>
 #include <QSignalSpy>
-#include <QSettings>
+#include "SlicerSelectionTestFile.hpp"
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
@@ -695,7 +695,11 @@ void checkPrinterSwitchSaveAndCancel() {
             TransactionManager::instance().getUndoStackSize() == undoCount,
             "Cancelling did not retain the saved printer and unsaved process on the source");
 
-    QSettings().remove(QStringLiteral("slicing/printerPresets/P3%200.4%20nozzle"));
+    auto savedSelections = readSlicerSelectionTestFile();
+    auto savedPrinters = savedSelections.value("printers").toObject();
+    savedPrinters.remove("P3");
+    savedSelections["printers"] = savedPrinters;
+    require(writeSlicerSelectionTestFile(savedSelections), "Cannot clear remembered P3 settings");
     require(bridge->selectMachine("P3", "0.4", {}, "P3 0.4 nozzle") && waitForMachinePreparation(*bridge) && prompts.size() == 3,
             "Switching to a compatible P3 preset did not ask about the edited process");
     bridge->resolvePrinterSwitch("cancel");
@@ -725,11 +729,11 @@ void checkPrinterSwitchSaveAndCancel() {
 const auto projectCollisionName = QStringLiteral("0.20mm Standard @MyKlipper(111.3mf)");
 
 QString projectCollisionFile(const QString& configDirectory) {
-    return configDirectory + QStringLiteral("/slicer-presets/CFSYS/process/") + projectCollisionName + ".json";
+    return configDirectory + QStringLiteral("/user/CFSYS/process/") + projectCollisionName + ".json";
 }
 
 void writeUserPresetFixtures(const QString& configDirectory) {
-    const auto processDirectory = configDirectory + QStringLiteral("/slicer-presets/P3/process");
+    const auto processDirectory = configDirectory + QStringLiteral("/user/P3/process");
     require(QDir().mkpath(processDirectory + QStringLiteral("/base")), "Cannot create user preset fixture directory");
     const auto write = [](const QString& path, const QJsonObject& fields) {
         QFile file(path);
@@ -781,7 +785,7 @@ void checkProjectPresetSaveAndReselect(SliceSettingsBridge& bridge) {
     auto& backend = GPlatform::SlicingBackend::instance();
     const auto path = QStringLiteral(PRINTER_SWITCH_PROJECT);
     const auto originalFile = bytes(path);
-    const auto collisionPath = projectCollisionFile(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation));
+    const auto collisionPath = projectCollisionFile(qEnvironmentVariable("GPLATFORM_SLICER_CONFIG_DIR"));
     const auto originalUserPreset = bytes(collisionPath);
     importAndWait(path, "project");
     const auto source = backend.activeConfigView();
@@ -847,11 +851,11 @@ void checkP3PaletteSources() {
         return config ? QString::fromStdString(config->value("filament_colour").value_or("")).toUpper() : QString{};
     };
     const QString defaults = "#F28E2B;#4E79A7;#59A14F;#B07AA1;#EDC948;#E15759";
-    const QString custom = "#102030;#102030;#102030;#102030;#102030;#102030";
-    const QString legacy = "#102030;#203040;#304050;#405060;#506070;#607080";
-    const QString group = "slicing/printerPresets/P3%200.4%20nozzle";
-    const QString legacyGroup = "slicing/printers/P3/0.4";
-    QSettings settings;
+    const QString custom = "#102030FF;#102030FF;#102030FF;#102030FF;#102030FF;#102030FF";
+    const auto rememberedPalette = [](const QString& model, const QString& preset) {
+        return readSlicerSelectionTestFile().value("printers").toObject().value(model).toObject()
+            .value("0.4").toObject().value(preset).toObject().value("settings").toObject().value("filament_colour");
+    };
     const auto selectOther = [&] {
         require(selectMachineAndWait(*bridge, "Flashforge AD5X", "0.4") &&
                 bridge->selectedMachineModelId() == "Flashforge AD5X", "Cannot switch from P3");
@@ -861,19 +865,22 @@ void checkP3PaletteSources() {
                 "Cannot switch to P3");
     };
     selectOther();
-    settings.remove(group);
+    auto memory = readSlicerSelectionTestFile();
+    auto printers = memory.value("printers").toObject();
+    printers.remove("P3");
+    memory["printers"] = printers;
+    require(writeSlicerSelectionTestFile(memory), "Cannot clear P3 preference fixture");
     selectP3();
     require(palette() == defaults, "P3 defaults did not use the six physical tool colors");
+    for (int slot = 0; slot < 6; ++slot)
+        require(bridge->setFilamentColor(slot, QColor("#102030")), "Cannot set a personal P3 color");
+    require(palette() == custom, qPrintable("Personal P3 editing produced " + palette()));
+    require(rememberedPalette("P3", "P3 0.4 nozzle").toString().toUpper() == custom,
+            qPrintable("Personal P3 color was not saved: " +
+                       rememberedPalette("P3", "P3 0.4 nozzle").toString()));
     selectOther();
-    settings.remove(group);
-    settings.setValue(legacyGroup + "/filament_colour", legacy);
-    settings.setValue(legacyGroup + "/slicing/selection/filamentPhysicalTools", QVariantList{0, 1, 2, 3, 4, 5});
     selectP3();
-    require(palette() == legacy, "P3 lost a matching legacy palette");
-    selectOther();
-    settings.setValue(group + "/filament_colour", custom);
-    selectP3();
-    require(palette() == custom, "P3 overwrote a remembered same-color palette");
+    require(palette() == custom, qPrintable("P3 overwrote a remembered same-color palette: " + palette()));
     importAndWait("../imported/p3-short-ring/4444444-p3-56mm.3mf", "project");
     require(palette() == "#FFFFFF;#80FF80;#0080FF;#FFAD5B;#737373;#FFFFFF",
             "Opening a P3 project replaced the project's colors with preset colors");
@@ -883,14 +890,14 @@ void checkP3PaletteSources() {
     require(palette() == custom, "The opened project's colors overwrote the preset palette");
 
     selectOther();
-    const QString ad5xGroup = "slicing/printerPresets/Flashforge%20AD5X%200.4%20nozzle";
-    const auto ad5xColors = settings.value(ad5xGroup + "/filament_colour");
-    require(ad5xColors.isValid(), "The AD5X preset has no remembered palette");
+    const QString ad5xPreset = "Flashforge AD5X 0.4 nozzle";
+    const auto ad5xColors = rememberedPalette("Flashforge AD5X", ad5xPreset);
+    require(ad5xColors.isString(), "The AD5X preset has no remembered palette");
     const auto ad5xSlots = bridge->filamentSlots().size();
     importAndWait("../imported/printer-preset-switch/111.3mf", "geometry");
     require(bridge->filamentSlots().size() > ad5xSlots, "Geometry import did not exercise palette expansion");
     selectP3();
-    require(settings.value(ad5xGroup + "/filament_colour") == ad5xColors,
+    require(rememberedPalette("Flashforge AD5X", ad5xPreset) == ad5xColors,
             "Geometry import wrote its expanded palette into the printer preset");
 
     const auto restoreStartup = [] {
@@ -898,19 +905,22 @@ void checkP3PaletteSources() {
         future.waitForFinished();
         return future.result();
     };
-    settings.setValue("slicing/selection/printerPresetId", "Deleted P3 preset");
-    settings.setValue("slicing/printerPresets/Deleted%20P3%20preset/filament_colour", defaults);
+    memory = readSlicerSelectionTestFile();
+    memory["active"] = QJsonObject{{"model", "P3"}, {"variant", "0.4"}, {"machine", "Deleted P3 preset"}};
+    require(writeSlicerSelectionTestFile(memory), "Cannot seed deleted P3 preset");
     const auto restored = restoreStartup();
     require(restored && restored.view.selection.printer_preset_id == "P3 0.4 nozzle" && palette() == custom,
             "Startup wrote a deleted P3 preset's colors into the system preset");
 
-    const QString ad5xRemembered = "#123456;#234567;#345678;#456789;#567890";
-    settings.setValue(ad5xGroup + "/filament_colour", ad5xRemembered);
-    settings.setValue("slicing/selection/machineModelId", "Removed printer");
+    selectOther();
+    require(bridge->setFilamentColor(0, QColor("#123456")), "Cannot save an AD5X color");
+    memory = readSlicerSelectionTestFile();
+    memory["active"] = QJsonObject{{"model", "Removed printer"}, {"variant", "0.4"}, {"machine", "Removed preset"}};
+    require(writeSlicerSelectionTestFile(memory), "Cannot seed removed printer");
     const auto fallback = restoreStartup();
     require(fallback && fallback.view.selection.machine_model_id == "Flashforge AD5X" &&
             palette().startsWith("#123456"), "Startup ignored the fallback printer's own colors");
-    std::cout << "P3 colors: defaults, legacy mapping, explicit memory, import isolation and startup fallback\n";
+    std::cout << "P3 colors: defaults, personal memory, import isolation and startup fallback\n";
 }
 
 void checkContextFileMenus() {
@@ -1083,14 +1093,11 @@ int main(int argc,char** argv) {
     app.setOrganizationName("GPlatformTests");
     app.setApplicationName("3MF-"+QUuid::createUuid().toString(QUuid::Id128));
     QTemporaryDir settings;
-    QSettings::setDefaultFormat(QSettings::IniFormat);
-    QSettings::setPath(QSettings::IniFormat,QSettings::UserScope,settings.path());
-    const auto configDirectory=QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    const auto cleanup=qScopeGuard([&]{QDir(configDirectory).removeRecursively();});
     int status=0;
     try {
         require(settings.isValid(),"Cannot create isolated 3MF integration settings");
-        writeUserPresetFixtures(configDirectory);
+        qputenv("GPLATFORM_SLICER_CONFIG_DIR", settings.path().toUtf8());
+        writeUserPresetFixtures(settings.path());
         SettingsHelper::getInstance()->init(argv);
         registerApplicationModules();
         MenuData::getInstance()->loadMenusFromFile(QStringLiteral(THREE_MF_MENUS));
