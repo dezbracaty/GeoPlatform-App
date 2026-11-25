@@ -11,6 +11,8 @@ add_library(GPlatformCore STATIC
     GettextBridge.cpp
     SettingsHelper.h
     SettingsHelper.cpp
+    WorkspaceLoadingFrame.hpp
+    WorkspaceLoadingFrame.cpp
 )
 add_library(GPlatform::Core ALIAS GPlatformCore)
 

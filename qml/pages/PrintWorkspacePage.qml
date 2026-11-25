@@ -70,56 +70,6 @@ Item {
                 }
             }
 
-            // Loading 覆盖层
-            Rectangle {
-                id: loadingOverlay
-                anchors.fill: parent
-                z: 5
-                color: Theme.res.solidBackgroundFillColorBase
-                // Once a valid frame exists, keep it visible during scene updates.
-                visible: !threadRenderer.hasPresentedFrame && !threadRenderer.isFrameReady
-
-                Column {
-                    anchors.centerIn: parent
-                    spacing: 20
-
-                    ProgressRing {
-                        indeterminate: true
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        width: 80
-                        height: 80
-                        strokeWidth: 7
-                    }
-
-                    Label {
-                        text: qsTr("Loading model...")
-                        font: Typography.subtitle
-                        color: Theme.res.textFillColorPrimary
-                        anchors.horizontalCenter: parent.horizontalCenter
-                    }
-                }
-            }
-
-            Rectangle {
-                anchors.top: parent.top
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.topMargin: 16
-                width: Math.min(parent.width - 32, 560)
-                height: renderErrorLabel.implicitHeight + 24
-                radius: 6
-                z: 60
-                visible: threadRenderer.renderingError.length > 0
-                color: Theme.res.solidBackgroundFillColorBase
-                Label {
-                    id: renderErrorLabel
-                    anchors.fill: parent
-                    anchors.margins: 12
-                    text: threadRenderer.renderingError
-                    wrapMode: Text.Wrap
-                    color: Theme.res.textFillColorPrimary
-                }
-            }
-
             // UI 层
             Loader {
                 id: centralFragmentLoader

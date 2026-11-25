@@ -3156,7 +3156,19 @@ msgid "Initializing print platform…"
 msgstr "正在初始化打印平台…"
 
 msgid "Preparing 3D view…"
-msgstr "正在准备三维视图…"
+msgstr "正在准备 3D 视图…"
+
+msgid "Opening toolpath preview…"
+msgstr "正在打开路径预览…"
+
+msgid "Opening realistic view…"
+msgstr "正在打开真实渲染…"
+
+msgid "View could not be opened"
+msgstr "无法打开视图"
+
+msgid "3D rendering stopped. Restart the application to try again."
+msgstr "3D 渲染已停止。请重新启动应用后再试。"
 
 msgid "Startup failed"
 msgstr "启动失败"
