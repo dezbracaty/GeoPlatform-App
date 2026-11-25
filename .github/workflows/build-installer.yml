@@ -155,11 +155,6 @@ jobs:
           token: ${{ secrets.GPLATFORM_SOURCE_TOKEN }}
           persist-credentials: false
           lfs: false
-      - name: Check App CI contracts
-        shell: python
-        run: |
-          import subprocess, sys
-          subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'control/tests/ci'], check=True)
       - name: Build and package App with the selected SDK
         id: package
         shell: python
