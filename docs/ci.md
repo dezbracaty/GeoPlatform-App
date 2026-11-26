@@ -74,7 +74,9 @@ Git 仅在本次进程中使用 `gh auth git-credential` 提供的当前本机�
 | windows_test_assets_ref | 分支/完整 SHA | windows | Windows 测试资产 |
 
 
-冻结所选平台的源码、SDK 和 TestAssets 后，按 SHA 获取 SDK，执行宿主原生 CTest 和原生切片检查，并构建和部署独立 App。完成 SDK 消费及运行资源检查后，通过 Journal Web Server 的 `/api/run` 创建全量任务。沿用严格业务验收、最多两轮串行复查和原有汇总，第二轮只复查仍失败项。
+准备任务从 `scripts/prepare_test_assets.py` 声明的仓库解析每个所选平台的资产引用一次，冻结完整 SHA。执行任务在 runner 完成源码清理及历史子模块解除初始化后，用同一入口准备 `host-source/App/tests/TestAssets`，旧 App gitlink 的资产提交无需下载。原生 configure 接收同一个 `GPLATFORM_TEST_ASSETS_SHA`，离线校验并复用已准备的检出。宿主 CTest 和原生切片检查读取该目录，独立 App 保留本候选的 Journal 工具，通过 `--assets` 读取同一检出，Windows 也从该目录读取审核清单。
+
+回归报告记录资产仓库、所选引用、冻结 SHA、实际路径及原生和 Journal 两阶段确认的 SHA。资产校验失败会中止。完成 SDK 消费及运行资源检查后，通过 Journal Web Server 的 `/api/run` 创建全量任务。沿用严格业务验收、最多两轮串行复查和原有汇总，第二轮只复查仍失败项。
 
 两平台的独立 App 消费构建将编译明细写入 Runner 本机日志，Actions 记录阶段起止并在失败时显示日志尾部。Journal 在阶段或状态变化时输出汇总，同一阶段每 60 秒输出一次进度。场景及步骤明细保存在 Runner 本机，附件在任务结束时一次上传回归总报告和 Journal 摘要。上传失败在该步骤留痕，平台验收仍按实际回归结果判定。
 
@@ -95,7 +97,7 @@ Git 仅在本次进程中使用 `gh auth git-credential` 提供的当前本机�
 | windows_sdk_ref | 分支/完整 SHA，可空 | 空 | 显式指定 Windows SDK，空值使用共用选择规则 |
 | platform | windows / macos / all | windows | 所选平台 |
 
-冻结 App 和 SDK 后，校验所选 SDK 的包完整性、真实生产来源、源码输入和 Qt/编译器/ABI。通过显式 GPLATFORM_SDK_ROOT 和正式 preset 构建独立 App，执行消费检查，再经正式部署和 installer 目标生成安装包。检查实际包内容、架构、依赖、哈希及应用启动，再上传安装包与报告。
+冻结 App 和 SDK 后，校验所选 SDK 的包完整性、真实生产来源、源码输入和 Qt/编译器/ABI。通过显式 GPLATFORM_SDK_ROOT 和正式 preset 构建独立 App，执行 SDK 消费检查。安装包入口关闭 `GPLATFORM_BUILD_TESTS`，configure 无需获取 TestAssets。再经正式部署和 installer 目标生成安装包，检查实际包内容、架构、依赖、哈希及应用启动，最后上传安装包与报告。
 
 Windows 生成 AMD64 `.exe` installer，Mac 生成 Universal `.dmg`，all 并行。两平台使用同一个 App SHA 及各自冻结的 SDK。此入口的范围为 App 构建、安装包及启动检查。打包通过不满足 MR 全量门禁。
 

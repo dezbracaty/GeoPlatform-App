@@ -78,7 +78,8 @@ class Workflows(unittest.TestCase):
                     env = dict(os.environ, GITHUB_WORKSPACE=str(workspace), RUNNER_TEMP=str(runner),
                         GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='2', PLATFORM=platform,
                         SOURCE_SHA='a' * 40, APP_SHA='b' * 40, GITHUB_REPOSITORY='owner/App',
-                        ASSETS_SHA='c' * 40, ASSETS_REF=platform, SDK_SHA='d' * 40, SDK_REPOSITORY='owner/SDK',
+                        ASSETS_SHA='c' * 40, ASSETS_REF=platform, ASSETS_REPOSITORY='owner/Assets',
+                        SDK_SHA='d' * 40, SDK_REPOSITORY='owner/SDK',
                         GITHUB_OUTPUT=str(github_output))
                     with patch.dict(os.environ, env):
                         exec(compile(prepare['run'], '<workflow-report-path>', 'exec'), {})

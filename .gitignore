@@ -14,3 +14,6 @@ __pycache__/
 *.py[cod]
 # Former SDK checkout is retained locally; SDK selection is explicit now.
 /ThirdParty/libs/GPlatformSDK/
+
+# Independently prepared by scripts/prepare_test_assets.py.
+/tests/TestAssets/

@@ -3,7 +3,7 @@
 ## 仓库与所有权
 
 测试资产唯一来源为 [GeoPlatform-TestAssets](https://github.com/dezbracaty/GeoPlatform-TestAssets)。
-App 在 `tests/TestAssets` 以子模块固定提交；完整宿主使用 `App/tests/TestAssets`，不再保存另一份模型或场景。
+App 使用独立 Git/LFS 检出 `tests/TestAssets`，在完整宿主中对应 `App/tests/TestAssets`。原生测试的 CMake configure 会自动准备，单独运行 Journal 时可用 Python 入口显式准备。
 普通构建按需初始化测试资产；完整宿主启用 `GPLATFORM_BUILD_TESTS` 时需要该固定版本。
 资产仓库只拥有模型、Journal、metadata、预期、基线、格式和确定性生成器。
 
@@ -62,9 +62,7 @@ metadata v3 声明 `id/name/testPurpose/scope/inputs/unverifiedScopes/verificati
    需要采集新基线时按 [Windows 基准采集](#windows-基准采集) 执行，通过正式回放后纳入
    `windows`，并记录 Mac 来源 SHA、Windows 资产 SHA、改动理由和报告。
 
-App 的 `tests/TestAssets` gitlink 固定默认 Mac 资产版本。若交付需要更新该引用，先确认 Mac 资产提交可从远端取得，
-再同步 App 和宿主的 gitlink。Windows 回归通过 [平台 CI](ci.md#固定分支与候选身份) 独立选择并冻结
-`windows` 资产 SHA，本地工作台使用 `--assets` 指定 Windows 资产目录。
+无显式 SHA 的原生测试 configure 在 macOS 使用 `macmini`，在 Windows 使用 `windows`。已有检出只在 HEAD 与本地记录的平台分支提交匹配时复用。传入 `-DGPLATFORM_TEST_ASSETS_SHA=<full-sha>` 可固定版本。已有工作台可继续使用默认目录或通过 `--assets` 指向已经准备好的资产检出。[平台 CI](ci.md#固定分支与候选身份) 为每个平台独立冻结资产 SHA。
 
 每个平台的全量范围由冻结后的 TestAssets 提交和 `discover_scenarios()` 决定。
 Mac 先新增、Windows 仍在适配期间，两平台的活动清单可以不同。分别以计划场景和实际验收结果核对覆盖；
@@ -149,8 +147,7 @@ Journal `acceptance` 原样保留。只有对应的正式 DB 或截图检查完�
 ## 使用与扩展
 
 ```powershell
-git -C App submodule update --init --checkout tests/TestAssets
-git -C App/tests/TestAssets lfs pull
+python App/scripts/prepare_test_assets.py --ref windows
 python App/tools/run_acceptance.py --list
 python App/tools/run_acceptance.py --list-methods
 python App/tools/run_acceptance.py --application build-Release/GPlatform/GPlatform.exe --cases p3_height_color_export --exports "$env:USERPROFILE/Downloads/GPlatform/Gcode" --output build-Release/Testing/AppAcceptance/new-run
@@ -158,6 +155,8 @@ python App/tools/run_acceptance.py --application build-Release/GPlatform/GPlatfo
 
 网页默认场景目录也指向资产仓库。勾选回放通过上述共享入口执行指定场景；
 录制页的诊断回放显示 Journal 原始验收，不能替代正式场景的 `case_result.json`。
+
+已有旧子模块检出可以直接复用。若 `tests/TestAssets/.git` 是指向 App Git 元数据目录下 `modules/tests/TestAssets` 的文件，请连同宿主的 Git 元数据一起保留。准备相同 SHA 时保留当前分支，切换到其他 SHA 时使用 detached HEAD，原有本地分支仍可继续开发。请先处理资产仓库中未提交的改动，再切换版本。
 
 工作台默认将结果保存在所选可执行文件旁的 `Journal/playbacks/session_…/`；macOS 即
 `GPlatform.app/Contents/MacOS/Journal/playbacks/`。CLI 的 `--output` 覆盖本次保存位置。

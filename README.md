@@ -198,7 +198,15 @@ Release 薄架构配置完成后，可在所选构建目录构建 `GPlatform_dis
 
 `tests/startup/check_translations.py` 属于 App 自身检查；
 `tests/startup/run_window_checks.py` 在 Windows 上运行，需要显式提供 `--application` 和 `--output`，默认使用本仓库的 Journal 工具。
-模型、场景 JSON 和预期由固定版本的 `tests/TestAssets` 子模块维护。
+模型、场景 JSON 和预期来自独立 TestAssets 仓库。启用 `GPLATFORM_BUILD_TESTS=ON` 时，CMake 在 configure 阶段将 Git/LFS 资产准备到 `tests/TestAssets` 并显示路径和完整 SHA。默认选择 macOS 的 `macmini` 或 Windows 的 `windows`，传入 `-DGPLATFORM_TEST_ASSETS_SHA=<full-sha>` 可固定版本。后续配置会离线核对并复用匹配的检出。已有目录的 HEAD 与所选 SHA 或本地记录的默认平台分支不符时，configure 停止并提示显式准备，保留用户分支和工作区。普通构建、SDK 检查和安装包构建不要求该目录。
+
+仅运行 Journal 时，可从 App 根目录显式准备：
+
+```sh
+python3 scripts/prepare_test_assets.py --ref macmini
+```
+
+Windows 用 `python` 和 `--ref windows`。用完整 SHA 可以重现历史资产版本。准备入口使用本机 Git 凭据，并报告实际 SHA。
 共享业务验收入口为 `tools/run_acceptance.py`，Python 工具和网页工作台唯一实现位于 `tools/journal/`，
 随本 App 一起更新，完整宿主和独立 App 都默认使用它。网页工作台入口为 `tools/journal/journal_server.py`；执行与文件保留在服务电脑，其他电脑通过浏览器访问。
 `--journal-tools` 保留为显式开发覆盖；正常测试无需配置外部目录。

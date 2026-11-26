@@ -91,7 +91,8 @@ def build_consumer(source, platform, sdk_root, env, receipt):
     metadata = validate_sdk(source, slots, sdk_root)
     receipt.update(sdk_root=str(sdk_root), metadata=metadata)
     validate_source_inputs(source, metadata)
-    arguments = ['-DGPLATFORM_BUILD_SDK_CHECKS=ON', '-DGPLATFORM_SDK_ROOT=' + str(sdk_root)]
+    arguments = ['-DGPLATFORM_BUILD_TESTS=OFF', '-DGPLATFORM_BUILD_SDK_CHECKS=ON',
+                 '-DGPLATFORM_SDK_ROOT=' + str(sdk_root)]
     qt = env.get('Qt6_DIR') or env.get('QT6_DIR')
     if qt:
         arguments.append('-DQt6_DIR=' + qt)
@@ -242,7 +243,8 @@ def build(source, platform, app_sha, sdk_root, sdk_sha):
             report["sdk_consumer_check"] = "passed"
             package_dir.mkdir()
             if platform == "windows":
-                cmake_args = ["-DGPLATFORM_BUILD_SDK_CHECKS=ON", "-DGPLATFORM_SDK_ROOT=" + str(actual_sdk)]
+                cmake_args = ["-DGPLATFORM_BUILD_TESTS=OFF", "-DGPLATFORM_BUILD_SDK_CHECKS=ON",
+                              "-DGPLATFORM_SDK_ROOT=" + str(actual_sdk)]
                 qt = env.get("Qt6_DIR") or env.get("QT6_DIR")
                 if qt:
                     cmake_args.append("-DQt6_DIR=" + qt)

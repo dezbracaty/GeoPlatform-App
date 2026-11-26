@@ -77,6 +77,9 @@ class SubmoduleTests(unittest.TestCase):
         self.assertFalse((self.source / path / '.git').exists())
         self.git(self.source, '-c', 'protocol.file.allow=always', 'submodule', 'update', '--init', '--checkout', '--', path)
         self.assertEqual(self.git(self.source / path, 'rev-parse', 'HEAD'), self.pinned)
+        with self.assertRaisesRegex(RuntimeError, 'Prepare runner source'):
+            common.init_source_submodules(self.source)
+        self.git(self.source, 'submodule', 'deinit', '--force', '--', path)
         common.init_source_submodules(self.source)
         self.assertFalse((self.source / path / '.git').exists())
 

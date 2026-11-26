@@ -31,7 +31,8 @@ class WindowsRegressionChecks(unittest.TestCase):
         self.app.parent.mkdir()
         self.app.write_bytes(b'current deployed app')
         self.output = self.source / 'regression'
-        scene = self.source / 'tests/TestAssets/scenarios/scene'
+        self.assets = self.source / 'host-source/App/tests/TestAssets'
+        scene = self.assets / 'scenarios/scene'
         scene.mkdir(parents=True)
         (scene / 'events').mkdir()
         (scene / 'events/Journal.json').write_text(
@@ -44,8 +45,9 @@ class WindowsRegressionChecks(unittest.TestCase):
         self.size = (1382, 954)
         self.exit = 0
 
-    def execute(self, source, executable, output, env):
+    def execute(self, source, executable, output, env, *, assets):
         self.assertEqual(source, self.source)
+        self.assertEqual(assets, self.assets)
         self.assertEqual(executable, self.app)
         self.assertNotIn('QT_QPA_PLATFORM', env)
         run = self.output / 'run'
@@ -58,15 +60,17 @@ class WindowsRegressionChecks(unittest.TestCase):
         return self.summary, run
 
     def run_regression(self):
-        with patch.object(subject, 'require_desktop'), patch.object(subject, 'prepare_assets', return_value='c' * 40), \
+        with patch.object(subject, 'require_desktop'), \
                 patch.object(subject, 'text_git', return_value='a' * 40), \
                 patch.object(subject, 'server_regression', side_effect=self.execute):
-            return subject.regression(self.source, self.app, self.output, dict(QT_QPA_PLATFORM='offscreen'), 'c' * 40)
+            return subject.regression(self.source, self.app, self.output, dict(QT_QPA_PLATFORM='offscreen'),
+                                      assets=self.assets, assets_sha='c' * 40)
 
     def test_pass_uses_deployed_app_all_cases_and_records_fixed_inputs(self):
         self.assertEqual(self.run_regression()['status'], 'passed')
         inputs = json.loads((self.output / 'regression-inputs.json').read_text(encoding='utf-8'))
         self.assertEqual(inputs['assets_sha'], 'c' * 40)
+        self.assertEqual(inputs['assets_path'], str(self.assets))
         self.assertEqual(inputs['application'], str(self.app))
 
     def test_candidate_collection_cannot_pass_the_ci_gate(self):
@@ -100,13 +104,13 @@ class WindowsRegressionChecks(unittest.TestCase):
                 subject.require_desktop()
 
     def test_pending_standards_cannot_be_consumed_as_approved_windows_baselines(self):
-        metadata = self.source / 'tests/TestAssets/scenarios/scene/metadata.json'
+        metadata = self.assets / 'scenarios/scene/metadata.json'
         metadata.write_text(json.dumps(dict(baselineReview=dict(platform='Windows amd64', status='pending'))), encoding='utf-8')
         with self.assertRaisesRegex(RuntimeError, 'reviewed baselines'):
             self.run_regression()
 
     def test_deployment_specific_db_baselines_require_the_declared_directory(self):
-        metadata = self.source / 'tests/TestAssets/scenarios/scene/metadata.json'
+        metadata = self.assets / 'scenarios/scene/metadata.json'
         declaration = json.loads(metadata.read_text(encoding='utf-8'))
         declaration['preconditions'] = dict(applicationDirectory=str(self.source / 'another-build'))
         metadata.write_text(json.dumps(declaration), encoding='utf-8')
@@ -114,7 +118,7 @@ class WindowsRegressionChecks(unittest.TestCase):
             self.run_regression()
 
     def test_explicit_resource_binding_defers_validation_to_maintained_acceptance(self):
-        metadata = self.source / 'tests/TestAssets/scenarios/scene/metadata.json'
+        metadata = self.assets / 'scenarios/scene/metadata.json'
         declaration = json.loads(metadata.read_text(encoding='utf-8'))
         declaration['preconditions'] = dict(applicationDirectory=str(self.source / 'another-build'))
         declaration['deploymentResources'] = {'resources/bed.stl': 'a' * 64}

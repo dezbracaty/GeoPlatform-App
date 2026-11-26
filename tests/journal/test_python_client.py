@@ -19,6 +19,7 @@ from contextlib import contextmanager
 
 
 TOOLS = Path(__file__).resolve().parents[2] / "tools/journal"
+ASSETS = Path(__file__).resolve().parents[1] / 'TestAssets'
 sys.path.insert(0, str(TOOLS))
 
 from journal_runner import (  # noqa: E402
@@ -616,9 +617,9 @@ class JournalPythonClientCheck(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'missing events/Journal.json'):
                 discover_scenarios(root)
 
+    @unittest.skipUnless((ASSETS / 'catalog.json').is_file(), 'TestAssets checkout has not been prepared')
     def test_all_shipped_active_journals_are_discoverable(self):
-        root = Path(__file__).resolve().parents[1] / 'TestAssets/scenarios'
-        cases = discover_scenarios(root)
+        cases = discover_scenarios(ASSETS / 'scenarios')
         self.assertTrue(cases)
         for case in cases:
             with self.subTest(case=case.name):
@@ -1194,11 +1195,12 @@ class JournalPythonClientCheck(unittest.TestCase):
                              ["payload"]["params"]["filePath"],
                              "../assets/cube.stl")
 
+    @unittest.skipUnless((ASSETS / 'catalog.json').is_file(), 'TestAssets checkout has not been prepared')
     def test_repository_replays_use_existing_portable_import_fixtures(self):
         # Guard the shipped catalog, rather than letting a developer's local
         # Downloads path survive until an end-to-end replay on another machine.
-        repository = Path(__file__).resolve().parents[2]
-        scenarios = sorted((repository / "tests/TestAssets/scenarios").glob("*/events/Journal.json"))
+        repository = ASSETS.parents[1]
+        scenarios = sorted((ASSETS / 'scenarios').glob('*/events/Journal.json'))
         self.assertTrue(scenarios)
         for scenario in scenarios:
             for entry in load_journal(scenario)["entries"]:
