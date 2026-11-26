@@ -2,14 +2,13 @@
 #include "ActionManager.hpp"
 #include "SliceSettingsBridge.hpp"
 #include "SettingsHelper.h"
-#include <Resource.h>
-#include <SmoothUI.h>
 #include <DocumentManager.hpp>
 #include <PrintBedDB.hpp>
 #include <WindowDB.hpp>
 #include <CameraDB.hpp>
 #include <PrintBedTemplateDB.hpp>
 #include <QGuiApplication>
+#include <QPalette>
 #include <QQuickWindow>
 #include <QScreen>
 #include <QQuickItem>
@@ -24,9 +23,13 @@
 
 StartupCoordinator::StartupCoordinator(bool replayMode, QObject* parent)
     : QObject(parent), m_replayMode(replayMode) {
-    const auto themeMode = SettingsHelper::getInstance()->getDarkMode();
-    m_loadingDark = themeMode == SmoothUI::Dark ||
-        (themeMode != SmoothUI::Light && Resource::getInstance()->systemDark());
+    using DarkMode = SettingsHelper::DarkMode;
+    const auto themeMode = static_cast<DarkMode>(SettingsHelper::getInstance()->getDarkMode());
+    const auto windowColor = QGuiApplication::palette().color(QPalette::Window);
+    const double luminance =
+        windowColor.red() * 0.2126 + windowColor.green() * 0.7152 + windowColor.blue() * 0.0722;
+    m_loadingDark = themeMode == DarkMode::Dark ||
+        (themeMode != DarkMode::Light && luminance <= 255.0 / 2);
     m_clock.start();
     LOG_INFO("[STARTUP STATE] applicationState={} elapsedMs={}",
              int(qGuiApp->applicationState()), elapsedMs());
