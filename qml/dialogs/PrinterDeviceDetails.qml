@@ -23,6 +23,16 @@ ColumnLayout {
     property int currentTab: 0
     property bool expanded: false
     property bool activeJob: PrinterService.jobState === PrinterService.Printing || PrinterService.jobState === PrinterService.Paused || PrinterService.jobState === PrinterService.Pausing || PrinterService.jobState === PrinterService.Resuming || PrinterService.jobState === PrinterService.Stopping
+    readonly property bool submissionNameMode: {
+        if (activeJob)
+            return false;
+        const state = PrinterService.transferState;
+        if (state === PrinterService.TransferUploading || state === PrinterService.TransferStarting)
+            return true;
+        return !PrinterService.jobNoticeDismissed && PrinterService.jobNoticeIsSubmission
+            && (state === PrinterService.TransferUploaded || state === PrinterService.TransferFailed
+                || state === PrinterService.TransferCancelled || state === PrinterService.TransferUnknown);
+    }
     readonly property string connectionDescription: [PrinterService.backendName, PrinterService.selectedDeviceRoute === PrinterService.Cloud ? qsTr("Cloud") : PrinterService.selectedDeviceRoute === PrinterService.LocalNetwork ? qsTr("LAN") : ""].filter(v => v.length > 0).join(" · ")
     readonly property string availableControls: {
         if (!PrinterService.statusFresh)
@@ -355,7 +365,13 @@ ColumnLayout {
                             Label {
                                 objectName: "printerControlJobFileName"
                                 Layout.fillWidth: true
-                                text: root.activeJob || PrinterService.transferState !== PrinterService.TransferIdle ? (PrinterService.jobFileName || qsTr("Printing")) : qsTr("No active print job")
+                                text: {
+                                    if (root.submissionNameMode)
+                                        return PrinterService.submissionDisplayName || qsTr("Print Job");
+                                    if (root.activeJob || PrinterService.transferState !== PrinterService.TransferIdle)
+                                        return PrinterService.jobFileName || qsTr("Printing");
+                                    return qsTr("No active print job");
+                                }
                                 elide: Text.ElideRight
                                 font.pixelSize: 12
                                 font.weight: Font.DemiBold
