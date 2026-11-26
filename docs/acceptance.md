@@ -3,8 +3,8 @@
 ## 仓库与所有权
 
 测试资产唯一来源为 [GeoPlatform-TestAssets](https://github.com/dezbracaty/GeoPlatform-TestAssets)。
-App 使用独立 Git/LFS 检出 `tests/TestAssets`，在完整宿主中对应 `App/tests/TestAssets`。原生测试的 CMake configure 会自动准备，单独运行 Journal 时可用 Python 入口显式准备。
-普通构建按需初始化测试资产；完整宿主启用 `GPLATFORM_BUILD_TESTS` 时需要该固定版本。
+App 使用独立 Git/LFS 检出 `tests/TestAssets`，在完整宿主中对应 `App/tests/TestAssets`。原生测试的 CMake configure 会自动准备，单独运行 Journal 时可用同一个 CMake 模块的脚本模式准备。
+普通构建和仅启用 `GPLATFORM_BUILD_SDK_CHECKS` 的构建无需获取测试资产。
 资产仓库只拥有模型、Journal、metadata、预期、基线、格式和确定性生成器。
 
 App `tools/acceptance.py` 拥有业务验收编排与最终结论；`tools/acceptance_checks.py` 拥有产物检查。
@@ -147,7 +147,7 @@ Journal `acceptance` 原样保留。只有对应的正式 DB 或截图检查完�
 ## 使用与扩展
 
 ```powershell
-python App/scripts/prepare_test_assets.py --ref windows
+cmake -P App/cmake/thirdparty/fetch_test_assets.cmake
 python App/tools/run_acceptance.py --list
 python App/tools/run_acceptance.py --list-methods
 python App/tools/run_acceptance.py --application build-Release/GPlatform/GPlatform.exe --cases p3_height_color_export --exports "$env:USERPROFILE/Downloads/GPlatform/Gcode" --output build-Release/Testing/AppAcceptance/new-run
@@ -156,7 +156,7 @@ python App/tools/run_acceptance.py --application build-Release/GPlatform/GPlatfo
 网页默认场景目录也指向资产仓库。勾选回放通过上述共享入口执行指定场景；
 录制页的诊断回放显示 Journal 原始验收，不能替代正式场景的 `case_result.json`。
 
-已有旧子模块检出可以直接复用。若 `tests/TestAssets/.git` 是指向 App Git 元数据目录下 `modules/tests/TestAssets` 的文件，请连同宿主的 Git 元数据一起保留。准备相同 SHA 时保留当前分支，切换到其他 SHA 时使用 detached HEAD，原有本地分支仍可继续开发。请先处理资产仓库中未提交的改动，再切换版本。
+已有旧子模块检出可以直接复用。若 `tests/TestAssets/.git` 是指向 App Git 元数据目录下 `modules/tests/TestAssets` 的文件，请连同宿主的 Git 元数据一起保留。脚本模式同样接受 `-DGPLATFORM_TEST_ASSETS_SHA=<full-sha>`，参数放在 `-P` 前。已有检出版本不符时，先保存改动，再用 Git 手动切换版本。
 
 工作台默认将结果保存在所选可执行文件旁的 `Journal/playbacks/session_…/`；macOS 即
 `GPlatform.app/Contents/MacOS/Journal/playbacks/`。CLI 的 `--output` 覆盖本次保存位置。

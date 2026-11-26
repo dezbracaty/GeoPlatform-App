@@ -117,7 +117,7 @@ def main(argv=None, *, session=None, session_factory=None, progress=None, betwee
         args.journal_tools = args.source / 'App/tools/journal'
     if not (args.assets / 'catalog.json').is_file():
         parser.error('TestAssets catalog missing. Configure native tests or run from the App root: '
-                     'python3 scripts/prepare_test_assets.py --ref <branch-or-full-sha>')
+                     'cmake -P cmake/thirdparty/fetch_test_assets.cmake')
     if not (args.journal_tools / 'journal_execution_session.py').is_file():
         parser.error(f'Journal tools not found at {args.journal_tools}; use the bundled App tools/journal directory')
     sys.path.insert(0, str(args.journal_tools.resolve()))

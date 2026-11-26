@@ -39,6 +39,7 @@ class SourceMRRegression(unittest.TestCase):
                     self.assertEqual('last output' in console.getvalue(), bool(exit_code))
 
     def test_mr_freezes_platform_assets_and_reuses_one_sdk_branch_observation(self):
+        assets_repository = controller.test_assets_repository()
         class API:
             def __init__(self): self.calls = []
             def request(self, method, path):
@@ -50,8 +51,8 @@ class SourceMRRegression(unittest.TestCase):
                         {'sha':'b'*40, 'submodule_git_url':'https://github.com/org/App.git'},
                     '/repos/org/App/contents/cmake/sdk-repository.json?ref=' + 'b'*40:
                         {'type':'file','encoding':'base64','content':base64.b64encode(b'{"repository":"org/SDK"}').decode()},
-                    f'/repos/{controller.ASSETS_REPOSITORY}/branches/macmini': {'commit':{'sha':'d'*40}},
-                    f'/repos/{controller.ASSETS_REPOSITORY}/branches/windows': {'commit':{'sha':'e'*40}},
+                    f'/repos/{assets_repository}/branches/macmini': {'commit':{'sha':'d'*40}},
+                    f'/repos/{assets_repository}/branches/windows': {'commit':{'sha':'e'*40}},
                 }
                 return 200, responses[path]
         api = API()
@@ -61,7 +62,7 @@ class SourceMRRegression(unittest.TestCase):
         self.assertEqual(branch.call_args.args[1], 'feature/mr')
         self.assertEqual(result, {'source_sha':'a'*40, 'app_sha':'b'*40,
                                  'declared_app_sha':'b'*40, 'app_repository':'org/App', 'host_repository':'org/Host',
-                                 'assets_repository':controller.ASSETS_REPOSITORY, 'macos_assets_sha':'d'*40, 'windows_assets_sha':'e'*40, 'sdk_repository':'org/SDK',
+                                 'assets_repository':assets_repository, 'macos_assets_sha':'d'*40, 'windows_assets_sha':'e'*40, 'sdk_repository':'org/SDK',
                                  'windows_sdk_sha':'f'*40, 'macos_sdk_sha':'f'*40})
         self.assertEqual(len(api.calls), 6)
         self.assertFalse(any('/contents/tests/' in path for _, path in api.calls))
@@ -149,7 +150,7 @@ sys.meta_path.insert(0, NoOptionalPackages())
 
     def pipeline(self, root, output, *, compiler_error=False, receipt_assets='d'*40):
         root, output = root.resolve(), output.resolve()
-        assets = root / 'App' / controller.ASSETS_PATH
+        assets = root / 'App' / controller.TEST_ASSETS_PATH
         executable=root/'consumer-app'; executable.write_bytes(b'actual fixture executable')
         def run(args, **kw):
             if '-c' in args and args[2] == controller.APP_CONSUMER:
@@ -188,9 +189,8 @@ sys.meta_path.insert(0, NoOptionalPackages())
             stack.enter_context(patch.object(controller,'init_host_submodules'))
             stack.enter_context(patch.object(controller,'init_source_submodules'))
             stack.enter_context(patch.object(controller,'text_git',side_effect=['b'*40,'c'*40,'e'*40,'f'*40]))
-            prepare = stack.enter_context(patch.object(controller, 'prepare_assets', return_value=(assets, 'd'*40)))
-            check = stack.enter_context(patch.object(controller, 'checkout_head', return_value='d'*40))
-            stack.enter_context(patch.object(controller, 'require_clean'))
+            prepare = stack.enter_context(patch.object(controller, 'test_assets_checkout', return_value=(assets, 'd'*40)))
+            check = stack.enter_context(patch.object(controller, 'check_runner_test_assets', return_value='d'*40))
             commands = stack.enter_context(patch.object(controller,'run',side_effect=run))
             stack.enter_context(patch.object(controller.native_checks,'build_environment',return_value={}))
             native=stack.enter_context(patch.object(controller.native_checks,'architecture',return_value={'returncode':0}))
@@ -198,7 +198,7 @@ sys.meta_path.insert(0, NoOptionalPackages())
             result = controller.regress(root, 'macos', 'a'*40, 'd'*40, output, app=root / 'source',
                                         app_sha='b'*40, app_repository='org/App', sdk_repository='org/SDK',
                                         sdk_root=root / 'sdk', sdk_sha='f'*40)
-            self.assertEqual(prepare.call_args.args, (root / 'App', 'd'*40))
+            self.assertEqual(prepare.call_args.args, (root / 'App', '-DGPLATFORM_TEST_ASSETS_SHA=' + 'd'*40))
             self.assertEqual(check.call_args.args, (root / 'App', assets))
             materialize.assert_called_once_with(root / 'sdk', 'f'*40, 'macos')
             self.assertEqual(commands.call_args.args[0][1:3], ['-c', controller.APP_REGRESSION])

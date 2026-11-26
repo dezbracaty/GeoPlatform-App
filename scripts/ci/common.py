@@ -18,12 +18,11 @@ import sys
 import subprocess
 import time
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from prepare_test_assets import ASSETS_PATH as TEST_ASSETS_PATH, asset_path, checkout_head, require_clean
-
 SHA = re.compile(r"[0-9a-f]{40}")
 REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 SDK_DECLARATION = "cmake/sdk-repository.json"
+TEST_ASSETS_PATH = "tests/TestAssets"
+TEST_ASSETS_MODULE = Path(__file__).resolve().parents[2] / "cmake/thirdparty/fetch_test_assets.cmake"
 
 
 API_VERSION = '2026-03-10'
@@ -338,6 +337,47 @@ def preset_cache_excludes(source, platform, *, consumer=False):
     return [argument for name in builds for argument in ("-e", f"/{name}/")]
 
 
+def test_assets_cmake(*args, env=None):
+    return run(["cmake", *args, "-P", TEST_ASSETS_MODULE], env=env, capture=True).decode().strip()
+
+
+def test_assets_repository():
+    return test_assets_cmake("-DGPLATFORM_TEST_ASSETS_MODE=repository")
+
+
+def asset_path(app):
+    assets = app / TEST_ASSETS_PATH
+    for path in (app, assets.parent, assets):
+        if path.is_symlink() or path.is_junction():
+            raise RuntimeError(f"TestAssets path must not be a symlink or junction: {path}")
+        if path.exists() and not path.is_dir():
+            raise RuntimeError(f"TestAssets path must be a directory: {path}")
+    return assets
+
+
+def test_assets_checkout(app, *args, env):
+    output = test_assets_cmake(f"-DGPLATFORM_TEST_ASSETS_APP_DIR={app}", *args, env=env)
+    prefix = "-- TestAssets: "
+    records = [line.removeprefix(prefix) for line in output.splitlines() if line.startswith(prefix)]
+    if len(records) != 1 or " at " not in records[0]:
+        raise RuntimeError("CMake did not report one TestAssets checkout")
+    sha, path = records[0].split(" at ", 1)
+    return Path(path), require_sha(sha)
+
+
+def check_runner_test_assets(app, assets, *, env):
+    """Verify ownership and cleanliness before touching a runner checkout."""
+    path, sha = test_assets_checkout(app, "-DGPLATFORM_TEST_ASSETS_MODE=checkout", env=env)
+    if path != assets:
+        raise RuntimeError("CMake TestAssets checkout differs from the runner path")
+    env = dict(env, GIT_OPTIONAL_LOCKS="0")
+    index = git(assets, "ls-files", "-v", "-z", env=env).split(b"\0")
+    if (git(assets, "status", "--porcelain", "--untracked-files=all", env=env)
+            or any(entry[:1].islower() or entry.startswith(b"S ") for entry in index)):
+        raise RuntimeError(f"TestAssets has local changes or hidden index entries: {assets}")
+    return sha
+
+
 def prepare_cached_source(source, sha, platform, *, consumer=False, host=False):
     """Reset the runner's fixed checkout and retain validated preset caches."""
     source = Path(source).absolute()
@@ -380,8 +420,7 @@ def prepare_cached_source(source, sha, platform, *, consumer=False, host=False):
             asset_env = dict(env, GIT_CONFIG_COUNT=str(offset + 1))
             asset_env[f'GIT_CONFIG_KEY_{offset}'] = 'safe.directory'
             asset_env[f'GIT_CONFIG_VALUE_{offset}'] = assets.as_posix()
-        checkout_head(asset_owner, assets, env=asset_env)
-        require_clean(assets, env=asset_env)
+        check_runner_test_assets(asset_owner, assets, env=asset_env)
         remove_owned_tree(assets, assets.parent, require_git=True)
     # Each submodule is checked out and cleaned once against its selected
     # Git tree in _init_pinned_submodules, not against yesterday's HEAD.

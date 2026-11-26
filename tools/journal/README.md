@@ -2,7 +2,7 @@
 
 本目录是随 App 维护的唯一 Python 工具实现，相关测试在 `tests/journal/`。
 下述命令从 App 仓库根目录执行，完整宿主可以先进入 `App/`。
-SDK 提供应用端 C++ Journal 服务。场景和模型通过 `python3 scripts/prepare_test_assets.py --ref <branch-or-full-sha>` 从 App 根目录准备到 `tests/TestAssets`。工作台默认使用该目录，也可通过 `--assets` 指定已准备的检出。
+SDK 提供应用端 C++ Journal 服务。场景和模型通过 `cmake -P cmake/thirdparty/fetch_test_assets.cmake` 从 App 根目录准备到 `tests/TestAssets`。默认准备当前平台分支，也可在 `-P` 前传 `-DGPLATFORM_TEST_ASSETS_SHA=<full-sha>`。工作台默认使用该目录，也可通过 `--assets` 指定已准备的检出。
 
 Journal 的交互入口是网页工作台。电脑 A 运行 Python 服务和 GPlatform，电脑 B 使用浏览器访问；录制、回放、比较、输入与结果文件均保留在 A。浏览器刷新或断开不会停止任务。
 

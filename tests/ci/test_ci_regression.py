@@ -30,8 +30,8 @@ class RegressionTests(unittest.TestCase):
             stack.enter_context(patch.object(driver, 'prepare_cached_source'))
             stack.enter_context(patch.object(driver, 'init_host_submodules'))
             stack.enter_context(patch.object(driver, 'text_git', return_value='b'*40))
-            stack.enter_context(patch.object(driver, 'prepare_assets',
-                return_value=(root / 'App' / driver.ASSETS_PATH, 'c'*40)))
+            stack.enter_context(patch.object(driver, 'test_assets_checkout',
+                return_value=(root / 'App' / driver.TEST_ASSETS_PATH, 'c'*40)))
             stack.enter_context(patch.object(driver.native_checks, 'build_environment', return_value={}))
             stack.enter_context(patch.object(driver.native_checks, 'architecture', return_value={'returncode': 0}))
             allocate = stack.enter_context(patch.object(tempfile, 'mkdtemp'))
@@ -126,20 +126,20 @@ class RegressionTests(unittest.TestCase):
             with self.subTest(missing=missing), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary).resolve()
                 seen = []
-                def prepare(app, sha, *, env):
+                def prepare(app, sha_arg, *, env):
                     seen.append('assets')
                     self.assertEqual(app, root / 'App')
-                    self.assertEqual(sha, 'c' * 40)
+                    self.assertEqual(sha_arg, '-DGPLATFORM_TEST_ASSETS_SHA=' + 'c' * 40)
                     if missing:
                         raise RuntimeError('fixture checkout failed')
-                    return app / driver.ASSETS_PATH, sha
+                    return app / driver.TEST_ASSETS_PATH, 'c' * 40
                 def native(*args, **kwargs):
                     self.assertEqual(seen, ['assets'])
                     self.assertEqual(kwargs['assets_sha'], 'c' * 40)
                     raise RuntimeError('reached configure after assets')
                 with contextlib.ExitStack() as stack:
                     stack.enter_context(patch.object(driver, 'run'))
-                    prepare_assets = stack.enter_context(patch.object(driver, 'prepare_assets', side_effect=prepare))
+                    prepare_assets = stack.enter_context(patch.object(driver, 'test_assets_checkout', side_effect=prepare))
                     stack.enter_context(patch.object(driver, 'machine_lock', return_value=contextlib.nullcontext()))
                     stack.enter_context(patch.object(driver, 'prepare_cached_source'))
                     host_submodules = stack.enter_context(patch.object(driver, 'init_host_submodules'))

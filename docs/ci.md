@@ -74,7 +74,7 @@ Git 仅在本次进程中使用 `gh auth git-credential` 提供的当前本机�
 | windows_test_assets_ref | 分支/完整 SHA | windows | Windows 测试资产 |
 
 
-准备任务从 `scripts/prepare_test_assets.py` 声明的仓库解析每个所选平台的资产引用一次，冻结完整 SHA。执行任务在 runner 完成源码清理及历史子模块解除初始化后，用同一入口准备 `host-source/App/tests/TestAssets`，旧 App gitlink 的资产提交无需下载。原生 configure 接收同一个 `GPLATFORM_TEST_ASSETS_SHA`，离线校验并复用已准备的检出。宿主 CTest 和原生切片检查读取该目录，独立 App 保留本候选的 Journal 工具，通过 `--assets` 读取同一检出，Windows 也从该目录读取审核清单。
+准备任务从 `cmake/thirdparty/fetch_test_assets.cmake` 声明的仓库解析每个所选平台的资产引用一次，冻结完整 SHA。执行任务在 runner 完成源码清理及历史子模块解除初始化后，用同一模块的 `cmake -P` 入口按冻结的 SHA 准备 `host-source/App/tests/TestAssets`，旧 App gitlink 的资产提交无需下载。原生 configure 接收同一个 `GPLATFORM_TEST_ASSETS_SHA`，离线校验并复用已准备的检出。宿主 CTest 和原生切片检查读取该目录，独立 App 保留本候选的 Journal 工具，通过 `--assets` 读取同一检出，Windows 也从该目录读取审核清单。
 
 回归报告记录资产仓库、所选引用、冻结 SHA、实际路径及原生和 Journal 两阶段确认的 SHA。资产校验失败会中止。完成 SDK 消费及运行资源检查后，通过 Journal Web Server 的 `/api/run` 创建全量任务。沿用严格业务验收、最多两轮串行复查和原有汇总，第二轮只复查仍失败项。
 

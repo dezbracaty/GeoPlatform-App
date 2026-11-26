@@ -203,10 +203,10 @@ Release 薄架构配置完成后，可在所选构建目录构建 `GPlatform_dis
 仅运行 Journal 时，可从 App 根目录显式准备：
 
 ```sh
-python3 scripts/prepare_test_assets.py --ref macmini
+cmake -P cmake/thirdparty/fetch_test_assets.cmake
 ```
 
-Windows 用 `python` 和 `--ref windows`。用完整 SHA 可以重现历史资产版本。准备入口使用本机 Git 凭据，并报告实际 SHA。
+脚本模式沿用平台默认分支。可在 `-P` 前传 `-DGPLATFORM_TEST_ASSETS_SHA=<full-sha>` 固定版本。CMake 使用本机 Git 凭据，并输出实际路径和 SHA。若已有检出的版本不匹配，先保存改动，再用 Git 手动选定版本。
 共享业务验收入口为 `tools/run_acceptance.py`，Python 工具和网页工作台唯一实现位于 `tools/journal/`，
 随本 App 一起更新，完整宿主和独立 App 都默认使用它。网页工作台入口为 `tools/journal/journal_server.py`；执行与文件保留在服务电脑，其他电脑通过浏览器访问。
 `--journal-tools` 保留为显式开发覆盖；正常测试无需配置外部目录。

@@ -1,18 +1,18 @@
 """Exercise the shared preparation with real Git and LFS in isolated fixtures."""
+from contextlib import redirect_stderr
+import io
 import json
 import os
 from pathlib import Path
-import stat
 import subprocess
 import sys
 import tempfile
-from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts/ci'))
 import common
-from prepare_test_assets import ASSETS_PATH, ASSETS_REPOSITORY, checkout_head, git, prepare_assets
+from common import TEST_ASSETS_PATH as ASSETS_PATH
 
 
 class TestAssetsPreparation(unittest.TestCase):
@@ -22,7 +22,7 @@ class TestAssetsPreparation(unittest.TestCase):
         self.root = Path(temp.name).resolve()
         self.remote = self.root / 'remote'
         self.app = self.root / 'source'
-        self.url = f'https://github.com/{ASSETS_REPOSITORY}.git'
+        self.url = common.repository_url(common.test_assets_repository())
         self.env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1',
                         GIT_CONFIG_COUNT='1', GIT_CONFIG_KEY_0=f'url.{self.remote.as_uri()}.insteadOf',
                         GIT_CONFIG_VALUE_0=self.url, GIT_ALLOW_PROTOCOL='file',
@@ -60,10 +60,22 @@ class TestAssetsPreparation(unittest.TestCase):
         self.assets = self.app / ASSETS_PATH
 
     def git(self, path, *args):
-        return git(path, *args, env=self.env)
+        result = subprocess.run(['git', '-C', str(path), *args], env=self.env,
+                                text=True, capture_output=True)
+        if result.returncode:
+            raise RuntimeError(f'git {args[0]}: {result.stderr}')
+        return result.stdout.strip()
 
-    def prepare(self, ref):
-        return prepare_assets(self.app, ref, env=self.env)
+    def prepare(self, sha=None, *, app=None, windows=False):
+        options = [f'-DWIN32={"ON" if windows else "OFF"}']
+        if sha:
+            options.append(f'-DGPLATFORM_TEST_ASSETS_SHA={sha}')
+        diagnostic = io.StringIO()
+        with redirect_stderr(diagnostic):
+            try:
+                return common.test_assets_checkout(app or self.app, *options, env=self.env)
+            except RuntimeError as error:
+                raise RuntimeError(diagnostic.getvalue()) from error
 
     def historical_checkout(self, sha):
         for name, value in [('path', ASSETS_PATH), ('url', self.url), ('update', 'none')]:
@@ -73,7 +85,7 @@ class TestAssetsPreparation(unittest.TestCase):
         self.git(self.app, 'commit', '-m', 'Historical App')
 
     def test_branch_exact_sha_and_repeat_do_not_rewrite_the_existing_branch_or_index(self):
-        self.assertEqual(self.prepare('macmini'), (self.assets, self.sha))
+        self.assertEqual(self.prepare(), (self.assets, self.sha))
         self.assertEqual((self.assets / self.lfs_file).read_bytes(), (self.remote / self.lfs_file).read_bytes())
         self.git(self.assets, 'switch', '-c', 'developer')
         index = (self.assets / '.git/index').read_bytes()
@@ -90,9 +102,9 @@ class TestAssetsPreparation(unittest.TestCase):
         windows_app = self.root / 'windows-app'
         windows_app.mkdir()
 
-        self.assertEqual(prepare_assets(self.app, None, env=self.env, configure_default='macmini'),
+        self.assertEqual(self.prepare(),
                          (self.assets, self.sha))
-        windows_assets, actual = prepare_assets(windows_app, None, env=self.env, configure_default='windows')
+        windows_assets, actual = self.prepare(app=windows_app, windows=True)
         self.assertEqual(actual, windows_sha)
 
         self.git(windows_assets, 'switch', '-c', 'developer')
@@ -101,27 +113,27 @@ class TestAssetsPreparation(unittest.TestCase):
         catalog.write_bytes(edited)
         index = (windows_assets / '.git/index').read_bytes()
         with patch.dict(self.env, GIT_ALLOW_PROTOCOL=''):
-            self.assertEqual(prepare_assets(self.app, None, env=self.env, configure_default='macmini'),
+            self.assertEqual(self.prepare(),
                              (self.assets, self.sha))
-            self.assertEqual(prepare_assets(windows_app, None, env=self.env, configure_default='windows'),
+            self.assertEqual(self.prepare(app=windows_app, windows=True),
                              (windows_assets, windows_sha))
-            with self.assertRaisesRegex(RuntimeError, 'cannot reuse it for macmini'):
-                prepare_assets(windows_app, None, env=self.env, configure_default='macmini')
-            with self.assertRaisesRegex(RuntimeError, 'cannot reuse'):
-                prepare_assets(windows_app, self.sha, env=self.env, configure_default='windows')
-            self.assertEqual(prepare_assets(windows_app, windows_sha, env=self.env, configure_default='macmini'),
+            with self.assertRaisesRegex(RuntimeError, 'cannot be reused for[ \n]+macmini'):
+                self.prepare(app=windows_app)
+            with self.assertRaisesRegex(RuntimeError, 'expected'):
+                self.prepare(self.sha, app=windows_app, windows=True)
+            self.assertEqual(self.prepare(windows_sha, app=windows_app),
                              (windows_assets, windows_sha))
         self.assertEqual(self.git(windows_assets, 'branch', '--show-current'), 'developer')
         self.assertEqual((windows_assets / '.git/index').read_bytes(), index)
         self.assertEqual(catalog.read_bytes(), edited)
 
     def test_configure_never_repairs_an_existing_lfs_pointer(self):
-        self.prepare('macmini')
+        self.prepare()
         pointer = self.git(self.assets, 'show', f'HEAD:{self.lfs_file}') + '\n'
         file = self.assets / self.lfs_file
         file.write_bytes(pointer.encode('utf-8'))
-        with self.assertRaisesRegex(RuntimeError, 'Git LFS materialization failed'):
-            prepare_assets(self.app, None, env=self.env, configure_default='macmini')
+        with self.assertRaisesRegex(RuntimeError, 'not materialized'):
+            self.prepare()
         self.assertEqual(file.read_bytes(), pointer.encode('utf-8'))
 
     def test_runner_switches_between_legacy_and_independent_checkouts_without_fetching_old_pin(self):
@@ -166,6 +178,8 @@ class TestAssetsPreparation(unittest.TestCase):
     def test_reuses_an_absorbed_legacy_gitfile_without_changing_its_owner(self):
         self.historical_checkout(self.sha)
         self.git(self.app, 'submodule', 'update', '--init', '--checkout', '--', ASSETS_PATH)
+        self.git(self.assets, 'lfs', 'install', '--local', '--skip-repo')
+        self.git(self.assets, 'lfs', 'pull')
         marker = (self.assets / '.git').read_bytes()
         self.assertEqual(self.prepare(self.sha), (self.assets, self.sha))
         self.assertEqual((self.assets / '.git').read_bytes(), marker)
@@ -174,7 +188,7 @@ class TestAssetsPreparation(unittest.TestCase):
         self.prepare(self.sha)
         changed = self.assets / 'catalog.json'
         changed.write_text('edited', encoding='utf-8')
-        with self.assertRaisesRegex(RuntimeError, 'local changes'):
+        with self.assertRaisesRegex(RuntimeError, 'JSON'):
             self.prepare(self.sha)
         with patch.dict(os.environ, self.env, clear=True):
             with self.assertRaisesRegex(RuntimeError, 'local changes'):
@@ -189,7 +203,7 @@ class TestAssetsPreparation(unittest.TestCase):
         (self.assets / '.git').rename(self.root / 'foreign-git')
         (self.assets / '.git').write_text(f'gitdir: {self.root / "foreign-git"}\n', encoding='utf-8')
         with self.assertRaisesRegex(RuntimeError, 'outside its expected location'):
-            checkout_head(self.app, self.assets, env=self.env)
+            self.prepare(self.sha)
 
     def test_rejects_junction_before_touching_target(self):
         external = self.root / 'external'
@@ -207,14 +221,6 @@ class TestAssetsPreparation(unittest.TestCase):
             self.assets.symlink_to(external, target_is_directory=True)
             with self.assertRaisesRegex(RuntimeError, 'symlink'):
                 self.prepare(self.sha)
-            # Exercise the junction metadata guard without claiming Windows filesystem coverage.
-            lstat = Path.lstat
-            def windows_metadata(path, *args, **kwargs):
-                if path == self.assets:
-                    return SimpleNamespace(st_mode=stat.S_IFDIR, st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT)
-                return lstat(path, *args, **kwargs)
-            with patch.object(Path, 'lstat', windows_metadata), self.assertRaisesRegex(RuntimeError, 'junction'):
-                self.prepare(self.sha)
         self.assertEqual(sentinel.read_text(encoding='utf-8'), 'owned elsewhere')
 
     def test_wrong_sha_or_missing_lfs_object_does_not_publish_checkout(self):
@@ -225,7 +231,7 @@ class TestAssetsPreparation(unittest.TestCase):
         self.assertTrue(objects)
         for file in objects:
             file.unlink()
-        with self.assertRaisesRegex(RuntimeError, r'Git lfs|Git LFS materialization'):
+        with self.assertRaisesRegex(RuntimeError, r'git lfs|not materialized'):
             self.prepare(self.sha)
         self.assertFalse(self.assets.exists())
 
