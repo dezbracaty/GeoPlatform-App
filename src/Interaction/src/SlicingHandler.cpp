@@ -1,4 +1,5 @@
 #include <ModelCreationUtil.hpp>
+#include <utility>
 #include "SlicingHandler.hpp"
 #include "ImportFileFormat.hpp"
 #include "InteractionRegistration.hpp"
@@ -585,6 +586,7 @@ bool SlicingHandler::startSliceTaskForModel(const QString& modelId, QString* err
 
     m_publicationEpoch = SlicingPreviewBridge::instance()->beginOutputTask();
     m_outputAtStart = SlicingPreviewBridge::instance()->currentOutput();
+    m_sliceContext = m_context;
     m_slicePending = true;
     QFuture<void> future = QtConcurrent::run([this]() {
         performSlice();
@@ -687,6 +689,7 @@ bool SlicingHandler::startSliceTaskForPlate(const QStringList& modelIds, QString
     m_state = State::Processing;
     m_publicationEpoch = SlicingPreviewBridge::instance()->beginOutputTask();
     m_outputAtStart = SlicingPreviewBridge::instance()->currentOutput();
+    m_sliceContext = m_context;
     m_slicePending = true;
     QFuture<void> future = QtConcurrent::run([this]() { performSlice(); });
     m_taskWatcher->setFuture(future);
@@ -698,6 +701,7 @@ bool SlicingHandler::startSliceTaskForPlate(const QStringList& modelIds, QString
 
 void SlicingHandler::onExit() {
     LOG_INFO("SlicingHandler: onExit");
+    const auto cancelledContext = std::exchange(m_sliceContext, {});
 
     // 等待后台任务完成
     if (m_taskWatcher && m_taskWatcher->isRunning()) {
@@ -727,6 +731,7 @@ void SlicingHandler::onExit() {
 
     // 调用基类实现
     StandardActionHandler::onExit();
+    if (cancelledContext) cancelledContext->reportCompletion(false, true);
 }
 
 void SlicingHandler::performSlice() {
@@ -903,14 +908,15 @@ void SlicingHandler::performSlice() {
 
 void SlicingHandler::onTaskCompleted() {
     m_slicePending = false;
+    const auto taskContext = std::exchange(m_sliceContext, {});
     try { m_taskWatcher->future().waitForFinished(); }
     catch (const std::exception& error) { m_success = false; m_errorMessage = QString::fromUtf8(error.what()); }
     catch (...) { m_success = false; m_errorMessage = QStringLiteral("Unexpected slicing task failure"); }
-    const bool trackedInvocation = m_context &&
-        !m_context->getInvocationId().trimmed().isEmpty();
+    const bool trackedInvocation = taskContext &&
+        !taskContext->getInvocationId().trimmed().isEmpty();
     const ScopedTransactionContextMetadata transactionScope(
         getActionCode(),
-        m_context ? m_context->getInvocationMetadata() : QVariantMap{},
+        taskContext ? taskContext->getInvocationMetadata() : QVariantMap{},
         trackedInvocation);
 
     auto endTime = std::chrono::steady_clock::now();
@@ -926,8 +932,11 @@ void SlicingHandler::onTaskCompleted() {
         if (!m_taskId.isEmpty()) { TaskStateNotifier::instance()->endTask(m_taskId); m_taskId.clear(); }
         if (m_state == State::Processing) {
             m_state = State::Ready;
-            if (m_context) m_context->setError(ActionErrorCode::Internal, m_errorMessage);
-            completeInvocation(m_context);
+            if (taskContext) {
+                taskContext->setError(ActionErrorCode::Internal, m_errorMessage);
+                taskContext->reportCompletion(false, true);
+            }
+            completeInvocation(taskContext);
         }
         return;
     }
@@ -936,6 +945,8 @@ void SlicingHandler::onTaskCompleted() {
     std::optional<GPlatform::Notifications::Notification> completionNotification;
     // 只处理切片模式（导入由 GCodeImportHandler 处理）
     if (m_mode == Mode::Slice) {
+        const auto completedTaskEpoch = m_publicationEpoch;
+        const auto completedOutput = m_pendingOutput;
         if (m_success && m_localProcessRevision != SliceSettingsBridge::instance()->localProcessRevision()) {
             m_success = false;
             m_errorMessage = tr("Model or modifier settings changed during slicing. Slice again.");
@@ -981,8 +992,8 @@ void SlicingHandler::onTaskCompleted() {
             if (!SlicingPreviewBridge::instance()->currentOutput()) EnvironmentSwitchHandler::switchEnvironment("normal");
             else EnvironmentSwitchHandler::switchEnvironment("preview");
             emit sliceCompleted("", false, m_errorMessage);
-            if (m_context) {
-                m_context->setError(ActionErrorCode::Internal, m_errorMessage);
+            if (taskContext) {
+                taskContext->setError(ActionErrorCode::Internal, m_errorMessage);
             }
         }
 
@@ -994,12 +1005,25 @@ void SlicingHandler::onTaskCompleted() {
         completionResult.insert("estimatedTimeSeconds", m_totalTime);
         completionResult.insert("filamentUsedMeters", m_filamentUsed);
         completionResult.insert("layerCount", m_layerCount);
-        completeInvocation(m_context, completionResult);
 
+        const auto finishedTaskId = m_taskId;
         if (!m_taskId.isEmpty()) {
             TaskStateNotifier::instance()->endTask(m_taskId);
             m_taskId.clear();
         }
+
+        auto* bridge = SlicingPreviewBridge::instance();
+        if (m_success && completedOutput && bridge->currentOutput() == completedOutput &&
+            bridge->canExportPrintOutput(QStringLiteral("gcode")) &&
+            !SliceSettingsBridge::instance()->hasPendingReslice()) {
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - m_taskStartTime).count();
+            LOG_INFO("[SLICING TIMING] Export output ready task={} epoch={} elapsed={}ms",
+                     finishedTaskId.toStdString(), completedTaskEpoch, elapsed);
+            if (taskContext) taskContext->reportEvent(QStringLiteral("outputReady"));
+        }
+
+        completeInvocation(taskContext, completionResult);
 
         m_sliceAllMode = false;
         m_useManualSupportMeshForSlice = false;

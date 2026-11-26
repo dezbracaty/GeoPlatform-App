@@ -43,6 +43,7 @@ using Application = QGuiApplication;
 #include <QScopeGuard>
 
 #include "ActionManager.hpp"
+#include "ActionContext.hpp"
 #include "MenuData.hpp"
 
 #include <exception>
@@ -52,6 +53,7 @@ using Application = QGuiApplication;
 
 #ifdef JOURNALSYSTEM_ENABLED
 #include "JournalSystem.h"
+#include "SmoothUI.h"
 #endif
 
 using namespace Qt::StringLiterals;
@@ -262,6 +264,25 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
     logElapsed("App translations initialized");
 
     StartupCoordinator startup(!startupReplayId.isEmpty());
+#ifdef JOURNALSYSTEM_ENABLED
+    const auto reportComponent = [journal = QPointer<JournalSystem>(journal)](
+        QObject* source, const QString& event) {
+        if (journal && source) journal->reportEvent(source->objectName(), event);
+    };
+    SmoothUI::setComponentEventReporter(reportComponent);
+    const auto clearComponentReporter = qScopeGuard([] { SmoothUI::setComponentEventReporter({}); });
+
+    QString readyCapture;
+    const auto reportMainReady = [&startup, journal, &readyCapture, reportComponent] {
+        const auto capture = journal->signalCaptureId();
+        if (startup.ready() && !capture.isEmpty() && capture != readyCapture) {
+            readyCapture = capture;
+            reportComponent(startup.mainWindow(), u"ready"_s);
+        }
+    };
+    QObject::connect(&startup, &StartupCoordinator::startupReady, journal, reportMainReady);
+    QObject::connect(journal, &JournalSystem::signalCaptureStarted, journal, reportMainReady);
+#endif
     app.setQuitOnLastWindowClosed(false);
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &startup,
                      &StartupCoordinator::beginShutdown, Qt::DirectConnection);
@@ -373,31 +394,28 @@ static int runApplication(int argc, char* argv[], QString& restartExecutable,
                         // journal.entry.execute / JournalSystem.execute_entry to test the app.
                         // Author complete events/Journal.json files and use the shared
                         // journal_runner.py --run JSON-file interface instead.
-                        // Single-entry dispatch is internal transport for that file runner;
-                        // it is NOT an approved AI testing interface.
+                        // Test replay submits complete files to the native script service.
+                        // Single-entry dispatch is retained for recording and non-replay diagnostics.
+                        ActionManager::getInstance()->setActionEventFactory(
+                            [journal = QPointer<JournalSystem>(journal)](const QString& source) -> ActionContext::EventReporter {
+                                const auto capture = journal ? journal->signalCaptureId() : QString();
+                                if (capture.isEmpty()) return {};
+                                return [journal, source, capture](const QString& event) {
+                                    if (journal && journal->signalCaptureId() == capture)
+                                        journal->reportEvent(source, event);
+                                };
+                            });
                         journal->setActionInvoker(
-                            [](const QString& actionCode,
-                               const QVariantMap& params,
-                               QString& error) {
-                                if (actionCode.trimmed().isEmpty()) {
-                                    error = QStringLiteral("Action code is empty");
-                                    return false;
-                                }
-                                auto* manager = ActionManager::getInstance();
-                                if (!manager) {
-                                    error = QStringLiteral("ActionManager is unavailable");
-                                    return false;
-                                }
-                                const auto receipt = manager->invokeActionWithReceipt(actionCode, params, {});
-                                if (!receipt.value("accepted").toBool()
-                                    || !receipt.value("success").toBool()) {
-                                    error = QStringLiteral("Action failed: %1 [%2]: %3")
-                                                .arg(actionCode,
-                                                     receipt.value("error_code").toString(),
-                                                     receipt.value("error").toString());
-                                    return false;
-                                }
-                                return true;
+                            [](const QString& actionCode, const QVariantMap& params,
+                               const QString& sourceDirectory, QString& error) {
+                                const auto receipt = ActionManager::getInstance()->invokeActionWithReceipt(
+                                    actionCode, params, {{u"sourceDirectory"_s, sourceDirectory}});
+                                if (receipt.value("accepted").toBool() && receipt.value("success").toBool())
+                                    return true;
+                                error = QStringLiteral("Action failed: %1 [%2]: %3")
+                                    .arg(actionCode, receipt.value("error_code").toString(),
+                                         receipt.value("error").toString());
+                                return false;
                             });
                         journal->setDbStateProvider(
                             QString::fromLatin1(trans::SerializedStateFormat),

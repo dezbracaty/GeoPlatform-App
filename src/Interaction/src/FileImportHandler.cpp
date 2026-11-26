@@ -6,6 +6,7 @@
 #include "AIDescriptorHelper.hpp"
 #include "LocalModelLibraryService.h"
 
+#include <QDir>
 #include <QFileInfo>
 #include <QUrl>
 
@@ -62,7 +63,10 @@ void FileImportHandler::onEnter(std::shared_ptr<ActionContext> context) {
         context->setError(ActionErrorCode::InvalidParams, tr("Only local files can be imported"));
         return;
     }
-    const QString path = url.isLocalFile() ? url.toLocalFile() : input.toString();
+    QString path = url.isLocalFile() ? url.toLocalFile() : input.toString();
+    const auto sourceDirectory = context->getInvocationMetadata().value("sourceDirectory").toString();
+    if (!sourceDirectory.isEmpty() && QFileInfo(path).isRelative())
+        path = QDir(sourceDirectory).absoluteFilePath(path);
     const QFileInfo file(path);
     if (!file.exists()) {
         context->setError(ActionErrorCode::TargetNotFound,
@@ -96,7 +100,7 @@ void FileImportHandler::onEnter(std::shared_ptr<ActionContext> context) {
     }
 
     auto* manager = ActionManager::getInstance();
-    const QVariantMap importOutcome = manager->invokeTrackedAction(importer, params);
+    const QVariantMap importOutcome = manager->invokeTrackedAction(importer, params, {}, context);
     const bool accepted = importOutcome.value("accepted").toBool() && importOutcome.value("success").toBool();
     // Keep the original receipt, including its pending/error information.
     context->setResult(QVariantMap{{"importAction", importer},

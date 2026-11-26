@@ -173,6 +173,10 @@ protected:
 
         const QString invocationId = context->getInvocationId().trimmed();
         if (invocationId.isEmpty()) {
+            const auto completion = (result.isValid() ? result : context->getResult()).toMap();
+            context->reportCompletion(!context->hasError() &&
+                (!completion.contains("success") || completion.value("success").toBool()),
+                completion.value("cancelled").toBool());
             return;
         }
 

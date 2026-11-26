@@ -62,6 +62,7 @@ bool GCodeImportHandler::onInitialize() {
     m_createdObjectId.clear();
     m_success = false;
     m_errorMessage.clear();
+    m_cancelled = false;
     m_layerCount = 0;
     m_segmentCount = 0;
     m_pointCount = 0;
@@ -188,7 +189,9 @@ void GCodeImportHandler::onBackgroundStarted() {
             if (SlicingPreviewBridge::instance()->acceptsPublication(epoch)) parseGCodeInBackground();
             else {
                 m_pendingOutput.reset();
-                m_success = false; m_errorMessage = QStringLiteral("G-code import cancelled or superseded");
+                m_success = false;
+                m_cancelled = true;
+                m_errorMessage = QStringLiteral("G-code import cancelled or superseded");
                 requestResumeFromBackground();
             }
         }
@@ -249,13 +252,16 @@ void GCodeImportHandler::onParseFinished() {
         LOG_INFO("GCode parse finished after handler left background state; result discarded");
         m_prepared = {};
         m_pendingOutput.reset();
-        m_success = false; m_errorMessage = QStringLiteral("G-code import cancelled");
+        m_success = false;
+        m_cancelled = true;
+        m_errorMessage = QStringLiteral("G-code import cancelled");
         if (getState() == State::Background) requestResumeFromBackground();
         return;
     }
 
     m_success = m_prepared.geometryAvailable && !m_prepared.cancelled && m_prepared.error.isEmpty();
     if (!m_success) {
+        m_cancelled = m_prepared.cancelled;
         m_errorMessage = m_prepared.cancelled ? QStringLiteral("GCode import cancelled") : m_prepared.error;
         LOG_ERROR("GCode import failed: {}", m_errorMessage.toStdString());
         requestResumeFromBackground();
@@ -308,6 +314,7 @@ void GCodeImportHandler::onBackgroundCompleted() {
     const auto accepted = m_acceptedOutput.lock();
     if (m_success && (!bridge->acceptsPublication(m_completionEpoch) || !accepted || bridge->currentOutput() != accepted)) {
         m_success = false;
+        m_cancelled = true;
         m_errorMessage = QStringLiteral("G-code import cancelled or superseded");
     }
 
@@ -327,6 +334,7 @@ void GCodeImportHandler::onBackgroundCompleted() {
         LOG_ERROR("GCode import failed: {}", m_errorMessage.toStdString());
 
         if (m_context) {
+            if (m_cancelled) m_context->setResult(QVariantMap{{"cancelled", true}});
             m_context->setError(ActionErrorCode::Internal, m_errorMessage);
         }
     }

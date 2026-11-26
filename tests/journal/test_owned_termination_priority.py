@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/journal'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import journal_execution_session as sessions
-from test_python_client import RunnerClient, write_journal
+from test_python_client import RunnerClient, native_result, owned_replay_replies, script_reply, write_journal
 
 
 class OwnedTerminationCheck(unittest.TestCase):
@@ -83,13 +83,13 @@ class OwnedTerminationCheck(unittest.TestCase):
                 root, process = Path(temporary), self.process()
                 client = RunnerClient(root)
                 client.connect, client.disconnect = Mock(), Mock()
-                client.request = Mock(side_effect=lambda method, params, **kwargs:
-                    {'status': 'ready', 'replayId': params['replayId']})
                 if mode == 'native-window':
                     client.window_info = Mock(return_value=dict(logicalSize=[1200, 800],
                         devicePixelRatio=1.25, availableLogicalSize=[1536, 912]))
                 if mode == 'timeout': process.wait.side_effect = subprocess.TimeoutExpired('owned', 5)
                 journal = write_journal(root/'source.json', [client.entry('action', {'code': 'existing.action'})])
+                replies = (script_reply("running"), script_reply("passed", native_result()))
+                client.request.side_effect = replies if mode == 'attach' else owned_replay_replies(*replies)
                 with patch.object(sessions.sys, 'platform', 'darwin' if mode == 'mac' else 'win32'), \
                         patch.object(sessions, 'JournalSystem', return_value=client), \
                         patch.object(sessions.subprocess, 'Popen', return_value=process), \
@@ -110,13 +110,14 @@ class OwnedTerminationCheck(unittest.TestCase):
                     self.assertEqual(result['applicationExitCode'], 1)
                     self.assertFalse(result['applicationKeptOpen'])
                 self.assertEqual([c.args[0] for c in client.request.call_args_list],
-                                 [] if mode == 'attach' else ['journal.replay.begin'])
+                                 (['journal.script.start', 'journal.script.status'] if mode == 'attach' else
+                                  ['journal.replay.begin', 'journal.script.start', 'journal.script.status']))
                 if mode == 'native-window':
-                    self.assertNotIn('windowProfile', client.request.call_args.args[1])
+                    self.assertNotIn('windowProfile', client.request.call_args_list[0].args[1])
                     self.assertNotIn('windowProfile', result)
                     self.assertEqual(result['actualWindow']['logicalSize'], [1200, 800])
                 elif mode != 'attach':
-                    self.assertEqual(client.request.call_args.args[1]['windowProfile'], sessions.WINDOW_PROFILE)
+                    self.assertEqual(client.request.call_args_list[0].args[1]['windowProfile'], sessions.WINDOW_PROFILE)
                 if result.get('applicationLiveLogPath'): Path(result['applicationLiveLogPath']).unlink()
 
     def test_native_window_rejects_baseline_verification_and_attach_before_launch(self):

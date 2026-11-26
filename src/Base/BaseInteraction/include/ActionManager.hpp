@@ -42,13 +42,16 @@ public:
     // Application-owned admission, evaluated before constructing a handler.
     using AdmissionPolicy = std::function<QString(const QString&, bool)>;
     void setAdmissionPolicy(AdmissionPolicy policy) { m_admissionPolicy = std::move(policy); }
+    using ActionEventFactory = std::function<std::function<void(const QString&)>(const QString&)>;
+    void setActionEventFactory(ActionEventFactory factory) { m_actionEventFactory = std::move(factory); }
     QVariantMap invokeActionWithReceipt(const QString& actionCode,
                                        const QVariantMap& params = {},
                                        const QVariantMap& metadata = {});
     // Finite native operations: completion is published after handler cleanup.
     QVariantMap invokeTrackedAction(const QString& actionCode,
                                     const QVariantMap& params = {},
-                                    const QVariantMap& metadata = {});
+                                    const QVariantMap& metadata = {},
+                                    const std::shared_ptr<ActionContext>& completionOwner = {});
 
     // AI-facing APIs
     Q_INVOKABLE QVariantList listActionsForAI();
@@ -123,6 +126,7 @@ private:
     bool checkAdmission(const QString& actionCode, bool aiInvoke, QVariantMap* receipt = nullptr,
                         const QVariantMap& metadata = {});
     AdmissionPolicy m_admissionPolicy;
+    ActionEventFactory m_actionEventFactory;
     // 注册Handler（由Registry调用）
     void registerHandler(const QString& actionCode, HandlerPtr handler);
 
@@ -155,6 +159,7 @@ private:
         QVariantMap data;
         HandlerPtr handler;
         std::shared_ptr<ActionContext> context;
+        std::shared_ptr<ActionContext> completionOwner;
         quint64 generation{0};
         bool native{false};
     };

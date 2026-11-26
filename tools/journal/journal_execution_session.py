@@ -173,7 +173,8 @@ class JournalExecutionSession:
 
     def run(self, journal_path, *, application=None, host="127.0.0.1", port=0,
             output_dir=None, keep_app=False, startup_timeout=30, progress=None, log=None,
-            environment_overrides=None, comparisons=None, validate=True, native_window=False):
+            environment_overrides=None, comparisons=None, validate=True, native_window=False,
+            capture_signals=False):
         if native_window and (validate or not application):
             raise ValueError("native_window requires an owned application and validate=False")
         progress = progress if progress is not None else self.progress
@@ -282,7 +283,8 @@ class JournalExecutionSession:
             emit("Journal 已连接；开始执行文件（不再请求应用重启）")
             result = JournalRunner(client, comparisons=comparisons).run(
                 document, output_dir=output, progress=progress, validate=validate,
-                cancel_event=self.cancel_event)
+                cancel_event=self.cancel_event,
+                **({"capture_signals": True} if capture_signals else {}))
             if environment_overrides is not None:
                 result["environmentOverrides"] = dict(environment_overrides)
             if not native_window:

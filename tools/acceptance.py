@@ -357,7 +357,7 @@ def bind_deployment_resources(document, metadata, application):
         replacements.append((relative, token(captured_root / suffix), token(resource_root / suffix)))
     seen, changed = set(), False
     for entry in document['entries']:
-        if entry['kind'] != 'verify.db':
+        if isinstance(entry, str) or entry['kind'] != 'verify.db':
             continue
         payload = entry['payload']
         raw = base64.b64decode(payload['expectedSerialized'], validate=True)
@@ -388,7 +388,8 @@ def materialize_journal(case, output, export_root, *, capture_candidates=False, 
     document = read_json(case['journal'])
     changed = bind_deployment_resources(document, case['metadata'], application)
     declared = {a['fileName'] for a in case['metadata'].get('artifacts', {}).values()}
-    for index, entry in enumerate(document['entries'], 1):
+    operations = [entry for entry in document['entries'] if not isinstance(entry, str)]
+    for index, entry in enumerate(operations, 1):
         if capture_candidates and entry['kind'] == 'verify.db':
             entry.update(kind='capture.db', payload=dict(dbInstanceId=entry['payload']['dbInstanceId']))
             changed = True
@@ -425,11 +426,12 @@ def materialize_journal(case, output, export_root, *, capture_candidates=False, 
     if not changed:
         return case['journal'], digest(case['journal'])
     # Relative imports refer to the authored source, not the materialized location.
-    for entry in document['entries']:
+    for entry in operations:
         if entry['kind'] == 'action' and entry['payload'].get('code') == 'file.import':
             params = entry['payload'].get('params', {})
-            if params.get('filePath') and not Path(params['filePath']).is_absolute():
-                params['filePath'] = str((case['journal'].parent / params['filePath']).resolve())
+            path = params.get('filePath')
+            if isinstance(path, str) and path and '://' not in path and not Path(path).is_absolute():
+                params['filePath'] = str((case['journal'].parent / path).resolve())
         elif entry['kind'] == 'verify.screenshot' or (entry['kind'] == 'action' and
                 entry['payload'].get('code') == 'screenshot.capture' and entry['payload'].get('baseline')):
             baseline = entry['payload']['baseline']

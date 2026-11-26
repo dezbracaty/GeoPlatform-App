@@ -69,14 +69,14 @@ class DisplayProfileCheck(unittest.TestCase):
         client.window_info = Mock(return_value=window(size=[1300, 900]))
         with self.assertRaisesRegex(RuntimeError, "did not reach"):
             wait_for_window(client, timeout=0)
-        client.execute_entry.assert_not_called()
+        client.request.assert_not_called()
 
     def test_screen_too_small_is_rejected_even_when_qt_reports_target_geometry(self):
         client = Mock()
         client.window_info.return_value = dict(window(), availableLogicalSize=[1280, 660])
         with self.assertRaisesRegex(RuntimeError, "available screen area is 1280x660"):
             wait_for_window(client)
-        client.execute_entry.assert_not_called()
+        client.request.assert_not_called()
 
     def test_owned_instance_preserves_native_dpr_without_scaling_or_restart(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -87,8 +87,16 @@ class DisplayProfileCheck(unittest.TestCase):
             client.window_info.return_value = window(2)
             client.paths.return_value = {"recordings": str(root / "recordings"),
                                          "playbacks": str(root / "playbacks")}
-            client.request.side_effect = lambda method, params, **kwargs: {
-                "replayId": params["replayId"], "status": "ready"}
+            def response(method, params, **kwargs):
+                if method == "journal.replay.begin":
+                    return {"replayId": params["replayId"], "status": "ready"}
+                return replies[method]
+            replies = {
+                "journal.script.start": {"status": "running"},
+                "journal.script.status": {"status": "passed", "results": [
+                    {"index": 1, "kind": "action", "atMs": 0, "status": "passed"}]},
+            }
+            client.request.side_effect = response
             processes = [Mock(pid=101, returncode=None)]
             for process in processes:
                 process.poll.return_value = None
@@ -103,8 +111,9 @@ class DisplayProfileCheck(unittest.TestCase):
             launch.assert_called_once()
             self.assertNotIn("QT_SCALE_FACTOR", launch.call_args.kwargs["env"])
             self.assertEqual(result["actualWindow"], window(2))
-            client.execute_entry.assert_called_once()
-            self.assertEqual(client.request.call_args.args[1]["windowProfile"], WINDOW_PROFILE)
+            self.assertEqual([call.args[0] for call in client.request.call_args_list],
+                             ["journal.replay.begin", "journal.script.start", "journal.script.status"])
+            self.assertEqual(client.request.call_args_list[0].args[1]["windowProfile"], WINDOW_PROFILE)
             for process in processes:
                 process.terminate.assert_called_once()
 
@@ -116,13 +125,19 @@ class DisplayProfileCheck(unittest.TestCase):
             client = Mock()
             client.window_info.return_value = window(2)
             client.paths.return_value = {"playbacks": str(root / "playbacks")}
+            client.request.side_effect = [
+                {"status": "running"},
+                {"status": "passed", "results": [
+                    {"index": 1, "kind": "action", "atMs": 0, "status": "passed"}]},
+            ]
             with patch("journal_execution_session.JournalSystem", return_value=client), \
                     patch("journal_execution_session.subprocess.Popen") as launch:
                 result = JournalExecutionSession().run(journal, port=9999, output_dir=root / "result")
             self.assertTrue(result["success"], result.get("error"))
             launch.assert_not_called()
             client.begin_replay.assert_called_once_with(timeout=30, window_profile=WINDOW_PROFILE)
-            client.execute_entry.assert_called_once()
+            self.assertEqual([call.args[0] for call in client.request.call_args_list],
+                             ["journal.script.start", "journal.script.status"])
 
     def test_recording_checks_profile_and_stops_on_failed_window_preparation(self):
         with tempfile.TemporaryDirectory() as temporary:

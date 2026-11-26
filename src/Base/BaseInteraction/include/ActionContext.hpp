@@ -1,7 +1,9 @@
 #pragma once
 
 #include <QString>
+#include <QSet>
 #include <QVariantMap>
+#include <functional>
 #include <memory>
 #include "ActionError.hpp"
 
@@ -9,8 +11,9 @@
 class ActionContext {
 public:
     using SPtr = std::shared_ptr<ActionContext>;
+    using EventReporter = std::function<void(const QString&)>;
 
-    ActionContext() = default;
+    explicit ActionContext(EventReporter reporter = {}) : m_eventReporter(std::move(reporter)) {}
     ~ActionContext() = default;
 
     // ActionCode访问
@@ -78,7 +81,28 @@ public:
         return m_hasError;
     }
 
+    // Action events are emitted on the owning thread, once per fact and invocation.
+    void reportEvent(const QString& event) {
+        if (!m_eventReporter || m_terminalReported || m_reportedEvents.contains(event)) return;
+        m_reportedEvents.insert(event);
+        m_eventReporter(event);
+    }
+
+    void reportCompletion(bool success, bool cancelled = false) {
+        if (!m_eventReporter || m_terminalReported) return;
+        m_terminalReported = true;
+        m_eventReporter(cancelled ? QStringLiteral("cancelled")
+                                  : success ? QStringLiteral("completed") : QStringLiteral("failed"));
+    }
+
+    void deferCompletionEvent() { m_completionDeferred = true; }
+    bool completionEventDeferred() const { return m_completionDeferred; }
+
 private:
+    const EventReporter m_eventReporter;
+    QSet<QString> m_reportedEvents;
+    bool m_terminalReported = false;
+    bool m_completionDeferred = false;
     QString m_actionCode;
     QVariantMap m_params;
     QString m_invocationId;

@@ -68,6 +68,7 @@ private:
     float m_totalTime{0.0f};
     float m_totalExtrusion{0.0f};
     bool m_success{false};
+    bool m_cancelled{false};
     bool m_parsePending{false};
     QString m_errorMessage;
 

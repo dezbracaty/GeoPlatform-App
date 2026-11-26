@@ -139,7 +139,7 @@ CLI 连接已有实例回放时，仍使用 `journal.replay.begin` 及 replayId 
 
 ## Journal v2
 
-唯一支持的结构为：
+普通录制或场景使用以下结构：
 
 ```json
 {
@@ -156,31 +156,28 @@ CLI 连接已有实例回放时，仍使用 `journal.replay.begin` 及 replayId 
 
 旧 `m_events` Journal 和旧文本命令不再支持，也不会自动转换。
 
-文件顶层只有 `formatVersion`、`entries`，每条只有 `atMs`、`kind`、`payload`。
+文件顶层只有 `formatVersion`、`entries`。操作对象只有 `atMs`、`kind`、`payload`。
 名称和描述只写场景/录制目录的 `metadata.json`，不在 Journal 内重复保存。
 `atMs` 必须非递减；同一毫秒按数组顺序执行，文件不再包含 `sequence`。
-录制内部仍使用应用顺序号合并事件和检查点，保存时排序后移除；加载文件时按数组位置生成
-现有通信请求所需的顺序号，不改变 C++ 条目协议。含旧 `metadata`/`sequence` 字段的文件拒绝加载，
-不提供旧结构兼容或自动迁移，不修改磁盘上的历史录制。
+录制在保存时按应用顺序号合并事件与检查点并移除顺序号。含旧 `metadata`/`sequence` 字段的文件拒绝加载，
+历史 v2 文件继续使用原结构。含 Journal 标记的录制使用 v3，标记是直接放在数组中的
+JSON 字符串，例如 `"#gplatform.main.ready"`。标记不含时间，操作仍按自身 `atMs` 执行。
+v3 拒绝对象式标记，旧工具也会拒绝含字符串标记的文件。
+C++ 把首操作前、各操作之间与末操作后的标记分组，等待全部名称及次数吻合。脚本中的标记只表达期望。
+多发立刻失败。缺项会阻止下一步并持续等待，`journal.script.status` 的 `waitingSignalGroup` 会列出当前等待组。
+取消回放时，报告的 `signalGroups` 保留该等待组。尾组还需连续安静 100 毫秒才封存。
+
+自动和手动回放都先一次提交完整文档，再读取原生进度。手动单步的继续请求只授权执行下一项。
+独立截图或 DB 的比较仍由 Python 工具完成，原生回放收到该检查的判定后才推进。
+`journal.entry.execute`、`app.db.serialize` 和 `app.screenshot.capture` 继续供录制和非回放诊断使用。
 
 主动编写的场景统一放在 `tests/TestAssets/scenarios/`，不再给每个场景配专用 Python 脚本。
 `capture.db`（dbInstanceId）只保存原始完整序列化字节，不作为验证 Action 发给 C++。
 UI 操作不使用业务属性断言或查询接口；默认命名目标找不到或输入派发失败，该条目直接失败并停止执行。
 无验证条目的场景明确标为 not_verified，不把“取到了数据”当作业务正确。
 
-仅当后续真实输入依赖异步界面出现时，可在该条 `input.mouse/input.key/input.wheel`
-的 payload 中显式设置 `readyTimeoutMs`（1–300000 的整数，且必须有命名 target）。
-这是共享 Python 文件执行器的选项，发送输入前从副本移除，默认没有等待。
-执行器先确认当前连接 `system.version` 的 `capabilities.namedInputReadiness` 严格为 true；
-旧程序或不匹配 SDK 在任何探测、输入派发前清晰失败，不能降级重试。
-随后仅通过原 `journal.entry.execute` 的 `checkOnly:true` 请求选项复用目标解析及可输入条件，
-不发送事件、不执行 Action、不追加录制、不读取业务数据。不存在、隐藏、禁用或空几何返回
-`ready:false`；非法输入和歧义目标立即报错。能力查询、分段收包、探测与轮询共享有限单调截止时间，
-等待可取消；超时、取消或通信错误不会发送真实输入。就绪后只派发一次，派发时仍重新检查目标，
-若目标已消失则失败，不循环重发。该等待耗时平移回放时钟，保留后续原 `atMs` 间隔。
-报告中的 `inputReadiness.waitSeconds/probeCount` 及 `startedAt/readyAt/dispatchRequestedAt`
-只是等待与实际输入请求时刻的工具证据，不是业务完成时间；业务成功仍由原 DB、截图及文件检查验证。
-异步取消、负向场景不添加此选项，其原语义保持不变。
+异步界面就绪可由组件在真实生命周期上报。例如文件浏览器首次呈现并可交互时上报
+`#smoothui.fileBrowser.ready`。从实际录制获得的标记放在相关操作之间，由原生回放等待。
 
 需要等待明确的观察前置条件时，仅 `verify.screenshot` 和 `verify.db` 可显式添加：
 
@@ -195,12 +192,8 @@ UI 操作不使用业务属性断言或查询接口；默认命名目标找不�
 ```
 
 `timeoutMs` 同样为 1–300000 的整数；可指定 `window:{"objectName":"..."}`，默认使用统一回放主窗口。
-此能力先严格确认 `namedTargetVisibility:true`，再用原 `journal.entry.execute` 的
-`checkOnly:true, observeTarget:{target,window}` 纯描述分支查询，不包含 entry/event，也不构造假输入。
-每轮核对全部目标；`hidden` 必须目标确实存在且不可见，禁用、空几何或低透明度不等于隐藏，
-`hidden` 的目标缺失、歧义及非法描述不能成为成功。这些条件不查询任意属性或业务状态。
-复用同一绝对期限、取消及断流处理，等待耗时记入 `uiReadiness` 并平移后续回放时间。
-条件满足后仍只捕获一次并执行原整图比较，不重试截图以寻找匹配帧；能力不匹配时零探测、零捕获。
+原生执行器在每轮核对全部目标。`hidden` 要求目标存在且不可见，禁用和空几何不算隐藏。
+`hidden` 的目标缺失、歧义和非法描述不能通过。达到全部前置条件后只捕获一次，交给现有独立比较规则。
 该例只表示预览控件可输入及指定 Overlay 隐藏，不表示切片业务成功、没有警告或其他通知全部消失。
 未标注的截图和其他场景保持原语义。
 
@@ -210,17 +203,17 @@ UI 操作不使用业务属性断言或查询接口；默认命名目标找不�
 不同窗口或未限定窗口的输入均拒绝加载。共享执行器遇到该输入失败会立即停止，
 因此不能以拼错从未出现的目标作为完成条件。该条件仅表示控件生命周期结束，
 不保证业务成功；随后 `verify.db` 只读取一次完整原始字节并照原标准比较，
-不循环读 DB 等待 expected 相同。取消、超时或能力不匹配时零 DB 读取。
+取消或到期会阻止该检查点读取 DB。
 
 只需要保存截图时，JSON 直接使用已有 `action`，code 为 `screenshot.capture`，
 params 例如 `{"filepath":"screenshots/all.png","notify":false}`，不新增截图 Action 或条目类型。
-Runner 将相对 filepath 解析到本次结果目录，仍通过现有 Action 请求交给应用保存；
+资产准备将相对 filepath 解析到本次结果目录，原生回放调用现有 Action 保存；
 检查文件生成且非空后，把图片链接加入报告。已存在的指定文件会拒绝覆盖，避免旧图被误当本次证据。
 这只验证截图落盘；预览画面是否正确仍由调用端判断，已有 `verify.screenshot` 用于可信基线比较。
 
 ## 按 objectName 操作控件
 
-现有 `journal.entry.execute` 的 `input.mouse / input.key / input.wheel`
+Journal 的 `input.mouse / input.key / input.wheel`
 可指定 `payload.target`，按 objectName 搜索窗口 QObject 子对象及 Qt Quick 视觉子项，并直接向控件投递事件。
 可用 `window.objectName` 限定窗口；找不到、重名、隐藏或禁用时明确失败，不取第一个候选。
 视觉子项遍历覆盖被 Qt Quick 重挂到 overlay 的 Popup 内容。
@@ -281,7 +274,7 @@ Journal/
 
 Journal 执行器的完整回放和单步结束均只生成一份 `execution_result.json` 和对应 HTML 报告。
 App 正式场景还在执行结果外生成 `case_result.json`、`case_report.html` 与汇总。
-源文件在本次执行开始时只读取一次，同一份字节用于校验、执行与哈希；执行中修改源文件不改变本轮输入。
+本轮开始时读取并计算源文件哈希。路径物化使用这份输入，执行中修改源文件不改变本轮文档。
 中间层先完成连接清理、进程处理及日志收集，再调用公共结果函数生成 JSON/HTML；步骤通过但清理失败，最终结果仍失败。
 结果目录命名和创建、普通与外部会话的信息读取均由现有 SessionRepository 统一负责。
 只识别会话目录中的 `events/Journal.json`，不回退读取根目录 Journal；回放结果无需包含 Journal。

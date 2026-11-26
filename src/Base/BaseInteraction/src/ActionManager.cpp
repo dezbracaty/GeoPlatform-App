@@ -362,10 +362,12 @@ QVariantMap nativeOutcome(QVariantMap outcome) {
 
 QVariantMap ActionManager::invokeTrackedAction(const QString& actionCode,
                                                const QVariantMap& params,
-                                               const QVariantMap& metadata) {
+                                               const QVariantMap& metadata,
+                                               const std::shared_ptr<ActionContext>& completionOwner) {
     const auto id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     PendingInvocation pending;
     pending.native = true;
+    pending.completionOwner = completionOwner;
     pending.data = {{"actionCode", actionCode}, {"meta", metadata}};
     m_pendingInvocations.insert(id, pending);
     QVariantMap receipt;
@@ -376,6 +378,7 @@ QVariantMap ActionManager::invokeTrackedAction(const QString& actionCode,
         receipt.value("success").toBool() && receipt.value("pending").toBool();
     receipt.insert("async", running);
     if (running) {
+        if (completionOwner) completionOwner->deferCompletionEvent();
         m_pendingInvocations[id].data.insert("seq", receipt.value("seq"));
         receipt.insert("status", "running");
     } else {
@@ -396,7 +399,13 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
                                           const QString& invocationId,
                                           const QVariantMap& invocationMetadata,
                                           QVariantMap* receipt) {
-    const auto setOutcome = [this, receipt](QVariantMap value) {
+    std::shared_ptr<ActionContext> context;
+    const auto setOutcome = [this, receipt, &context](QVariantMap value) {
+        if (context && (!value.value("success").toBool() ||
+                (!value.value("pending").toBool() && !context->completionEventDeferred()))) {
+            const auto outcome = nativeOutcome(value);
+            context->reportCompletion(outcome.value("success").toBool(), outcome.value("status") == "cancelled");
+        }
         if (receipt) *receipt = value;
         m_lastActionOutcome = std::move(value);
     };
@@ -559,7 +568,9 @@ bool ActionManager::triggerActionInternal(const QString& actionCode,
             static_cast<Qt::ConnectionType>(Qt::QueuedConnection | Qt::UniqueConnection));
 
     // 创建ActionContext
-    auto context = std::make_shared<ActionContext>();
+    const bool delegated = nativeTracked && m_pendingInvocations.value(invocationId).completionOwner;
+    context = std::make_shared<ActionContext>(
+        m_actionEventFactory && !delegated ? m_actionEventFactory(actionCode) : ActionContext::EventReporter{});
     context->setActionCode(actionCode);
     context->setParams(params);
     context->setInvocationId(invocationId);
@@ -1067,6 +1078,8 @@ void ActionManager::onHandlerInvocationCompleted(const QString& invocationId,
                 outcome.insert("error", "Importer reported completion before releasing its operation");
                 outcome.insert("released", false);
             }
+            const auto& owner = pending.completionOwner ? pending.completionOwner : pending.context;
+            owner->reportCompletion(outcome.value("success").toBool(), outcome.value("status") == "cancelled");
         }
     }
     m_lastActionOutcome = outcome;

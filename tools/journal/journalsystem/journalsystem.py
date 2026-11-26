@@ -172,7 +172,7 @@ class JournalSystem:
         return self.request("app.window.info", {"window": window})
 
     def start_recording(self, record_mouse_moves=True, *, window_profile=None):
-        params = {"recordMouseMoves": bool(record_mouse_moves)}
+        params = {"recordMouseMoves": bool(record_mouse_moves), "journalSignals": True}
         if window_profile is not None:
             params["windowProfile"] = window_profile
         return self.request("journal.record.start", params)
