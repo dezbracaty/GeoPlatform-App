@@ -5,7 +5,7 @@ description: 编写或执行 GPlatform 的真实应用 Journal 验收。先明�
 
 # Journal 应用验收
 
-本技能随 App 保存，正式 Python 工具唯一实现位于 `APP_ROOT/tools/journal/`，随 App 一起交付；相关测试位于 `APP_ROOT/tests/journal/`。模型与场景由 `APP_ROOT/tests/TestAssets` 固定子模块维护，入口为 `scenarios/<id>/events/Journal.json`；通过 `tools/run_acceptance.py` 统一执行及业务验收，规则见 `docs/acceptance.md`。先确认实际工具、场景、被测可执行文件和验证资产；独立 App 默认使用随仓库提供的工具，`--journal-tools` 仅用于显式开发覆盖，不能改用自造私有 RPC 冒充同一验收。
+本技能随 App 保存，正式 Python 工具唯一实现位于 `APP_ROOT/tools/journal/`，随 App 一起交付；相关测试位于 `APP_ROOT/tests/journal/`。从 App 根目录运行 `cmake -P cmake/thirdparty/fetch_test_assets.cmake`，将独立仓库的模型和场景准备到 `tests/TestAssets`。场景入口为 `scenarios/<id>/events/Journal.json`。通过 `tools/run_acceptance.py` 统一执行及业务验收，规则见 `docs/acceptance.md`。先确认实际工具、场景、被测可执行文件和验证资产；独立 App 默认使用随仓库提供的工具，`--journal-tools` 仅用于显式开发覆盖，不能改用自造私有 RPC 冒充同一验收。
 
 ## 明确验收入口
 

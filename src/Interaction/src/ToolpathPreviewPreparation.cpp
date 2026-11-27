@@ -214,7 +214,15 @@ PreparedToolpathPreview prepareToolpathPreview(const libslicer::ToolpathPreview&
         }
     }
     if (cancelled && cancelled()) result.cancelled = true;
-    if (result.cancelled) { result.data = {}; result.geometryAvailable = false; }
+    if (!result.cancelled) {
+        result.inspection = ToolpathPreviewDB::prepareInspectionGeometry(result.data);
+        if (cancelled && cancelled()) result.cancelled = true;
+    }
+    if (result.cancelled) {
+        result.data = {};
+        result.inspection.reset();
+        result.geometryAvailable = false;
+    }
     return result;
 }
 

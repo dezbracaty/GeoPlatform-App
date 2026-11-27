@@ -1,56 +1,14 @@
 """Run the delivery App natively through the dedicated regression entry."""
-import json
 from pathlib import Path
 import sys
 import tempfile
 import unittest
-from subprocess import CompletedProcess
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts/ci'))
-from mac_regression import prepare_assets, regression
+from mac_regression import regression
 
 
 class MacRegressionTests(unittest.TestCase):
-    def test_assets_use_independent_pinned_commit_without_changing_app_gitlink(self):
-        source = Path('/fixture/source')
-        declared, selected = 'a' * 40, 'b' * 40
-        with patch('mac_regression.text_git', side_effect=[declared, declared, selected]), \
-                patch('mac_regression.git_env', return_value={}), patch('mac_regression.run') as execute, \
-                patch('mac_regression.subprocess.run', return_value=CompletedProcess([], 128, b'', b'')):
-            self.assertEqual(prepare_assets(source, selected), selected)
-        commands = [call.args[0] for call in execute.call_args_list]
-        self.assertIn(['git', '-C', source / 'tests/TestAssets', 'fetch', '--depth=1', 'origin', selected], commands)
-        self.assertIn(['git', '-C', source / 'tests/TestAssets', 'checkout', '--detach', selected], commands)
-        self.assertEqual(commands[-1], ['git', '-C', source / 'tests/TestAssets', 'lfs', 'pull'])
-        self.assertFalse(any('add' in command or 'commit' in command for command in commands))
-
-    def test_cached_asset_commit_is_used_without_fetch(self):
-        source = Path('/fixture/source')
-        assets = source / 'tests/TestAssets'
-        declared, selected = 'a' * 40, 'b' * 40
-        with patch('mac_regression.text_git', side_effect=[declared, declared, selected]), \
-                patch('mac_regression.git_env', return_value={}), patch('mac_regression.run') as execute, \
-                patch('mac_regression.subprocess.run', return_value=CompletedProcess([], 0, b'commit\n', b'')) as probe:
-            self.assertEqual(prepare_assets(source, selected), selected)
-        probe.assert_called_once_with(['git', '-C', assets, 'cat-file', '-t', selected],
-                                      env={'GIT_NO_LAZY_FETCH': '1'}, capture_output=True)
-        commands = [call.args[0] for call in execute.call_args_list]
-        self.assertIn(['git', '-C', assets, 'checkout', '--detach', selected], commands)
-        self.assertNotIn('fetch', [command[3] for command in commands])
-        self.assertEqual(commands[-1], ['git', '-C', assets, 'lfs', 'pull'])
-
-    def test_wrong_asset_checkout_is_rejected_before_lfs_or_replay(self):
-        with patch('mac_regression.text_git', side_effect=['a' * 40, 'a' * 40, 'c' * 40]), \
-                patch('mac_regression.git_env', return_value={}), patch('mac_regression.run') as execute, \
-                patch('mac_regression.subprocess.run', return_value=CompletedProcess([], 128, b'', b'')):
-            with self.assertRaisesRegex(RuntimeError, 'prepared regression SHA'):
-                prepare_assets(Path('/fixture/source'), 'b' * 40)
-        self.assertFalse(any('lfs' in call.args[0] for call in execute.call_args_list))
-
-
-
-
-
     def test_regression_uses_native_delivery_app_and_all_pinned_assets(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);source=root/'source';source.mkdir()
@@ -59,17 +17,18 @@ class MacRegressionTests(unittest.TestCase):
             for name in ['journal_execution_session.py','journal_runner.py','journal_display_profile.py']:(tools/name).write_text('# managed')
             output=root/'evidence'
             env=dict(GPLATFORM_JOURNAL_TOOLS=str(root/'obsolete-tools'),QT_QPA_PLATFORM='offscreen',QT_SCALE_FACTOR='.5')
-            def execute(selected, program, destination, environment):
+            def execute(selected, program, destination, environment, *, assets):
                 self.assertEqual(selected, source)
                 self.assertEqual(program, exe)
+                self.assertEqual(assets, root / "host-source/App/tests/TestAssets")
                 self.assertNotIn('QT_QPA_PLATFORM', environment)
                 self.assertNotIn('QT_SCALE_FACTOR', environment)
                 return dict(completedCaseCount=101), output / 'run/session_fixture'
             with patch('mac_regression.sys.platform','darwin'),patch('mac_regression.getpass.getuser',return_value='ci'),\
                     patch('mac_regression.subprocess.check_output',return_value='ci\n'),patch('mac_regression.run'),\
-                    patch('mac_regression.prepare_assets',return_value='a'*40),patch('mac_regression.text_git',return_value='b'*40),\
+                    patch('mac_regression.text_git',return_value='b'*40),\
                     patch('mac_regression.server_regression',side_effect=execute):
-                result=regression(source,bundle,output,env)
+                result=regression(source,bundle,output,env, assets=root / "host-source/App/tests/TestAssets", assets_sha='a'*40)
             self.assertEqual(result['case_count'],101)
             self.assertEqual(exe.read_bytes(),b'program')
 
@@ -81,7 +40,8 @@ class MacRegressionTests(unittest.TestCase):
             for name in ['journal_runner.py','journal_display_profile.py']:(tools/name).write_text('# managed')
             with patch('mac_regression.sys.platform','darwin'),patch('mac_regression.getpass.getuser',return_value='ci'),\
                     patch('mac_regression.subprocess.check_output',return_value='ci\n'),patch('mac_regression.run'),\
-                    patch('mac_regression.prepare_assets',return_value='a'*40),patch('mac_regression.text_git',return_value='b'*40),\
+                    patch('mac_regression.text_git',return_value='b'*40),\
                     patch('mac_regression.server_regression',side_effect=RuntimeError('Server regression did not pass')):
                 with self.assertRaisesRegex(RuntimeError,'did not pass'):
-                    regression(source,bundle,root/'out',dict(GPLATFORM_JOURNAL_TOOLS=str(tools)))
+                    regression(source,bundle,root/'out',dict(GPLATFORM_JOURNAL_TOOLS=str(tools)),
+                               assets=root / "host-source/App/tests/TestAssets", assets_sha='a'*40)

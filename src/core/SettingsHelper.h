@@ -21,6 +21,9 @@ private:
     static SettingsHelper* m_instance;
 
 public:
+    // Values persisted by Theme.darkMode in QML.
+    enum class DarkMode : int { Light = 0, Dark = 1, System = 2 };
+
     static SettingsHelper* getInstance() {
         if (!m_instance) {
             m_instance = new SettingsHelper(QCoreApplication::instance());
@@ -39,7 +42,7 @@ public:
         save("darkMode", darkModel);
     }
     Q_INVOKABLE int getDarkMode() {
-        return get("darkMode", QVariant(0)).toInt();
+        return get("darkMode", QVariant(static_cast<int>(DarkMode::Light))).toInt();
     }
     Q_INVOKABLE void saveLocale(const QString& locale) {
         save("locale", locale);

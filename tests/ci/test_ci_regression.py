@@ -30,6 +30,8 @@ class RegressionTests(unittest.TestCase):
             stack.enter_context(patch.object(driver, 'prepare_cached_source'))
             stack.enter_context(patch.object(driver, 'init_host_submodules'))
             stack.enter_context(patch.object(driver, 'text_git', return_value='b'*40))
+            stack.enter_context(patch.object(driver, 'test_assets_checkout',
+                return_value=(root / 'App' / driver.TEST_ASSETS_PATH, 'c'*40)))
             stack.enter_context(patch.object(driver.native_checks, 'build_environment', return_value={}))
             stack.enter_context(patch.object(driver.native_checks, 'architecture', return_value={'returncode': 0}))
             allocate = stack.enter_context(patch.object(tempfile, 'mkdtemp'))
@@ -42,7 +44,7 @@ class RegressionTests(unittest.TestCase):
             materialize.assert_called_once_with(sdk, 'd'*40, 'windows')
             self.assertEqual((sdk / 'sentinel').read_bytes(), b'keep')
 
-    def test_native_ctest_uses_the_same_python_as_driver_admission(self):
+    def test_native_configure_uses_driver_python_and_frozen_assets(self):
         import native_regression as regression
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary).resolve()
@@ -58,7 +60,7 @@ class RegressionTests(unittest.TestCase):
 
             with patch('native_regression.command', side_effect=command), patch('native_regression.runtime', return_value={}):
                 result = regression.architecture(source, 'x64' if windows else 'arm64',
-                    output, report, {'Qt6_DIR': '/fixture/Qt'})
+                    output, report, {'Qt6_DIR': '/fixture/Qt'}, assets_sha='c' * 40)
             self.assertEqual(result, {'returncode': 1})
             self.assertEqual(len(calls), 1 if windows else 2, 'A failed host build must not start another Orca build')
             if not windows:
@@ -66,6 +68,7 @@ class RegressionTests(unittest.TestCase):
                 self.assertEqual(calls[1][0], ['cmake', '--build', '--preset', 'arm_release', '--target', 'all'])
             arguments = json.loads(calls[0][1]['CI_CMAKE_ARGS']) if windows else calls[0][0]
             self.assertIn('-DPython3_EXECUTABLE=' + sys.executable, arguments)
+            self.assertIn('-DGPLATFORM_TEST_ASSETS_SHA=' + 'c' * 40, arguments)
             self.assertIn('-DJOURNALSYSTEM_BUILD_TESTS=ON', arguments)
             self.assertIn('-DGPLATFORM_BUILD_ORCA_NATIVE_PROBES=ON', arguments)
 
@@ -100,7 +103,8 @@ class RegressionTests(unittest.TestCase):
                   patch.object(regression, 'runtime', return_value={}),
                   patch.object(regression.subprocess, 'check_output', return_value=inventory)):
                 report = {'output': str(output), 'phases': []}
-                result = regression.architecture(source, 'x64' if windows else 'arm64', output, report, {'Qt6_DIR': '/fixture/Qt'})
+                result = regression.architecture(source, 'x64' if windows else 'arm64',
+                    output, report, {'Qt6_DIR': '/fixture/Qt'}, assets_sha='c' * 40)
             self.assertEqual(result, {'returncode': 0})
             self.assertEqual(calls, ['pwsh', 'ctest'] if windows else ['bash', 'cmake', 'ctest'])
 
@@ -122,19 +126,20 @@ class RegressionTests(unittest.TestCase):
             with self.subTest(missing=missing), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary).resolve()
                 seen = []
-                def execute(args, **kwargs):
-                    if '-c' in args and args[2] == driver.APP_NATIVE_ASSETS:
-                        seen.append('assets')
-                        self.assertEqual(args[3], str(root / 'App'))
-                        self.assertEqual(args[4], 'c' * 40)
-                        self.assertIn('prepare_assets(app, sys.argv[2])', args[2])
-                        if missing:
-                            raise RuntimeError('fixture checkout failed')
+                def prepare(app, sha_arg, *, env):
+                    seen.append('assets')
+                    self.assertEqual(app, root / 'App')
+                    self.assertEqual(sha_arg, '-DGPLATFORM_TEST_ASSETS_SHA=' + 'c' * 40)
+                    if missing:
+                        raise RuntimeError('fixture checkout failed')
+                    return app / driver.TEST_ASSETS_PATH, 'c' * 40
                 def native(*args, **kwargs):
                     self.assertEqual(seen, ['assets'])
+                    self.assertEqual(kwargs['assets_sha'], 'c' * 40)
                     raise RuntimeError('reached configure after assets')
                 with contextlib.ExitStack() as stack:
-                    stack.enter_context(patch.object(driver, 'run', side_effect=execute))
+                    stack.enter_context(patch.object(driver, 'run'))
+                    prepare_assets = stack.enter_context(patch.object(driver, 'test_assets_checkout', side_effect=prepare))
                     stack.enter_context(patch.object(driver, 'machine_lock', return_value=contextlib.nullcontext()))
                     stack.enter_context(patch.object(driver, 'prepare_cached_source'))
                     host_submodules = stack.enter_context(patch.object(driver, 'init_host_submodules'))
@@ -148,6 +153,7 @@ class RegressionTests(unittest.TestCase):
                                        sdk_root=root / 'sdk', sdk_sha='d'*40, sdk_repository='org/SDK')
                     host_submodules.assert_called_once_with(root, host_platform='macos')
                     app_submodules.assert_called_once_with(root / 'source')
+                    prepare_assets.assert_called_once()
                     self.assertEqual(build.call_count, 0 if missing else 1)
                 report = json.loads((root / 'report/source-regression.json').read_text())
                 self.assertEqual(report['status'], 'failed')
@@ -173,7 +179,7 @@ class RegressionTests(unittest.TestCase):
         env = dict(GITHUB_WORKSPACE=str(workspace), REPORT_DIRECTORY=report_directory,
                    GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1', PLATFORM='macos', SOURCE_SHA='a'*40,
                    APP_SHA='d'*40, GITHUB_REPOSITORY='org/App', ASSETS_SHA='b'*40, ASSETS_REF='macmini',
-                   SDK_SHA='c'*40, SDK_REPOSITORY='org/SDK')
+                   SDK_SHA='c'*40, SDK_REPOSITORY='org/SDK', ASSETS_REPOSITORY='org/Assets')
         with patch.dict(os.environ, env), patch('subprocess.run') as spawn:
             exec(compile(code,'actual-workflow-step','exec'), {})
             spawn.assert_called_once()
@@ -182,7 +188,8 @@ class RegressionTests(unittest.TestCase):
             self.assertEqual(dict(zip(args[2::2], args[3::2])), {
                 '--source-sha': 'a'*40, '--source-dir': 'host-source', '--app-dir': 'source',
                 '--app-sha': 'd'*40, '--app-repository': 'org/App', '--assets-sha': 'b'*40,
-                '--assets-ref': 'macmini', '--platform': 'macos', '--output': report_directory,
+                '--assets-ref': 'macmini', '--assets-repository': 'org/Assets',
+                '--platform': 'macos', '--output': report_directory,
                 '--sdk-root': 'sdk', '--sdk-sha': 'c'*40, '--sdk-repository': 'org/SDK',
             })
             self.assertEqual(spawn.call_args.kwargs, {'check': True})

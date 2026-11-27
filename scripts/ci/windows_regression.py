@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 from common import digest, text_git, write_json
-from mac_regression import prepare_assets, server_regression
+from mac_regression import server_regression
 
 
 def require_desktop():
@@ -34,22 +34,21 @@ def require_desktop():
         user.CloseDesktop(desktop)
 
 
-def regression(source, executable, output, env, test_assets_sha):
+def regression(source, executable, output, env, *, assets, assets_sha):
     source, executable, output = Path(source), Path(executable), Path(output)
     require_desktop()
     from PIL import Image
     if not executable.is_file():
         raise RuntimeError('Windows regression executable is missing from the deployed App')
-    assets_sha = prepare_assets(source, test_assets_sha)
     output.mkdir(parents=True, exist_ok=True)
     tools = source / 'tools/journal'
     write_json(output / 'regression-inputs.json', dict(application=str(executable),
         application_sha256=digest(executable), app_sha=text_git(source, 'rev-parse', 'HEAD'),
-        assets_sha=assets_sha, journalTools={name: digest(tools / name) for name in
+        assets_sha=assets_sha, assets_path=str(assets), journalTools={name: digest(tools / name) for name in
         ('journal_runner.py', 'journal_execution_session.py', 'journal_display_profile.py')}))
     sys.path.insert(0, str(tools))
     from session_repository import discover_scenarios
-    scenes = [directory / 'metadata.json' for directory in discover_scenarios(source / 'tests/TestAssets/scenarios')]
+    scenes = [directory / 'metadata.json' for directory in discover_scenarios(assets / 'scenarios')]
     pending = []
     for metadata in scenes:
         declaration = json.loads(metadata.read_text(encoding='utf-8'))
@@ -67,7 +66,7 @@ def regression(source, executable, output, env, test_assets_sha):
     native.pop('QT_QPA_PLATFORM', None)
     native['PYTHONIOENCODING'] = 'utf-8'
     # The existing Server owns scheduling, display policy and serial rechecks.
-    summary, directory = server_regression(source, executable, output, native)
+    summary, directory = server_regression(source, executable, output, native, assets=assets)
     if (summary.get('status') != 'passed' or not summary.get('runComplete')
             or summary.get('selectionScope') != 'all' or summary.get('candidateCollection') or summary.get('cleanupError')):
         raise RuntimeError('Windows regression did not pass the complete Server task')
@@ -90,5 +89,5 @@ def regression(source, executable, output, env, test_assets_sha):
                 with Image.open(actual) as capture:
                     if capture.size != (1382, 954):
                         raise RuntimeError(f'Windows screenshot size differs: {actual}')
-    return dict(status='passed', assets_sha=assets_sha, case_count=summary['completedCaseCount'],
+    return dict(status='passed', assets_sha=assets_sha, assets_path=str(assets), case_count=summary['completedCaseCount'],
                 summary_path=str(directory / 'summary.json'))

@@ -20,6 +20,7 @@ ContentPage {
     property bool changingPage: false
     property bool pendingPrintAfterConnect: false
     property string activePageName: "prepare"
+    property var pendingWorkspace: null
     property var calibrationPanel: null
     readonly property var previewPage: previewLoader.item
     readonly property var realisticPage: realisticLoader.item
@@ -306,6 +307,97 @@ ContentPage {
     }
 
     ContentDialog {
+        id: presetSaveDialog
+        objectName: "presetSaveDialog"
+        width: Math.min(460, root.width - 24)
+        title: duplicate ? qsTr("Duplicate preset") : qsTr("Save user preset")
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape
+        property string domain: ""
+        property int filamentSlot: -1
+        property string revision: ""
+        property string error: ""
+        property bool canSaveCurrent: false
+        property bool duplicate: false
+        readonly property var nameStatus: visible
+            ? SliceSettingsBridge.savePreset(domain, filamentSlot, revision, true, newPresetName.text, true, false)
+            : ({})
+
+        function showFor(domain, slot, sourceName, duplicate) {
+            presetSaveDialog.domain = domain
+            presetSaveDialog.duplicate = duplicate
+            filamentSlot = slot
+            revision = SliceSettingsBridge.configurationRevisionToken()
+            canSaveCurrent = !duplicate && SliceSettingsBridge.savePreset(domain, slot, revision, false, "", true, false).valid
+            newPresetName.text = sourceName + " - " + qsTr("Copy")
+            overwritePreset.checked = false
+            error = ""
+            open()
+        }
+        function submit(saveAs) {
+            const result = SliceSettingsBridge.savePreset(domain, filamentSlot, revision,
+                saveAs, newPresetName.text, false, saveAs && overwritePreset.checked)
+            if (result.valid)
+                close()
+            else
+                error = result.message
+        }
+        onOpened: {
+            newPresetName.forceActiveFocus()
+            newPresetName.selectAll()
+        }
+        ColumnLayout {
+            width: presetSaveDialog.availableWidth
+            TextField {
+                id: newPresetName
+                objectName: "presetSaveDialog.name"
+                Layout.fillWidth: true
+                placeholderText: qsTr("Preset name")
+                onTextEdited: {
+                    overwritePreset.checked = false
+                    presetSaveDialog.error = ""
+                }
+                onAccepted: if (savePresetCopy.enabled) presetSaveDialog.submit(true)
+            }
+            Label {
+                Layout.fillWidth: true
+                visible: text.length > 0
+                wrapMode: Text.Wrap
+                textFormat: Text.PlainText
+                text: presetSaveDialog.error || presetSaveDialog.nameStatus.message
+                    || presetSaveDialog.nameStatus.overwriteWarning || ""
+            }
+            CheckBox {
+                id: overwritePreset
+                objectName: "presetSaveDialog.overwrite"
+                visible: !!presetSaveDialog.nameStatus.overwriteWarning
+                text: qsTr("Overwrite existing user preset")
+            }
+        }
+        footer: DialogButtonBox {
+            Button {
+                text: qsTr("Cancel")
+                onClicked: presetSaveDialog.close()
+            }
+            Button {
+                objectName: "presetSaveDialog.saveCurrent"
+                visible: presetSaveDialog.canSaveCurrent
+                text: qsTr("Save")
+                onClicked: presetSaveDialog.submit(false)
+            }
+            Button {
+                id: savePresetCopy
+                objectName: "presetSaveDialog.saveAs"
+                text: qsTr("Save as New Preset")
+                enabled: presetSaveDialog.nameStatus.valid === true
+                    && (!overwritePreset.visible || overwritePreset.checked)
+                onClicked: presetSaveDialog.submit(true)
+            }
+        }
+    }
+
+    ContentDialog {
         id: sendConfirmation
         objectName: "printerSendConfirmation"
         title: qsTr("Send to Printer")
@@ -558,56 +650,240 @@ ContentPage {
     }
 
     function ensureWorkspacePage(pageName) {
-        if (pageName === "preview") {
-            previewLoader.active = true
-            return previewPage
-        }
-        if (pageName === "realistic") {
-            realisticLoader.active = true
-            return realisticPage
-        }
-        return pageName === "prepare" ? preparePage : null
+        if (pageName === "prepare") return preparePage
+        const loader = workspaceLoader(pageName)
+        if (!loader) return null
+        // Export, reslice, and the guide need the page within this call.
+        loader.asynchronous = false
+        loader.active = true
+        return loader.item
+    }
+
+    function workspaceLoader(pageName) {
+        return pageName === "preview" ? previewLoader
+             : pageName === "realistic" ? realisticLoader : null
+    }
+
+    function updateWorkspaceEnvironment(pageName, requested) {
+        const environment = pageName === "preview" ? "slicing" : "normal"
+        if (requested && MenuData.currentEnvironment !== environment)
+            ActionManager.triggerAction("environment.switch", { environment: environment })
     }
 
     function activatePage(pageName, updateEnvironment, copyCamera = true) {
-        if (!dockReady || workspacePageNames.indexOf(pageName) < 0) {
+        if (!dockReady || workspacePageNames.indexOf(pageName) < 0
+                || (!StartupState.ready && pageName !== "prepare"))
+            return
+        if (pendingWorkspace && pendingWorkspace.pageName === pageName) {
+            pendingWorkspace.updateEnvironment = updateEnvironment
             return
         }
 
-        var sourceRenderer = rendererForPage(activePageName)
-        if (!ensureWorkspacePage(pageName))
-            return
-        var targetRenderer = rendererForPage(pageName)
+        const sourceRenderer = pendingWorkspace ? pendingWorkspace.sourceRenderer
+                                                : rendererForPage(activePageName)
+        const targetRenderer = rendererForPage(pageName)
+        const alreadyActive = activePageName === pageName && targetRenderer && targetRenderer.renderActive
+        const needsFirstFrame = StartupState.ready && !alreadyActive
+                && (!targetRenderer || (!targetRenderer.hasPresentedFrame && !targetRenderer.renderingError))
+        const dock = pageName === "preview" ? previewDock
+                   : pageName === "realistic" ? realisticDock : prepareDock
+        const viewport = pageName === "preview" ? previewViewport
+                       : pageName === "realistic" ? realisticViewport : prepareViewport
         changingPage = true
-        activePageName = pageName
-        if (copyCamera && sourceRenderer && targetRenderer && sourceRenderer !== targetRenderer)
-            targetRenderer.copyCameraStateFrom(sourceRenderer)
-        if (pageName === "preview") {
-            previewDock.setAsCurrentTab()
-            previewPage.renderer.activateView()
-            if (updateEnvironment && MenuData.currentEnvironment !== "slicing") {
-                ActionManager.triggerAction("environment.switch", {
-                    environment: "slicing"
-                })
+        try {
+            if (!needsFirstFrame && copyCamera && targetRenderer && sourceRenderer
+                    && targetRenderer !== sourceRenderer)
+                targetRenderer.copyCameraStateFrom(sourceRenderer)
+            pendingWorkspace = needsFirstFrame && !viewport.loadFailed
+                    ? { pageName, sourceRenderer, updateEnvironment, copyCamera, waitingForPaint: true } : null
+            activePageName = pageName
+            dock.setAsCurrentTab()
+            if (!pendingWorkspace)
+                updateWorkspaceEnvironment(pageName, updateEnvironment)
+        } finally {
+            changingPage = false
+        }
+    }
+
+    function startWorkspaceAfterLoadingFrame(pageName) {
+        const request = pendingWorkspace
+        if (!request || request.pageName !== pageName || activePageName !== pageName
+                || !request.waitingForPaint)
+            return
+        pendingWorkspace = { pageName, sourceRenderer: request.sourceRenderer,
+            updateEnvironment: request.updateEnvironment, copyCamera: request.copyCamera,
+            waitingForPaint: false }
+        const loader = workspaceLoader(pageName)
+        if (loader && loader.status !== Loader.Ready && loader.status !== Loader.Error) {
+            loader.asynchronous = true
+            loader.active = true
+        }
+        finishWorkspaceActivation(pageName)
+    }
+
+    function finishWorkspaceActivation(pageName) {
+        const request = pendingWorkspace
+        if (!request || request.pageName !== pageName || activePageName !== pageName
+                || request.waitingForPaint)
+            return
+        const loader = workspaceLoader(pageName)
+        if (loader && loader.status !== Loader.Ready && loader.status !== Loader.Error)
+            return
+        const targetRenderer = rendererForPage(pageName)
+        changingPage = true
+        try {
+            if (request.copyCamera && targetRenderer && request.sourceRenderer
+                    && targetRenderer !== request.sourceRenderer)
+                targetRenderer.copyCameraStateFrom(request.sourceRenderer)
+            pendingWorkspace = null
+            updateWorkspaceEnvironment(pageName, request.updateEnvironment)
+        } finally {
+            if (pendingWorkspace === request)
+                pendingWorkspace = null
+            changingPage = false
+        }
+    }
+
+    component WorkspaceViewport: Item {
+        id: viewport
+        SmoothUI.theme: Theme.of(viewport)
+        required property Item host
+        required property string pageName
+        property var renderer: null
+        property bool loadFailed: false
+        readonly property bool selected: host.dockReady && host.activePageName === pageName
+        readonly property bool pending: host.pendingWorkspace !== null
+                                        && host.pendingWorkspace.pageName === pageName
+        readonly property string renderError: loadFailed
+                ? qsTr("3D rendering stopped. Restart the application to try again.")
+                : renderer ? renderer.renderingError : ""
+        readonly property bool hasFrame: !!renderer && renderer.hasPresentedFrame
+        readonly property bool animateLoading: visible && !!Window.window
+                && Window.window.visibility !== Window.Minimized
+                && (Window.window.active || StartupState.backgroundReplay)
+        readonly property string loadingText: pageName === "preview" ? qsTr("Opening toolpath preview…")
+                : pageName === "realistic" ? qsTr("Opening realistic view…") : qsTr("Preparing 3D view…")
+        readonly property string loadingState: !StartupState.ready || !selected ? ""
+                : hasFrame ? "ready" : renderError.length > 0 ? "failed" : "waiting"
+
+        WorkspaceLoadingFrame {
+            id: loadingOverlay
+            objectName: "print.workspace.loading." + viewport.pageName
+            anchors.fill: parent
+            z: 5
+            color: Theme.res.solidBackgroundFillColorBase
+            opacity: 0
+            visible: state === "waiting" || state === "failed" || viewportReveal.running
+            armed: viewport.pending && viewport.host.pendingWorkspace.waitingForPaint
+                   && viewport.loadingState === "waiting"
+            onFramePresented: viewport.host.startWorkspaceAfterLoadingFrame(viewport.pageName)
+
+            state: viewport.loadingState
+            states: [
+                State {
+                    name: "waiting"
+                    PropertyChanges { target: loadingOverlay; opacity: 1 }
+                },
+                State {
+                    name: "failed"
+                    PropertyChanges { target: loadingOverlay; opacity: 1 }
+                },
+                State { name: "ready" }
+            ]
+            transitions: Transition {
+                id: viewportReveal
+                from: "waiting"
+                to: "ready"
+                enabled: viewport.animateLoading
+                OpacityAnimator { target: loadingOverlay; duration: 120; easing.type: Easing.OutCubic }
             }
-        } else if (pageName === "realistic") {
-            realisticDock.setAsCurrentTab()
-            realisticPage.renderer.activateView()
-            if (updateEnvironment && MenuData.currentEnvironment !== "normal") {
-                ActionManager.triggerAction("environment.switch", {
-                    environment: "normal"
-                })
+
+            MouseArea {
+                anchors.fill: parent
+                enabled: loadingOverlay.state === "waiting" || loadingOverlay.state === "failed"
+                acceptedButtons: Qt.AllButtons
+                onWheel: function(event) { event.accepted = true }
             }
-        } else {
-            prepareDock.setAsCurrentTab()
-            preparePage.renderer.activateView()
-            if (updateEnvironment && MenuData.currentEnvironment !== "normal") {
-                ActionManager.triggerAction("environment.switch", {
-                    environment: "normal"
-                })
+            Rectangle {
+                anchors.centerIn: parent
+                width: Math.max(0, Math.min(parent.width - 32,
+                    Math.max(248, Math.min(loadingOverlay.state === "failed" ? 380 : 320,
+                                          message.implicitWidth + 76))))
+                height: Math.max(68, statusRow.implicitHeight + 30)
+                radius: 10
+                border.width: 1
+                border.color: Theme.res.cardStrokeColorDefault
+                color: Theme.res.cardBackgroundColor
+                RowLayout {
+                    id: statusRow
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.margins: parent.width < 248 ? 12 : 16
+                    spacing: 12
+                    LoadingGlyph {
+                        visible: loadingOverlay.state !== "failed"
+                        Layout.preferredWidth: width
+                        Layout.preferredHeight: height
+                        accentColor: Colors.blue.defaultBrushFor(viewport.SmoothUI.dark)
+                        mutedColor: Theme.res.textFillColorSecondary
+                        animating: (loadingOverlay.state === "waiting" || viewportReveal.running)
+                                   && viewport.animateLoading
+                    }
+                    Label {
+                        visible: loadingOverlay.state === "failed"
+                        Layout.preferredWidth: 32
+                        horizontalAlignment: Text.AlignHCenter
+                        text: "!"
+                        font.pixelSize: 22
+                        color: Theme.res.systemFillColorCritical
+                    }
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+                        Label {
+                            id: message
+                            Layout.fillWidth: true
+                            text: loadingOverlay.state === "failed" ? qsTr("View could not be opened")
+                                                                     : viewport.loadingText
+                            font.pixelSize: 14
+                            font.weight: Font.Medium
+                            color: Theme.res.textFillColorPrimary
+                            wrapMode: Text.Wrap
+                            Accessible.role: Accessible.StaticText
+                            Accessible.name: text
+                        }
+                        Label {
+                            visible: loadingOverlay.state === "failed"
+                            Layout.fillWidth: true
+                            text: viewport.renderError
+                            color: Theme.res.textFillColorSecondary
+                            wrapMode: Text.Wrap
+                        }
+                    }
+                }
             }
         }
-        changingPage = false
+
+        Rectangle {
+            anchors.top: parent.top
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.topMargin: 16
+            width: Math.min(parent.width - 32, 560)
+            height: renderErrorLabel.implicitHeight + 24
+            radius: 6
+            z: 60
+            visible: viewport.hasFrame && viewport.renderError.length > 0
+            color: Theme.res.solidBackgroundFillColorBase
+            Label {
+                id: renderErrorLabel
+                anchors.fill: parent
+                anchors.margins: 12
+                text: viewport.renderError
+                wrapMode: Text.Wrap
+                color: Theme.res.textFillColorPrimary
+            }
+        }
     }
 
     DockingArea {
@@ -624,12 +900,20 @@ ContentPage {
             title: qsTr("Prepare")
             options: KDDW.KDDockWidgets.DockWidgetOption_NotClosable
 
-            Prepare3DPrintPage {
-                id: preparePage
-                workspaceContext: sharedWorkspaceContext
-                renderActive: StartupState.sceneReady && root.dockReady && root.activePageName === "prepare"
-                onWorkspaceRequested: function(workspaceName) {
-                    root.activatePage(workspaceName, true)
+            WorkspaceViewport {
+                id: prepareViewport
+                host: root
+                pageName: "prepare"
+                renderer: preparePage.renderer
+
+                Prepare3DPrintPage {
+                    id: preparePage
+                    anchors.fill: parent
+                    workspaceContext: sharedWorkspaceContext
+                    renderActive: StartupState.sceneReady && prepareViewport.selected && !prepareViewport.pending
+                    onWorkspaceRequested: function(workspaceName) {
+                        root.activatePage(workspaceName, true)
+                    }
                 }
             }
         }
@@ -640,16 +924,25 @@ ContentPage {
             title: qsTr("Preview")
             options: KDDW.KDDockWidgets.DockWidgetOption_NotClosable
 
-            Loader {
-                id: previewLoader
-                anchors.fill: parent
-                active: false
-                sourceComponent: Component {
-                    Preview3DPrintPage {
-                        workspaceContext: sharedWorkspaceContext
-                        renderActive: StartupState.ready && root.dockReady && root.activePageName === "preview"
-                        onWorkspaceRequested: function(workspaceName) {
-                            root.activatePage(workspaceName, true)
+            WorkspaceViewport {
+                id: previewViewport
+                host: root
+                pageName: "preview"
+                renderer: root.previewPage ? root.previewPage.renderer : null
+                loadFailed: previewLoader.status === Loader.Error
+
+                Loader {
+                    id: previewLoader
+                    anchors.fill: parent
+                    active: false
+                    onStatusChanged: root.finishWorkspaceActivation("preview")
+                    sourceComponent: Component {
+                        Preview3DPrintPage {
+                            workspaceContext: sharedWorkspaceContext
+                            renderActive: StartupState.ready && previewViewport.selected && !previewViewport.pending
+                            onWorkspaceRequested: function(workspaceName) {
+                                root.activatePage(workspaceName, true)
+                            }
                         }
                     }
                 }
@@ -662,16 +955,25 @@ ContentPage {
             title: qsTr("Realistic")
             options: KDDW.KDDockWidgets.DockWidgetOption_NotClosable
 
-            Loader {
-                id: realisticLoader
-                anchors.fill: parent
-                active: false
-                sourceComponent: Component {
-                    Realistic3DPrintPage {
-                        workspaceContext: sharedWorkspaceContext
-                        renderActive: StartupState.ready && root.dockReady && root.activePageName === "realistic"
-                        onWorkspaceRequested: function(workspaceName) {
-                            root.activatePage(workspaceName, true)
+            WorkspaceViewport {
+                id: realisticViewport
+                host: root
+                pageName: "realistic"
+                renderer: root.realisticPage ? root.realisticPage.renderer : null
+                loadFailed: realisticLoader.status === Loader.Error
+
+                Loader {
+                    id: realisticLoader
+                    anchors.fill: parent
+                    active: false
+                    onStatusChanged: root.finishWorkspaceActivation("realistic")
+                    sourceComponent: Component {
+                        Realistic3DPrintPage {
+                            workspaceContext: sharedWorkspaceContext
+                            renderActive: StartupState.ready && realisticViewport.selected && !realisticViewport.pending
+                            onWorkspaceRequested: function(workspaceName) {
+                                root.activatePage(workspaceName, true)
+                            }
                         }
                     }
                 }
@@ -818,6 +1120,8 @@ ContentPage {
         boundsItem: root
         workspaceReady: root.dockReady && StartupState.ready && root.activePageName === "prepare"
         onAddModelRequested: Global.starter.chooseModel({})
+        onPresetSaveRequested: (domain, slot, sourceName, duplicate) =>
+            presetSaveDialog.showFor(domain, slot, sourceName, duplicate)
         onDetailedSettingsRequested: function(workspaceIndex, slotIndex, restoreFocus) {
             globalPrintBar.openMachineSettings({workspaceIndex: workspaceIndex, slotIndex: slotIndex,
                 restoreFocus: restoreFocus})

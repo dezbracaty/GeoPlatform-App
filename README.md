@@ -122,10 +122,10 @@ CMake 从 PATH 和 Inno Setup 7 的标准用户/系统安装位置查找 ISCC。
 
 安装向导提供两种互斥的安装方式：
 
-- **全新安装（重置全部设置）**：更新程序，并用包内 `GPlatform.defaults.ini` 整份替换启动安装器用户的 `%LOCALAPPDATA%\GPlatform\GPlatform\GPlatform.ini`。旧键和值全部清除，默认中文、最小化导航窗格；模型和项目文件保留。
+- **全新安装（重置全部设置）**：更新程序，用包内 `GPlatform.defaults.ini` 替换启动安装器用户的 `%LOCALAPPDATA%\GPlatform\GPlatform.ini`，并清除切片选择记忆。默认中文、最小化导航窗格，用户另存的预设、模型和项目文件保留。
 - **覆盖安装（保留全部设置）**：只更新程序，用户 INI 原文件保持不变。
 
-检测到已有用户 INI 时默认选择覆盖安装，否则默认选择全新安装；不会记住上次的重置选择。需要静默安装时，可用 Inno Setup 标准参数 `/TASKS="settingskeep"` 或 `/TASKS="settingsreset"` 明确选择，未指定则使用相同的自动选择规则。
+检测到用户 INI 或切片选择记忆时默认选择覆盖安装，否则默认选择全新安装；不会记住上次的重置选择。需要静默安装时，可用 Inno Setup 标准参数 `/TASKS="settingskeep"` 或 `/TASKS="settingsreset"` 明确选择，未指定则使用相同的自动选择规则。
 默认 INI 由仓库 `config/GPlatform.defaults.ini` 维护，路径项留空后由程序采用当前用户的默认目录，不复制打包机器的个人配置。
 配置检测和替换在安装器原始启动用户身份下执行，UAC 使用另一个管理员账户授权时也不会改写该管理员的配置。请正常双击安装器，再按 UAC 提示授权；预先以其他账户启动安装器时，该账户本身就是安装器的启动用户。
 安装期间通过现有应用关闭流程退出旧程序，完成后由最后一页的启动选项决定是否打开新程序。配置操作仅发生在安装阶段，日常启动不执行版本重置。
@@ -198,7 +198,15 @@ Release 薄架构配置完成后，可在所选构建目录构建 `GPlatform_dis
 
 `tests/startup/check_translations.py` 属于 App 自身检查；
 `tests/startup/run_window_checks.py` 在 Windows 上运行，需要显式提供 `--application` 和 `--output`，默认使用本仓库的 Journal 工具。
-模型、场景 JSON 和预期由固定版本的 `tests/TestAssets` 子模块维护。
+模型、场景 JSON 和预期来自独立 TestAssets 仓库。启用 `GPLATFORM_BUILD_TESTS=ON` 时，CMake 在 configure 阶段将 Git/LFS 资产准备到 `tests/TestAssets` 并显示路径和完整 SHA。默认选择 macOS 的 `macmini` 或 Windows 的 `windows`，传入 `-DGPLATFORM_TEST_ASSETS_SHA=<full-sha>` 可固定版本。后续配置会离线核对并复用匹配的检出。已有目录的 HEAD 与所选 SHA 或本地记录的默认平台分支不符时，configure 停止并提示显式准备，保留用户分支和工作区。普通构建、SDK 检查和安装包构建不要求该目录。
+
+仅运行 Journal 时，可从 App 根目录显式准备：
+
+```sh
+cmake -P cmake/thirdparty/fetch_test_assets.cmake
+```
+
+脚本模式沿用平台默认分支。可在 `-P` 前传 `-DGPLATFORM_TEST_ASSETS_SHA=<full-sha>` 固定版本。CMake 使用本机 Git 凭据，并输出实际路径和 SHA。若已有检出的版本不匹配，先保存改动，再用 Git 手动选定版本。
 共享业务验收入口为 `tools/run_acceptance.py`，Python 工具和网页工作台唯一实现位于 `tools/journal/`，
 随本 App 一起更新，完整宿主和独立 App 都默认使用它。网页工作台入口为 `tools/journal/journal_server.py`；执行与文件保留在服务电脑，其他电脑通过浏览器访问。
 `--journal-tools` 保留为显式开发覆盖；正常测试无需配置外部目录。

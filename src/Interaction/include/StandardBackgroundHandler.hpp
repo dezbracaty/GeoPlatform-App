@@ -61,6 +61,8 @@ public:
 
         onCleanup(); // 子类清理
         setActive(false);
+        if (m_context && m_context->getInvocationId().isEmpty())
+            m_context->reportCompletion(false, !m_context->hasError());
         m_context.reset();
 
         LOG_INFO("Background Handler deactivated: {}", metaObject()->className());
@@ -85,16 +87,18 @@ public:
 
     void onResume() final override {
         if (m_state == State::Background) {
+            const auto context = m_context;
             m_state = State::Active;
             setActive(true);
 
-            const bool trackedInvocation = m_context &&
-                !m_context->getInvocationId().trimmed().isEmpty();
+            const bool trackedInvocation = context &&
+                !context->getInvocationId().trimmed().isEmpty();
             const ScopedTransactionContextMetadata transactionScope(
                 getActionCode(),
-                m_context ? m_context->getInvocationMetadata() : QVariantMap{},
+                context ? context->getInvocationMetadata() : QVariantMap{},
                 trackedInvocation);
             onBackgroundCompleted(); // 子类处理后台结果
+            if (m_context != context) return;
 
             // 从 TaskStateNotifier 注销任务
             if (!m_taskId.isEmpty()) {
@@ -108,11 +112,10 @@ public:
             // 处理完成后自动退出（除非子类要求继续）
             if (!shouldKeepActive()) {
                 // 延迟退出，让ActionManager在下一个事件循环中处理
-                QTimer::singleShot(0, this, [this]() {
-                    if (m_context && !m_context->hasError()) {
-                        m_context->setResult(getCompletionResult());
-                    }
-                    completeInvocation(m_context);
+                QTimer::singleShot(0, this, [this, context]() {
+                    if (!context || m_context != context) return;
+                    if (!context->hasError()) context->setResult(getCompletionResult());
+                    completeInvocation(context);
                     // 设置为非活跃状态，让ActionManager知道Handler已完成
                     setActive(false);
                     LOG_INFO("Handler marked as completed: {}", metaObject()->className());

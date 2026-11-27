@@ -26,6 +26,7 @@ class SliceSettingsBridge final : public bridge::BridgeBase {
     Q_PROPERTY(bool hasPendingReslice READ hasPendingReslice NOTIFY hasPendingResliceChanged)
     Q_PROPERTY(QVariantMap settings READ settings WRITE setSettings NOTIFY settingsChanged)
     Q_PROPERTY(QStringList modifiedSettingKeys READ modifiedSettingKeys NOTIFY settingsChanged)
+    Q_PROPERTY(QStringList modifiedPrinterSettingKeys READ modifiedPrinterSettingKeys NOTIFY settingsChanged)
     Q_PROPERTY(bool printerPresetModified READ printerPresetModified NOTIFY settingsChanged)
     Q_PROPERTY(bool schemaLoaded READ schemaLoaded NOTIFY schemaChanged)
     Q_PROPERTY(int schemaRevision READ schemaRevision NOTIFY schemaChanged)
@@ -50,6 +51,7 @@ public:
         libslicer::ActiveConfigView view;
         QVariantMap machine;
         QStringList modifiedProcessKeys;
+        QStringList modifiedPrinterKeys;
         std::unordered_map<std::string, std::size_t> itemIndex;
         QVariantList schemaSettings, schemaPages, filamentSlots;
         QHash<QString, QVariantMap> schemaByKey;
@@ -71,6 +73,7 @@ public:
 
     QVariantMap settings() const;
     QStringList modifiedSettingKeys() const;
+    QStringList modifiedPrinterSettingKeys() const;
     bool printerPresetModified() const;
     void setSettings(const QVariantMap& settings);
 
@@ -91,6 +94,8 @@ public:
                                    const QString& printerPresetId = {});
     Q_INVOKABLE void resolvePrinterSwitch(const QString& action, const QString& saveName = {});
     Q_INVOKABLE QVariantMap printerSwitchPresetNameStatus(const QString& name);
+    Q_INVOKABLE QVariantMap savePreset(const QString& type, int filamentSlot, const QString& revision,
+        bool saveAs, const QString& name, bool validateOnly, bool overwriteConfirmed = false);
     Q_INVOKABLE bool selectProcessPreset(const QString& presetId);
     Q_INVOKABLE bool selectFilamentPreset(const QString& presetId);
     Q_INVOKABLE bool selectFilamentPresetForSlot(int slotIndex, const QString& presetId);
@@ -144,6 +149,7 @@ signals:
     void localProcessSettingsChanged();
     void settingChanged(const QString& key, const QVariant& value);
     void settingRejected(const QString& key, const QString& message);
+    void selectionSaveFailed(const QString& message);
     void schemaChanged();
     void machineSelectionChanged();
     void presetSelectionChanged();
@@ -169,22 +175,22 @@ private:
                                      const QVariant& value) const;
     QVariantMap rowForDefinitionLocked(const QVariantMap& definition) const;
     static QVariantList presetOptions(const std::vector<libslicer::PresetOption>& options);
-    static QVariantList filamentSlotItems(
-        const std::vector<libslicer::FilamentSlotInfo>& filamentSlots,
-        const std::vector<libslicer::SettingItem>& settings);
+    static QVariantList filamentSlotItems(const libslicer::ActiveConfigView&);
     static QString presetName(const std::vector<libslicer::PresetOption>& options,
                               const std::string& selectedId);
     bool isVisibleInMode(const QVariantMap& definition, bool showAdvancedMode) const;
     void setPendingLocked(bool* changed);
     void setConfigurationError(const QString& message);
+    void persistSelection(std::uint64_t revision, libslicer::SelectionSaveOptions options = {});
     bool replaceConfig(GPlatform::SlicingConfigActivationResult&& result, bool markPending,
-                       bool synchronizePlateMaterials = false);
+                       bool synchronizePlateMaterials = false, bool rememberSelection = true);
     struct PendingPrinterSwitch {
         libslicer::ConfigSelection target;
         libslicer::PrinterSwitchReview review;
         std::vector<libslicer::PrinterSwitchDecision> decisions;
-        std::vector<std::pair<std::string, std::string>> remembered;
+        std::vector<std::pair<std::string, std::string>> projectOverrides;
         bool presetSaved{false};
+        bool dependentPresetSaved{false};
         // Complete GUI projection retained only while review occupies the
         // worker, so synchronous popup-close refreshes cannot wait behind IO.
         QVariantList printerCatalog;
@@ -202,7 +208,7 @@ private:
     std::vector<libslicer::PresetOption> m_compatibleFilaments;
     std::vector<libslicer::SettingItem> m_items;
     QStringList m_modifiedProcessKeys;
-    bool m_printerPresetModified{false};
+    QStringList m_modifiedPrinterKeys;
     std::unordered_map<std::string, std::size_t> m_itemIndex;
     QVariantList m_schemaSettings;
     QVariantList m_schemaPages;

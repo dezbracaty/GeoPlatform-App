@@ -1,8 +1,9 @@
 #pragma once
-#include <ToolpathPreviewTypes.hpp>
+#include <ToolpathPreviewDB.hpp>
 #include <GCodeSource.hpp>
 #include <QStringList>
 #include <functional>
+#include <optional>
 #include <libslicer/Toolpath.hpp>
 #include <libslicer/Library.hpp>
 
@@ -21,6 +22,7 @@ struct CapturedToolpathSource {
 };
 struct PreparedToolpathPreview {
     ToolpathPreviewData data;
+    std::optional<ToolpathPreviewDB::PreparedInspectionGeometry> inspection;
     QStringList warnings;
     QString error;
     QString sourceError;

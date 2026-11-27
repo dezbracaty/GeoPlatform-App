@@ -16,50 +16,20 @@ import urllib.request
 import urllib.error
 import uuid
 
-from common import git_env, run, text_git, write_json
+from common import run, text_git, write_json
 
 
 STATE_RECOVERY_SECONDS = 60
 PROGRESS_HEARTBEAT_SECONDS = 60
 
 
-def prepare_assets(source, selected_sha=None):
-    """Initialize the declared repository, then consume the independently prepared test commit."""
-    source = Path(source)
-    expected = text_git(source, 'rev-parse', 'HEAD:tests/TestAssets')
-    if len(expected) != 40:
-        raise RuntimeError('Regression requires a fixed TestAssets gitlink')
-    env = git_env()
-    run(['git', '-C', source, 'submodule', 'sync', '--', 'tests/TestAssets'], env=env)
-    run(['git', '-C', source, 'submodule', 'update', '--init', '--checkout', '--', 'tests/TestAssets'],
-        env=env, attempts=3)
-    assets = source / 'tests/TestAssets'
-    if text_git(assets, 'rev-parse', 'HEAD') != expected:
-        raise RuntimeError('TestAssets differs from the App fixed gitlink')
-    selected_sha = selected_sha or expected
-    if re.fullmatch('[0-9a-f]{40}', selected_sha) is None:
-        raise ValueError('TestAssets must be pinned to a complete prepared SHA')
-    if selected_sha != expected:
-        # The native phase may already have fetched this exact commit.
-        cached = subprocess.run(
-            ['git', '-C', assets, 'cat-file', '-t', selected_sha],
-            env=dict(env, GIT_NO_LAZY_FETCH='1'), capture_output=True)
-        if cached.returncode or cached.stdout.strip() != b'commit':
-            run(['git', '-C', assets, 'fetch', '--depth=1', 'origin', selected_sha], env=env, attempts=3)
-        run(['git', '-C', assets, 'checkout', '--detach', selected_sha], env=env)
-    if text_git(assets, 'rev-parse', 'HEAD') != selected_sha:
-        raise RuntimeError('TestAssets differs from the prepared regression SHA')
-    run(['git', '-C', assets, 'lfs', 'pull'], env=env, attempts=3)
-    return selected_sha
-
-
-def server_regression(source, executable, output, env, *, timeout=14400):
+def server_regression(source, executable, output, env, *, assets, timeout=14400):
     """Own a normal Server process, submit one all-ID task, retain both attempt stages."""
     output = Path(output)
     tools = Path(source) / 'tools/journal'
     sys.path.insert(0, str(tools))
     from session_repository import discover_scenarios
-    ids = [path.name for path in discover_scenarios(Path(source) / 'tests/TestAssets/scenarios')]
+    ids = [path.name for path in discover_scenarios(assets / 'scenarios')]
     if not ids:
         raise RuntimeError('No active Journal scenarios')
     code = f'{secrets.randbelow(1000000):06d}'
@@ -71,7 +41,7 @@ def server_regression(source, executable, output, env, *, timeout=14400):
                "sys.argv=sys.argv[1:]; sys.path.insert(0,str(Path(sys.argv[0]).resolve().parent)); "
                "runpy.run_path(sys.argv[0],run_name='__main__')")
     command = [sys.executable, '-u', '-c', wrapper, tools / 'journal_server.py',
-               '--application', executable, '--app-root', source, '--assets', Path(source) / 'tests/TestAssets',
+               '--application', executable, '--app-root', source, '--assets', assets,
                '--output-root', output / 'run', '--exports', output / 'exports',
                '--port', '0', '--listen', '127.0.0.1', '--token', code, '--no-browser']
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),
@@ -193,7 +163,7 @@ def server_regression(source, executable, output, env, *, timeout=14400):
                 raise RuntimeError(f'Journal Server cleanup failed: exit {child.returncode}')
 
 
-def regression(source, bundle, output, env, test_assets_sha=None):
+def regression(source, bundle, output, env, *, assets, assets_sha):
     source, bundle, output = Path(source), Path(bundle), Path(output)
     if sys.platform != 'darwin':
         raise RuntimeError('macOS GUI regression requires macOS')
@@ -205,7 +175,6 @@ def regression(source, bundle, output, env, test_assets_sha=None):
         raise RuntimeError('The selected App commit is missing its bundled tools/journal')
     # Importing the comparator here checks required automatic-verification dependencies.
     run([sys.executable, '-c', 'import PIL'], env=env)
-    assets_sha = prepare_assets(source, test_assets_sha)
     executable = bundle / 'Contents/MacOS/GPlatform'
     if not executable.is_file():
         raise RuntimeError('Regression executable is missing from the audited App bundle')
@@ -213,6 +182,7 @@ def regression(source, bundle, output, env, test_assets_sha=None):
     paths = [tools / name for name in ('journal_runner.py', 'journal_execution_session.py', 'journal_display_profile.py')]
     from common import digest
     write_json(output / 'regression-inputs.json', dict(application=str(executable), assets_sha=assets_sha,
+               assets_path=str(assets),
                app_sha=text_git(source, 'rev-parse', 'HEAD'),
                journalTools={path.name: digest(path) for path in paths}))
     # SDK checks use offscreen, but real Journal GUI regression must use the native desktop.
@@ -221,6 +191,6 @@ def regression(source, bundle, output, env, test_assets_sha=None):
                 'QT_AUTO_SCREEN_SCALE_FACTOR', 'QT_FONT_DPI', 'QT_ENABLE_HIGHDPI_SCALING',
                 'QT_SCALE_FACTOR_ROUNDING_POLICY'):
         native_env.pop(key, None)
-    summary, directory = server_regression(source, executable, output, native_env)
-    return dict(status='passed', assets_sha=assets_sha, case_count=summary['completedCaseCount'],
+    summary, directory = server_regression(source, executable, output, native_env, assets=assets)
+    return dict(status='passed', assets_sha=assets_sha, assets_path=str(assets), case_count=summary['completedCaseCount'],
                 summary_path=str(directory / 'summary.json'))

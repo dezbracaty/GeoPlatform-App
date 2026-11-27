@@ -115,28 +115,72 @@ FramelessWindow {
     }
     
     onCloseListener: function(event) {
-        dialog_close.open()
         event.accepted = false
+        if (!StartupState.ready)
+            StartupState.requestExit()
+        else
+            dialog_close.open()
     }
     
     Component.onCompleted: {
         StartupState.attachMainWindow(window)
     }
     
-    // Keep the native surface mapped for Prepare's first frame, while blocking
-    // all ordinary content interaction behind the startup Tool window.
-    MouseArea {
+    // Submit this surface before retiring the bootstrap window, and keep the
+    // Prepare renderer visible beneath it until its own first frame.
+    WorkspaceLoadingFrame {
+        id: startupCover
         parent: window.contentItem
+        objectName: "gplatform.startup.mainCover"
         anchors.fill: parent
         z: 100000
-        visible: !StartupState.ready
-        acceptedButtons: Qt.AllButtons
-        hoverEnabled: true
-        preventStealing: true
-        onWheel: function(event) { event.accepted = true }
-        focus: visible
-        Keys.onPressed: function(event) { event.accepted = true }
-        Keys.onReleased: function(event) { event.accepted = true }
+        visible: !StartupState.ready || startupReveal.running
+        armed: !StartupState.ready
+        color: startupContent.backgroundColor
+        opacity: 0
+        state: StartupState.ready ? "ready" : "waiting"
+        states: [
+            State { name: "waiting"; PropertyChanges { target: startupCover; opacity: 1 } },
+            State { name: "ready" }
+        ]
+        transitions: Transition {
+            id: startupReveal
+            from: "waiting"
+            to: "ready"
+            enabled: window.active || StartupState.backgroundReplay
+            OpacityAnimator { target: startupCover; duration: 120; easing.type: Easing.OutCubic }
+        }
+        onFramePresented: StartupState.mainLoadingFramePresented()
+
+        MouseArea {
+            anchors.fill: parent
+            enabled: !StartupState.ready
+            acceptedButtons: Qt.AllButtons
+            hoverEnabled: true
+            preventStealing: true
+            onWheel: function(event) { event.accepted = true }
+        }
+        StartupLoadingContent {
+            id: startupContent
+            readonly property rect splash: StartupState.splashGeometry
+            readonly property point panelCenter: {
+                if (splash.width <= 0 || splash.height <= 0)
+                    return Qt.point(startupCover.width / 2, startupCover.height / 2)
+                // Track main-window movement and map through the client area,
+                // including any native title bar offset.
+                const origin = startupCover.mapFromGlobal(window.x, window.y)
+                return Qt.point(origin.x + splash.x - window.x + splash.width / 2,
+                                origin.y + splash.y - window.y + splash.height / 2)
+            }
+            width: Math.min(startupCover.width, splash.width > 0 ? splash.width : implicitWidth)
+            height: Math.min(startupCover.height, splash.height > 0 ? splash.height : implicitHeight)
+            x: Math.round(Math.max(0, Math.min(startupCover.width - width, panelCenter.x - width / 2)))
+            y: Math.round(Math.max(0, Math.min(startupCover.height - height, panelCenter.y - height / 2)))
+            enabled: !StartupState.ready
+            animating: startupCover.visible && StartupState.mainLoadingPresented
+                       && (window.active || StartupState.backgroundReplay)
+                       && window.visibility !== Window.Minimized
+        }
     }
 
     InfoBarManager {
@@ -192,6 +236,9 @@ FramelessWindow {
 
         function onSettingRejected(key, message) {
             NotificationManager.showWarning(qsTr("Setting not applied"), message)
+        }
+        function onSelectionSaveFailed(message) {
+            NotificationManager.showWarning(qsTr("Slicing selection"), message)
         }
     }
 

@@ -5,6 +5,7 @@ import hashlib
 import html
 import json
 import os
+import re
 import sys
 import time
 import threading
@@ -14,9 +15,12 @@ from pathlib import Path
 from urllib.parse import quote
 from session_repository import JournalSessionRepository
 from journal_display_profile import WINDOW_PROFILE, wait_for_window
+from journal_replay_evidence import ReplayEvidence, runtime_document
 
 
 FORMAT_VERSION = 2
+SIGNAL_FORMAT_VERSION = 3
+SIGNAL_NAME = re.compile(r"#[A-Za-z0-9_.-]+")
 DB_SERIALIZATION_FORMAT = "transdb.cereal-portable-binary.v1"
 # Only these reviewed native-import question images contain the continuously
 # animated task indicator. Other stages, including cancel/retry, remain exact.
@@ -96,18 +100,26 @@ def load_journal(path):
     document = json.loads(source)
     if not isinstance(document, dict):
         raise JournalFormatError("Journal root must be an object")
-    if document.get("formatVersion") != FORMAT_VERSION:
-        raise JournalFormatError("Only Journal formatVersion 2 is supported")
+    version = document.get("formatVersion")
+    if type(version) is not int or version not in (FORMAT_VERSION, SIGNAL_FORMAT_VERSION):
+        raise JournalFormatError("Only Journal formatVersion 2 or 3 is supported")
     if set(document) != {"formatVersion", "entries"}:
         raise JournalFormatError("Journal fields must be formatVersion/entries; descriptions belong in metadata.json")
     entries = document.get("entries")
     if not isinstance(entries, list) or not entries:
-        raise JournalFormatError("Journal v2 requires a non-empty entries array")
+        raise JournalFormatError("Journal requires a non-empty entries array")
 
     previous_time = -1
+    operations = []
     for index, entry in enumerate(entries):
+        if isinstance(entry, str):
+            if version != SIGNAL_FORMAT_VERSION or not SIGNAL_NAME.fullmatch(entry):
+                raise JournalFormatError(f"entries[{index}] requires formatVersion 3 and a #signal name")
+            continue
         if not isinstance(entry, dict):
-            raise JournalFormatError(f"entries[{index}] must be an object")
+            raise JournalFormatError(f"entries[{index}] must be an operation object or a #signal string")
+        if entry.get("kind") == "signal":
+            raise JournalFormatError(f"entries[{index}] must use a #signal string instead of a signal object")
         if set(entry) != {"atMs", "kind", "payload"}:
             raise JournalFormatError(f"entries[{index}] fields must be atMs/kind/payload; array order defines sequence")
         if (isinstance(entry["atMs"], bool) or
@@ -117,13 +129,13 @@ def load_journal(path):
             raise JournalFormatError("Journal entries must be ordered by atMs")
         previous_time = entry["atMs"]
         # The wire entry still requires sequence; the file has only array order.
-        entry["sequence"] = index + 1
-        if entry["kind"] not in ENTRY_KINDS:
-            raise JournalFormatError(
-                f"entries[{index}] has unsupported kind {entry['kind']!r}")
+        entry["sequence"] = len(operations) + 1
         if not isinstance(entry["payload"], dict):
             raise JournalFormatError(f"entries[{index}].payload must be an object")
         payload = entry["payload"]
+        if entry["kind"] not in ENTRY_KINDS:
+            raise JournalFormatError(
+                f"entries[{index}] has unsupported kind {entry['kind']!r}")
         if "uiReady" in payload:
             condition = payload["uiReady"]
             if (entry["kind"] not in {"verify.screenshot", "verify.db"} or not isinstance(condition, dict) or
@@ -150,16 +162,9 @@ def load_journal(path):
                         prior["payload"].get("target") == target["target"] and
                         isinstance(prior["payload"].get("window"), dict) and
                         prior["payload"]["window"].get("objectName") == window_name
-                        for prior in entries[:index]):
+                        for prior in operations):
                     raise JournalFormatError(
                         f"entries[{index}] absent observation requires earlier real named input to the same window and target")
-        if "readyTimeoutMs" in payload:
-            if (entry["kind"] not in {"input.mouse", "input.key", "input.wheel"} or
-                    not isinstance(payload.get("target"), str) or not payload["target"] or
-                    type(payload["readyTimeoutMs"]) is not int or
-                    not 1 <= payload["readyTimeoutMs"] <= 300000):
-                raise JournalFormatError(
-                    f"entries[{index}] readyTimeoutMs requires named mouse/key/wheel input and an integer from 1 to 300000")
         if entry["kind"] == "action" and not payload.get("code"):
             raise JournalFormatError(f"entries[{index}] action has no code")
         if entry["kind"] == "capture.db":
@@ -205,6 +210,11 @@ def load_journal(path):
                 _blur_radius(payload.get("blurRadius", 0))
             except ValueError as exc:
                 raise JournalFormatError(f"entries[{index}] {exc}") from exc
+        operations.append(entry)
+    if not operations or (version == SIGNAL_FORMAT_VERSION and len(operations) == len(entries)):
+        raise JournalFormatError("Journal requires operations and formatVersion 3 requires a #signal")
+    document["entries"] = operations
+    document["source"] = source
     document["journalPath"] = str(path.resolve())
     document["journalSha256"] = hashlib.sha256(source).hexdigest()
     return document
@@ -213,12 +223,15 @@ def load_journal(path):
 def write_journal(path, entries):
     path = Path(path)
     if not entries:
-        raise JournalFormatError("Cannot write an empty Journal v2")
+        raise JournalFormatError("Cannot write an empty Journal")
+    signal_entries = sum("marker" in entry for entry in entries)
+    if signal_entries == len(entries):
+        raise JournalFormatError("Recording contains signals but no operation")
     ordered = sorted(entries, key=lambda item: (item["atMs"], item["sequence"]))
     document = {
-        "formatVersion": FORMAT_VERSION,
-        "entries": [{key: entry[key] for key in ("atMs", "kind", "payload")}
-                    for entry in ordered],
+        "formatVersion": SIGNAL_FORMAT_VERSION if signal_entries else FORMAT_VERSION,
+        "entries": [entry["marker"] if "marker" in entry else
+                    {key: entry[key] for key in ("atMs", "kind", "payload")} for entry in ordered],
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -404,6 +417,11 @@ class ScreenshotComparisons:
         future = self._executor.submit(self._compare, expected, actual, diff, error, exclude_import_progress)
         with self._submission_lock:
             self._jobs.append((future, result, str(output.resolve())))
+
+    def compare_checkpoint(self, prepared, actual):
+        expected, diff, error, exclude_import_progress = prepared
+        return self._executor.submit(self._compare, expected, actual, diff, error,
+                                     exclude_import_progress).result()
 
     def track(self, summary):
         if any(step.get("status") == "pending" for step in summary["results"]):
@@ -641,10 +659,10 @@ class JournalRunner:
             raise RuntimeError("Recording session path is unavailable")
         result = self.client.stop_recording()
         entries = list(result["entries"]) + self._checkpoints
-        if not entries:
+        if not any("marker" not in entry for entry in entries):
             self.recording = False
             self._recording_id = None
-            raise JournalFormatError("Recording contains no entries to save")
+            raise JournalFormatError("Recording contains no operation to save")
         self._pending_recording = {
             "path": session_path,
             "entries": copy.deepcopy(entries),
@@ -669,265 +687,97 @@ class JournalRunner:
         paths = self.client.paths() if output_dir is None else {}
         return JournalSessionRepository(playbacks=paths.get("playbacks")).create_playback(output_dir)
 
-    def _wait_for_readiness(self, timeout_ms, cancel_event, details, capability, probe, unavailable):
-        cancelled = cancel_event if cancel_event is not None else threading.Event()
-        started = time.monotonic()
-        deadline = started + timeout_ms / 1000.0
-        details.update(probeCount=0, ready=False,
-                       startedAt=datetime.now().astimezone().isoformat(timespec="microseconds"))
-
-        def request(method, params=None):
-            if cancelled.is_set():
-                raise InterruptedError("Replay cancelled by caller")
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise TimeoutError("UI readiness deadline exceeded")
-            return self.client.request(method, params, timeout=remaining, cancel_event=cancelled)
-
-        try:
-            capabilities = request("system.version").get("capabilities")
-            if (not isinstance(capabilities, dict) or
-                    capabilities.get(capability) is not True):
-                raise RuntimeError(unavailable)
-            while True:
-                details["probeCount"] += 1
-                ready = probe(request, details)
-                if cancelled.is_set():
-                    raise InterruptedError("Replay cancelled by caller")
-                if time.monotonic() >= deadline:
-                    raise TimeoutError("UI readiness deadline exceeded")
-                if ready:
-                    details["ready"] = True
-                    details["readyAt"] = datetime.now().astimezone().isoformat(timespec="microseconds")
-                    return
-                if cancelled.wait(min(0.05, max(0, deadline - time.monotonic()))):
-                    raise InterruptedError("Replay cancelled by caller")
-        finally:
-            details["waitSeconds"] = time.monotonic() - started
-
-    def _wait_for_input(self, entry, timeout_ms, cancel_event, details):
-        def probe(request, evidence):
-            state = request("journal.entry.execute", {"entry": entry, "checkOnly": True})
-            if type(state.get("ready")) is not bool:
-                raise RuntimeError("Invalid named input readiness response")
-            if not state["ready"]:
-                evidence["reason"] = state.get("reason", "")
-            return state["ready"]
-        self._wait_for_readiness(timeout_ms, cancel_event, details, "namedInputReadiness", probe,
-            "Application does not support named input readiness; no input was dispatched")
-
-    def _wait_for_ui(self, condition, cancel_event, details, *, unavailable=
-                     "Application does not support named target visibility; no screenshot was captured"):
-        def probe(request, evidence):
-            observations = []
-            ready = True
-            for target in condition["targets"]:
-                descriptor = {"target": target["target"],
-                    "window": condition.get("window", WINDOW_PROFILE["window"])}
-                state = request("journal.entry.execute", {"checkOnly": True, "observeTarget": descriptor})
-                if any(type(state.get(field)) is not bool for field in ("exists", "visible", "ready")):
-                    raise RuntimeError("Invalid named target visibility response")
-                if not state["exists"] and (state["visible"] or state["ready"]):
-                    raise RuntimeError("Inconsistent named target visibility response")
-                if target["state"] == "hidden" and not state["exists"]:
-                    raise RuntimeError("Hidden observation target does not exist: " + target["target"])
-                if target["state"] == "input-ready":
-                    satisfied = state["ready"]
-                elif target["state"] == "absent":
-                    satisfied = not state["exists"]
-                else:
-                    satisfied = not state["visible"]
-                ready = ready and satisfied
-                observations.append(dict(target, **state))
-            evidence["observations"] = observations
-            return ready
-        self._wait_for_readiness(condition["timeoutMs"], cancel_event, details, "namedTargetVisibility", probe,
-                                unavailable)
-
-    def _execute_entry(self, journal_path, output, entry, index, validate, *, cancel_event=None):
-        result = {"index": index, "kind": entry["kind"],
-                  "atMs": entry["atMs"], "status": "passed",
-                  "message": "executed", "evidence": []}
-        capture_target = None
-        try:
-            if entry["kind"].startswith("input.") or entry["kind"] == "action":
-                if entry["kind"] == "action":
-                    result["actionCode"] = entry["payload"]["code"]
-                dispatched = entry
-                screenshot_path = None
-                screenshot_standard = None
-                if (entry["kind"] == "action" and
-                        entry["payload"].get("code") == "file.import"):
-                    filepath = entry["payload"].get("params", {}).get("filePath")
-                    if (isinstance(filepath, str) and filepath and
-                            not Path(filepath).is_absolute()):
-                        fixture_path = (journal_path.parent / filepath).resolve()
-                        if not fixture_path.is_file():
-                            raise FileNotFoundError(
-                                f"Import fixture does not exist: {fixture_path}")
-                        dispatched = copy.deepcopy(entry)
-                        dispatched["payload"]["params"]["filePath"] = str(fixture_path)
-                if entry["kind"] == "action" and entry["payload"].get("code") == "screenshot.capture":
-                    filepath = entry["payload"].get("params", {}).get("filepath")
-                    screenshot_path = (output / (filepath or f"screenshots/screenshot_{index:03d}_actual.png")).resolve()
-                    if screenshot_path.exists():
-                        raise FileExistsError(f"Screenshot already exists: {screenshot_path}")
-                    screenshot_path.parent.mkdir(parents=True, exist_ok=True)
-                    dispatched = copy.deepcopy(entry)
-                    dispatched["payload"].setdefault("params", {})["filepath"] = str(screenshot_path)
-                    # Baseline is a Python executor binding, not an App Action parameter.
-                    dispatched["payload"].pop("baseline", None)
-                    if validate:
-                        screenshot_standard = self.comparisons.prepare(
-                            journal_path, output, entry["payload"], index, screenshot_path)
-                if "readyTimeoutMs" in dispatched["payload"]:
-                    dispatched = copy.deepcopy(dispatched)
-                    timeout_ms = dispatched["payload"].pop("readyTimeoutMs")
-                    self._wait_for_input(dispatched, timeout_ms, cancel_event,
-                                         result.setdefault("inputReadiness", {}))
-                    if cancel_event is not None and cancel_event.is_set():
-                        raise InterruptedError("Replay cancelled by caller")
-                    result["inputReadiness"]["dispatchRequestedAt"] = datetime.now().astimezone().isoformat(timespec="microseconds")
-                capture_target = screenshot_path
-                self.client.execute_entry(dispatched)
-                if screenshot_path is not None:
-                    if not screenshot_path.is_file() or screenshot_path.stat().st_size == 0:
-                        raise RuntimeError(f"Screenshot Action did not save an image: {screenshot_path}")
-                    result["evidence"].append(screenshot_path)
-                    if validate:
-                        self.comparisons.submit(output, screenshot_standard, screenshot_path, result)
-                    else:
-                        result.update(message="Candidate screenshot saved; not verification",
-                                      comparison=dict(status="skipped"))
-            elif entry["kind"] == "capture.db":
-                data = self.client.serialize_db(entry["payload"]["dbInstanceId"])
-                raw = base64.b64decode(data["serialized"], validate=True)
-                actual_path = output / "reports" / f"db_{index:03d}_actual.bin"
-                result["evidence"].append(actual_path)
-                actual_path.write_bytes(raw)
-                metadata_path = actual_path.with_suffix(".json")
-                metadata_path.write_text(json.dumps({
-                    "dbInstanceId": data["dbInstanceId"],
-                    "serializationFormat": data["serializationFormat"],
-                    "byteCount": len(raw), "sha256": hashlib.sha256(raw).hexdigest(),
-                }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-                result["evidence"].append(metadata_path)
-                result["message"] = "raw DB data captured; no baseline comparison"
-            elif not validate:
-                result["status"] = "skipped"
-                result["message"] = "validation disabled by caller"
-            elif entry["kind"] == "verify.db":
-                if "uiReady" in entry["payload"]:
-                    self._wait_for_ui(entry["payload"]["uiReady"], cancel_event,
-                        result.setdefault("uiReadiness", {}), unavailable=
-                        "Application does not support named target visibility; no DB state was read")
-                    if cancel_event is not None and cancel_event.is_set():
-                        raise InterruptedError("Replay cancelled by caller")
-                    result["uiReadiness"]["serializeRequestedAt"] = datetime.now().astimezone().isoformat(timespec="microseconds")
-                actual_result = self.client.serialize_db(
-                    entry["payload"]["dbInstanceId"])
-                expected_format = entry["payload"]["serializationFormat"]
-                actual_format = actual_result.get("serializationFormat")
-                if actual_format != expected_format:
-                    raise RuntimeError(
-                        "DB serialization format mismatch: "
-                        f"{expected_format!r} != {actual_format!r}")
-                comparison, expected, actual = compare_serialized_data(
-                    entry["payload"]["expectedSerialized"],
-                    actual_result.get("serialized"))
-                stem = f"db_{index:03d}"
-                expected_path = output / "reports" / f"{stem}_expected.bin"
-                actual_path = output / "reports" / f"{stem}_actual.bin"
-                comparison_path = output / "reports" / f"{stem}_comparison.json"
-                expected_path.write_bytes(expected)
-                actual_path.write_bytes(actual)
-                comparison_path.write_text(
-                    json.dumps(comparison, ensure_ascii=False, indent=2) + "\n",
-                    encoding="utf-8")
-                result["evidence"] = [
-                    expected_path, actual_path, comparison_path]
-                if not comparison["equal"]:
-                    result["status"] = "failed"
-                    result["message"] = (
-                        "DB serialized data mismatch: first byte difference at "
-                        f"offset {comparison['firstDifferenceOffset']}")
-                else:
-                    result["message"] = "complete TransDB state matches"
-            elif entry["kind"] == "verify.screenshot":
-                if "uiReady" in entry["payload"]:
-                    self._wait_for_ui(entry["payload"]["uiReady"], cancel_event,
-                                      result.setdefault("uiReadiness", {}))
-                actual_path = (
-                    output / "screenshots" / f"screenshot_{index:03d}_actual.png")
-                standard = self.comparisons.prepare(journal_path, output, entry["payload"], index, actual_path)
-                if "uiReady" in entry["payload"]:
-                    if cancel_event is not None and cancel_event.is_set():
-                        raise InterruptedError("Replay cancelled by caller")
-                    result["uiReadiness"]["captureRequestedAt"] = datetime.now().astimezone().isoformat(timespec="microseconds")
-                capture = self.client.capture_screenshot()
-                capture_target = actual_path
-                actual_path.write_bytes(capture["png"])
-                self.comparisons.submit(output, standard, actual_path, result)
-        except Exception as exc:
-            result["status"] = "failed"
-            result["message"] = str(exc)
-            # A capture can produce evidence before reporting an error.
-            if capture_target is not None and not result["evidence"] and capture_target.is_file():
-                result["evidence"].append(capture_target)
-        return result
-
-    def run(self, document, output_dir, progress=None, validate=True, cancel_event=None):
-        """Execute an already loaded Journal; the owner finalizes its result."""
-        output = Path(output_dir)
+    def _script_context(self, document, output, validate):
         journal_path = Path(document["journalPath"])
-        summary = {
-            "journalPath": str(journal_path),
-            "journalSha256": document["journalSha256"],
-            "totalEntries": len(document["entries"]),
-            "outputPath": str(output), "results": [],
+        return {
+            "document": document,
+            "summary": {"journalPath": str(journal_path),
+                        "journalSha256": document["journalSha256"],
+                        "totalEntries": len(document["entries"]),
+                        "outputPath": str(output), "results": []},
+            "evidence": ReplayEvidence(journal_path, output, validate,
+                                       self.comparisons, compare_serialized_data),
         }
+
+    def _submit_script(self, state, validate, manual=False, capture_signals=False):
+        document = state["document"]
+        state["evidence"].prepare(document["entries"])
+        source = runtime_document(document["source"], Path(state["summary"]["outputPath"]))
+        parameters = {
+            "document": source, "validate": validate, "manual": manual,
+            "sourceDirectory": str(Path(document["journalPath"]).parent),
+        }
+        if capture_signals:
+            parameters["captureSignals"] = True
+        self.client.request("journal.script.start", parameters, timeout=10)
+
+    def _await_script(self, state, progress=None, cancel_event=None):
+        entries = state["document"]["entries"]
+        summary = state["summary"]
+        results = summary["results"]
+        while True:
+            cancelled = cancel_event is not None and cancel_event.is_set()
+            method = "journal.script.cancel" if cancelled else "journal.script.status"
+            status = self.client.request(method, {"after": len(results)}, timeout=10)
+            for native in status["results"]:
+                index = native["index"]
+                if index != len(results) + 1 or index > len(entries):
+                    raise RuntimeError("Invalid native Journal result position")
+                entry = entries[index - 1]
+                results.append(state["evidence"].process(entry, native))
+                if progress:
+                    progress(index, len(entries), entry)
+            phase = status["status"]
+            if phase == "verifying":
+                check = results[-1]
+                if cancel_event is not None and cancel_event.is_set():
+                    continue
+                self.client.request("journal.script.continue", {
+                    "after": len(results), "index": check["index"], "verified": check["status"] == "passed",
+                }, timeout=10)
+            elif phase in {"passed", "failed", "cancelled", "paused"}:
+                if "error" in status:
+                    summary["error"] = status["error"]
+                if "signalGroups" in status:
+                    summary["signalGroups"] = status["signalGroups"]
+                if "capturedSignalGroups" in status:
+                    summary["capturedSignalGroups"] = status["capturedSignalGroups"]
+                return phase
+            elif phase != "running":
+                raise RuntimeError(f"Unknown native Journal status {phase!r}")
+
+            if cancel_event is None:
+                time.sleep(0.05)
+            else:
+                cancel_event.wait(0.05)
+
+    def run(self, document, output_dir, progress=None, validate=True, cancel_event=None,
+            *, capture_signals=False):
+        """Submit one Journal document; the application owns its dispatch."""
         owned_comparisons = self.comparisons is None
         if owned_comparisons:
             self.comparisons = ScreenshotComparisons()
-        started = time.monotonic()
+        state = self._script_context(document, Path(output_dir), validate)
+        submitted = False
         try:
-            for index, entry in enumerate(document["entries"], start=1):
-                if cancel_event is not None and cancel_event.is_set():
-                    raise InterruptedError("Replay cancelled by caller")
-                scheduled = entry["atMs"] / 1000.0
-                now = time.monotonic()
-                remaining = scheduled - (now - started)
-                if remaining > 0:
-                    if cancel_event is not None:
-                        if cancel_event.wait(remaining):
-                            raise InterruptedError("Replay cancelled by caller")
-                    else:
-                        time.sleep(remaining)
-                else:
-                    # A slow capture/check must not consume later input gaps.
-                    # Resume the recorded cadence instead of bursting to catch up.
-                    started = now - scheduled
-                if progress:
-                    progress(index, len(document["entries"]), entry)
-                result = self._execute_entry(journal_path, output, entry, index, validate,
-                    **({"cancel_event": cancel_event} if
-                       "readyTimeoutMs" in entry["payload"] or "uiReady" in entry["payload"] else {}))
-                # Only the explicitly requested readiness wait pauses the
-                # recorded clock, preserving the following press/release gaps.
-                started += result.get("inputReadiness", {}).get("waitSeconds", 0)
-                started += result.get("uiReadiness", {}).get("waitSeconds", 0)
-                summary["results"].append(result)
-                if result["status"] == "failed":
-                    break
+            if cancel_event is not None and cancel_event.is_set():
+                raise InterruptedError("Replay cancelled by caller")
+            self._submit_script(state, validate, capture_signals=capture_signals)
+            submitted = True
+            self._await_script(state, progress, cancel_event)
+            submitted = False
         except Exception as exc:
-            summary["error"] = str(exc)
+            state["summary"]["error"] = str(exc)
         finally:
+            if submitted:
+                try:
+                    self.client.request("journal.script.cancel", timeout=10)
+                except Exception as exc:
+                    state["summary"].setdefault("cleanupErrors", []).append(str(exc))
             if owned_comparisons:
                 self.comparisons.close()
                 self.comparisons = None
-            else:
-                self.comparisons.track(summary)
-        return summary
+        return state["summary"]
 
     def play(self, journal_path, validate=True, progress=None, *, restart=True, output_dir=None):
         self.cancel_steps()
@@ -963,30 +813,22 @@ class JournalRunner:
         self.cancel_steps()
         document = load_journal(journal_path)
         output = self._new_output()
-        summary = {
-            "journalPath": document["journalPath"],
-            "journalSha256": document["journalSha256"],
-            "totalEntries": len(document["entries"]),
-            "outputPath": str(output), "results": [],
-        }
+        owned_comparisons = self.comparisons is None
+        if owned_comparisons:
+            self.comparisons = ScreenshotComparisons()
+        state = self._script_context(document, output, validate)
+        state["ownedComparisons"] = owned_comparisons
+        prepared = False
         try:
             self.client.begin_replay(window_profile=WINDOW_PROFILE)
-            try:
-                summary["actualWindow"] = wait_for_window(self.client)
-            except Exception:
-                self.client.end_replay()
-                raise
+            prepared = True
+            state["summary"]["actualWindow"] = wait_for_window(self.client)
+            self._submit_script(state, validate, manual=True)
         except Exception as exc:
-            summary["error"] = str(exc)
-            finish_result(summary)
+            state["summary"]["error"] = str(exc)
+            self._finish_steps(state, prepared)
             raise
-        self._step_state = {
-            "document": document, "output": output,
-            "validate": validate, "index": 0, "summary": summary,
-            "ownedComparisons": self.comparisons is None,
-        }
-        if self.comparisons is None:
-            self.comparisons = ScreenshotComparisons()
+        self._step_state = state
         self._step_path = Path(document["journalPath"])
         return document
 
@@ -1000,47 +842,45 @@ class JournalRunner:
         if self._step_state is None:
             raise RuntimeError("No step replay is active")
         state = self._step_state
-        entries = state["document"]["entries"]
-        offset = state["index"]
-        entry = entries[offset]
-        result = self._execute_entry(
-            Path(state["document"]["journalPath"]), state["output"], entry,
-            offset + 1, state["validate"])
-        state["summary"]["results"].append(result)
-        state["index"] += 1
-        complete = state["index"] >= len(entries) or result["status"] == "failed"
-        response = {"entry": result, "complete": complete,
-                    "position": state["index"], "total": len(entries)}
+        results = state["summary"]["results"]
+        previous = len(results)
+        try:
+            self.client.request("journal.script.continue", {"after": previous}, timeout=10)
+            complete = self._await_script(state) != "paused"
+        except Exception as exc:
+            state["summary"]["error"] = str(exc)
+            return {"entry": None, "complete": True, "position": len(results),
+                    "total": state["summary"]["totalEntries"], "summary": self.cancel_steps()}
+        response = {"entry": results[-1] if len(results) > previous else None,
+                    "complete": complete, "position": len(results),
+                    "total": state["summary"]["totalEntries"]}
         if complete:
+            response["summary"] = self._finish_steps(state, True)
+        return response
+
+    def _finish_steps(self, state, prepared):
+        if prepared:
             try:
                 self.client.end_replay()
             except Exception as exc:
                 state["summary"].setdefault("cleanupErrors", []).append(str(exc))
-            finally:
-                self._step_state = None
-                self._step_path = None
-            if state["ownedComparisons"]:
-                self.comparisons.close()
-                self.comparisons = None
-            response["summary"] = finish_result(state["summary"])
-        return response
-
-    def cancel_steps(self):
-        if self._step_state is None:
-            return
-        state = self._step_state
-        state["summary"]["error"] = "Step replay cancelled before completion"
-        try:
-            self.client.end_replay()
-        except Exception as exc:
-            state["summary"].setdefault("cleanupErrors", []).append(str(exc))
-        finally:
-            self._step_state = None
-            self._step_path = None
+        self._step_state = None
+        self._step_path = None
         if state["ownedComparisons"]:
             self.comparisons.close()
             self.comparisons = None
-        finish_result(state["summary"])
+        return finish_result(state["summary"])
+
+    def cancel_steps(self):
+        if self._step_state is None:
+            return None
+        state = self._step_state
+        state["summary"].setdefault("error", "Step replay cancelled before completion")
+        try:
+            self.client.request("journal.script.cancel", timeout=10)
+        except Exception as exc:
+            state["summary"].setdefault("cleanupErrors", []).append(str(exc))
+        return self._finish_steps(state, True)
 
 
 def main():

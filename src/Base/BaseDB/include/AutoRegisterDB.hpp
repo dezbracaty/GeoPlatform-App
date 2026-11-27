@@ -6,6 +6,7 @@
 #include "SystemTypes.hpp"
 #include "SnapGeometry.hpp"
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -119,6 +120,10 @@ protected:
     // Custom features that cannot be reconstructed must be persisted by the DB.
     // Invalid data leaves the previous snapshot intact. Empty data clears it.
     bool publishSnapGeometry(SnapGeometry geometry);
+    // Pure data preparation may run off-thread. An engaged null snapshot clears
+    // the geometry, while std::nullopt means validation failed.
+    static std::optional<SnapGeometryPtr> prepareSnapGeometry(SnapGeometry geometry);
+    void installSnapGeometry(SnapGeometryPtr snapshot);
 
 private:
     SnapGeometryPtr m_snapGeometry;

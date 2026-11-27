@@ -141,6 +141,7 @@ private:
 
     // TaskStateNotifier 任务ID
     QString m_taskId;
+    ActionContext::SPtr m_sliceContext;
 
     // 时间追踪（用于性能分析）
     std::chrono::steady_clock::time_point m_taskStartTime;

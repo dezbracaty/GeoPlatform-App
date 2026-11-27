@@ -68,6 +68,8 @@ set(QML_FILES
     qml/window/MainWindow.qml
     qml/window/PageWindow.qml
     qml/window/MainScreen.qml
+    qml/startup/StartupLoadingContent.qml
+    qml/startup/LoadingGlyph.qml
     qml/pages/DashboardPage.qml
     qml/pages/ModelCenterPage.qml
     qml/pages/ModelLibraryPage.qml
@@ -262,7 +264,6 @@ set_property(SOURCE src/Application/src/main.cpp APPEND PROPERTY
 
 
 set_source_files_properties(qml/startup/StartupWindow.qml PROPERTIES QT_RESOURCE_ALIAS StartupWindow.qml)
-set_source_files_properties(qml/startup/spinner.svg PROPERTIES QT_RESOURCE_ALIAS spinner.svg)
 
 set_source_files_properties(${PACKAGED_QML_SINGLETONS} PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
@@ -305,7 +306,7 @@ gplatform_add_renderer_resources(${PROJECT_NAME})
 
 qt_add_resources(${PROJECT_NAME} startup_resources
     PREFIX "/gplatform/startup"
-    FILES qml/startup/StartupWindow.qml qml/startup/spinner.svg)
+    FILES qml/startup/StartupWindow.qml)
 
 qt_add_qml_module(${PROJECT_NAME}
     URI "GPlatform"

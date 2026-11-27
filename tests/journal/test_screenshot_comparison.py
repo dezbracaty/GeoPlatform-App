@@ -5,7 +5,8 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+from test_python_client import native_result, screenshot_result, script_reply
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools/journal"))
 from journal_runner import (
@@ -17,6 +18,16 @@ try:
     from PIL import Image
 except ImportError:
     Image = None
+
+
+def checkpoint_replies(png, passes, *, capture_follows=False):
+    replies = [script_reply("running"), script_reply("verifying", screenshot_result(png))]
+    if not passes:
+        return [*replies, script_reply("failed"),
+                script_reply("failed", error="Journal checkpoint 1 failed independent verification")]
+    if capture_follows:
+        replies.extend([script_reply("running"), script_reply("verifying", native_result(index=2))])
+    return [*replies, script_reply("running"), script_reply("passed")]
 
 
 @unittest.skipIf(Image is None, "Screenshot comparison requires Pillow")
@@ -54,13 +65,6 @@ class ScreenshotRegionTest(unittest.TestCase):
                     actual.putpixel(outside, (254, 255, 255, 255))
                 data = BytesIO(); actual.save(data, format='PNG'); png = data.getvalue()
 
-                class Client:
-                    def capture_screenshot(self):
-                        return dict(png=png)
-
-                    def execute_entry(self, entry):
-                        Path(entry['payload']['params']['filepath']).write_bytes(png)
-
                 journal = root / 'Journal.json'
                 journal.write_text(json.dumps(dict(formatVersion=2, entries=[
                     dict(atMs=0, kind='verify.screenshot', payload=dict(baseline=str(baseline))),
@@ -68,7 +72,14 @@ class ScreenshotRegionTest(unittest.TestCase):
                          params=dict(filepath='capture.png'), baseline=str(baseline))),
                 ])))
                 output = root / 'result'; (output / 'screenshots').mkdir(parents=True)
-                result = finish_result(JournalRunner(Client()).run(load_journal(journal), output))
+                if passes:
+                    (output / 'capture.png').write_bytes(png)
+                client = Mock()
+                client.request.side_effect = checkpoint_replies(png, passes, capture_follows=True)
+                result = finish_result(JournalRunner(client).run(load_journal(journal), output))
+                self.assertEqual([call.args[1]["verified"] for call in client.request.call_args_list
+                                  if call.args[0] == "journal.script.continue"],
+                                 [True, True] if passes else [False])
                 self.assertEqual(result['acceptance'], 'passed' if passes else 'failed')
                 for step in result['results']:
                     comparison = step['comparison']
@@ -97,13 +108,6 @@ class ScreenshotRegionTest(unittest.TestCase):
                         actual.putpixel((1260 * dpr - 1, 90 * dpr), (254, 255, 255, 255))
                     data = BytesIO(); actual.save(data, format='PNG'); png = data.getvalue()
 
-                    class Client:
-                        def capture_screenshot(self):
-                            return dict(png=png)
-
-                        def execute_entry(self, entry):
-                            Path(entry['payload']['params']['filepath']).write_bytes(png)
-
                     journal = root / 'Journal.json'
                     journal.write_text(json.dumps(dict(formatVersion=2, entries=[
                         dict(atMs=0, kind='verify.screenshot', payload=dict(baseline='expected.png')),
@@ -111,7 +115,14 @@ class ScreenshotRegionTest(unittest.TestCase):
                              params=dict(filepath='captured.png'), baseline='expected.png')),
                     ])))
                     output = root / 'result'; (output / 'screenshots').mkdir(parents=True)
-                    result = finish_result(JournalRunner(Client()).run(load_journal(journal), output))
+                    if not outside:
+                        (output / 'captured.png').write_bytes(png)
+                    client = Mock()
+                    client.request.side_effect = checkpoint_replies(png, not outside, capture_follows=True)
+                    result = finish_result(JournalRunner(client).run(load_journal(journal), output))
+                    self.assertEqual([call.args[1]["verified"] for call in client.request.call_args_list
+                                      if call.args[0] == "journal.script.continue"],
+                                     [True, True] if not outside else [False])
                     self.assertEqual(result['acceptance'], 'failed' if outside else 'passed')
                     for step in result['results']:
                         comparison = step['comparison']
@@ -172,12 +183,12 @@ class ScreenshotRegionTest(unittest.TestCase):
                 changed = BytesIO()
                 Image.new("RGBA", (12, 10), "black").save(changed, format="PNG")
 
-                class Client:
-                    def capture_screenshot(self):
-                        # A later baseline edit must not rewrite this run's
-                        # expected image or change the comparison in flight.
-                        baseline.write_bytes(changed.getvalue())
-                        return {"png": original if matches else changed.getvalue()}
+                def replies():
+                    frames = checkpoint_replies(original if matches else changed.getvalue(), matches)
+                    yield frames[0]
+                    # The source baseline changes after native start.
+                    baseline.write_bytes(changed.getvalue())
+                    yield from frames[1:]
 
                 journal = root / "Journal.json"
                 journal.write_text(json.dumps(dict(formatVersion=2, entries=[dict(
@@ -186,7 +197,9 @@ class ScreenshotRegionTest(unittest.TestCase):
                                  region=[1, 1, 4, 3]))])), encoding="utf-8")
                 output = root / "result"
                 (output / "screenshots").mkdir(parents=True)
-                result = finish_result(JournalRunner(Client()).run(load_journal(journal), output))
+                client = Mock()
+                client.request.side_effect = replies()
+                result = finish_result(JournalRunner(client).run(load_journal(journal), output))
                 self.assertEqual(result["acceptance"], "passed" if matches else "failed")
                 expected = output / "screenshots/screenshot_001_expected.png"
                 self.assertEqual(expected.read_bytes(), original)
@@ -258,12 +271,8 @@ class ScreenshotRegionTest(unittest.TestCase):
                 actual.putpixel((x, 0), (255, 255, 255, 255))
             actual.putpixel((3, 0), (254, 255, 255, 255))
             data = BytesIO(); actual.save(data, format="PNG")
-            class Client:
-                calls = 0
-                def capture_screenshot(self):
-                    self.calls += 1
-                    return {"png": data.getvalue()}
-            client = Client()
+            client = Mock()
+            client.request.side_effect = checkpoint_replies(data.getvalue(), passes=False)
             journal = root / "Journal.json"
             journal.write_text(json.dumps(dict(formatVersion=2, entries=[dict(
                 atMs=0, kind="verify.screenshot", payload=dict(
@@ -271,7 +280,9 @@ class ScreenshotRegionTest(unittest.TestCase):
                     regions=[[0, 0, 3, 1], [2, 0, 2, 1]]))])))
             output = root / "result"; (output / "screenshots").mkdir(parents=True)
             result = JournalRunner(client).run(load_journal(journal), output)
-            self.assertEqual(client.calls, 1)
+            self.assertEqual([call.args for call in client.request.call_args_list if call.args[0] == "journal.script.status"],
+                             [("journal.script.status", {"after": 0}), ("journal.script.status", {"after": 1})])
+            self.assertFalse(client.request.call_args_list[2].args[1]["verified"])
             self.assertEqual(result['results'][0]['status'], 'failed')
             self.assertEqual(result['results'][0]['comparison']['differentPixels'], 117)
             with Image.open(output / 'screenshots/screenshot_001_diff.png') as diff:
@@ -329,17 +340,15 @@ class ScreenshotRegionTest(unittest.TestCase):
             self.assertFalse(compare_screenshots(
                 baseline, png, 1.0, root/'strict.png', region=[8, 8, 48, 48])[0])
 
-            class Client:
-                def capture_screenshot(self):
-                    return {'png': png}
-
             journal = root/'Journal.json'
             journal.write_text(json.dumps(dict(formatVersion=2, entries=[dict(
                 atMs=0, kind='verify.screenshot', payload=dict(
                     baseline='expected.png', region=[8, 8, 48, 48],
                     tolerance=1.0, maxChannelDifference=1, blurRadius=2))])))
             output = root/'result'; (output/'screenshots').mkdir(parents=True)
-            result = JournalRunner(Client()).run(load_journal(journal), output)
+            client = Mock()
+            client.request.side_effect = checkpoint_replies(png, passes=False)
+            result = JournalRunner(client).run(load_journal(journal), output)
             self.assertEqual(result['results'][0]['status'], 'failed')
             self.assertEqual(result['results'][0]['comparison']['differentPixels'], 3840)
             self.assertNotIn('blurRadius=2', result['results'][0]['message'])

@@ -73,14 +73,15 @@ class ServerRegressionTests(unittest.TestCase):
         shutil.copyfile(self.real/'session_repository.py',self.tools/'session_repository.py')
         # The real existing HTTP handler is used; the fake worker only produces fixture results.
         (self.tools/'journal_server.py').write_text(SERVER.replace('sys.argv[1]);del sys.argv[1]',repr(str(self.real))+')'))
+        self.assets = self.root / 'host-source/App/tests/TestAssets'
         for name in ['one','two']:
-            path=self.source/'tests/TestAssets/scenarios'/name/'events';path.mkdir(parents=True)
+            path=self.assets/'scenarios'/name/'events';path.mkdir(parents=True)
             (path/'Journal.json').write_text('{}')
         self.output=self.root/'evidence';self.output.mkdir()
 
     def run_fixture(self,mode,timeout=10):
         (self.source/'mode').write_text(mode)
-        return server_regression(self.source,self.root/'unused-app',self.output,dict(os.environ),timeout=timeout)
+        return server_regression(self.source,self.root/'unused-app',self.output,dict(os.environ),assets=self.assets,timeout=timeout)
 
     def test_login_all_inventory_waits_for_terminal_task_and_closes_owned_server(self):
         summary,directory=self.run_fixture('passed')

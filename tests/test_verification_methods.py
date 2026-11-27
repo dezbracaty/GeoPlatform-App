@@ -12,7 +12,7 @@ class MethodContractTest(unittest.TestCase):
     def test_asset_schemas_use_exactly_the_registered_methods(self):
         root = Path(__file__).resolve().parent / 'TestAssets/schemas'
         if not root.is_dir():
-            self.skipTest('Optional pinned TestAssets not initialized')
+            self.skipTest('Optional TestAssets checkout has not been prepared')
         schema = json.loads((root/'scenario.schema.json').read_text(encoding='utf8'))
         self.assertEqual(set(schema['properties']['verification']['properties']['requiredMethods']['items']['enum']), set(METHODS))
         result = json.loads((root/'case-result.schema.json').read_text(encoding='utf8'))

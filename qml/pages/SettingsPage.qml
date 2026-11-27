@@ -4,12 +4,70 @@ import QtQuick.Controls
 import SmoothUI.Controls
 import SmoothUI.impl
 import GPlatform
+import Render 1.0
 
 ScrollablePage {
 
     title: qsTr("Settings")
     columnSpacing: 24
     Component.onCompleted: NotificationManager.refreshDesktopStatus()
+
+    GroupBox {
+        title: qsTr("Rendering")
+        Layout.fillWidth: true
+        RefreshRateController {
+            id: renderSettings
+        }
+        ColumnLayout {
+            anchors.fill: parent
+            Switch {
+                objectName: "settings.vtkAntialiasing"
+                text: qsTr("Anti-aliasing")
+                checked: renderSettings.antialiasing
+                onClicked: renderSettings.antialiasing = checked
+            }
+            Label {
+                text: qsTr("Smooths edges in the Prepare and Preview viewports. The sample count applies to MSAA.")
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+            GridLayout {
+                columns: 2
+                Label {
+                    text: qsTr("Anti-aliasing type")
+                }
+                ComboBox {
+                    objectName: "settings.vtkAntialiasingType"
+                    Accessible.name: qsTr("Anti-aliasing type")
+                    enabled: renderSettings.antialiasing
+                    model: ["FXAA", "MSAA"]
+                    currentIndex: renderSettings.antialiasingType === RefreshRateController.MSAA ? 1 : 0
+                    onActivated: function(index) {
+                        renderSettings.antialiasingType = index === 1
+                                ? RefreshRateController.MSAA : RefreshRateController.FXAA
+                    }
+                }
+                Label {
+                    text: qsTr("MSAA sample count")
+                }
+                ComboBox {
+                    objectName: "settings.vtkAntialiasingSamples"
+                    Accessible.name: qsTr("MSAA sample count")
+                    enabled: renderSettings.antialiasing && renderSettings.antialiasingType === RefreshRateController.MSAA
+                    readonly property var sampleCounts: [2, 4, 8]
+                    model: sampleCounts.map(count => count + "×")
+                    currentIndex: sampleCounts.indexOf(renderSettings.antialiasingSamples)
+                    onActivated: function(index) { renderSettings.antialiasingSamples = sampleCounts[index] }
+                }
+            }
+            Label {
+                text: qsTr("Last rendered mode — Prepare: %1 · Preview: %2")
+                      .arg(renderSettings.prepareAntialiasing).arg(renderSettings.previewAntialiasing)
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+        }
+    }
 
     GroupBox {
         title: qsTr("Desktop notifications")

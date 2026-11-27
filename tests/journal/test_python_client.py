@@ -19,6 +19,7 @@ from contextlib import contextmanager
 
 
 TOOLS = Path(__file__).resolve().parents[2] / "tools/journal"
+ASSETS = Path(__file__).resolve().parents[1] / 'TestAssets'
 sys.path.insert(0, str(TOOLS))
 
 from journal_runner import (  # noqa: E402
@@ -129,6 +130,38 @@ class JournalTransportRecoveryCheck(unittest.TestCase):
         wire.close.assert_not_called()
 
 
+def native_result(kind="action", index=1, at_ms=0, **fields):
+    return dict({"index": index, "atMs": at_ms, "kind": kind, "status": "passed"}, **fields)
+
+
+def script_reply(status, *results, error=None):
+    reply = {"status": status, "results": list(results)}
+    if error is not None:
+        reply["error"] = error
+    return reply
+
+
+def owned_replay_replies(*script_responses):
+    """Echo the owned handshake identity, then return the test's canned replies."""
+    remaining = iter(script_responses)
+    def reply(method, params, **kwargs):
+        if method == "journal.replay.begin":
+            return {"status": "ready", "replayId": params["replayId"]}
+        return next(remaining)
+    return reply
+
+
+def screenshot_result(png, index=1):
+    return native_result("verify.screenshot", index, data={"pngBase64": base64.b64encode(png).decode("ascii")})
+
+
+def submitted_entries(client):
+    starts = [call for call in client.request.call_args_list if call.args[0] == "journal.script.start"]
+    if len(starts) != 1:
+        raise AssertionError(f"Expected one native document submission, got {len(starts)}")
+    return json.loads(starts[0].args[1]["document"])["entries"]
+
+
 class RunnerClient:
     def __init__(self, root):
         self.client = object()
@@ -138,6 +171,7 @@ class RunnerClient:
         self.calls = []
         self.recording = False
         self.recording_id = "test-recording"
+        self.request = Mock()
         self.db_data = {
             "dbInstanceId": "42",
             "serializationFormat": DB_SERIALIZATION_FORMAT,
@@ -186,13 +220,8 @@ class RunnerClient:
     def end_replay(self):
         self.calls.append("end")
 
-    def execute_entry(self, entry):
-        self.calls.append(("execute", entry["kind"]))
-        return {"entry": entry}
-
     def invoke_action(self, code, params=None):
         entry = self.entry("action", {"code": code, "params": params or {}})
-        self.execute_entry(entry)
         return {"recorded": True, "entry": entry}
 
 
@@ -220,76 +249,6 @@ def restart_probe_directory():
 
 
 class JournalPythonClientCheck(unittest.TestCase):
-    def _run_db_after_done(self, client, *, cancelled=None, ui_ready=True, actual=b'complete-original-db'):
-        expected = b'complete-original-db'
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            payload = {'dbInstanceId': '42', 'serializationFormat': DB_SERIALIZATION_FORMAT,
-                       'expectedSerialized': base64.b64encode(expected).decode('ascii')}
-            if ui_ready:
-                payload['uiReady'] = {'timeoutMs': 100, 'targets': [
-                    {'target': 'paint.done', 'state': 'absent'}]}
-            journal = write_journal(root / 'Journal.json', [
-                JournalSystem.entry('input.mouse', {'window': {'objectName': 'gplatform.main'},
-                    'target': 'paint.done', 'event': 'press', 'button': 1, 'buttons': 1}, 0),
-                JournalSystem.entry('input.mouse', {'window': {'objectName': 'gplatform.main'},
-                    'target': 'paint.done', 'event': 'release', 'button': 1, 'buttons': 0}, 1),
-                JournalSystem.entry('verify.db', payload, 2)])
-            client.serialize_db.return_value = {'serializationFormat': DB_SERIALIZATION_FORMAT,
-                'serialized': base64.b64encode(actual).decode('ascii')}
-            output = JournalSessionRepository(playbacks=root / 'playbacks').create_playback(root / 'result')
-            return JournalRunner(client).run(load_journal(journal), output, cancel_event=cancelled)
-
-    def test_db_absent_wait_is_not_hidden_or_disabled_then_reads_original_bytes_once(self):
-        for actual in (b'complete-original-db', b'wrong-but-finished-db'):
-            client = Mock()
-            client.request.side_effect = [{'capabilities': {'namedTargetVisibility': True}},
-                {'exists': True, 'visible': True, 'ready': False},
-                {'exists': True, 'visible': False, 'ready': False},
-                {'exists': False, 'visible': False, 'ready': False}]
-            cancelled = Mock(); cancelled.is_set.return_value = False; cancelled.wait.return_value = False
-            with patch('journal_runner.time.monotonic', return_value=0):
-                result = self._run_db_after_done(client, cancelled=cancelled, actual=actual)
-            row = result['results'][-1]
-            self.assertEqual(row['status'], 'passed' if actual == b'complete-original-db' else 'failed')
-            self.assertEqual(row['uiReadiness']['probeCount'], 3)
-            self.assertIn('serializeRequestedAt', row['uiReadiness'])
-            client.serialize_db.assert_called_once_with('42')
-            self.assertEqual(client.execute_entry.call_count, 2)
-            self.assertEqual(client.request.call_count, 4)
-
-    def test_db_absent_wait_rejects_no_capability_errors_cancel_and_timeout_without_reading(self):
-        for mode in ('legacy', 'ambiguous', 'cancel', 'timeout'):
-            clock, client, cancelled = [0.0], Mock(), Mock()
-            cancelled.is_set.return_value = False
-            cancelled.wait.side_effect = lambda seconds: (clock.__setitem__(0, clock[0] + seconds) or False)
-            def request(method, *_args, **_kwargs):
-                if method == 'system.version':
-                    return {'capabilities': {} if mode == 'legacy' else {'namedTargetVisibility': True}}
-                if mode == 'ambiguous': raise RuntimeError('Ambiguous UI target')
-                if mode == 'cancel': cancelled.is_set.return_value = True
-                return {'exists': mode == 'timeout', 'visible': False, 'ready': False}
-            client.request.side_effect = request
-            with patch('journal_runner.time.monotonic', side_effect=lambda: clock[0]):
-                result = self._run_db_after_done(client, cancelled=cancelled)
-            self.assertEqual(result['results'][-1]['status'], 'failed')
-            self.assertNotIn('serializeRequestedAt', result['results'][-1]['uiReadiness'])
-            client.serialize_db.assert_not_called()
-            if mode == 'legacy': self.assertEqual(client.request.call_count, 1)
-
-    def test_db_absent_wait_requires_successful_prior_input_and_default_db_has_no_probe(self):
-        client = Mock()
-        client.execute_entry.side_effect = RuntimeError('UI target not found')
-        result = self._run_db_after_done(client)
-        self.assertEqual(len(result['results']), 1)
-        client.request.assert_not_called()
-        client.serialize_db.assert_not_called()
-        client = Mock()
-        result = self._run_db_after_done(client, ui_ready=False)
-        self.assertEqual(result['results'][-1]['status'], 'passed')
-        client.request.assert_not_called()
-        client.serialize_db.assert_called_once_with('42')
-
     def test_absent_file_contract_requires_earlier_same_explicit_window_named_input(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / 'Journal.json'
@@ -306,120 +265,6 @@ class JournalPythonClientCheck(unittest.TestCase):
             path.write_text(json.dumps({'formatVersion': 2, 'entries': [checkpoint, later]}))
             with self.assertRaisesRegex(JournalFormatError, 'earlier real named input'): load_journal(path)
 
-    def _run_ready_screenshot(self, client, *, cancelled=None, ui_ready=True):
-        from PIL import Image
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            baseline = root / 'baseline.png'
-            Image.new('RGBA', tuple(WINDOW_PROFILE['logicalSize']), (255, 255, 255, 255)).save(baseline)
-            client.capture_screenshot.return_value = {'png': baseline.read_bytes()}
-            payload = {'baseline': str(baseline), 'tolerance': 1.0}
-            if ui_ready:
-                payload['uiReady'] = {'timeoutMs': 100, 'targets': [
-                    {'target': 'preview.selector', 'state': 'input-ready'},
-                    {'target': 'notification.overlay', 'state': 'hidden'}]}
-            output = JournalSessionRepository(playbacks=root / 'playbacks').create_playback(root / 'result')
-            return JournalRunner(client).run({'journalPath': str(root / 'Journal.json'),
-                'journalSha256': 'test', 'entries': [{'atMs': 0, 'kind': 'verify.screenshot',
-                                                   'payload': payload}]}, output, cancel_event=cancelled)
-
-    def test_ui_observation_has_its_own_capability_and_no_fake_input_or_capture_on_mismatch(self):
-        client = Mock()
-        client.request.return_value = {'capabilities': {'namedInputReadiness': True}}
-        result = self._run_ready_screenshot(client)
-        self.assertIn('no screenshot was captured', result['results'][0]['message'])
-        self.assertEqual([c.args[0] for c in client.request.call_args_list], ['system.version'])
-        client.execute_entry.assert_not_called()
-        client.capture_screenshot.assert_not_called()
-
-    def test_ui_observation_waits_for_actual_hidden_state_then_captures_once(self):
-        client = Mock()
-        available = {'exists': True, 'visible': True, 'ready': True}
-        client.request.side_effect = [{'capabilities': {'namedTargetVisibility': True}}, available,
-            {'exists': True, 'visible': True, 'ready': False}, available,
-            {'exists': True, 'visible': False, 'ready': False}]
-        cancelled = Mock(); cancelled.is_set.return_value = False; cancelled.wait.return_value = False
-        with patch('journal_runner.time.monotonic', return_value=0):
-            result = self._run_ready_screenshot(client, cancelled=cancelled)
-        self.assertEqual(result['results'][0]['status'], 'passed')
-        self.assertEqual(result['results'][0]['uiReadiness']['probeCount'], 2)
-        client.execute_entry.assert_not_called()
-        client.capture_screenshot.assert_called_once()
-        for call in client.request.call_args_list[1:]:
-            self.assertIs(call.args[1]['checkOnly'], True)
-            self.assertEqual(set(call.args[1]), {'checkOnly', 'observeTarget'})
-            self.assertNotIn('entry', call.args[1])
-
-    def test_ui_observation_missing_hidden_invalid_and_cancelled_never_capture(self):
-        for mode in ('missing', 'invalid', 'cancel'):
-            client, cancelled = Mock(), threading.Event()
-            def request(method, params=None, **_kwargs):
-                if method == 'system.version': return {'capabilities': {'namedTargetVisibility': True}}
-                if params['observeTarget']['target'] == 'preview.selector':
-                    return {'exists': True, 'visible': True, 'ready': True}
-                if mode == 'invalid': raise RuntimeError('Ambiguous UI target')
-                if mode == 'cancel': cancelled.set()
-                return {'exists': mode != 'missing', 'visible': False, 'ready': False}
-            client.request.side_effect = request
-            result = self._run_ready_screenshot(client, cancelled=cancelled)
-            self.assertEqual(result['results'][0]['status'], 'failed')
-            self.assertNotIn('captureRequestedAt', result['results'][0]['uiReadiness'])
-            client.execute_entry.assert_not_called()
-            client.capture_screenshot.assert_not_called()
-
-    def test_ui_observation_timeout_and_default_screenshot_policy(self):
-        clock, client, cancelled = [0.0], Mock(), Mock()
-        cancelled.is_set.return_value = False
-        cancelled.wait.side_effect = lambda seconds: (clock.__setitem__(0, clock[0] + seconds) or False)
-        client.request.side_effect = lambda method, *_a, **_k: (
-            {'capabilities': {'namedTargetVisibility': True}} if method == 'system.version' else
-            {'exists': True, 'visible': True, 'ready': True})
-        with patch('journal_runner.time.monotonic', side_effect=lambda: clock[0]):
-            result = self._run_ready_screenshot(client, cancelled=cancelled)
-        self.assertIn('deadline', result['results'][0]['message'])
-        self.assertAlmostEqual(clock[0], .1)
-        client.capture_screenshot.assert_not_called()
-        client = Mock()
-        result = self._run_ready_screenshot(client, ui_ready=False)
-        self.assertEqual(result['results'][0]['status'], 'passed')
-        client.request.assert_not_called()
-        client.capture_screenshot.assert_called_once()
-
-    def test_ui_observation_does_not_retry_a_captured_image_until_it_matches(self):
-        from PIL import Image
-        from io import BytesIO
-        different = BytesIO()
-        image = Image.new('RGBA', tuple(WINDOW_PROFILE['logicalSize']), (255, 255, 255, 255))
-        image.putpixel((0, 0), (0, 0, 0, 255))
-        image.save(different, format='PNG')
-        client = Mock()
-        client.request.side_effect = [{'capabilities': {'namedTargetVisibility': True}},
-            {'exists': True, 'visible': True, 'ready': True},
-            {'exists': True, 'visible': False, 'ready': False}]
-        client.capture_screenshot.side_effect = lambda: {'png': different.getvalue()}
-        with patch('journal_runner.time.monotonic', return_value=0):
-            result = self._run_ready_screenshot(client)
-        self.assertEqual(result['results'][0]['status'], 'failed')
-        self.assertEqual(result['results'][0]['comparison']['differentPixels'], 1)
-        client.capture_screenshot.assert_called_once()
-        self.assertEqual(client.request.call_count, 3)
-
-    def test_ui_observation_cancel_during_standard_preparation_does_not_capture(self):
-        client, cancelled = Mock(), threading.Event()
-        client.request.side_effect = [{'capabilities': {'namedTargetVisibility': True}},
-            {'exists': True, 'visible': True, 'ready': True},
-            {'exists': True, 'visible': False, 'ready': False}]
-        original = ScreenshotComparisons.prepare
-        def prepare(*args, **kwargs):
-            result = original(*args, **kwargs)
-            cancelled.set()
-            return result
-        with patch.object(ScreenshotComparisons, 'prepare', autospec=True, side_effect=prepare):
-            result = self._run_ready_screenshot(client, cancelled=cancelled)
-        self.assertIn('cancelled', result['results'][0]['message'])
-        self.assertNotIn('captureRequestedAt', result['results'][0]['uiReadiness'])
-        client.capture_screenshot.assert_not_called()
-
     def test_screenshot_ui_ready_contract_is_narrow_and_explicit(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / 'Journal.json'
@@ -435,106 +280,6 @@ class JournalPythonClientCheck(unittest.TestCase):
             path.write_text(json.dumps({'formatVersion': 2, 'entries': [{'atMs': 0,
                 'kind': 'input.key', 'payload': {'target': 'x', 'uiReady': valid}}]}))
             with self.assertRaisesRegex(JournalFormatError, 'uiReady'): load_journal(path)
-
-    def _run_ready_input(self, client, *, cancelled=None):
-        with tempfile.TemporaryDirectory() as temporary:
-            return JournalRunner(client).run({"journalPath": "readiness.json", "journalSha256": "test",
-                "entries": [{"atMs": 0, "kind": "input.key", "payload": {
-                    "target": "preview.selector", "event": "press", "key": 16777232,
-                    "readyTimeoutMs": 100}}]}, temporary, cancel_event=cancelled)
-
-    def test_readiness_requires_explicit_capability_before_any_probe_or_input(self):
-        for capabilities in (None, {}, {"namedInputReadiness": 1}, {"namedInputReadiness": "true"}):
-            client = Mock()
-            client.request.return_value = {"capabilities": capabilities}
-            result = self._run_ready_input(client)
-            self.assertEqual(result['results'][0]['status'], 'failed')
-            self.assertIn('does not support', result['results'][0]['message'])
-            self.assertEqual([c.args[0] for c in client.request.call_args_list], ['system.version'])
-            client.execute_entry.assert_not_called()
-
-    def test_readiness_waits_without_dispatch_then_sends_real_input_once(self):
-        client = Mock()
-        client.request.side_effect = [{'capabilities': {'namedInputReadiness': True}},
-                                      {'ready': False}, {'ready': True}]
-        cancelled = Mock()
-        cancelled.is_set.return_value = False
-        cancelled.wait.return_value = False
-        with patch('journal_runner.time.monotonic', return_value=0):
-            result = self._run_ready_input(client, cancelled=cancelled)
-        self.assertEqual(result['results'][0]['status'], 'passed')
-        self.assertEqual(result['results'][0]['inputReadiness']['probeCount'], 2)
-        evidence = result['results'][0]['inputReadiness']
-        self.assertLessEqual(evidence['startedAt'], evidence['readyAt'])
-        self.assertLessEqual(evidence['readyAt'], evidence['dispatchRequestedAt'])
-        client.execute_entry.assert_called_once()
-        sent = client.execute_entry.call_args.args[0]
-        self.assertNotIn('readyTimeoutMs', sent['payload'])
-        for call in client.request.call_args_list[1:]:
-            self.assertIs(call.args[1]['checkOnly'], True)
-            self.assertNotIn('readyTimeoutMs', call.args[1]['entry']['payload'])
-
-    def test_readiness_cancel_and_probe_error_never_dispatch_real_input(self):
-        for mode in ('cancel-before', 'cancel-wait', 'cancel-ready', 'invalid', 'transport'):
-            cancelled = threading.Event()
-            client = Mock()
-            if mode == 'cancel-before': cancelled.set()
-            def request(method, *_args, **_kwargs):
-                if method == 'system.version': return {'capabilities': {'namedInputReadiness': True}}
-                if mode.startswith('cancel-'):
-                    cancelled.set()
-                    return {'ready': mode == 'cancel-ready'}
-                raise RuntimeError('Ambiguous UI target' if mode == 'invalid' else 'Journal connection closed')
-            client.request.side_effect = request
-            result = self._run_ready_input(client, cancelled=cancelled)
-            self.assertEqual(result.get('error') or result['results'][0]['status'],
-                             'Replay cancelled by caller' if mode == 'cancel-before' else 'failed')
-            client.execute_entry.assert_not_called()
-
-    def test_readiness_timeout_and_target_disappearance_do_not_retry_input(self):
-        clock = [0.0]
-        cancelled = Mock()
-        cancelled.is_set.return_value = False
-        cancelled.wait.side_effect = lambda seconds: (clock.__setitem__(0, clock[0] + seconds) or False)
-        client = Mock()
-        client.request.side_effect = lambda method, *_a, **_k: (
-            {'capabilities': {'namedInputReadiness': True}} if method == 'system.version' else {'ready': False})
-        with patch('journal_runner.time.monotonic', side_effect=lambda: clock[0]):
-            result = self._run_ready_input(client, cancelled=cancelled)
-        self.assertIn('deadline', result['results'][0]['message'])
-        self.assertNotIn('dispatchRequestedAt', result['results'][0]['inputReadiness'])
-        self.assertAlmostEqual(clock[0], .1)
-        client.execute_entry.assert_not_called()
-        client = Mock()
-        client.request.side_effect = [{'capabilities': {'namedInputReadiness': True}}, {'ready': True}]
-        client.execute_entry.side_effect = RuntimeError('UI target disappeared')
-        result = self._run_ready_input(client)
-        self.assertEqual(result['results'][0]['status'], 'failed')
-        client.execute_entry.assert_called_once()
-        self.assertEqual(client.request.call_count, 2)
-
-    def test_readiness_wait_preserves_release_and_later_recorded_gaps(self):
-        for key, kind in (('inputReadiness', 'input.key'),
-                          ('uiReadiness', 'verify.screenshot'), ('uiReadiness', 'verify.db')):
-            clock, dispatched = [0.0], []
-            runner = JournalRunner(Mock())
-            entries = [{'atMs': at, 'kind': 'input.key', 'payload': {}} for at in (0, 1, 201)]
-            if key == 'inputReadiness':
-                entries[0]['payload']['readyTimeoutMs'] = 10000
-            else:
-                entries[0].update(kind=kind, payload={'uiReady': {}})
-            def execute(*_args, **_kwargs):
-                dispatched.append(clock[0])
-                if len(dispatched) == 1:
-                    clock[0] += 5
-                    return {'status': 'passed', key: {'waitSeconds': 5}}
-                return {'status': 'passed'}
-            with patch('journal_runner.time.monotonic', side_effect=lambda: clock[0]), \
-                    patch('journal_runner.time.sleep', side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
-                    patch.object(runner, '_execute_entry', side_effect=execute):
-                runner.run({'journalPath': 'case.json', 'journalSha256': 'test', 'entries': entries}, '.')
-            for actual, expected in zip(dispatched, (0, 5.001, 5.201)):
-                self.assertAlmostEqual(actual, expected)
 
     def test_opt_in_receive_has_absolute_fragment_deadline_and_inflight_cancel(self):
         for chunks in ([b'1', b'0:', b'0123456789'], [b'10:', b'01234', b'56789'],
@@ -576,18 +321,6 @@ class JournalPythonClientCheck(unittest.TestCase):
         self.assertIsNone(client.client)
         self.assertEqual(len(sock.sent), 2)
 
-    def test_readiness_timeout_file_contract_rejects_implicit_or_invalid_waits(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            path = Path(temporary) / 'Journal.json'
-            for value in (True, 0, -1, 1.5, '100', 300001):
-                path.write_text(json.dumps({'formatVersion': 2, 'entries': [{
-                    'atMs': 0, 'kind': 'input.key', 'payload': {'target': 'x', 'readyTimeoutMs': value}}]}))
-                with self.assertRaisesRegex(JournalFormatError, 'readyTimeoutMs'): load_journal(path)
-            for kind, payload in [('action', {'code': 'x'}), ('input.key', {})]:
-                path.write_text(json.dumps({'formatVersion': 2, 'entries': [{
-                    'atMs': 0, 'kind': kind, 'payload': dict(payload, readyTimeoutMs=100)}]}))
-                with self.assertRaisesRegex(JournalFormatError, 'readyTimeoutMs'): load_journal(path)
-
     def test_scene_discovery_rejects_nested_journals_instead_of_omitting_them(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -616,9 +349,9 @@ class JournalPythonClientCheck(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'missing events/Journal.json'):
                 discover_scenarios(root)
 
+    @unittest.skipUnless((ASSETS / 'catalog.json').is_file(), 'TestAssets checkout has not been prepared')
     def test_all_shipped_active_journals_are_discoverable(self):
-        root = Path(__file__).resolve().parents[1] / 'TestAssets/scenarios'
-        cases = discover_scenarios(root)
+        cases = discover_scenarios(ASSETS / 'scenarios')
         self.assertTrue(cases)
         for case in cases:
             with self.subTest(case=case.name):
@@ -642,14 +375,20 @@ class JournalPythonClientCheck(unittest.TestCase):
                     png = BytesIO()
                     image.save(png, format="PNG")
                     client = RunnerClient(root)
-                    client.capture_screenshot = Mock(return_value={"png": png.getvalue()})
+                    final = (script_reply("passed", native_result(index=2)) if variant == "equal"
+                             else script_reply("failed", error="Journal checkpoint 1 failed independent verification"))
+                    client.request.side_effect = [
+                        script_reply("running"), script_reply("verifying", screenshot_result(png.getvalue())),
+                        script_reply("running"), final]
                     journal = write_journal(root / "case.json", [
                         client.entry("verify.screenshot", dict(baseline="approved.png", tolerance=0,
                             region=[0, 0, 2, 2], maxChannelDifference=255, blurRadius=2)),
                         client.entry("action", dict(code="following.input"), sequence=1)])
                     result = JournalRunner(client).play(journal, restart=False, output_dir=root / variant)
                     self.assertEqual(result["acceptance"], "passed" if variant == "equal" else "failed")
-                    self.assertEqual(result["completedEntries"], 2)
+                    self.assertEqual(result["completedEntries"], 2 if variant == "equal" else 1)
+                    self.assertEqual(client.request.call_args_list[2].args,
+                                     ("journal.script.continue", {"after": 1, "index": 1, "verified": variant == "equal"}))
                     comparison = result["results"][0]["comparison"]
                     self.assertEqual(comparison["mode"], "exact")
                     if variant != "size":
@@ -657,25 +396,33 @@ class JournalPythonClientCheck(unittest.TestCase):
                     self.assertEqual(baseline.read_bytes(), original)
                     self.assertEqual(Path(result["results"][0]["evidence"][1]).read_bytes(), png.getvalue())
 
-    def test_capture_without_baseline_fails_even_with_passing_db_and_continues_replay(self):
+    def test_capture_without_baseline_fails_even_with_passing_db_and_stops_replay(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             client = RunnerClient(root)
-            def execute(entry):
-                if entry["payload"]["code"] == "screenshot.capture":
-                    Path(entry["payload"]["params"]["filepath"]).write_bytes(b"captured")
-            client.execute_entry = Mock(side_effect=execute)
+
             journal = write_journal(root / "case.json", [
                 client.entry("verify.db", dict(dbInstanceId="42", serializationFormat=DB_SERIALIZATION_FORMAT,
                     expectedSerialized=client.db_data["serialized"])),
                 client.entry("action", dict(code="screenshot.capture"), sequence=1),
                 client.entry("action", dict(code="following.input"), sequence=2)])
-            result = JournalRunner(client).play(journal, restart=False)
+            output = root / "result"
+            def replies():
+                yield script_reply("running")
+                yield script_reply("verifying", native_result("verify.db", data=client.db_data))
+                yield script_reply("running")
+                (output / "screenshots/screenshot_002_actual.png").write_bytes(b"captured")
+                yield script_reply("verifying", native_result(index=2))
+                yield script_reply("failed")
+                yield script_reply("failed", error="Journal checkpoint 2 failed independent verification")
+            client.request.side_effect = replies()
+            result = JournalRunner(client).play(journal, restart=False, output_dir=output)
+            self.assertEqual([call.args[1]["verified"] for call in client.request.call_args_list
+                              if call.args[0] == "journal.script.continue"], [True, False])
             self.assertEqual(result["acceptance"], "failed")
-            self.assertEqual(result["completedEntries"], 3)
+            self.assertEqual(result["completedEntries"], 2)
             self.assertEqual(result["results"][0]["status"], "passed")
             self.assertIn("no approved baseline", result["results"][1]["message"])
-            self.assertEqual(result["results"][2]["status"], "passed")
             self.assertFalse((root / "approved.png").exists())
 
     def test_capture_action_with_baseline_is_checked_and_candidate_mode_never_passes(self):
@@ -685,13 +432,19 @@ class JournalPythonClientCheck(unittest.TestCase):
             baseline = root / "approved.png"
             Image.new("RGBA", (8, 8), "white").save(baseline)
             client = RunnerClient(root)
-            def execute(entry):
-                self.assertNotIn("baseline", entry["payload"])
-                Path(entry["payload"]["params"]["filepath"]).write_bytes(baseline.read_bytes())
-            client.execute_entry = Mock(side_effect=execute)
+            def replies(output):
+                yield script_reply("running")
+                (output / "screenshots/screenshot_001_actual.png").write_bytes(baseline.read_bytes())
+                yield script_reply("verifying", native_result())
+                yield script_reply("running")
+                yield script_reply("passed")
             journal = write_journal(root / "case.json", [client.entry("action",
                 dict(code="screenshot.capture", baseline="approved.png"))])
+            client.request.side_effect = replies(root / "verified")
             result = JournalRunner(client).play(journal, restart=False, output_dir=root / "verified")
+            self.assertNotIn("baseline", submitted_entries(client)[0]["payload"])
+            client.request.reset_mock()
+            client.request.side_effect = replies(root / "candidate")
             self.assertEqual(result["acceptance"], "passed")
             self.assertEqual(result["results"][0]["comparison"]["differentPixels"], 0)
             candidate = JournalRunner(client).play(journal, restart=False, validate=False, output_dir=root / "candidate")
@@ -705,124 +458,46 @@ class JournalPythonClientCheck(unittest.TestCase):
             baseline = root / 'approved.png'
             Image.new('RGBA', (8, 8), 'white').save(baseline)
             client = RunnerClient(root)
-            client.execute_entry = Mock(side_effect=lambda entry:
-                Path(entry['payload']['params']['filepath']).write_bytes(baseline.read_bytes()))
-            client.capture_screenshot = Mock(return_value=dict(png=baseline.read_bytes()))
+            output = root / 'result'
+            def replies():
+                yield script_reply("running")
+                (output / "screenshots/screenshot_002_diff.png").write_bytes(baseline.read_bytes())
+                yield script_reply("verifying", native_result())
+                yield script_reply("running")
+                yield script_reply("verifying", screenshot_result(baseline.read_bytes(), index=2))
+                yield script_reply("failed")
+                yield script_reply("failed", error="Journal checkpoint 2 failed independent verification")
+            client.request.side_effect = replies()
             journal = write_journal(root / 'case.json', [
                 client.entry('action', dict(code='screenshot.capture', baseline='approved.png',
                     params=dict(filepath='screenshots/screenshot_002_diff.png'))),
                 client.entry('verify.screenshot', dict(baseline='approved.png'), sequence=1)])
-            result = JournalRunner(client).play(journal, restart=False)
+            result = JournalRunner(client).play(journal, restart=False, output_dir=output)
             self.assertEqual(result['acceptance'], 'failed')
             self.assertEqual(result['results'][0]['comparison']['status'], 'passed')
             self.assertIn('collides', result['results'][1]['message'])
-            client.capture_screenshot.assert_not_called()
+            self.assertEqual([call.args[1]["verified"] for call in client.request.call_args_list
+                              if call.args[0] == "journal.script.continue"], [True, False])
             self.assertEqual(Path(result['results'][0]['evidence'][1]).read_bytes(), baseline.read_bytes())
 
-    def test_background_worker_error_is_recorded_after_replay_continues(self):
+    def test_background_worker_error_stops_native_replay(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "approved.png").write_bytes(b"standard")
             client = RunnerClient(root)
-            client.capture_screenshot = Mock(return_value={"png": b"actual"})
+            client.request.side_effect = [
+                script_reply("running"), script_reply("verifying", screenshot_result(b"actual")),
+                script_reply("failed"), script_reply("failed", error="Journal checkpoint 1 failed independent verification")]
             journal = write_journal(root / "case.json", [
                 client.entry("verify.screenshot", dict(baseline="approved.png")),
                 client.entry("action", dict(code="following.input"), sequence=1)])
             with patch.object(ScreenshotComparisons, "_compare", side_effect=RuntimeError("worker error")):
                 result = JournalRunner(client).play(journal, restart=False)
             self.assertEqual(result["acceptance"], "failed")
-            self.assertEqual(result["completedEntries"], 2)
+            self.assertEqual(result["completedEntries"], 1)
             self.assertIn("worker error", result["results"][0]["message"])
-
-    def test_out_of_order_comparisons_and_cancelled_replay_keep_their_results(self):
-        import threading
-        from PIL import Image
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            baseline = root / "approved.png"
-            Image.new("RGBA", (8, 8), "white").save(baseline)
-            client = RunnerClient(root)
-            client.capture_screenshot = Mock(return_value={"png": baseline.read_bytes()})
-            cancelled, release, second_done = threading.Event(), threading.Event(), threading.Event()
-            original_compare = ScreenshotComparisons._compare
-            def compare(expected, actual, diff, error, exclude_import_progress):
-                if '001' in expected.name:
-                    if not release.wait(3):
-                        raise RuntimeError("Comparison was awaited during replay")
-                result = original_compare(expected, actual, diff, error, exclude_import_progress)
-                if '002' in expected.name:
-                    second_done.set()
-                return result
-            client.execute_entry = Mock(side_effect=lambda _entry: cancelled.set())
-            journal = write_journal(root / "case.json", [
-                client.entry("verify.screenshot", dict(baseline="approved.png")),
-                client.entry("verify.screenshot", dict(baseline="approved.png"), sequence=1),
-                client.entry("action", dict(code="cancel"), sequence=2),
-                client.entry("action", dict(code="must.not.run"), sequence=3)])
-            output = JournalSessionRepository().create_playback(root / "run")
-            comparisons = ScreenshotComparisons()
-            with patch.object(ScreenshotComparisons, "_compare", side_effect=compare):
-                try:
-                    result = JournalRunner(client, comparisons=comparisons).run(
-                        load_journal(journal), output, cancel_event=cancelled)
-                    self.assertEqual(result["error"], "Replay cancelled by caller")
-                    self.assertEqual(len(result["results"]), 3)
-                    self.assertTrue(second_done.wait(2))
-                    # Completion notification precedes Future completion by a
-                    # few instructions; wait only on that already-running job
-                    # in this test, never in the production replay loop.
-                    comparisons._jobs[1][0].result(timeout=2)
-                    comparisons.collect()
-                    self.assertEqual(result["results"][0]["status"], "pending")
-                    self.assertEqual(result["results"][1]["status"], "passed")
-                finally:
-                    release.set()
-                    comparisons.close()
-            self.assertEqual(result["acceptance"], "failed")
-            self.assertTrue(all(row['status'] == 'passed' for row in result['results']))
-            self.assertNotIn('pending', json.dumps(json.loads((output / 'execution_result.json').read_text())))
-
-    def test_slow_checkpoint_does_not_consume_later_input_gap(self):
-        runner = JournalRunner(Mock())
-        clock = [0.0]
-        dispatched = []
-        entries = [
-            {"atMs": 0, "kind": "verify.screenshot", "payload": {}},
-            {"atMs": 10, "kind": "input.mouse", "payload": {}},
-            {"atMs": 210, "kind": "input.mouse", "payload": {}},
-        ]
-
-        def execute(_path, _output, entry, _index, _validate):
-            dispatched.append(clock[0])
-            if entry["kind"] == "verify.screenshot":
-                clock[0] += 0.35
-            return {"status": "passed"}
-
-        with patch("journal_runner.time.monotonic", side_effect=lambda: clock[0]), \
-                patch("journal_runner.time.sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
-                patch.object(runner, "_execute_entry", side_effect=execute):
-            result = runner.run({"journalPath": "case.json", "journalSha256": "test", "entries": entries}, ".")
-        self.assertEqual(len(result["results"]), 3)
-        for actual, expected in zip(dispatched, [0.0, 0.35, 0.55]):
-            self.assertAlmostEqual(actual, expected)
-
-    def test_fast_requests_keep_the_recorded_cadence(self):
-        runner = JournalRunner(Mock())
-        clock = [0.0]
-        dispatched = []
-        entries = [{"atMs": at, "kind": "action", "payload": {}} for at in (0, 10, 20)]
-
-        def execute(*_args):
-            dispatched.append(clock[0])
-            clock[0] += 0.002
-            return {"status": "passed"}
-
-        with patch("journal_runner.time.monotonic", side_effect=lambda: clock[0]), \
-                patch("journal_runner.time.sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
-                patch.object(runner, "_execute_entry", side_effect=execute):
-            runner.run({"journalPath": "case.json", "journalSha256": "test", "entries": entries}, ".")
-        for actual, expected in zip(dispatched, [0.0, 0.01, 0.02]):
-            self.assertAlmostEqual(actual, expected)
+            self.assertEqual(client.request.call_args_list[2].args,
+                             ("journal.script.continue", {"after": 1, "index": 1, "verified": False}))
 
     def test_macos_registration_waits_for_owned_registration_without_launching(self):
         from journal_execution_session import _identify_owned_macos_application
@@ -847,7 +522,6 @@ class JournalPythonClientCheck(unittest.TestCase):
         self.assertTrue(all(c[0] == "/usr/bin/lsappinfo" for c in commands))
         self.assertTrue(all("-all" in c for c in commands if "info" in c))
         launch.assert_not_called()
-
 
     def test_serial_activation_only_targets_verified_owned_pid_and_rechecks_identity(self):
         from journal_execution_session import _identify_owned_macos_application
@@ -895,7 +569,6 @@ class JournalPythonClientCheck(unittest.TestCase):
                     with self.assertRaises(RuntimeError):
                         _identify_owned_macos_application(process, executable, time.monotonic() + 10)
 
-
     def test_macos_registration_child_exit_or_timeout_never_launches_replacement(self):
         from journal_execution_session import _identify_owned_macos_application
         executable = Path("/Applications/Test.app/Contents/MacOS/Test").resolve()
@@ -923,7 +596,6 @@ class JournalPythonClientCheck(unittest.TestCase):
                 _identify_owned_macos_application(process, executable, time.monotonic() - 1)
             run.assert_not_called()
 
-
     def test_registration_leaves_other_platforms_and_unbundled_executables_unchanged(self):
         from journal_execution_session import _identify_owned_macos_application
         for platform, executable in [("linux", "/tmp/Test.app/Contents/MacOS/Test"),
@@ -934,7 +606,6 @@ class JournalPythonClientCheck(unittest.TestCase):
                         patch("journal_execution_session.subprocess.run") as run:
                     self.assertIsNone(_identify_owned_macos_application(Mock(), Path(executable), 0))
                     run.assert_not_called()
-
 
     def test_macos_registration_selects_owned_child_while_recording_instance_stays_open(self):
         from journal_execution_session import _identify_owned_macos_application
@@ -959,7 +630,6 @@ class JournalPythonClientCheck(unittest.TestCase):
         self.assertEqual(result['pid'], 123)
         self.assertFalse(any('setfront' in c for c in commands))
 
-
     def test_execution_retains_registration_evidence_and_original_readiness_handshake(self):
         from journal_execution_session import JournalExecutionSession
         with tempfile.TemporaryDirectory() as temporary:
@@ -967,8 +637,8 @@ class JournalPythonClientCheck(unittest.TestCase):
             journal = write_journal(Path(temporary) / "source.json", [client.entry("action", {"code": "existing.action"})])
             client.connect = Mock()
             client.disconnect = Mock()
-            client.request = Mock(side_effect=lambda method, params, **kwargs:
-                                  {"status": "ready", "replayId": params["replayId"]})
+            client.request.side_effect = owned_replay_replies(
+                script_reply("running"), script_reply("passed", native_result()))
             process = Mock(pid=123, returncode=None)
             process.poll.return_value = None
             process.wait.side_effect = lambda **kwargs: setattr(process.poll, "return_value", -15)
@@ -980,9 +650,8 @@ class JournalPythonClientCheck(unittest.TestCase):
             self.assertEqual(result["applicationRegistration"], activation)
             saved = json.loads((Path(result["outputPath"]) / "execution_result.json").read_text(encoding="utf-8"))
             self.assertEqual(saved["applicationRegistration"], activation)
-            self.assertEqual(client.request.call_args.args[0], "journal.replay.begin")
+            self.assertEqual(client.request.call_args_list[0].args[0], "journal.replay.begin")
             self.assertTrue(result["success"])
-
 
     def test_execution_uses_one_source_read_even_if_file_changes_during_connect(self):
         from journal_execution_session import JournalExecutionSession
@@ -996,7 +665,7 @@ class JournalPythonClientCheck(unittest.TestCase):
                 write_journal(journal, [client.entry("action", {"code": "changed"})])
             client.connect = Mock(side_effect=connect)
             client.disconnect = Mock()
-            client.execute_entry = Mock(return_value={})
+            client.request.side_effect = [script_reply("running"), script_reply("passed", native_result())]
             read_bytes = Path.read_bytes
             reads = []
             def read(path):
@@ -1007,7 +676,7 @@ class JournalPythonClientCheck(unittest.TestCase):
                     patch.object(Path, "read_bytes", read):
                 summary = JournalExecutionSession().run(journal, port=9999)
             self.assertEqual(reads, [journal])
-            self.assertEqual(client.execute_entry.call_args.args[0]["payload"]["code"], "original")
+            self.assertEqual(submitted_entries(client)[0]["payload"]["code"], "original")
             saved = json.loads((Path(summary["outputPath"]) / "execution_result.json").read_text(encoding="utf-8"))
             self.assertTrue(saved["success"])
             self.assertEqual(saved["journalSha256"], hashlib.sha256(original).hexdigest())
@@ -1022,8 +691,8 @@ class JournalPythonClientCheck(unittest.TestCase):
                 client.entry("action", {"code": "existing.action"})])
             client.connect = Mock()
             client.disconnect = Mock()
-            client.request = Mock(side_effect=lambda method, params, **kwargs:
-                                  {"status": "ready", "replayId": params["replayId"]})
+            client.request.side_effect = owned_replay_replies(
+                script_reply("running"), script_reply("passed", native_result()))
             client.end_replay = Mock(side_effect=ConnectionError("cleanup failed"))
             process = Mock(pid=123, returncode=None)
             process.poll.return_value = None
@@ -1052,8 +721,8 @@ class JournalPythonClientCheck(unittest.TestCase):
                     client.entry("action", {"code": "existing.action"})])
                 client.connect = Mock()
                 client.disconnect = Mock()
-                client.request = Mock(side_effect=lambda method, params, **kwargs:
-                                      {"status": "ready", "replayId": params["replayId"]})
+                client.request.side_effect = owned_replay_replies(
+                    script_reply("running"), script_reply("passed", native_result()))
                 process = Mock(pid=123, returncode=None)
                 process.poll.return_value = None
                 process.wait.side_effect = lambda **kwargs: setattr(process.poll, "return_value", -15)
@@ -1092,7 +761,9 @@ class JournalPythonClientCheck(unittest.TestCase):
     def test_missing_input_target_fails_without_a_ui_assertion(self):
         with tempfile.TemporaryDirectory() as temporary:
             client = RunnerClient(temporary)
-            client.execute_entry = Mock(side_effect=RuntimeError("UI target not found: missing"))
+            error = "UI target not found: missing"
+            client.request.side_effect = [script_reply("running"), script_reply("failed",
+                native_result("input.mouse", status="failed", message=error), error=error)]
             journal = write_journal(Path(temporary) / "source.json", [
                 client.entry("input.mouse", {"target": "missing", "event": "press"}, sequence=1),
                 client.entry("action", {"code": "must.not.execute"}, sequence=2)])
@@ -1100,7 +771,8 @@ class JournalPythonClientCheck(unittest.TestCase):
             self.assertFalse(result["success"])
             self.assertEqual(result["completedEntries"], 1)
             self.assertIn("not found", result["results"][0]["message"])
-            client.execute_entry.assert_called_once()
+            self.assertEqual([call.args[0] for call in client.request.call_args_list],
+                             ["journal.script.start", "journal.script.status"])
 
     def test_steps_keep_source_snapshot_and_persist_cleanup_failure(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1110,7 +782,9 @@ class JournalPythonClientCheck(unittest.TestCase):
                 client.entry("action", {"code": "first"}, sequence=1),
                 client.entry("action", {"code": "second"}, sequence=2)])
             source_hash = hashlib.sha256(journal.read_bytes()).hexdigest()
-            client.execute_entry = Mock(return_value={})
+            client.request.side_effect = [
+                script_reply("paused"), script_reply("running"), script_reply("paused", native_result()),
+                script_reply("running"), script_reply("passed", native_result(index=2))]
             first = runner.step_journal(journal)
             self.assertFalse(first["complete"])
             write_journal(journal, [client.entry("action", {"code": "changed"})])
@@ -1118,8 +792,9 @@ class JournalPythonClientCheck(unittest.TestCase):
                 second = runner.step_journal(journal)
             self.assertTrue(second["complete"])
             self.assertIsNone(runner._step_state)
-            self.assertEqual([call.args[0]["payload"]["code"]
-                              for call in client.execute_entry.call_args_list], ["first", "second"])
+            self.assertEqual([entry["payload"]["code"] for entry in submitted_entries(client)], ["first", "second"])
+            self.assertEqual([call.args[1] for call in client.request.call_args_list
+                              if call.args[0] == "journal.script.continue"], [{"after": 0}, {"after": 1}])
             summary = second["summary"]
             saved = json.loads((Path(summary["outputPath"]) / "execution_result.json").read_text(encoding="utf-8"))
             self.assertFalse(saved["success"])
@@ -1155,13 +830,21 @@ class JournalPythonClientCheck(unittest.TestCase):
             entry = client.entry("action", {"code": "screenshot.capture",
                                           "params": {"filepath": "screenshots/all.png", "notify": False}})
             journal = write_journal(Path(temporary) / "case.json", [entry])
-            def execute(dispatched):
-                self.assertEqual(dispatched["kind"], "action")
-                self.assertEqual(dispatched["payload"]["code"], "screenshot.capture")
-                self.assertFalse(dispatched["payload"]["params"]["notify"])
-                Path(dispatched["payload"]["params"]["filepath"]).write_bytes(b"test-image")
-            client.execute_entry = Mock(side_effect=execute)
-            result = JournalRunner(client).play(journal, restart=False)
+            output = Path(temporary) / "result"
+            def replies():
+                yield script_reply("running")
+                (output / "screenshots/all.png").write_bytes(b"test-image")
+                yield script_reply("verifying", native_result())
+                yield script_reply("failed")
+                yield script_reply("failed", error="Journal checkpoint 1 failed independent verification")
+            client.request.side_effect = replies()
+            result = JournalRunner(client).play(journal, restart=False, output_dir=output)
+            [dispatched] = submitted_entries(client)
+            self.assertEqual(dispatched["kind"], "action")
+            self.assertEqual(dispatched["payload"]["code"], "screenshot.capture")
+            self.assertFalse(dispatched["payload"]["params"]["notify"])
+            self.assertEqual(dispatched["payload"]["params"]["filepath"],
+                             str((output / "screenshots/all.png").resolve()))
             actual = (Path(result["outputPath"]) / "screenshots/all.png").resolve()
             self.assertEqual(actual.read_bytes(), b"test-image")
             self.assertEqual(result["results"][0]["evidence"], [actual])
@@ -1182,23 +865,24 @@ class JournalPythonClientCheck(unittest.TestCase):
             journal = write_journal(events / "Journal.json", [client.entry(
                 "action", {"code": "file.import",
                            "params": {"filePath": "../assets/cube.stl"}})])
-            client.execute_entry = Mock(return_value={})
+            client.request.side_effect = [script_reply("running"), script_reply("passed", native_result())]
 
             result = JournalRunner(client).play(journal, restart=False)
 
             self.assertTrue(result["success"])
-            dispatched = client.execute_entry.call_args.args[0]
-            self.assertEqual(dispatched["payload"]["params"]["filePath"],
-                             str(fixture.resolve()))
+            [dispatched] = submitted_entries(client)
+            self.assertEqual(dispatched["payload"]["params"]["filePath"], "../assets/cube.stl")
+            self.assertEqual(client.request.call_args_list[0].args[1]["sourceDirectory"], str(events.resolve()))
             self.assertEqual(load_journal(journal)["entries"][0]
                              ["payload"]["params"]["filePath"],
                              "../assets/cube.stl")
 
+    @unittest.skipUnless((ASSETS / 'catalog.json').is_file(), 'TestAssets checkout has not been prepared')
     def test_repository_replays_use_existing_portable_import_fixtures(self):
         # Guard the shipped catalog, rather than letting a developer's local
         # Downloads path survive until an end-to-end replay on another machine.
-        repository = Path(__file__).resolve().parents[2]
-        scenarios = sorted((repository / "tests/TestAssets/scenarios").glob("*/events/Journal.json"))
+        repository = ASSETS.parents[1]
+        scenarios = sorted((ASSETS / 'scenarios').glob('*/events/Journal.json'))
         self.assertTrue(scenarios)
         for scenario in scenarios:
             for entry in load_journal(scenario)["entries"]:
@@ -1213,27 +897,35 @@ class JournalPythonClientCheck(unittest.TestCase):
                     self.assertTrue(fixture.is_relative_to(repository))
                     self.assertTrue(fixture.is_file(), f"missing fixture: {fixture}")
 
-    def test_file_import_rejects_missing_relative_fixture_before_dispatch(self):
+    def test_file_import_reports_native_rejection_of_missing_relative_fixture(self):
         with tempfile.TemporaryDirectory() as temporary:
             client = RunnerClient(temporary)
             journal = write_journal(Path(temporary) / "events" / "Journal.json", [
                 client.entry("action", {"code": "file.import",
                              "params": {"filePath": "../assets/missing.stl"}})])
-            client.execute_entry = Mock(return_value={})
+            missing = (Path(temporary) / "assets/missing.stl").resolve()
+            error = f"Action failed: file.import [ERR_TARGET_NOT_FOUND]: File not found: {missing}"
+            client.request.side_effect = [script_reply("running"), script_reply("failed",
+                native_result(status="failed", message=error), error=error)]
 
             result = JournalRunner(client).play(journal, restart=False)
 
             self.assertEqual(result["acceptance"], "failed")
-            self.assertIn("Import fixture does not exist",
-                          result["results"][0]["message"])
-            client.execute_entry.assert_not_called()
+            self.assertEqual(result["results"][0]["message"], error)
+            [dispatched] = submitted_entries(client)
+            self.assertEqual(dispatched["payload"]["params"]["filePath"], "../assets/missing.stl")
+            self.assertEqual(client.request.call_args_list[0].args[1]["sourceDirectory"],
+                             str((Path(temporary) / "events").resolve()))
 
     def test_screenshot_action_missing_file_is_failure(self):
         with tempfile.TemporaryDirectory() as temporary:
             client = RunnerClient(temporary)
             journal = write_journal(Path(temporary) / "case.json", [client.entry(
                 "action", {"code": "screenshot.capture", "params": {"filepath": "screenshots/all.png"}})])
+            client.request.side_effect = [script_reply("running"), script_reply("verifying", native_result()),
+                script_reply("failed"), script_reply("failed", error="Journal checkpoint 1 failed independent verification")]
             result = JournalRunner(client).play(journal, restart=False)
+            self.assertFalse(client.request.call_args_list[2].args[1]["verified"])
             self.assertEqual(result["acceptance"], "failed")
             self.assertIn("did not save an image", result["results"][0]["message"])
 
@@ -1244,10 +936,15 @@ class JournalPythonClientCheck(unittest.TestCase):
             existing.write_bytes(b"previous-evidence")
             journal = write_journal(Path(temporary) / "case.json", [client.entry(
                 "action", {"code": "screenshot.capture", "params": {"filepath": str(existing)}})])
+            error = "Screenshot output must be a new file"
+            client.request.side_effect = [script_reply("running"), script_reply("failed",
+                native_result(status="failed", message=error), error=error)]
             result = JournalRunner(client).play(journal, restart=False)
+            self.assertEqual(result["results"][0]["message"], error)
             self.assertEqual(result["acceptance"], "failed")
             self.assertEqual(existing.read_bytes(), b"previous-evidence")
-            self.assertNotIn(("execute", "action"), client.calls)
+            self.assertEqual([call.args[0] for call in client.request.call_args_list],
+                             ["journal.script.start", "journal.script.status"])
 
     def test_saved_json_validates_db_captures_data_and_does_not_restart(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1258,6 +955,10 @@ class JournalPythonClientCheck(unittest.TestCase):
                              "expectedSerialized": client.db_data["serialized"]}, sequence=1),
                 client.entry("capture.db", {"dbInstanceId": "42"}, sequence=2)])
             source = journal.read_bytes()
+            client.request.side_effect = [script_reply("running"),
+                script_reply("verifying", native_result("verify.db", data=dict(client.db_data))), script_reply("running"),
+                script_reply("verifying", native_result("capture.db", index=2, data=dict(client.db_data))), script_reply("running"),
+                script_reply("passed")]
             result = JournalRunner(client).play(journal, restart=False, output_dir=Path(temporary) / "pass")
             self.assertEqual(result["acceptance"], "passed")
             self.assertEqual(result["completedEntries"], 2)
@@ -1266,7 +967,12 @@ class JournalPythonClientCheck(unittest.TestCase):
             raw = Path(result["results"][1]["evidence"][0]).read_bytes()
             self.assertEqual(raw, base64.b64decode(client.db_data["serialized"]))
             client.db_data["serialized"] = base64.b64encode(b"changed").decode("ascii")
+            client.request.side_effect = [script_reply("running"),
+                script_reply("verifying", native_result("verify.db", data=dict(client.db_data))),
+                script_reply("failed"), script_reply("failed", error="Journal checkpoint 1 failed independent verification")]
             failed = JournalRunner(client).play(journal, restart=False, output_dir=Path(temporary) / "fail")
+            self.assertEqual([call.args[1]["verified"] for call in client.request.call_args_list
+                              if call.args[0] == "journal.script.continue"], [True, True, False])
             self.assertEqual(failed["acceptance"], "failed")
             self.assertEqual(failed["completedEntries"], 1)
             self.assertTrue(Path(failed["results"][0]["evidence"][0]).exists())
@@ -1376,6 +1082,9 @@ class JournalPythonClientCheck(unittest.TestCase):
             client = RunnerClient(temporary)
             journal = write_journal(Path(temporary) / "capture.json", [
                 client.entry("capture.db", {"dbInstanceId": "42"})])
+            client.request.side_effect = [script_reply("running"),
+                script_reply("verifying", native_result("capture.db", data=client.db_data)), script_reply("running"),
+                script_reply("passed")]
             self.assertEqual(JournalRunner(client).play(journal, restart=False)["acceptance"], "not_verified")
             for expected, tolerance in (({"text": "old UI assertion"}, 0),):
                 bad = write_journal(Path(temporary) / "bad.json", [client.entry(
@@ -1490,8 +1199,8 @@ class JournalPythonClientCheck(unittest.TestCase):
                 client = RunnerClient(root)
                 client.connect = Mock()
                 client.disconnect = Mock()
-                client.request = Mock(side_effect=lambda method, params, **kw:
-                    {'status': 'ready', 'replayId': params['replayId']})
+                client.request.side_effect = owned_replay_replies(
+                    script_reply("running"), script_reply("passed", native_result()))
                 journal = write_journal(root / 'case.json', [client.entry('action', {'code': 'existing.action'})])
                 process = Mock(pid=123, returncode=None)
                 process.poll.return_value = None
@@ -1561,6 +1270,9 @@ class JournalPythonClientCheck(unittest.TestCase):
             client.disconnect = Mock()
             journal = write_journal(Path(temporary) / "case.json", [
                 client.entry("capture.db", {"dbInstanceId": "42"})])
+            client.request.side_effect = [script_reply("running"),
+                script_reply("verifying", native_result("capture.db", data=client.db_data)),
+                script_reply("running"), script_reply("passed")]
             with patch("journal_execution_session.JournalSystem", return_value=client), \
                     patch("journal_execution_session.Path.cwd", side_effect=AssertionError("must not use cwd")):
                 result = JournalExecutionSession().run(journal, port=9999)
@@ -1636,8 +1348,9 @@ class JournalPythonClientCheck(unittest.TestCase):
             event = threading.Event()
             client.connect = Mock()
             client.disconnect = Mock()
-            client.request = Mock(side_effect=lambda method, params, **kwargs:
-                                  {"status": "ready", "replayId": params["replayId"]})
+            client.request.side_effect = owned_replay_replies(
+                script_reply("running"), script_reply("running", native_result()),
+                script_reply("cancelled", error="Replay cancelled by caller"))
             process = Mock(pid=123, returncode=None)
             process.poll.return_value = None
             process.wait.side_effect = lambda **kwargs: setattr(process.poll, "return_value", -15)
@@ -1657,8 +1370,9 @@ class JournalPythonClientCheck(unittest.TestCase):
                 for timer in timers:
                     timer.join()
             self.assertLess(time.monotonic() - started, 5)
-            self.assertEqual([call for call in client.calls if isinstance(call, tuple)
-                              and call[0] == "execute"], [("execute", "action")])
+            self.assertEqual([row["actionCode"] for row in result["results"]], ["first"])
+            self.assertEqual([call.args[0] for call in client.request.call_args_list],
+                             ["journal.replay.begin", "journal.script.start", "journal.script.status", "journal.script.cancel"])
             self.assertIn("end", client.calls)
             process.terminate.assert_called_once()
             process.wait.assert_called_once()
@@ -1667,50 +1381,6 @@ class JournalPythonClientCheck(unittest.TestCase):
             self.assertEqual(result["acceptance"], "failed")
             self.assertIn("cancelled", result["error"])
             self.assertEqual(json.loads((root / "result/execution_result.json").read_text(encoding="utf-8"))["acceptance"], "failed")
-
-    def test_interrupted_probe_cleans_owned_child_and_reports_retained_or_attached_replay(self):
-        from journal_execution_session import JournalExecutionSession
-        for mode in ('owned', 'retained', 'attached'):
-            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
-                client = RunnerClient(root)
-                client.connect = Mock()
-                client.disconnect = Mock(side_effect=lambda: setattr(client, 'client', None))
-                client.request = Mock(side_effect=lambda method, params, **kwargs:
-                    {'status': 'ready', 'replayId': params['replayId']})
-                client.end_replay = Mock(side_effect=ConnectionError('Replay connection closed'))
-                journal = write_journal(root / 'source.json', [
-                    client.entry('input.key', {'target': 'x', 'event': 'press', 'readyTimeoutMs': 100})])
-                process = Mock(pid=123, returncode=None)
-                process.poll.return_value = None
-                process.wait.side_effect = lambda **kwargs: setattr(process.poll, 'return_value', -15)
-                def interrupted(*_args, **kwargs):
-                    client.disconnect()
-                    return {'journalPath': str(journal), 'journalSha256': 'test', 'totalEntries': 1,
-                        'outputPath': str(kwargs['output_dir']), 'results': [{
-                            'index': 1, 'kind': 'input.key', 'atMs': 0, 'status': 'failed',
-                            'message': 'Replay cancelled by caller'}]}
-                with patch('journal_execution_session.JournalSystem', return_value=client), \
-                        patch('journal_execution_session.subprocess.Popen', return_value=process), \
-                        patch('journal_execution_session.JournalRunner') as runner:
-                    runner.return_value.run.side_effect = interrupted
-                    result = JournalExecutionSession().run(journal,
-                        application=None if mode == 'attached' else sys.executable,
-                        port=9999 if mode == 'attached' else 0,
-                        keep_app=mode == 'retained', output_dir=root / 'result')
-                self.assertEqual(result['results'][0]['message'], 'Replay cancelled by caller')
-                if mode == 'owned':
-                    self.assertNotIn('cleanupErrors', result)
-                    self.assertEqual(result['replayCleanup'], 'owned-process-termination')
-                    client.end_replay.assert_not_called()
-                    process.terminate.assert_called_once()
-                    self.assertFalse(result['applicationKeptOpen'])
-                else:
-                    self.assertEqual(result['cleanupErrors'], ['Replay connection closed'])
-                    client.end_replay.assert_called_once()
-                    process.terminate.assert_not_called()
-                if result.get('applicationLiveLogPath'):
-                    Path(result['applicationLiveLogPath']).unlink()
 
     def test_cancel_before_start_never_launches_application(self):
         import threading
@@ -1978,14 +1648,22 @@ class JournalPythonClientCheck(unittest.TestCase):
             with patch.object(client, "begin_replay", side_effect=prepare), \
                     patch("journal_runner.time.monotonic", side_effect=lambda: now[0]), \
                     patch("journal_runner.time.sleep") as sleep:
-                runner.play(journal)
-                self.assertAlmostEqual(sleep.call_args_list[0].args[0], 0.1)
+                client.request.side_effect = [script_reply("running"), script_reply("running", native_result(at_ms=100)),
+                    script_reply("passed", native_result(index=2, at_ms=200))]
+                self.assertTrue(runner.play(journal)["success"])
+                self.assertEqual([row["atMs"] for row in submitted_entries(client)], [100, 200])
+                self.assertTrue(all(call.args == (0.05,) for call in sleep.call_args_list))
             client.calls.clear()
             # Separate fixture outputs: mocked playback can finish within the
             # same wall-clock millisecond as starting step playback.
             client.playbacks = Path(temporary) / "step-playbacks"
-            runner.step_journal(journal)
-            runner.step_journal(journal)
+            client.request.reset_mock()
+            client.request.side_effect = [script_reply("paused"), script_reply("running"),
+                script_reply("paused", native_result(at_ms=100)), script_reply("running"),
+                script_reply("passed", native_result(index=2, at_ms=200))]
+            self.assertFalse(runner.step_journal(journal)["complete"])
+            self.assertTrue(runner.step_journal(journal)["complete"])
+            self.assertEqual([row["atMs"] for row in submitted_entries(client)], [100, 200])
             self.assertEqual(client.calls.count("begin"), 1)
 
     def test_preparation_failure_never_executes_entries(self):
@@ -1998,7 +1676,7 @@ class JournalPythonClientCheck(unittest.TestCase):
                 summary = runner.play(journal)
                 self.assertFalse(summary["success"])
                 self.assertEqual(summary["error"], "startup")
-            self.assertFalse(any(isinstance(call, tuple) and call[0] == "execute" for call in client.calls))
+            client.request.assert_not_called()
 
     def test_fragmented_and_coalesced_frames(self):
         first = frame({"requestId": 1, "success": True, "result": {"a": 1}})
@@ -2139,15 +1817,23 @@ class JournalPythonClientCheck(unittest.TestCase):
                 [entry["kind"] for entry in document["entries"]],
                 ["action", "verify.db"])
 
+            client.request.side_effect = [script_reply("running"), script_reply("running", native_result(at_ms=5)),
+                script_reply("verifying", native_result("verify.db", index=2, at_ms=10, data=dict(client.db_data))),
+                script_reply("running"), script_reply("passed")]
             summary = runner.play(journal)
             self.assertTrue(summary["success"])
-            self.assertEqual(client.calls[-4:], [
-                "begin", ("execute", "action"), ("db", "42"), "end"])
+            self.assertEqual(client.calls[-3:], ["stop", "begin", "end"])
+            self.assertEqual([row["kind"] for row in summary["results"]], ["action", "verify.db"])
+            self.assertTrue(client.request.call_args_list[-2].args[1]["verified"])
             self.assertTrue(Path(summary["reportPath"]).exists())
 
             client.db_data["serialized"] = base64.b64encode(
                 b"complete-db-state-v2").decode("ascii")
+            client.request.side_effect = [script_reply("running"), script_reply("running", native_result(at_ms=5)),
+                script_reply("verifying", native_result("verify.db", index=2, at_ms=10, data=dict(client.db_data))),
+                script_reply("failed"), script_reply("failed", error="Journal checkpoint 2 failed independent verification")]
             failed = runner.play(journal)
+            self.assertFalse(client.request.call_args_list[-2].args[1]["verified"])
             self.assertFalse(failed["success"])
             differences = failed["results"][-1]["message"]
             self.assertIn("DB serialized data mismatch", differences)

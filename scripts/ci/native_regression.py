@@ -11,7 +11,7 @@ import time
 
 from xml.etree import ElementTree
 
-from common import git_env, write_json
+from common import git_env, require_sha, write_json
 
 
 def command(args, cwd, env, log, timeout=7200, input_data=None):
@@ -141,13 +141,14 @@ def verify_native_junit(path):
             raise RuntimeError(f'Required native CTest did not pass exactly once: {name}')
 
 
-def architecture(source, arch, output, report, env):
+def architecture(source, arch, output, report, env, *, assets_sha):
     preset, directory = {'x64': ('release', 'build-Release'),
         'arm64': ('arm_release', 'build-arm64-Release'),
         'x86_64': ('x86_release', 'build-x86_64-Release')}[arch]
     build = source / directory
     output.mkdir()
     arguments = ['-DGPLATFORM_BUILD_TESTS=ON', '-DGPLATFORM_BUILD_SDK_CHECKS=ON',
+                 '-DGPLATFORM_TEST_ASSETS_SHA=' + require_sha(assets_sha),
                  '-DJOURNALSYSTEM_BUILD_TESTS=ON',
                  '-DGPLATFORM_BUILD_ORCA_NATIVE_PROBES=ON',
                  '-DQt6_DIR=' + env['Qt6_DIR'],

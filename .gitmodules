@@ -2,8 +2,3 @@
 	path = ThirdParty/OrcaSlicer
 	url = https://github.com/dezbracaty/OrcaSlicer.git
 	branch = feature/continuous-fiber-v2
-[submodule "tests/TestAssets"]
-	path = tests/TestAssets
-	url = https://github.com/dezbracaty/GeoPlatform-TestAssets.git
-	branch = macmini
-	update = none

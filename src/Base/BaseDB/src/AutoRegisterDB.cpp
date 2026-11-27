@@ -33,30 +33,39 @@ SnapGeometryPtr AutoRegisterDB::snapGeometry() const {
 }
 
 bool AutoRegisterDB::publishSnapGeometry(SnapGeometry geometry) {
+    auto snapshot = prepareSnapGeometry(std::move(geometry));
+    if (!snapshot) return false;
+    installSnapGeometry(std::move(*snapshot));
+    return true;
+}
+
+std::optional<SnapGeometryPtr> AutoRegisterDB::prepareSnapGeometry(SnapGeometry geometry) {
     const auto finite = [](const Vector3& point) {
         return std::isfinite(point.x) && std::isfinite(point.y) &&
                std::isfinite(point.z);
     };
-    if (geometry.features.size()>std::numeric_limits<std::uint32_t>::max()) return false;
+    if (geometry.features.size()>std::numeric_limits<std::uint32_t>::max()) return std::nullopt;
     std::unordered_set<std::uint64_t> ids;
     for (const auto& feature : geometry.features) {
         if (feature.kind != SnapFeatureKind::Point &&
             feature.kind != SnapFeatureKind::Segment &&
-            feature.kind != SnapFeatureKind::Line) return false;
+            feature.kind != SnapFeatureKind::Line) return std::nullopt;
         if (std::uint64_t(feature.groupBegin) + feature.groupCount > geometry.features.size())
-            return false;
+            return std::nullopt;
         if (!std::isfinite(feature.radiusMm) || feature.radiusMm < 0 ||
             !ids.insert(feature.id).second || !finite(feature.first) ||
             (feature.kind != SnapFeatureKind::Point && !finite(feature.second)))
-            return false;
+            return std::nullopt;
     }
     SnapGeometryPtr snapshot;
     geometry.buildIndex();
     if (!geometry.features.empty())
         snapshot = std::make_shared<const SnapGeometry>(std::move(geometry));
-    std::atomic_store_explicit(&m_snapGeometry, std::move(snapshot),
-                               std::memory_order_release);
-    return true;
+    return snapshot;
+}
+
+void AutoRegisterDB::installSnapGeometry(SnapGeometryPtr snapshot) {
+    std::atomic_store_explicit(&m_snapGeometry, std::move(snapshot), std::memory_order_release);
 }
 
 const DBInstanceID& AutoRegisterDB::getDBInstanceID() const {

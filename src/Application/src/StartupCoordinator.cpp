@@ -1,12 +1,14 @@
 #include "StartupCoordinator.hpp"
 #include "ActionManager.hpp"
 #include "SliceSettingsBridge.hpp"
+#include "SettingsHelper.h"
 #include <DocumentManager.hpp>
 #include <PrintBedDB.hpp>
 #include <WindowDB.hpp>
 #include <CameraDB.hpp>
 #include <PrintBedTemplateDB.hpp>
 #include <QGuiApplication>
+#include <QPalette>
 #include <QQuickWindow>
 #include <QScreen>
 #include <QQuickItem>
@@ -21,6 +23,13 @@
 
 StartupCoordinator::StartupCoordinator(bool replayMode, QObject* parent)
     : QObject(parent), m_replayMode(replayMode) {
+    using DarkMode = SettingsHelper::DarkMode;
+    const auto themeMode = static_cast<DarkMode>(SettingsHelper::getInstance()->getDarkMode());
+    const auto windowColor = QGuiApplication::palette().color(QPalette::Window);
+    const double luminance =
+        windowColor.red() * 0.2126 + windowColor.green() * 0.7152 + windowColor.blue() * 0.0722;
+    m_loadingDark = themeMode == DarkMode::Dark ||
+        (themeMode != DarkMode::Light && luminance <= 255.0 / 2);
     m_clock.start();
     LOG_INFO("[STARTUP STATE] applicationState={} elapsedMs={}",
              int(qGuiApp->applicationState()), elapsedMs());
@@ -48,6 +57,23 @@ bool StartupCoordinator::backgroundReplay() const {
 }
 
 QString StartupCoordinator::version() const { return QCoreApplication::applicationVersion(); }
+
+QRect StartupCoordinator::splashWorkArea() const {
+    auto* screen = m_splash ? m_splash->screen() : QGuiApplication::primaryScreen();
+    return screen ? screen->availableGeometry() : QRect{};
+}
+
+QRect StartupCoordinator::splashGeometry() const {
+    return m_splash ? QRect(m_splash->mapToGlobal(QPoint{}), m_splash->size()) : QRect{};
+}
+
+void StartupCoordinator::watchSplashScreen(QScreen* screen) {
+    disconnect(m_splashWorkAreaConnection);
+    if (screen)
+        m_splashWorkAreaConnection = connect(screen, &QScreen::availableGeometryChanged,
+                                             this, &StartupCoordinator::splashWorkAreaChanged);
+    emit splashWorkAreaChanged();
+}
 
 void StartupCoordinator::setStage(const QString& stage, const QString& text) {
     if (stopped()) return;
@@ -109,6 +135,13 @@ void StartupCoordinator::preparePresets(std::function<void()> continuation) {
 void StartupCoordinator::setSplash(QQuickWindow* window) {
     m_splash = window;
     if (!window) { fail(tr("Cannot create the startup window")); return; }
+    connect(window, &QWindow::screenChanged, this, &StartupCoordinator::watchSplashScreen);
+    connect(window, &QWindow::xChanged, this, &StartupCoordinator::splashGeometryChanged);
+    connect(window, &QWindow::yChanged, this, &StartupCoordinator::splashGeometryChanged);
+    connect(window, &QWindow::widthChanged, this, &StartupCoordinator::splashGeometryChanged);
+    connect(window, &QWindow::heightChanged, this, &StartupCoordinator::splashGeometryChanged);
+    watchSplashScreen(window->screen());
+    emit splashGeometryChanged();
     if (!window->flags().testFlag(Qt::WindowDoesNotAcceptFocus)) {
         window->raise();
         window->requestActivate();
@@ -169,19 +202,11 @@ void StartupCoordinator::attachMainWindow(QObject* object) {
     QTimer::singleShot(0, this, [this] { fitMainWindowToWorkArea(true); });
 #endif
     profilePhase("bind-main-window");
-    if (m_splash) {
-        m_splash->setTransientParent(window);
-        profilePhase("set-splash-transient-parent");
-        if (!m_splash->flags().testFlag(Qt::WindowDoesNotAcceptFocus)) {
-            m_splash->raise();
-            profilePhase("raise-splash");
-            m_splash->requestActivate();
-        }
-    }
     connect(window, &QQuickWindow::sceneGraphError, this,
         [this](QQuickWindow::SceneGraphError, const QString& error) { fail(error); },
         Qt::QueuedConnection);
     profilePhase("connect-scenegraph-error");
+    emit changed();
 }
 
 #ifdef Q_OS_WIN
@@ -270,12 +295,28 @@ void StartupCoordinator::initializeScene() {
         fail(tr("Print platform initialization failed: %1").arg(receipt.value("error").toString()));
         return;
     }
-    m_sceneReady = true;
+    m_sceneInitialized = true;
     setStage("FirstFrame", tr("Preparing 3D view…"));
     if (m_main) {
         if (!m_main->isVisible()) m_main->show();
         m_main->update();
     }
+    enablePrepareRenderer();
+}
+
+void StartupCoordinator::mainLoadingFramePresented() {
+    if (stopped() || ready() || m_mainLoadingPresented || !m_main || !m_main->isVisible()) return;
+    m_mainLoadingPresented = true;
+    if (m_splash) m_splash->hide();
+    emit changed();
+    enablePrepareRenderer();
+}
+
+void StartupCoordinator::enablePrepareRenderer() {
+    if (!m_sceneInitialized || !m_mainLoadingPresented || m_sceneReady) return;
+    m_sceneReady = true;
+    emit changed();
+    if (m_main) m_main->update();
     checkFrame();
 }
 
@@ -300,9 +341,6 @@ void StartupCoordinator::checkFrame() {
         !m_renderer->property("hasPresentedFrame").toBool()) return;
     setStage("Ready", tr("Ready"));
     m_timer.stop();
-    // The main window is already visible; hiding the Tool window cannot leave
-    // a gap with no application windows or retain its input/focus ownership.
-    if (m_splash) m_splash->hide();
     qGuiApp->setQuitOnLastWindowClosed(true);
     if (!m_main->flags().testFlag(Qt::WindowDoesNotAcceptFocus)) {
         m_main->raise();
@@ -342,7 +380,12 @@ void StartupCoordinator::fail(const QString& message) {
     m_text = tr("Startup failed");
     LOG_ERROR("[STARTUP] failed elapsedMs={} error={}", elapsedMs(), message.toStdString());
     emit changed();
-    if (m_replayMode) QCoreApplication::exit(1);
+    if (m_replayMode) {
+        QCoreApplication::exit(1);
+    } else if (m_splash) {
+        if (m_main) m_main->hide();
+        if (!m_splash->isVisible()) m_splash->show();
+    }
 }
 
 void StartupCoordinator::beginShutdown() {

@@ -3156,7 +3156,19 @@ msgid "Initializing print platform…"
 msgstr "正在初始化打印平台…"
 
 msgid "Preparing 3D view…"
-msgstr "正在准备三维视图…"
+msgstr "正在准备 3D 视图…"
+
+msgid "Opening toolpath preview…"
+msgstr "正在打开路径预览…"
+
+msgid "Opening realistic view…"
+msgstr "正在打开真实渲染…"
+
+msgid "View could not be opened"
+msgstr "无法打开视图"
+
+msgid "3D rendering stopped. Restart the application to try again."
+msgstr "3D 渲染已停止。请重新启动应用后再试。"
 
 msgid "Startup failed"
 msgstr "启动失败"
@@ -3590,6 +3602,42 @@ msgstr "取消上传"
 
 msgid "Cancelled"
 msgstr "已取消"
+
+msgid "Rendering"
+msgstr "渲染"
+
+msgid "Anti-aliasing"
+msgstr "抗锯齿"
+
+msgid "Anti-aliasing type"
+msgstr "抗锯齿类型"
+
+msgid "MSAA sample count"
+msgstr "MSAA 倍数"
+
+msgid "Smooths edges in the Prepare and Preview viewports. The sample count applies to MSAA."
+msgstr "平滑准备和预览视口中的边缘。倍数仅用于 MSAA。"
+
+msgid "Last rendered mode — Prepare: %1 · Preview: %2"
+msgstr "最近绘制模式 — 准备：%1 · 预览：%2"
+
+msgid "Waiting for viewport"
+msgstr "等待视口绘制"
+
+msgid "FXAA (depth peeling is enabled)"
+msgstr "FXAA（已启用深度剥离）"
+
+msgid "FXAA (requested MSAA sample count is unavailable)"
+msgstr "FXAA（所选 MSAA 倍数不可用）"
+
+msgid "FXAA (MSAA framebuffer or resolve is unavailable)"
+msgstr "FXAA（MSAA 帧缓冲区或解析不可用）"
+
+msgid "MSAA %1×"
+msgstr "MSAA %1×"
+
+msgid "Off"
+msgstr "关闭"
 
 msgid "Desktop notifications"
 msgstr "桌面通知"
@@ -4205,6 +4253,33 @@ msgstr "无法恢复模型的材料归属。"
 
 msgid "Save user preset"
 msgstr "保存用户预设"
+
+msgid "Save preset"
+msgstr "保存预设"
+
+msgid "Duplicate preset"
+msgstr "复制预设"
+
+msgid "Save as New Preset"
+msgstr "另存为新预设"
+
+msgid "Overwrite existing user preset"
+msgstr "覆盖已有的用户预设"
+
+msgid "Choose a different name for the new preset"
+msgstr "请为新预设输入不同的名称"
+
+msgid "Only a user preset can be saved in place"
+msgstr "只有用户预设可以直接保存"
+
+msgid "Confirm overwriting the existing user preset"
+msgstr "请确认覆盖已有的用户预设"
+
+msgid "The configuration changed before saving the preset"
+msgstr "当前配置已变化，请重新打开保存窗口"
+
+msgid "System profile files are read-only"
+msgstr "系统预设文件为只读"
 
 msgid "Transfer or discard changes"
 msgstr "转移或丢弃改动"

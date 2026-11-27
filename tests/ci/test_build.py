@@ -416,7 +416,7 @@ class InstallerSelectionChecks(unittest.TestCase):
                               side_effect=RuntimeError(failure) if failure == 'SDK materialization failed' else None) as materialize,
                         patch('build.build_consumer', side_effect=consume_sdk) as consume,
                         patch('build.windows_entry', side_effect=lambda *args: (
-                            source / 'package' / 'GPlatform.exe').write_bytes(b'checked package')),
+                            source / 'package' / 'GPlatform.exe').write_bytes(b'checked package')) as installer_entry,
                         patch('build.run'),
                         patch('build.importlib.util.spec_from_file_location',
                               return_value=SimpleNamespace(loader=SimpleNamespace(exec_module=lambda module: None))),
@@ -437,6 +437,8 @@ class InstallerSelectionChecks(unittest.TestCase):
                             actual_source, selected_platform, actual_sdk, _, _ = consume.call_args.args
                             self.assertEqual((actual_source, selected_platform, actual_sdk),
                                              (source, platform, sdk))
+                        if installer_entry.called:
+                            self.assertIn('-DGPLATFORM_BUILD_TESTS=OFF', installer_entry.call_args.args[2])
 
                     values = dict(line.split('=', 1) for line in outputs.read_text(encoding='utf-8').splitlines())
                     report_path = result / 'build-result.json'

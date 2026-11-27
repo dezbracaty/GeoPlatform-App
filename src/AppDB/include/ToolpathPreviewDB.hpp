@@ -52,6 +52,11 @@ public:
         std::uint32_t sourceLine{0}; // 1-based final G-code source line; zero means none.
     };
     const std::vector<InspectionElement>& inspectionElements() const { return m_inspectionElements; }
+    class PreparedInspectionGeometry {
+        friend class ToolpathPreviewDB;
+        SnapGeometryPtr snapshot;
+        std::vector<InspectionElement> elements;
+    };
     struct InspectionVisibility {
         std::uint64_t generation{0};
         int firstLayer{0}, lastLayer{-1}, step{-1};
@@ -67,6 +72,10 @@ public:
     std::shared_ptr<const GCodeSource> gcodeSource() const { return m_gcodeSource; }
 
     void setPreviewData(ToolpathPreviewData&& data);
+    // Prepare from the final segments, options and diagnostic paths. Install
+    // this snapshot on the document thread with the data it was built from.
+    static PreparedInspectionGeometry prepareInspectionGeometry(const ToolpathPreviewData& data);
+    void setPreviewData(ToolpathPreviewData&& data, PreparedInspectionGeometry&& inspection);
     void clearPreviewData();
     void releasePrintOutputArtifacts();
 
@@ -121,7 +130,6 @@ protected:
     void initializeSubActorProperties() override;
 
 private:
-    void publishInspectionGeometry();
     std::vector<InspectionElement> m_inspectionElements;
     std::shared_ptr<const GCodeSource> m_gcodeSource;
     bool m_suppressPreviewNotifications = false;

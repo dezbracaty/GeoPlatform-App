@@ -57,6 +57,7 @@ jobs:
       app_sha: ${{ steps.source.outputs.app_sha }}
       host_repository: ${{ steps.source.outputs.host_repository }}
       declared_app_sha: ${{ steps.source.outputs.declared_app_sha }}
+      assets_repository: ${{ steps.source.outputs.assets_repository }}
       windows_assets_sha: ${{ steps.source.outputs.windows_assets_sha }}
       macos_assets_sha: ${{ steps.source.outputs.macos_assets_sha }}
       windows_sdk_sha: ${{ steps.source.outputs.windows_sdk_sha }}
@@ -239,6 +240,7 @@ jobs:
           SDK_REPOSITORY: ${{ needs.prepare.outputs.sdk_repository }}
           ASSETS_REF: ${{ matrix.platform == 'windows' && inputs.windows_test_assets_ref || inputs.macos_test_assets_ref }}
           ASSETS_SHA: ${{ matrix.platform == 'windows' && needs.prepare.outputs.windows_assets_sha || needs.prepare.outputs.macos_assets_sha }}
+          ASSETS_REPOSITORY: ${{ needs.prepare.outputs.assets_repository }}
           REPORT_DIRECTORY: ${{ steps.report_path.outputs.directory }}
         run: |
           import os, subprocess, sys
@@ -246,6 +248,7 @@ jobs:
               '--app-dir', 'source',
               '--source-sha', os.environ['SOURCE_SHA'], '--app-sha', os.environ['APP_SHA'],
               '--app-repository', os.environ['GITHUB_REPOSITORY'], '--assets-sha', os.environ['ASSETS_SHA'], '--assets-ref', os.environ['ASSETS_REF'],
+              '--assets-repository', os.environ['ASSETS_REPOSITORY'],
               '--platform', os.environ['PLATFORM'], '--output', os.environ['REPORT_DIRECTORY'],
               '--sdk-root', 'sdk', '--sdk-sha', os.environ['SDK_SHA'],
               '--sdk-repository', os.environ['SDK_REPOSITORY']], check=True)

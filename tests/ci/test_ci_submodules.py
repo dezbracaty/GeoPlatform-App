@@ -154,7 +154,9 @@ class SubmoduleTests(unittest.TestCase):
         self.git(app, "submodule", "update", "--init", "--checkout", "--", path)
         assets_gitdir = Path(self.git(app / path, "rev-parse", "--absolute-git-dir"))
         self.assertEqual(self.git(app / path, "rev-parse", "HEAD"), self.pinned)
-        common._init_pinned_submodules(self.source, common.git_env(), producer=True)
+        with self.assertRaisesRegex(RuntimeError, 'Prepare runner source'):
+            common._init_pinned_submodules(self.source, common.git_env(), producer=True)
+        self.git(app, 'submodule', 'deinit', '--force', '--', path)
         self.assertFalse((app / path / ".git").exists())
         self.assertTrue(assets_gitdir.is_dir())
         common.init_source_submodules(app)

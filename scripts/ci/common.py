@@ -22,6 +22,7 @@ SHA = re.compile(r"[0-9a-f]{40}")
 REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 SDK_DECLARATION = "cmake/sdk-repository.json"
 TEST_ASSETS_PATH = "tests/TestAssets"
+TEST_ASSETS_MODULE = Path(__file__).resolve().parents[2] / "cmake/thirdparty/fetch_test_assets.cmake"
 
 
 API_VERSION = '2026-03-10'
@@ -90,18 +91,6 @@ def resolve_ref(api, repository, ref):
     if exact and sha != ref:
         raise RuntimeError('Requested SHA did not resolve exactly')
     return sha
-
-
-def app_dependency_repository(api, repository, app_sha, path):
-    repository_url(repository); require_sha(app_sha)
-    _, item = api.request('GET', f'/repos/{repository}/contents/{path}?ref={app_sha}')
-    match = re.fullmatch(r'(?:https://github\.com/|git@github\.com:)([^/]+/[^/]+?)(?:\.git)?',
-                         item.get('submodule_git_url', ''))
-    if not match:
-        raise RuntimeError('App dependency GitHub repository declaration missing: ' + path)
-    require_sha(item.get('sha', ''))
-    repository_url(match[1])
-    return match[1]
 
 
 def parse_sdk_repository(content):
@@ -348,6 +337,47 @@ def preset_cache_excludes(source, platform, *, consumer=False):
     return [argument for name in builds for argument in ("-e", f"/{name}/")]
 
 
+def test_assets_cmake(*args, env=None):
+    return run(["cmake", *args, "-P", TEST_ASSETS_MODULE], env=env, capture=True).decode().strip()
+
+
+def test_assets_repository():
+    return test_assets_cmake("-DGPLATFORM_TEST_ASSETS_MODE=repository")
+
+
+def asset_path(app):
+    assets = app / TEST_ASSETS_PATH
+    for path in (app, assets.parent, assets):
+        if path.is_symlink() or path.is_junction():
+            raise RuntimeError(f"TestAssets path must not be a symlink or junction: {path}")
+        if path.exists() and not path.is_dir():
+            raise RuntimeError(f"TestAssets path must be a directory: {path}")
+    return assets
+
+
+def test_assets_checkout(app, *args, env):
+    output = test_assets_cmake(f"-DGPLATFORM_TEST_ASSETS_APP_DIR={app}", *args, env=env)
+    prefix = "-- TestAssets: "
+    records = [line.removeprefix(prefix) for line in output.splitlines() if line.startswith(prefix)]
+    if len(records) != 1 or " at " not in records[0]:
+        raise RuntimeError("CMake did not report one TestAssets checkout")
+    sha, path = records[0].split(" at ", 1)
+    return Path(path), require_sha(sha)
+
+
+def check_runner_test_assets(app, assets, *, env):
+    """Verify ownership and cleanliness before touching a runner checkout."""
+    path, sha = test_assets_checkout(app, "-DGPLATFORM_TEST_ASSETS_MODE=checkout", env=env)
+    if path != assets:
+        raise RuntimeError("CMake TestAssets checkout differs from the runner path")
+    env = dict(env, GIT_OPTIONAL_LOCKS="0")
+    index = git(assets, "ls-files", "-v", "-z", env=env).split(b"\0")
+    if (git(assets, "status", "--porcelain", "--untracked-files=all", env=env)
+            or any(entry[:1].islower() or entry.startswith(b"S ") for entry in index)):
+        raise RuntimeError(f"TestAssets has local changes or hidden index entries: {assets}")
+    return sha
+
+
 def prepare_cached_source(source, sha, platform, *, consumer=False, host=False):
     """Reset the runner's fixed checkout and retain validated preset caches."""
     source = Path(source).absolute()
@@ -377,6 +407,21 @@ def prepare_cached_source(source, sha, platform, *, consumer=False, host=False):
                 raise RuntimeError('App cache must belong to the runner checkout')
             preset_cache_excludes(app, platform)
     env = git_env()
+    # Check the assets before reset/clean can act on a leftover checkout.
+    # The host App gitlink and the independent consumer have separate histories.
+    asset_owner = app if host else source
+    assets = asset_path(asset_owner)
+    if assets.exists() and any(assets.iterdir()):
+        if host and not (app / '.git').exists():
+            raise RuntimeError('Cannot establish ownership of residual host TestAssets')
+        asset_env = env
+        if os.name == 'nt':
+            offset = int(env['GIT_CONFIG_COUNT'])
+            asset_env = dict(env, GIT_CONFIG_COUNT=str(offset + 1))
+            asset_env[f'GIT_CONFIG_KEY_{offset}'] = 'safe.directory'
+            asset_env[f'GIT_CONFIG_VALUE_{offset}'] = assets.as_posix()
+        check_runner_test_assets(asset_owner, assets, env=asset_env)
+        remove_owned_tree(assets, assets.parent, require_git=True)
     # Each submodule is checked out and cleaned once against its selected
     # Git tree in _init_pinned_submodules, not against yesterday's HEAD.
     git(source, "reset", "--hard", "--no-recurse-submodules", "HEAD", env=env)
@@ -428,10 +473,13 @@ def _init_pinned_submodules(source, env, *, require_app=False, producer=False,
             print(f"Skipping stale submodule declaration: {path!r}")
             continue
         if path == TEST_ASSETS_PATH:
-            # Product builds do not consume test assets. Preserve cached Git/LFS
-            # objects while preventing an old initialized pin from dirtying CI.
+            # Historical App commits can still track the old optional gitlink.
+            # Runner source preparation validated and removed any old checkout.
+            assets = asset_path(Path(source))
+            if assets.exists() and any(assets.iterdir()):
+                raise RuntimeError('Prepare runner source before deinitializing historical TestAssets')
             git(source, 'submodule', 'deinit', '--force', '--', path, env=env)
-            print('Skipping optional pinned TestAssets; initialize explicitly for acceptance')
+            print('Skipping historical TestAssets gitlink')
             continue
         git(source, "submodule", "sync", "--", path, env=env)
         app_owner = producer and path == 'App'
